@@ -1032,27 +1032,35 @@ thread_local ThreadCollectMemo threadCollectMemo;
 // the ring holds. Each entry keeps the furthest end walked from that page, so a range it contains
 // with the same start hits too; the ring still answers other contained ranges. Cleared when the
 // epoch or the unwatch serial moves (APS5_NO_COLLECT_INDEX=1: the ring only).
+// #1201's port (e2f2f8b7c) brought the same map (EpochCollectMap, APS5_NO_EPOCH_COLLECT_MAP=1):
+// this one serves both, owned through ThreadOwned as that one was. Each thread has its own (a
+// pipelined committer collects under its own epochs, DrawPipeline::FollowEpoch), so no thread
+// answers from another's walks.
 struct ThreadCollectIndex {
     std::uint64_t epoch = 0;
     std::uint64_t unwatched = 0;
     std::unordered_map<std::uintptr_t, std::uintptr_t> ends;
 };
-thread_local ThreadCollectIndex threadCollectIndex;
+
+ThreadCollectIndex& threadCollectIndex() {
+    thread_local ThreadCollectIndex* slot = nullptr;
+    return ShaderRecompiler::ThreadOwned(slot);
+}
 
 bool collectIndexEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr;
+    static const bool enabled = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr && std::getenv("APS5_NO_EPOCH_COLLECT_MAP") == nullptr;
     return enabled;
 }
 
 bool collectIndexed(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch, std::uint64_t unwatched) {
-    const auto& index = threadCollectIndex;
+    const auto& index = threadCollectIndex();
     if (index.epoch != epoch || index.unwatched != unwatched) return false;
     const auto found = index.ends.find(first);
     return found != index.ends.end() && stop <= found->second;
 }
 
 void indexCollect(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch, std::uint64_t unwatched) {
-    auto& index = threadCollectIndex;
+    auto& index = threadCollectIndex();
     if (index.epoch != epoch || index.unwatched != unwatched || index.ends.size() >= 65536u) {
         index.ends.clear();
         index.epoch = epoch;

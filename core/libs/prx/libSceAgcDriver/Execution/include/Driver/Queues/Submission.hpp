@@ -41,6 +41,10 @@ struct Submission {
     std::chrono::steady_clock::time_point enqueuedAt{};
     std::chrono::steady_clock::time_point dequeuedAt{};
     std::chrono::steady_clock::time_point orderedAt{};
+    // When the submission was enqueued, for the collect-epoch decision only (execute bumps the epoch
+    // when this is after the worker's last bump; a released REWIND tail inherits the bump that walked
+    // it). Kept apart from enqueuedAt, which the frame timing log requires in received order.
+    std::chrono::steady_clock::time_point epochAt{};
     const std::uint32_t* rewindTail = nullptr;
     std::size_t rewindWords = 0;
 };

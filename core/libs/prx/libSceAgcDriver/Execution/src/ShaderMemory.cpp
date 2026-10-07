@@ -112,6 +112,19 @@ ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regio
     }
 }
 
+// std::map moves its nodes, so `lastPage` and `replayLast` (an element iterator, never end) keep
+// pointing at the same page, now in this object's map.
+ShaderMemory::ShaderMemory(ShaderMemory&& other) noexcept : initial(std::move(other.initial)), pages(std::move(other.pages)), lastBase(other.lastBase), lastPage(other.lastPage), replayLast(other.replayLast), replayHint(other.replayHint), provenSpans(std::move(other.provenSpans)), provenHint(other.provenHint), pendingWrite(other.pendingWrite), observe(other.observe), hookWaits(other.hookWaits) {
+    other.initial.clear();
+    other.pages.clear();
+    other.lastBase = NoPage;
+    other.lastPage = nullptr;
+    other.replayLast = {};
+    other.replayHint = false;
+    other.provenSpans.clear();
+    other.provenHint = 0;
+}
+
 ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
     const auto found = pages.find(base);
     if (found != pages.end()) return found->second;

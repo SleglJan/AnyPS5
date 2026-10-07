@@ -136,6 +136,12 @@ public:
     explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr);
     ShaderMemory(const ShaderMemory&) = delete;
     ShaderMemory& operator=(const ShaderMemory&) = delete;
+    // A pipelined draw's commit owns its capture's pages (DrawPipeline): every member moves, the
+    // replay state included (std::map moves its nodes, so lastPage and replayLast keep pointing at
+    // the same pages, now in this object's map; a replayed page's shared image moves with its
+    // node). The moved-from object is left empty, with its shortcuts cleared.
+    ShaderMemory(ShaderMemory&& other) noexcept;
+    ShaderMemory& operator=(ShaderMemory&&) = delete;
     // Returns what the capture resolved (plan, snapshot, specialization) for
     // ShaderRecompiler::Recompile(request, capture), which then skips its own materialization. One
     // result per call: the draw path captures several stages on one ShaderMemory. With `handle`
