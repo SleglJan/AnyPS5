@@ -2499,6 +2499,12 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     return target;
 }
 
+std::optional<ShaderRecompiler::GeometryStageLimits> VulkanDevice::GeometryLimits() const {
+    if (!state->geometryShader) return std::nullopt;
+    const auto& limits = state->properties.limits;
+    return ShaderRecompiler::GeometryStageLimits{limits.maxGeometryInputComponents, limits.maxGeometryOutputComponents, limits.maxGeometryOutputVertices, limits.maxGeometryTotalOutputComponents, limits.maxFragmentInputComponents};
+}
+
 bool VulkanDevice::PrimitiveListRestart() const {
     return state->primitiveListRestart;
 }
