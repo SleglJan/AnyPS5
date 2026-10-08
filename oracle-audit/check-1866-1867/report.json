@@ -1,0 +1,5505 @@
+[
+ {
+  "kernel": "DivisionOutputModifiers.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "error": "NVNQQQ0AAAAAQFB5OKZVAABoAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/gQ4QNoAQin0KAG/VBAsaDAsAb9UFCRpcDABf1QQLGhQNAl/VBAsaPA6MbdUECxoEDwxt1QQLGgwQDG3VBgsaHBGMbdUGCxoUEoxu1QQNEgQUDG7VBg0SDBYMbtUEDRIcGIxu1QYNEhQAEHjgAwoBgBAQeOADDgGAIBB44AMSAYAwEHjgAxYBgAAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "error": "NVNQQQ0AAAAAsG+Ve15VAABoAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/gQ4QNoAQin0KAG/VBAsaDAsAb9UFCRpcDABf1QQLGhQNAl/VBAsaPA6MbdUECxoEDwxt1QQLGgwQDG3VBgsaHBGMbdUGCxoUEoxu1QQNEgQUDG7VBg0SDBYMbtUEDRIcGIxu1QYNEhQAEHjgAwoBgBAQeOADDgGAIBB44AMSAYAwEHjgAxYBgAAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "DivisionResultModifiers.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "error": "NVNQQQ0AAAAAADeY7qRVAABkAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/gQ4QNoAQin0KgG/VBAsaBAuAX9UECxoEDIJf1QQLGiQNgG/VBQkaRA6AcNUEDRIEEABw1QYNEgwSgGDVBA0SBBQAYNUGCRocFoBg1QYJGhQYgGDVBA0SJAAQeOADCgGAEBB44AMOAYAgEHjgAxIBgDAQeOADFgGAAACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "error": "NVNQQQ0AAAAAUI6EDGpVAABkAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/gQ4QNoAQin0KgG/VBAsaBAuAX9UECxoEDIJf1QQLGiQNgG/VBQkaRA6AcNUEDRIEEABw1QYNEgwSgGDVBA0SBBQAYNUGCRocFoBg1QYJGhQYgGDVBA0SJAAQeOADCgGAEBB44AMOAYAgEHjgAxIBgDAQeOADFgGAAACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F32OutputModifier.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 449,
+    "nan-payload": 63,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 449,
+    "nan-payload": 63,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 428,
+    "nan-payload": 84,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 449,
+    "nan-payload": 63,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 449,
+    "nan-payload": 63,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 491,
+    "nan-payload": 21,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 491,
+    "nan-payload": 21,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F32ResultClamp.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 477,
+    "nan-payload": 35,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64Transcendental.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 500,
+    "nan-payload": 8,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 500,
+    "nan-payload": 8,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "error": "NVNQQQ0AAAAAoLHi16JVAABbAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/BF8UfgRjGH4EaRx+EAB01QQNAgISAHTVBAEBAhQBdNUEDQIqFoCv1QQBAQIYAbTVBAEBIgAQeOADCgGAEBB44AMOAYAgEHjgAxIBgDAQeOADFgGAAACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 508,
+    "nan-payload": 0,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 508,
+    "nan-payload": 0,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 500,
+    "nan-payload": 8,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "Ryzen/title": {
+    "equal": 500,
+    "nan-payload": 8,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "Ryzen/title_noclamp": {
+    "error": "NVNQQQ0AAAAAMDdCDqVVAABbAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/BF8UfgRjGH4EaRx+EAB01QQNAgISAHTVBAEBAhQBdNUEDQIqFoCv1QQBAQIYAbTVBAEBIgAQeOADCgGAEBB44AMOAYAgEHjgAxIBgDAQeOADFgGAAACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 508,
+    "nan-payload": 0,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   },
+   "Ryzen/old": {
+    "equal": 508,
+    "nan-payload": 0,
+    "differs": 4,
+    "examples": [
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "08000006",
+      "oracle": "039e0000"
+     },
+     {
+      "row": 3,
+      "col": 4,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "effffffc",
+      "oracle": "ed080000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "e0000000",
+       "47efffff",
+       "0000001e",
+       "00000000"
+      ],
+      "host": "10000010",
+      "oracle": "1af80000"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Float16Modifiers.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 498,
+    "nan-payload": 14,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 498,
+    "nan-payload": 14,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 474,
+    "nan-payload": 38,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 498,
+    "nan-payload": 14,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 498,
+    "nan-payload": 14,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Float16TernaryClamp.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 12,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 384,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 384,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 378,
+    "nan-payload": 6,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 375,
+    "nan-payload": 0,
+    "differs": 9,
+    "examples": [
+     {
+      "row": 3,
+      "col": 1,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 8,
+      "col": 0,
+      "inputs": [
+       "2000fc01",
+       "79817bff",
+       "7bff8001",
+       "e6607650"
+      ],
+      "host": "e6603c00",
+      "oracle": "e6600000"
+     },
+     {
+      "row": 14,
+      "col": 5,
+      "inputs": [
+       "b95a7bff",
+       "007d8001",
+       "7c010ccb",
+       "b9c23f62"
+      ],
+      "host": "b9c20000",
+      "oracle": "b9c2007d"
+     },
+     {
+      "row": 18,
+      "col": 5,
+      "inputs": [
+       "7e00f5dd",
+       "7e008000",
+       "fc01bc00",
+       "8fd0b012"
+      ],
+      "host": "8fd03c00",
+      "oracle": "8fd00000"
+     },
+     {
+      "row": 26,
+      "col": 0,
+      "inputs": [
+       "0000027c",
+       "7e00932b",
+       "35557c01",
+       "eedc6a0c"
+      ],
+      "host": "eedc027c",
+      "oracle": "eedc0000"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 375,
+    "nan-payload": 0,
+    "differs": 9,
+    "examples": [
+     {
+      "row": 3,
+      "col": 1,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 8,
+      "col": 0,
+      "inputs": [
+       "2000fc01",
+       "79817bff",
+       "7bff8001",
+       "e6607650"
+      ],
+      "host": "e6603c00",
+      "oracle": "e6600000"
+     },
+     {
+      "row": 14,
+      "col": 5,
+      "inputs": [
+       "b95a7bff",
+       "007d8001",
+       "7c010ccb",
+       "b9c23f62"
+      ],
+      "host": "b9c20000",
+      "oracle": "b9c2007d"
+     },
+     {
+      "row": 18,
+      "col": 5,
+      "inputs": [
+       "7e00f5dd",
+       "7e008000",
+       "fc01bc00",
+       "8fd0b012"
+      ],
+      "host": "8fd03c00",
+      "oracle": "8fd00000"
+     },
+     {
+      "row": 26,
+      "col": 0,
+      "inputs": [
+       "0000027c",
+       "7e00932b",
+       "35557c01",
+       "eedc6a0c"
+      ],
+      "host": "eedc027c",
+      "oracle": "eedc0000"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 384,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 384,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 380,
+    "nan-payload": 4,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 375,
+    "nan-payload": 0,
+    "differs": 9,
+    "examples": [
+     {
+      "row": 3,
+      "col": 1,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 8,
+      "col": 0,
+      "inputs": [
+       "2000fc01",
+       "79817bff",
+       "7bff8001",
+       "e6607650"
+      ],
+      "host": "e6603c00",
+      "oracle": "e6600000"
+     },
+     {
+      "row": 14,
+      "col": 5,
+      "inputs": [
+       "b95a7bff",
+       "007d8001",
+       "7c010ccb",
+       "b9c23f62"
+      ],
+      "host": "b9c20000",
+      "oracle": "b9c2007d"
+     },
+     {
+      "row": 18,
+      "col": 5,
+      "inputs": [
+       "7e00f5dd",
+       "7e008000",
+       "fc01bc00",
+       "8fd0b012"
+      ],
+      "host": "8fd03c00",
+      "oracle": "8fd00000"
+     },
+     {
+      "row": 26,
+      "col": 0,
+      "inputs": [
+       "0000027c",
+       "7e00932b",
+       "35557c01",
+       "eedc6a0c"
+      ],
+      "host": "eedc027c",
+      "oracle": "eedc0000"
+     }
+    ]
+   },
+   "Ryzen/old": {
+    "equal": 375,
+    "nan-payload": 0,
+    "differs": 9,
+    "examples": [
+     {
+      "row": 3,
+      "col": 1,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "bfa8fd5a",
+       "00008000",
+       "7d232fe0",
+       "6a55b5f1"
+      ],
+      "host": "6a550000",
+      "oracle": "6a552fe0"
+     },
+     {
+      "row": 8,
+      "col": 0,
+      "inputs": [
+       "2000fc01",
+       "79817bff",
+       "7bff8001",
+       "e6607650"
+      ],
+      "host": "e6603c00",
+      "oracle": "e6600000"
+     },
+     {
+      "row": 14,
+      "col": 5,
+      "inputs": [
+       "b95a7bff",
+       "007d8001",
+       "7c010ccb",
+       "b9c23f62"
+      ],
+      "host": "b9c20000",
+      "oracle": "b9c2007d"
+     },
+     {
+      "row": 18,
+      "col": 5,
+      "inputs": [
+       "7e00f5dd",
+       "7e008000",
+       "fc01bc00",
+       "8fd0b012"
+      ],
+      "host": "8fd03c00",
+      "oracle": "8fd00000"
+     },
+     {
+      "row": 26,
+      "col": 0,
+      "inputs": [
+       "0000027c",
+       "7e00932b",
+       "35557c01",
+       "eedc6a0c"
+      ],
+      "host": "eedc027c",
+      "oracle": "eedc0000"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "SdwaLdexpF16.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Vop2ModifierForms.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 508,
+    "nan-payload": 4,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 508,
+    "nan-payload": 4,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 505,
+    "nan-payload": 7,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 508,
+    "nan-payload": 4,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 496,
+    "nan-payload": 4,
+    "differs": 12,
+    "examples": [
+     {
+      "row": 17,
+      "col": 4,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     },
+     {
+      "row": 17,
+      "col": 5,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 6,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 7,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     },
+     {
+      "row": 17,
+      "col": 8,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 9,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 500,
+    "nan-payload": 0,
+    "differs": 12,
+    "examples": [
+     {
+      "row": 17,
+      "col": 4,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     },
+     {
+      "row": 17,
+      "col": 5,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 6,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 7,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     },
+     {
+      "row": 17,
+      "col": 8,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "00000001"
+     },
+     {
+      "row": 17,
+      "col": 9,
+      "inputs": [
+       "3f19999a",
+       "00000001",
+       "00000001",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80000001"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Vop3CubeClamp.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 500,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 500,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 500,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 500,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "DivFixupF16.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 8,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 256,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F32MinMaxNan.Code",
+  "oracle": "re-measured",
+  "rows": 128,
+  "used": 8,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64Arithmetic.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "Ryzen/title": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 477,
+    "nan-payload": 21,
+    "differs": 14,
+    "examples": [
+     {
+      "row": 7,
+      "col": 8,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 9,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 7,
+      "col": 10,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "00000001",
+      "oracle": "00000000"
+     },
+     {
+      "row": 7,
+      "col": 11,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000001",
+       "7ff00000"
+      ],
+      "host": "7ff80000",
+      "oracle": "3ff00000"
+     },
+     {
+      "row": 13,
+      "col": 8,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "d9787a36",
+      "oracle": "00000000"
+     },
+     {
+      "row": 13,
+      "col": 9,
+      "inputs": [
+       "d9787a36",
+       "fff7c837",
+       "00000000",
+       "41f00000"
+      ],
+      "host": "ffffc837",
+      "oracle": "41f00000"
+     }
+    ]
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64Conversions.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "error": "NVNQQQ0AAAAAkFFUa59VAABcAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/BCEUfgUJGH4FLRx+EIBk1QYNAgISAWXVBg0COhQAZNUG/wECAAAIQBYAmNUGAQEiGABM1Qbl4RMAEHjgAwoBgBAQeOADDgGAIBB44AMSAYAwEHjgAxYBgAAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "error": "NVNQQQ0AAAAAoLeBTbZVAABcAAAAAAAAAIQAAjSGAAY0ABA44AEEAIBwP4y/BCEUfgUJGH4FLRx+EIBk1QYNAgISAWXVBg0COhQAZNUG/wECAAAIQBYAmNUGAQEiGABM1Qbl4RMAEHjgAwoBgBAQeOADDgGAIBB44AMSAYAwEHjgAxYBgAAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/AACBvwAAgb8AAIG/"
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64Division.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 497,
+    "nan-payload": 15,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64DivisionModifiers.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 502,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64NanConversions.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 3,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 96,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 96,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 83,
+    "nan-payload": 13,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 96,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 96,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "F64Rounding.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "Ryzen/title": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 484,
+    "nan-payload": 3,
+    "differs": 25,
+    "examples": [
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "3ff00000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "3f800000",
+      "oracle": "40000000"
+     },
+     {
+      "row": 7,
+      "col": 12,
+      "inputs": [
+       "00000000",
+       "c0040000",
+       "00000000",
+       "00000000"
+      ],
+      "host": "c0200000",
+      "oracle": "c0a00000"
+     },
+     {
+      "row": 9,
+      "col": 12,
+      "inputs": [
+       "c5f99476",
+       "4153959f",
+       "00000000",
+       "36a00000"
+      ],
+      "host": "4a9cacfe",
+      "oracle": "4b1cacfe"
+     },
+     {
+      "row": 10,
+      "col": 12,
+      "inputs": [
+       "33e8e7aa",
+       "40a1e71c",
+       "7716dc6d",
+       "bfdd8066"
+      ],
+      "host": "450f38e2",
+      "oracle": "458f38e2"
+     },
+     {
+      "row": 11,
+      "col": 12,
+      "inputs": [
+       "2d0e58dc",
+       "402fc4a6",
+       "00000000",
+       "40040000"
+      ],
+      "host": "417e2531",
+      "oracle": "41fe2531"
+     },
+     {
+      "row": 12,
+      "col": 12,
+      "inputs": [
+       "26fc54b4",
+       "41019e75",
+       "00000000",
+       "36900000"
+      ],
+      "host": "480cf3a9",
+      "oracle": "488cf3a9"
+     }
+    ]
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "SdwaFloatSelectors.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 508,
+    "nan-payload": 2,
+    "differs": 2,
+    "examples": [
+     {
+      "row": 10,
+      "col": 15,
+      "inputs": [
+       "00000000",
+       "7c007c00",
+       "7f7f7f7f",
+       "3c003c00"
+      ],
+      "host": "ffffff00",
+      "oracle": "00000000"
+     },
+     {
+      "row": 14,
+      "col": 3,
+      "inputs": [
+       "7f800000",
+       "00000000",
+       "01000100",
+       "1b1c3f27"
+      ],
+      "host": "0000ffff",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 508,
+    "nan-payload": 2,
+    "differs": 2,
+    "examples": [
+     {
+      "row": 10,
+      "col": 15,
+      "inputs": [
+       "00000000",
+       "7c007c00",
+       "7f7f7f7f",
+       "3c003c00"
+      ],
+      "host": "ffffff00",
+      "oracle": "00000000"
+     },
+     {
+      "row": 14,
+      "col": 3,
+      "inputs": [
+       "7f800000",
+       "00000000",
+       "01000100",
+       "1b1c3f27"
+      ],
+      "host": "0000ffff",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 508,
+    "nan-payload": 2,
+    "differs": 2,
+    "examples": [
+     {
+      "row": 10,
+      "col": 15,
+      "inputs": [
+       "00000000",
+       "7c007c00",
+       "7f7f7f7f",
+       "3c003c00"
+      ],
+      "host": "ffffff00",
+      "oracle": "00000000"
+     },
+     {
+      "row": 14,
+      "col": 3,
+      "inputs": [
+       "7f800000",
+       "00000000",
+       "01000100",
+       "1b1c3f27"
+      ],
+      "host": "0000ffff",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 508,
+    "nan-payload": 2,
+    "differs": 2,
+    "examples": [
+     {
+      "row": 10,
+      "col": 15,
+      "inputs": [
+       "00000000",
+       "7c007c00",
+       "7f7f7f7f",
+       "3c003c00"
+      ],
+      "host": "ffffff00",
+      "oracle": "00000000"
+     },
+     {
+      "row": 14,
+      "col": 3,
+      "inputs": [
+       "7f800000",
+       "00000000",
+       "01000100",
+       "1b1c3f27"
+      ],
+      "host": "0000ffff",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 453,
+    "nan-payload": 2,
+    "differs": 57,
+    "examples": [
+     {
+      "row": 1,
+      "col": 1,
+      "inputs": [
+       "00000000",
+       "10663f9d",
+       "8b35e743",
+       "7d7d9db4"
+      ],
+      "host": "00009db4",
+      "oracle": "10669db4"
+     },
+     {
+      "row": 2,
+      "col": 1,
+      "inputs": [
+       "0008dbf2",
+       "47004700",
+       "3c000000",
+       "80000000"
+      ],
+      "host": "00000000",
+      "oracle": "94f20000"
+     },
+     {
+      "row": 2,
+      "col": 4,
+      "inputs": [
+       "0008dbf2",
+       "47004700",
+       "3c000000",
+       "80000000"
+      ],
+      "host": "00000000",
+      "oracle": "006dbcbd"
+     },
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "00000000",
+      "oracle": "004700f2"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "00000000",
+      "oracle": "fff20000"
+     },
+     {
+      "row": 3,
+      "col": 7,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "000005c2",
+      "oracle": "00470047"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 511,
+    "nan-payload": 1,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 457,
+    "nan-payload": 0,
+    "differs": 55,
+    "examples": [
+     {
+      "row": 1,
+      "col": 1,
+      "inputs": [
+       "00000000",
+       "10663f9d",
+       "8b35e743",
+       "7d7d9db4"
+      ],
+      "host": "00009db4",
+      "oracle": "10669db4"
+     },
+     {
+      "row": 2,
+      "col": 1,
+      "inputs": [
+       "0008dbf2",
+       "47004700",
+       "3c000000",
+       "80000000"
+      ],
+      "host": "00000000",
+      "oracle": "94f20000"
+     },
+     {
+      "row": 2,
+      "col": 4,
+      "inputs": [
+       "0008dbf2",
+       "47004700",
+       "3c000000",
+       "80000000"
+      ],
+      "host": "00000000",
+      "oracle": "006dbcbd"
+     },
+     {
+      "row": 3,
+      "col": 0,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "00000000",
+      "oracle": "004700f2"
+     },
+     {
+      "row": 3,
+      "col": 2,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "00000000",
+      "oracle": "fff20000"
+     },
+     {
+      "row": 3,
+      "col": 7,
+      "inputs": [
+       "05c21fab",
+       "00470047",
+       "80000000",
+       "47004700"
+      ],
+      "host": "000005c2",
+      "oracle": "00470047"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Vop3PackLdexp.Code",
+  "oracle": "re-measured",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 459,
+    "nan-payload": 3,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 451,
+    "nan-payload": 3,
+    "differs": 58,
+    "examples": [
+     {
+      "row": 0,
+      "col": 6,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "00000000",
+      "oracle": "00400000"
+     },
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 4,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80400000"
+     },
+     {
+      "row": 1,
+      "col": 5,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80400000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 6,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "00000000",
+      "oracle": "00200000"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "Ryzen/title": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 462,
+    "nan-payload": 0,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 459,
+    "nan-payload": 3,
+    "differs": 50,
+    "examples": [
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 12,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "40000000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 13,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "000000fc",
+      "oracle": "00000000"
+     },
+     {
+      "row": 4,
+      "col": 12,
+      "inputs": [
+       "3f7fff80",
+       "3effff00",
+       "00000000",
+       "00000001"
+      ],
+      "host": "00008000",
+      "oracle": "00000000"
+     },
+     {
+      "row": 5,
+      "col": 13,
+      "inputs": [
+       "bf000000",
+       "3f000000",
+       "00000115",
+       "348abf59"
+      ],
+      "host": "da210b4d",
+      "oracle": "00000000"
+     }
+    ]
+   },
+   "Ryzen/old": {
+    "equal": 451,
+    "nan-payload": 3,
+    "differs": 58,
+    "examples": [
+     {
+      "row": 0,
+      "col": 6,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "00000000",
+      "oracle": "00400000"
+     },
+     {
+      "row": 0,
+      "col": 13,
+      "inputs": [
+       "3fc00000",
+       "00800000",
+       "00000080",
+       "ffffffff"
+      ],
+      "host": "ffffff80",
+      "oracle": "00000000"
+     },
+     {
+      "row": 1,
+      "col": 4,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80400000"
+     },
+     {
+      "row": 1,
+      "col": 5,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "80400000"
+     },
+     {
+      "row": 1,
+      "col": 12,
+      "inputs": [
+       "bf800001",
+       "80ffffff",
+       "ffffff81",
+       "00000000"
+      ],
+      "host": "c17fffff",
+      "oracle": "00000000"
+     },
+     {
+      "row": 3,
+      "col": 6,
+      "inputs": [
+       "40000000",
+       "00800001",
+       "ffffff82",
+       "fffffffe"
+      ],
+      "host": "00000000",
+      "oracle": "00200000"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Vop1FloatUnary.Code",
+  "oracle": "pass 2 adapters",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 1614,
+    "nan-payload": 10,
+    "differs": 104,
+    "examples": [
+     {
+      "row": 21,
+      "col": 14,
+      "inputs": [
+       "384fbc0e",
+       "42d05018",
+       "3bff8400",
+       "75f99ac4"
+      ],
+      "host": "3be69ba7",
+      "oracle": "3be69ba6"
+     },
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4491200",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 4,
+      "col": 17,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "401c6be4",
+      "oracle": "401c6be5"
+     },
+     {
+      "row": 4,
+      "col": 19,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 21,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 23,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "c025079a",
+      "oracle": "c025079c"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 1614,
+    "nan-payload": 10,
+    "differs": 104,
+    "examples": [
+     {
+      "row": 21,
+      "col": 14,
+      "inputs": [
+       "384fbc0e",
+       "42d05018",
+       "3bff8400",
+       "75f99ac4"
+      ],
+      "host": "3be69ba7",
+      "oracle": "3be69ba6"
+     },
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4491200",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 4,
+      "col": 17,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "401c6be4",
+      "oracle": "401c6be5"
+     },
+     {
+      "row": 4,
+      "col": 19,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 21,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 23,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "c025079a",
+      "oracle": "c025079c"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 1614,
+    "nan-payload": 10,
+    "differs": 104,
+    "examples": [
+     {
+      "row": 21,
+      "col": 14,
+      "inputs": [
+       "384fbc0e",
+       "42d05018",
+       "3bff8400",
+       "75f99ac4"
+      ],
+      "host": "3be69ba7",
+      "oracle": "3be69ba6"
+     },
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4491200",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 4,
+      "col": 17,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "401c6be4",
+      "oracle": "401c6be5"
+     },
+     {
+      "row": 4,
+      "col": 19,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 21,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 23,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "c025079a",
+      "oracle": "c025079c"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 1614,
+    "nan-payload": 10,
+    "differs": 104,
+    "examples": [
+     {
+      "row": 21,
+      "col": 14,
+      "inputs": [
+       "384fbc0e",
+       "42d05018",
+       "3bff8400",
+       "75f99ac4"
+      ],
+      "host": "3be69ba7",
+      "oracle": "3be69ba6"
+     },
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4491200",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 4,
+      "col": 17,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "401c6be4",
+      "oracle": "401c6be5"
+     },
+     {
+      "row": 4,
+      "col": 19,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 21,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "40bf2758",
+      "oracle": "40bf2759"
+     },
+     {
+      "row": 4,
+      "col": 23,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "c025079a",
+      "oracle": "c025079c"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 1611,
+    "nan-payload": 10,
+    "differs": 107,
+    "examples": [
+     {
+      "row": 0,
+      "col": 9,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "007fffff"
+     },
+     {
+      "row": 21,
+      "col": 14,
+      "inputs": [
+       "384fbc0e",
+       "42d05018",
+       "3bff8400",
+       "75f99ac4"
+      ],
+      "host": "3be69ba7",
+      "oracle": "3be69ba6"
+     },
+     {
+      "row": 0,
+      "col": 26,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "81c90fd3"
+     },
+     {
+      "row": 0,
+      "col": 27,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "01c90fd3"
+     },
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4491200",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 4,
+      "col": 17,
+      "inputs": [
+       "7f800000",
+       "3e2b6c1a",
+       "be007c00",
+       "2de0a56a"
+      ],
+      "host": "401c6be4",
+      "oracle": "401c6be5"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 1718,
+    "nan-payload": 0,
+    "differs": 10,
+    "examples": [
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 13,
+      "col": 27,
+      "inputs": [
+       "4036ac94",
+       "ba85a805",
+       "53869182",
+       "ec007b1b"
+      ],
+      "host": "bbd1f205",
+      "oracle": "bbd1f20b"
+     },
+     {
+      "row": 16,
+      "col": 26,
+      "inputs": [
+       "bb27aea0",
+       "bf9e8d90",
+       "1a67bbff",
+       "526c5cc5"
+      ],
+      "host": "bc83b159",
+      "oracle": "bc83b10e"
+     },
+     {
+      "row": 17,
+      "col": 28,
+      "inputs": [
+       "be381e7f",
+       "bc0a3bbf",
+       "2ce6fe00",
+       "c9794969"
+      ],
+      "host": "3eda91dd",
+      "oracle": "3eda91e0"
+     },
+     {
+      "row": 22,
+      "col": 27,
+      "inputs": [
+       "ffc00000",
+       "b966cd34",
+       "8000bbff",
+       "efbd6b85"
+      ],
+      "host": "bab5479c",
+      "oracle": "bab54564"
+     },
+     {
+      "row": 23,
+      "col": 26,
+      "inputs": [
+       "b3800000",
+       "3abb690b",
+       "f181eaa6",
+       "aae550d5"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b4c90fd5"
+     }
+    ]
+   },
+   "Ryzen/title": {
+    "equal": 1718,
+    "nan-payload": 0,
+    "differs": 10,
+    "examples": [
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 13,
+      "col": 27,
+      "inputs": [
+       "4036ac94",
+       "ba85a805",
+       "53869182",
+       "ec007b1b"
+      ],
+      "host": "bbd1f205",
+      "oracle": "bbd1f20b"
+     },
+     {
+      "row": 16,
+      "col": 26,
+      "inputs": [
+       "bb27aea0",
+       "bf9e8d90",
+       "1a67bbff",
+       "526c5cc5"
+      ],
+      "host": "bc83b159",
+      "oracle": "bc83b10e"
+     },
+     {
+      "row": 17,
+      "col": 28,
+      "inputs": [
+       "be381e7f",
+       "bc0a3bbf",
+       "2ce6fe00",
+       "c9794969"
+      ],
+      "host": "3eda91dd",
+      "oracle": "3eda91e0"
+     },
+     {
+      "row": 22,
+      "col": 27,
+      "inputs": [
+       "ffc00000",
+       "b966cd34",
+       "8000bbff",
+       "efbd6b85"
+      ],
+      "host": "bab5479c",
+      "oracle": "bab54564"
+     },
+     {
+      "row": 23,
+      "col": 26,
+      "inputs": [
+       "b3800000",
+       "3abb690b",
+       "f181eaa6",
+       "aae550d5"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b4c90fd5"
+     }
+    ]
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 1718,
+    "nan-payload": 0,
+    "differs": 10,
+    "examples": [
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 13,
+      "col": 27,
+      "inputs": [
+       "4036ac94",
+       "ba85a805",
+       "53869182",
+       "ec007b1b"
+      ],
+      "host": "bbd1f205",
+      "oracle": "bbd1f20b"
+     },
+     {
+      "row": 16,
+      "col": 26,
+      "inputs": [
+       "bb27aea0",
+       "bf9e8d90",
+       "1a67bbff",
+       "526c5cc5"
+      ],
+      "host": "bc83b159",
+      "oracle": "bc83b10e"
+     },
+     {
+      "row": 17,
+      "col": 28,
+      "inputs": [
+       "be381e7f",
+       "bc0a3bbf",
+       "2ce6fe00",
+       "c9794969"
+      ],
+      "host": "3eda91dd",
+      "oracle": "3eda91e0"
+     },
+     {
+      "row": 22,
+      "col": 27,
+      "inputs": [
+       "ffc00000",
+       "b966cd34",
+       "8000bbff",
+       "efbd6b85"
+      ],
+      "host": "bab5479c",
+      "oracle": "bab54564"
+     },
+     {
+      "row": 23,
+      "col": 26,
+      "inputs": [
+       "b3800000",
+       "3abb690b",
+       "f181eaa6",
+       "aae550d5"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b4c90fd5"
+     }
+    ]
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 1718,
+    "nan-payload": 0,
+    "differs": 10,
+    "examples": [
+     {
+      "row": 3,
+      "col": 26,
+      "inputs": [
+       "b0800000",
+       "3f800000",
+       "84003400",
+       "5555aaaa"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b1c90fd5"
+     },
+     {
+      "row": 13,
+      "col": 27,
+      "inputs": [
+       "4036ac94",
+       "ba85a805",
+       "53869182",
+       "ec007b1b"
+      ],
+      "host": "bbd1f205",
+      "oracle": "bbd1f20b"
+     },
+     {
+      "row": 16,
+      "col": 26,
+      "inputs": [
+       "bb27aea0",
+       "bf9e8d90",
+       "1a67bbff",
+       "526c5cc5"
+      ],
+      "host": "bc83b159",
+      "oracle": "bc83b10e"
+     },
+     {
+      "row": 17,
+      "col": 28,
+      "inputs": [
+       "be381e7f",
+       "bc0a3bbf",
+       "2ce6fe00",
+       "c9794969"
+      ],
+      "host": "3eda91dd",
+      "oracle": "3eda91e0"
+     },
+     {
+      "row": 22,
+      "col": 27,
+      "inputs": [
+       "ffc00000",
+       "b966cd34",
+       "8000bbff",
+       "efbd6b85"
+      ],
+      "host": "bab5479c",
+      "oracle": "bab54564"
+     },
+     {
+      "row": 23,
+      "col": 26,
+      "inputs": [
+       "b3800000",
+       "3abb690b",
+       "f181eaa6",
+       "aae550d5"
+      ],
+      "host": "b4c90fde",
+      "oracle": "b4c90fd5"
+     }
+    ]
+   },
+   "Ryzen/old": {
+    "equal": 1712,
+    "nan-payload": 0,
+    "differs": 16,
+    "examples": [
+     {
+      "row": 0,
+      "col": 1,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "3f800000"
+     },
+     {
+      "row": 0,
+      "col": 2,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "80000000",
+      "oracle": "bf800000"
+     },
+     {
+      "row": 0,
+      "col": 8,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "3f7fffff"
+     },
+     {
+      "row": 0,
+      "col": 9,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "007fffff"
+     },
+     {
+      "row": 0,
+      "col": 26,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "81c90fd3"
+     },
+     {
+      "row": 0,
+      "col": 27,
+      "inputs": [
+       "807fffff",
+       "007fffff",
+       "3c003800",
+       "13579bdf"
+      ],
+      "host": "00000000",
+      "oracle": "01c90fd3"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Division.HelperCode",
+  "oracle": "pass 2 adapters",
+  "rows": 256,
+  "used": 4,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 1014,
+    "nan-payload": 10,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 1024,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Division.DivisionCode",
+  "oracle": "pass 2 adapters",
+  "rows": 255,
+  "used": 1,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 255,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Division.FmaCode",
+  "oracle": "pass 2 adapters",
+  "rows": 2,
+  "used": 1,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 2,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Float16Misc.MiscCode",
+  "oracle": "pass 2 adapters",
+  "rows": 255,
+  "used": 11,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 2513,
+    "nan-payload": 37,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 2513,
+    "nan-payload": 37,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 2513,
+    "nan-payload": 37,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 2513,
+    "nan-payload": 37,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 2454,
+    "nan-payload": 41,
+    "differs": 55,
+    "examples": [
+     {
+      "row": 1,
+      "col": 9,
+      "inputs": [
+       "cac52720",
+       "00000064",
+       "8fe2c3f4",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "839a0691"
+     },
+     {
+      "row": 5,
+      "col": 9,
+      "inputs": [
+       "fbff8acd",
+       "00000001",
+       "3f800000",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "b17f8acd"
+     },
+     {
+      "row": 6,
+      "col": 9,
+      "inputs": [
+       "4ca4aaf9",
+       "000003ba",
+       "7f800000",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "07196949"
+     },
+     {
+      "row": 16,
+      "col": 9,
+      "inputs": [
+       "0001bc00",
+       "fbff3c07",
+       "3f800000",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "b9dd560e"
+     },
+     {
+      "row": 21,
+      "col": 9,
+      "inputs": [
+       "4e63fc00",
+       "000002a7",
+       "9f94c755",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "08972c59"
+     },
+     {
+      "row": 27,
+      "col": 9,
+      "inputs": [
+       "8001fbff",
+       "d32e6778",
+       "7f800000",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "112d0a52"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 2550,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 2550,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 2550,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 2546,
+    "nan-payload": 4,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 2491,
+    "nan-payload": 5,
+    "differs": 54,
+    "examples": [
+     {
+      "row": 1,
+      "col": 9,
+      "inputs": [
+       "cac52720",
+       "00000064",
+       "8fe2c3f4",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "839a0691"
+     },
+     {
+      "row": 5,
+      "col": 9,
+      "inputs": [
+       "fbff8acd",
+       "00000001",
+       "3f800000",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "b17f8acd"
+     },
+     {
+      "row": 6,
+      "col": 9,
+      "inputs": [
+       "4ca4aaf9",
+       "000003ba",
+       "7f800000",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "07196949"
+     },
+     {
+      "row": 16,
+      "col": 9,
+      "inputs": [
+       "0001bc00",
+       "fbff3c07",
+       "3f800000",
+       "00000000"
+      ],
+      "host": "80000000",
+      "oracle": "b9dd560e"
+     },
+     {
+      "row": 21,
+      "col": 9,
+      "inputs": [
+       "4e63fc00",
+       "000002a7",
+       "9f94c755",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "08972c59"
+     },
+     {
+      "row": 27,
+      "col": 9,
+      "inputs": [
+       "8001fbff",
+       "d32e6778",
+       "7f800000",
+       "00000000"
+      ],
+      "host": "00000000",
+      "oracle": "112d0a52"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "kernel": "Float16Rounding.RoundingCode",
+  "oracle": "pass 2 adapters",
+  "rows": 256,
+  "used": 3,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 756,
+    "nan-payload": 12,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 768,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 768,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "Float16ResultModifiers.Code",
+  "oracle": "pass 2 adapters",
+  "rows": 32,
+  "used": 16,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 509,
+    "nan-payload": 2,
+    "differs": 1,
+    "examples": [
+     {
+      "row": 7,
+      "col": 3,
+      "inputs": [
+       "00000001",
+       "00003a00",
+       "00008001",
+       "477ff000"
+      ],
+      "host": "00000003",
+      "oracle": "00000006"
+     }
+    ]
+   },
+   "NVIDIA/title": {
+    "equal": 509,
+    "nan-payload": 2,
+    "differs": 1,
+    "examples": [
+     {
+      "row": 7,
+      "col": 3,
+      "inputs": [
+       "00000001",
+       "00003a00",
+       "00008001",
+       "477ff000"
+      ],
+      "host": "00000003",
+      "oracle": "00000006"
+     }
+    ]
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 506,
+    "nan-payload": 5,
+    "differs": 1,
+    "examples": [
+     {
+      "row": 7,
+      "col": 3,
+      "inputs": [
+       "00000001",
+       "00003a00",
+       "00008001",
+       "477ff000"
+      ],
+      "host": "00000003",
+      "oracle": "00000006"
+     }
+    ]
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 509,
+    "nan-payload": 2,
+    "differs": 1,
+    "examples": [
+     {
+      "row": 7,
+      "col": 3,
+      "inputs": [
+       "00000001",
+       "00003a00",
+       "00008001",
+       "477ff000"
+      ],
+      "host": "00000003",
+      "oracle": "00000006"
+     }
+    ]
+   },
+   "NVIDIA/old": {
+    "equal": 509,
+    "nan-payload": 2,
+    "differs": 1,
+    "examples": [
+     {
+      "row": 7,
+      "col": 3,
+      "inputs": [
+       "00000001",
+       "00003a00",
+       "00008001",
+       "477ff000"
+      ],
+      "host": "00000003",
+      "oracle": "00000006"
+     }
+    ]
+   },
+   "Ryzen/none": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 512,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ },
+ {
+  "kernel": "MixPrecision.MixCode",
+  "oracle": "pass 2 adapters",
+  "rows": 17,
+  "used": 9,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ }
+]

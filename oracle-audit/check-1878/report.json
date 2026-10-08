@@ -1,0 +1,70 @@
+[
+ {
+  "kernel": "MixPrecision.MixCode",
+  "oracle": "pass 2 adapters",
+  "rows": 17,
+  "used": 9,
+  "modes": {
+   "NVIDIA/none": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/title_noclamp": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/ieee1_flush32": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "NVIDIA/old": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/none": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/title_noclamp": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/ieee1_flush32": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   },
+   "Ryzen/old": {
+    "equal": 153,
+    "nan-payload": 0,
+    "differs": 0,
+    "examples": []
+   }
+  }
+ }
+]

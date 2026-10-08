@@ -1,0 +1,41 @@
+== dx10: cells with oracle[title] != oracle[title_noclamp]
+DivisionOutputModifiers.Code       14  Ryzen/title_noclamp: throws  NVIDIA/title_noclamp: throws
+DivisionResultModifiers.Code       39  Ryzen/title_noclamp: throws  NVIDIA/title_noclamp: throws
+F32OutputModifier.Code             21  Ryzen/title_noclamp: =21 nan=0 diff=0  NVIDIA/title_noclamp: =0 nan=21 diff=0
+F32ResultClamp.Code                57  Ryzen/title_noclamp: =57 nan=0 diff=0  NVIDIA/title_noclamp: =22 nan=35 diff=0
+F64Transcendental.Code              5  Ryzen/title_noclamp: throws  NVIDIA/title_noclamp: throws
+Float16Modifiers.Code              28  Ryzen/title_noclamp: =28 nan=0 diff=0  NVIDIA/title_noclamp: =4 nan=24 diff=0
+Float16ResultModifiers.Code        21  Ryzen/title_noclamp: =21 nan=0 diff=0  NVIDIA/title_noclamp: =18 nan=3 diff=0
+Float16TernaryClamp.Code           27  Ryzen/title_noclamp: =23 nan=4 diff=0  NVIDIA/title_noclamp: =21 nan=6 diff=0
+SdwaLdexpF16.Code                 111  Ryzen/title_noclamp: =111 nan=0 diff=0  NVIDIA/title_noclamp: =111 nan=0 diff=0
+Vop2ModifierForms.Code              3  Ryzen/title_noclamp: =3 nan=0 diff=0  NVIDIA/title_noclamp: =0 nan=3 diff=0
+Vop3CubeClamp.Code                 28  Ryzen/title_noclamp: =28 nan=0 diff=0  NVIDIA/title_noclamp: =28 nan=0 diff=0
+   total ('Ryzen', 'title_noclamp') {'throws': 58, 'equal': 292, 'nan-payload': 4, 'differs': 0}
+   total ('NVIDIA', 'title_noclamp') {'throws': 58, 'equal': 204, 'nan-payload': 92, 'differs': 0}
+== ieee: cells with oracle[title] != oracle[ieee1_flush32]
+DivFixupF16.Code                   21  Ryzen/title: =21 nan=0 diff=0  Ryzen/ieee1_flush32: =21 nan=0 diff=0  NVIDIA/title: =21 nan=0 diff=0  NVIDIA/ieee1_flush32: =21 nan=0 diff=0
+Division.DivisionCode               1  Ryzen/title: =1 nan=0 diff=0  Ryzen/ieee1_flush32: =1 nan=0 diff=0  NVIDIA/title: =1 nan=0 diff=0  NVIDIA/ieee1_flush32: =1 nan=0 diff=0
+Division.HelperCode                20  Ryzen/title: =10 nan=10 diff=0  Ryzen/ieee1_flush32: =20 nan=0 diff=0  NVIDIA/title: =10 nan=10 diff=0  NVIDIA/ieee1_flush32: =20 nan=0 diff=0
+DivisionOutputModifiers.Code      127  Ryzen/title: =127 nan=0 diff=0  Ryzen/ieee1_flush32: =127 nan=0 diff=0  NVIDIA/title: =127 nan=0 diff=0  NVIDIA/ieee1_flush32: =127 nan=0 diff=0
+F32MinMaxNan.Code                 258  Ryzen/title: =258 nan=0 diff=0  Ryzen/ieee1_flush32: =258 nan=0 diff=0  NVIDIA/title: =258 nan=0 diff=0  NVIDIA/ieee1_flush32: =258 nan=0 diff=0
+F32OutputModifier.Code            225  Ryzen/title: =225 nan=0 diff=0  Ryzen/ieee1_flush32: =204 nan=21 diff=0  NVIDIA/title: =204 nan=21 diff=0  NVIDIA/ieee1_flush32: =204 nan=21 diff=0
+F64Arithmetic.Code                 35  Ryzen/title: =0 nan=21 diff=14  Ryzen/ieee1_flush32: =35 nan=0 diff=0  NVIDIA/title: =0 nan=21 diff=14  NVIDIA/ieee1_flush32: =35 nan=0 diff=0
+F64Conversions.Code                 1  Ryzen/title: =0 nan=1 diff=0  Ryzen/ieee1_flush32: =1 nan=0 diff=0  NVIDIA/title: =0 nan=1 diff=0  NVIDIA/ieee1_flush32: =1 nan=0 diff=0
+F64Division.Code                   15  Ryzen/title: =0 nan=15 diff=0  Ryzen/ieee1_flush32: =15 nan=0 diff=0  NVIDIA/title: =0 nan=15 diff=0  NVIDIA/ieee1_flush32: =15 nan=0 diff=0
+F64DivisionModifiers.Code          10  Ryzen/title: =0 nan=10 diff=0  Ryzen/ieee1_flush32: =10 nan=0 diff=0  NVIDIA/title: =0 nan=10 diff=0  NVIDIA/ieee1_flush32: =10 nan=0 diff=0
+F64NanConversions.Code             13  Ryzen/title: =0 nan=13 diff=0  Ryzen/ieee1_flush32: =13 nan=0 diff=0  NVIDIA/title: =0 nan=13 diff=0  NVIDIA/ieee1_flush32: =13 nan=0 diff=0
+F64Rounding.Code                   28  Ryzen/title: =0 nan=3 diff=25  Ryzen/ieee1_flush32: =28 nan=0 diff=0  NVIDIA/title: =0 nan=3 diff=25  NVIDIA/ieee1_flush32: =28 nan=0 diff=0
+F64Transcendental.Code              8  Ryzen/title: =0 nan=8 diff=0  Ryzen/ieee1_flush32: =8 nan=0 diff=0  NVIDIA/title: =0 nan=8 diff=0  NVIDIA/ieee1_flush32: =8 nan=0 diff=0
+Float16Misc.MiscCode               12  Ryzen/title: =12 nan=0 diff=0  Ryzen/ieee1_flush32: =8 nan=4 diff=0  NVIDIA/title: =8 nan=4 diff=0  NVIDIA/ieee1_flush32: =8 nan=4 diff=0
+Float16Rounding.RoundingCode       12  Ryzen/title: =0 nan=12 diff=0  Ryzen/ieee1_flush32: =12 nan=0 diff=0  NVIDIA/title: =0 nan=12 diff=0  NVIDIA/ieee1_flush32: =0 nan=12 diff=0
+Float16TernaryClamp.Code            9  Ryzen/title: =9 nan=0 diff=0  Ryzen/ieee1_flush32: =0 nan=0 diff=9  NVIDIA/title: =9 nan=0 diff=0  NVIDIA/ieee1_flush32: =0 nan=0 diff=9
+SdwaFloatSelectors.Code             1  Ryzen/title: =0 nan=1 diff=0  Ryzen/ieee1_flush32: =1 nan=0 diff=0  NVIDIA/title: =0 nan=1 diff=0  NVIDIA/ieee1_flush32: =0 nan=1 diff=0
+SdwaLdexpF16.Code                  36  Ryzen/title: =36 nan=0 diff=0  Ryzen/ieee1_flush32: =36 nan=0 diff=0  NVIDIA/title: =36 nan=0 diff=0  NVIDIA/ieee1_flush32: =36 nan=0 diff=0
+Vop1FloatUnary.Code               118  Ryzen/title: =118 nan=0 diff=0  Ryzen/ieee1_flush32: =118 nan=0 diff=0  NVIDIA/title: =118 nan=0 diff=0  NVIDIA/ieee1_flush32: =118 nan=0 diff=0
+Vop2ModifierForms.Code             16  Ryzen/title: =16 nan=0 diff=0  Ryzen/ieee1_flush32: =16 nan=0 diff=0  NVIDIA/title: =16 nan=0 diff=0  NVIDIA/ieee1_flush32: =16 nan=0 diff=0
+Vop3CubeClamp.Code                 12  Ryzen/title: =12 nan=0 diff=0  Ryzen/ieee1_flush32: =0 nan=12 diff=0  NVIDIA/title: =12 nan=0 diff=0  NVIDIA/ieee1_flush32: =0 nan=12 diff=0
+Vop3PackLdexp.Code                 11  Ryzen/title: =11 nan=0 diff=0  Ryzen/ieee1_flush32: =8 nan=3 diff=0  NVIDIA/title: =11 nan=0 diff=0  NVIDIA/ieee1_flush32: =8 nan=3 diff=0
+   total ('Ryzen', 'title') {'equal': 856, 'nan-payload': 94, 'differs': 39}
+   total ('Ryzen', 'ieee1_flush32') {'equal': 940, 'nan-payload': 40, 'differs': 9}
+   total ('NVIDIA', 'title') {'equal': 831, 'nan-payload': 119, 'differs': 39}
+   total ('NVIDIA', 'ieee1_flush32') {'equal': 927, 'nan-payload': 53, 'differs': 9}

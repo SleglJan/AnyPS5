@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -50,6 +51,12 @@ int main() {
         const std::uint32_t lds = Setting("REPLAY_LDS", 0);
         const std::uint32_t userDataWords = Setting("REPLAY_USER_DATA", 8);
         const std::uint32_t wave = Setting("REPLAY_WAVE", 32);
+        std::optional<ShaderRecompiler::ShaderFloatMode> floatMode;
+        if (const char* mode = std::getenv("REPLAY_MODE"); mode && *mode) {
+            int fm = 0, dx10 = 0, ieee = 0, ovfl = 0;
+            if (std::sscanf(mode, "%i,%i,%i,%i", &fm, &dx10, &ieee, &ovfl) != 4) throw std::runtime_error("REPLAY_MODE is float_mode,dx10_clamp,ieee_mode,fp16_ovfl");
+            floatMode = ShaderRecompiler::ShaderFloatMode{static_cast<std::uint32_t>(fm), dx10 != 0, ieee != 0, ovfl != 0};
+        }
         const auto codeWords = ReadWords(codePath);
         const auto rowWords = ReadWords(rowsPath);
         if (rowWords.size() % inputs != 0) throw std::runtime_error("the rows file is not a multiple of REPLAY_INPUTS dwords");
@@ -81,6 +88,7 @@ int main() {
             {0, 0, 0, 128}
         };
         request.useCache = false;
+        request.context.floatMode = floatMode;
         const auto result = ShaderRecompiler::Recompile(request);
         device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
         device->WaitIdle();
