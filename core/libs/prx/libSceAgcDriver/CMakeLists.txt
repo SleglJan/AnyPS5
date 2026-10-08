@@ -448,6 +448,12 @@ target_link_libraries(agc_shader_control_flow_tests PRIVATE shader_recompiler_ag
 set_target_properties(agc_shader_control_flow_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shader_control_flow_tests)
 
+add_test_executable(agc_shader_mode_register_tests EXCLUDE_FROM_ALL tests/ShaderModeRegisters.cpp)
+target_include_directories(agc_shader_mode_register_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_shader_mode_register_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_shader_mode_register_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_shader_mode_register_tests)
+
 add_test_executable(agc_driver_flip_tests EXCLUDE_FROM_ALL
         tests/Flip.cpp
 )
@@ -698,6 +704,12 @@ target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
 )
 
 if(BUILD_TESTING)
+    set_target_properties(agc_shader_mode_register_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_shader_mode_register COMMAND agc_shader_mode_register_tests)
+    set_tests_properties(agc_shader_mode_register PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_shader_mode_register PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_shader_bindless COMMAND agc_shader_memory_tests --bindless)
     set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
