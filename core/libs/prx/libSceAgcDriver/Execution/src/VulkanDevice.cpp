@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -193,6 +194,7 @@ struct VulkanDevice::State {
     bool geometryShader = false;
     bool sampleRateShading = false;
     bool shaderClock = false;
+    bool narrowSubgroupClock = false;
     // VK_EXT_descriptor_indexing with non-uniform image array indexing (bindless image tables in
     // graphics stages, and compute workgroups wider than a wave).
     bool descriptorIndexing = false;
@@ -213,9 +215,12 @@ struct VulkanDevice::State {
     bool samplerAnisotropy = false;
     bool textureCompressionBC = false;
     bool samplerFilterMinmax = false;
+    bool fragmentShaderPixelInterlock = false;
+    bool conservativeRasterization = false;
     // VK_KHR_timeline_semaphore enabled: the recorder's unlocked waits are available.
     bool timelineSemaphores = false;
     bool computeWave32 = false;
+    std::uint32_t maxComputeSubgroupSize = 0;
     // Indirect draw features enabled (see Graphics::Context).
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
@@ -524,6 +529,7 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearImageMirrors(device);
+            Graphics::ClearHostImports(device);
             patternBuffers.clear();
             descriptorCache.reset();
             emptyBuffer.reset();
@@ -714,6 +720,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->capabilities.push_back(spv::CapabilityGroupNonUniform);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformBallot);
         if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformShuffle);
+        if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0) state->capabilities.push_back(spv::CapabilityGroupNonUniformArithmetic);
     }
     APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->subgroup.subgroupSize);
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
@@ -750,11 +757,26 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE;
     }
+    VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
+    if (hasExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &interlockFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->fragmentShaderPixelInterlock = interlockFeatures.fragmentShaderPixelInterlock == VK_TRUE;
+    }
+    interlockFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
+    interlockFeatures.fragmentShaderPixelInterlock = VK_TRUE;
     VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR};
     if (hasExtension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &clockFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->shaderClock = clockFeatures.shaderSubgroupClock == VK_TRUE && clockFeatures.shaderDeviceClock == VK_TRUE;
+    }
+    if (state->shaderClock && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+        VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
+        state->narrowSubgroupClock = NarrowSubgroupClock(driver.driverID, state->properties.deviceName);
+        APS5_LOG_OUT("Shader clock driver=%d narrowSubgroupClock=%d", static_cast<int>(driver.driverID), state->narrowSubgroupClock ? 1 : 0);
     }
     std::vector<const char*> deviceExtensions;
     if (window != nullptr) deviceExtensions.assign(presentationExtensions.begin(), presentationExtensions.end());
@@ -762,6 +784,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         deviceExtensions.push_back(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityFragmentBarycentricKHR);
         state->spirvExtensions.push_back("SPV_KHR_fragment_shader_barycentric");
+    }
+    if (state->fragmentShaderPixelInterlock) {
+        deviceExtensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+        state->capabilities.push_back(spv::CapabilityFragmentShaderPixelInterlockEXT);
+        state->spirvExtensions.push_back("SPV_EXT_fragment_shader_interlock");
     }
     if (state->shaderClock) {
         deviceExtensions.push_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
@@ -774,6 +801,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
     }
     const bool bufferInt64Atomics = atomicInt64Features.shaderBufferInt64Atomics == VK_TRUE;
+    if (bufferInt64Atomics) state->capabilities.push_back(spv::CapabilityInt64Atomics);
     atomicInt64Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES_KHR};
     atomicInt64Features.shaderBufferInt64Atomics = VK_TRUE;
     if (bufferInt64Atomics) deviceExtensions.push_back(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
@@ -813,6 +841,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         state->samplerFilterMinmax = minmaxProperties.filterMinmaxSingleComponentFormats == VK_TRUE && minmaxProperties.filterMinmaxImageComponentMapping == VK_TRUE;
         if (state->samplerFilterMinmax) deviceExtensions.push_back(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
+    }
+    if (hasExtension(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME)) {
+        VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &conservativeProperties};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
+        state->conservativeRasterization = conservativeProperties.primitiveOverestimationSize <= 1.0f / 256.0f && conservativeProperties.degenerateTrianglesRasterized == VK_TRUE;
+        if (state->conservativeRasterization) deviceExtensions.push_back(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
     }
     // Indirect draws with a GPU-side count (DRAW_INDIRECT_MULTI with count_indirect); a device
     // without it resolves such draws on the CPU.
@@ -989,6 +1024,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         barycentricFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &barycentricFeatures;
     }
+    if (state->fragmentShaderPixelInterlock) {
+        interlockFeatures.pNext = byteFeatures.pNext;
+        byteFeatures.pNext = &interlockFeatures;
+    }
     if (state->shaderClock) {
         clockFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &clockFeatures;
@@ -1020,7 +1059,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->timelineSemaphores = timelineFeatures.timelineSemaphore == VK_TRUE;
     }
     VkPhysicalDeviceSubgroupSizeControlFeaturesEXT subgroupSizeFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
-    if (hasExtension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) && state->subgroup.subgroupSize > 32u) {
+    if (hasExtension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) && state->subgroup.subgroupSize >= 32u) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &subgroupSizeFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         VkPhysicalDeviceSubgroupSizeControlPropertiesEXT subgroupSize{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES_EXT};
@@ -1028,6 +1067,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &sizeProperties);
         state->computeWave32 = subgroupSizeFeatures.subgroupSizeControl == VK_TRUE && subgroupSize.minSubgroupSize <= 32u && subgroupSize.maxSubgroupSize >= 32u &&
             (subgroupSize.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+        state->maxComputeSubgroupSize = subgroupSize.maxSubgroupSize;
     }
     if (state->computeWave32) {
         subgroupSizeFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
@@ -1073,6 +1113,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = family;
     check(state->DeviceFunction<PFN_vkCreateCommandPool>("vkCreateCommandPool")(state->device, &poolInfo, nullptr, &state->pool), "vkCreateCommandPool");
+    static const bool procTable = std::getenv("APS5_NO_PROC_TABLE") == nullptr;
+    if (procTable) {
+        Graphics::FillDeviceFunctions(graphicsContext(), state->deviceFunctions);
+        state->functionsReady = true;
+    }
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1084,14 +1129,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
     state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores);
     state->recorder->Activate();
-    // The entry points every record site uses, resolved once (APS5_NO_PROC_TABLE=1: per call, as
-    // before), and the context copy graphicsContext() hands out from here on: built after the
-    // recorder and the descriptor cache exist, so it carries them.
-    static const bool procTable = std::getenv("APS5_NO_PROC_TABLE") == nullptr;
-    if (procTable) {
-        Graphics::FillDeviceFunctions(graphicsContext(), state->deviceFunctions);
-        state->functionsReady = true;
-    }
     state->context = buildContext();
     state->contextReady = true;
     if (window != nullptr) {
@@ -1915,37 +1952,30 @@ std::shared_ptr<Graphics::StorageTexture> PresentableResident(const Graphics::Co
     return resident;
 }
 
-Graphics::DccKeys DisplayKeys(const DisplayBuffer& buffer, std::size_t bytes) {
-    const auto keys = Graphics::CurrentDccKeys(buffer.dccAddress, bytes);
-    if (keys != Graphics::DccKeys::Uncompressed && !Graphics::IsDccClear(keys)) {
-        char message[256];
-        std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx reads %s DCC keys at 0x%llx: presenting DCC metadata that is not uniformly uncompressed or fast-cleared is not implemented", static_cast<unsigned long long>(buffer.address), Graphics::DccKeysName(keys), static_cast<unsigned long long>(buffer.dccAddress));
-        throw std::runtime_error(message);
-    }
-    return keys;
+Graphics::DccKeys ResidentKeys(const Graphics::StorageTexture& resident) {
+    const auto& own = resident.Descriptor();
+    GuestMemory::CollectWritesUncached(own.dccAddress, Graphics::DccKeyBytes(resident.GuestBytes()));
+    return Graphics::ProvedClearKeys(own, resident.GuestBytes(), resident.KeyProof());
 }
 
-bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const DisplayBuffer& buffer, std::size_t bytes) {
-    const auto keys = DisplayKeys(buffer, bytes);
+bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const DisplayBuffer& buffer) {
+    const auto keys = DisplayBufferKeys(buffer);
     if (keys == Graphics::DccKeys::ClearRegister) {
         char message[320];
         std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx reads register-clear DCC keys at 0x%llx over the pending image 0x%llx (DCC 0x%llx, filled keys %s): whether its results precede the clear is not modeled", static_cast<unsigned long long>(buffer.address), static_cast<unsigned long long>(buffer.dccAddress), static_cast<unsigned long long>(resident.Descriptor().baseAddress), static_cast<unsigned long long>(resident.Descriptor().dccAddress), Graphics::DccKeysName(resident.FilledKeys()));
         throw std::runtime_error(message);
     }
     if (Graphics::IsDccClear(resident.FilledKeys()) && resident.FilledKeys() == keys) return false;
-    return Graphics::StorageImageServesKeys(resident, buffer.dccAddress);
+    return Graphics::KeysServeSurface(resident.Descriptor().dccAddress, resident.UploadedKeys(), resident.FilledKeys(), buffer.dccAddress, [&] { return ResidentKeys(resident); }, [&] { return keys; });
 }
 
 bool ResidentKeysMoved(const Graphics::StorageTexture& resident) {
-    const auto& own = resident.Descriptor();
-    if (own.dccAddress == 0) return false;
-    GuestMemory::CollectWritesUncached(own.dccAddress, Graphics::DccKeyBytes(resident.GuestBytes()));
-    return Graphics::ProvedClearKeys(own, resident.GuestBytes(), resident.KeyProof()) != resident.UploadedKeys();
+    return resident.Descriptor().dccAddress != 0 && ResidentKeys(resident) != resident.UploadedKeys();
 }
 
 std::optional<std::array<std::byte, 4>> CompressedClearPixel(const DisplayBuffer& buffer, std::size_t bytes) {
     GuestMemory::FlushGpuWrites(buffer.address, bytes);
-    const auto keys = DisplayKeys(buffer, bytes);
+    const auto keys = DisplayBufferKeys(buffer);
     if (keys == Graphics::DccKeys::Uncompressed) return std::nullopt;
     return DisplayBufferClearPixel(buffer, keys);
 }
@@ -1999,7 +2029,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
     if (!NoResidentPresent()) {
         bool pending = false;
         resident = PresentableResident(graphicsContext(), buffer, filter, pending, convert);
-        if (resident != nullptr && buffer.dccAddress != 0 && !ResidentServesDisplay(*resident, buffer, bytes)) {
+        if (resident != nullptr && buffer.dccAddress != 0 && !ResidentServesDisplay(*resident, buffer)) {
             resident.reset();
             convert = false;
         }
@@ -2403,6 +2433,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_1, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
     target.fragmentShaderBarycentricEnabled = state->fragmentShaderBarycentric;
     target.nonConstantImageOffsets = state->maintenance8;
+    target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.srgbDecodeFormats = state->srgbDecodeFormats;
     if (state->meshShader) {
         const auto& mesh = state->meshLimits;
@@ -2418,6 +2449,10 @@ bool VulkanDevice::PrimitiveListRestart() const {
 
 bool VulkanDevice::SamplerFilterMinmax() const {
     return state->samplerFilterMinmax;
+}
+
+bool VulkanDevice::ConservativeRasterization() const {
+    return state->conservativeRasterization;
 }
 
 Graphics::Context VulkanDevice::graphicsContext() const {
@@ -2464,6 +2499,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.depthBounds = state->depthBounds;
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
+    context.conservativeRasterization = state->conservativeRasterization;
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;
@@ -3487,8 +3523,8 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         pipelineInfo.stage.module = objects->module;
         pipelineInfo.stage.pName = "main";
         VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT requiredSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT};
-        requiredSubgroup.requiredSubgroupSize = shader.hostSubgroupSize;
-        if (state->computeWave32 && shader.hostSubgroupSize == 32u) pipelineInfo.stage.pNext = &requiredSubgroup;
+        requiredSubgroup.requiredSubgroupSize = std::min(shader.hostSubgroupSize, state->maxComputeSubgroupSize);
+        if (state->computeWave32 && (shader.hostSubgroupSize == 32u || shader.hostSubgroupSize > state->maxComputeSubgroupSize)) pipelineInfo.stage.pNext = &requiredSubgroup;
         pipelineInfo.layout = objects->layout;
         if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
         check(state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(state->device, context.pipelineCache, 1, &pipelineInfo, nullptr, &objects->pipeline), "vkCreateComputePipelines");

@@ -38,12 +38,6 @@ std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBan
     return it->second;
 }
 
-std::uint32_t readOr(const Registers& registers, std::uint32_t offset, RegisterBank bank, std::uint32_t fallback) {
-    NoteRegisterRead(bank, offset);
-    const auto it = registers.find(offset);
-    return it == registers.end() ? fallback : it->second;
-}
-
 template <typename T> T _readHeaderPod(std::span<const std::byte> header, std::uint64_t headerAddress, const void* pointer) {
     if (pointer == nullptr) throw std::runtime_error("AGC graphics: null AGC header pointer");
     const auto address = reinterpret_cast<std::uint64_t>(pointer);
@@ -68,7 +62,7 @@ template <typename T> void _readHeaderArray(std::span<const std::byte> header, s
 
 }
 
-ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers& shader) {
+ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers& shader, std::span<const std::byte> header) {
     const auto numThreadX = read(shader, computeNumThreadX, RegisterBank::Shader);
     const auto numThreadY = read(shader, computeNumThreadY, RegisterBank::Shader);
     const auto numThreadZ = read(shader, computeNumThreadZ, RegisterBank::Shader);
@@ -76,8 +70,13 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         throw std::runtime_error("AGC graphics: COMPUTE_NUM_THREAD_X/Y/Z must be nonzero");
     }
     const auto rsrc2 = read(shader, computePgmRsrc2, RegisterBank::Shader);
+    std::uint32_t scratchDwords = 0;
     if ((rsrc2 & 0x1u) != 0) {
-        throw std::runtime_error("AGC graphics: COMPUTE_PGM_RSRC2.SCRATCH_EN is unsupported");
+        if (header.size() < sizeof(Shader)) throw std::runtime_error("AGC graphics: COMPUTE_PGM_RSRC2.SCRATCH_EN without an AGC shader header");
+        Shader agcShader;
+        std::memcpy(&agcShader, header.data(), sizeof(Shader));
+        scratchDwords = agcShader.scratch_size_dw_per_thread;
+        if (scratchDwords == 0) throw std::runtime_error("AGC graphics: COMPUTE_PGM_RSRC2.SCRATCH_EN with a zero scratch size");
     }
     // Debug aid: APS5_LDS_SLACK=<dwords> grows every dispatch's LDS allocation by that much, to tell
     // whether a program depends on addresses past its declared allocation.
@@ -87,18 +86,20 @@ ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers&
         std::min(((rsrc2 >> 15u) & 0x1FFu) * 128u + ldsSlack, 16384u),
         {((rsrc2 >> 7u) & 0x1u) != 0, ((rsrc2 >> 8u) & 0x1u) != 0, ((rsrc2 >> 9u) & 0x1u) != 0},
         ((rsrc2 >> 10u) & 0x1u) != 0,
-        ((rsrc2 >> 11u) & 0x3u) + 1u
+        ((rsrc2 >> 11u) & 0x3u) + 1u,
+        {},
+        scratchDwords
     };
 }
 
 ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& context, const std::array<std::uint8_t, 8>& exportMappings, bool nullProgram) {
-    const auto inControl = read(context, spiPsInControl, RegisterBank::Context);
+    const auto inControl = nullProgram ? 0u : read(context, spiPsInControl, RegisterBank::Context);
     const auto inputNum = inControl & 0x3Fu;
     if (inputNum > 32u) {
         throw std::runtime_error("AGC graphics: SPI_PS_IN_CONTROL input count exceeds 32");
     }
-    const auto ena = nullProgram ? readOr(context, spiPsInputEna, RegisterBank::Context, defaultPixelInputs) : read(context, spiPsInputEna, RegisterBank::Context);
-    const auto addr = nullProgram ? readOr(context, spiPsInputAddr, RegisterBank::Context, defaultPixelInputs) : read(context, spiPsInputAddr, RegisterBank::Context);
+    const auto ena = nullProgram ? defaultPixelInputs : read(context, spiPsInputEna, RegisterBank::Context);
+    const auto addr = nullProgram ? defaultPixelInputs : read(context, spiPsInputAddr, RegisterBank::Context);
     const auto activeInputs = ena & addr;
     using ShaderRecompiler::PixelInput;
     using ShaderRecompiler::PixelInputBit;
@@ -115,14 +116,14 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     for (std::uint32_t i = 0; i < inputNum; ++i) {
         interpolatorSettings[i] = read(context, spiPsInputCntl0 + i, RegisterBank::Context);
     }
-    const auto shaderControl = read(context, dbShaderControl, RegisterBank::Context);
+    const auto shaderControl = nullProgram ? 0u : read(context, dbShaderControl, RegisterBank::Context);
     // Bits 9 and 11 are EXEC_ON_HIER_FAIL and ALPHA_TO_MASK_DISABLE on GFX10; neither changes what the
     // recompiled pixel shader computes.
     const auto conservativeZExport = (shaderControl >> 13u) & 0x3u;
     if (conservativeZExport == 3u) {
         throw std::runtime_error("AGC graphics: DB_SHADER_CONTROL.CONSERVATIVE_Z_EXPORT uses the reserved value 3");
     }
-    const auto colFormat = nullProgram ? readOr(context, spiShaderColFormat, RegisterBank::Context, 0u) : read(context, spiShaderColFormat, RegisterBank::Context);
+    const auto colFormat = nullProgram ? 0u : read(context, spiShaderColFormat, RegisterBank::Context);
     std::array<std::uint8_t, 8> targetOutputMode{};
     for (std::uint32_t i = 0; i < 8u; ++i) {
         targetOutputMode[i] = static_cast<std::uint8_t>((colFormat >> (4u * i)) & 0xFu);
@@ -154,6 +155,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .earlyZ = zOrder == 1u && !pixelKillEnable && !depthExportEnable && !sampleMaskExportEnable,
         .executeOnNoop = ((shaderControl >> 10u) & 0x1u) != 0,
         .conservativeZExport = static_cast<ShaderRecompiler::ConservativeZExport>(conservativeZExport),
+        .orderedPixelShader = ((shaderControl >> 16u) & 0x1u) != 0,
         .targetOutputMode = targetOutputMode,
         .targetExportMapping = exportMappings
     };

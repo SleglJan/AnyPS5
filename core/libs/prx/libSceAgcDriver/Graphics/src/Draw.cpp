@@ -42,7 +42,7 @@ std::uint32_t GuestFormatFor(VkFormat format, std::uint32_t elementBytes) {
 
 // The color buffer as a single-mip 2D surface descriptor (tile mode SW_64KB_R_X).
 GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
-    Require(color.tileMode == ColorTileMode::RenderTarget || color.tileMode == ColorTileMode::Standard4KB, "only 4 KiB standard and 64 KiB tiled color targets are resident");
+    Require(color.tileMode != ColorTileMode::Linear, "linear color targets are not resident");
     const bool chain = color.mipCount > 1;
     GuestTextureResource surface{};
     surface.baseAddress = chain ? color.surfaceAddress : color.address;
@@ -62,12 +62,18 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelW = 7;
     surface.dccAddress = color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
+    surface.dccPipeAligned = color.dccPipeAligned;
     return surface;
 }
 
 }
 
 namespace {
+
+std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
+    if (color.mipCount != 1 || color.depth != 1 || !color.dccPipeAligned) return DccKeyBytes(bytes);
+    return DccKeyCount(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, bytes);
+}
 
 std::array<std::byte, 16> clearTexel(const ColorTarget& color, DccKeys keys) {
     std::array<std::byte, 16> texel{};
@@ -102,7 +108,7 @@ void storeClearTexels(const Context& context, const ColorTarget& color, const st
     const auto keys = ReadDccKeys(color.dccAddress, color.bytes);
     if (!IsDccClear(keys)) return;
     writeTexels(color, keys == DccKeys::ClearRegister ? texel : clearTexel(color, keys));
-    MarkDccUncompressed(context, color.dccAddress, color.bytes);
+    MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
 }
 
 void materializeRegisterClear(const Context& context, const ColorTarget& color, StorageTexture& resident) {
@@ -121,7 +127,7 @@ void materializeRegisterClear(const Context& context, const ColorTarget& color, 
         }
     }
     if (cleared) {
-        MarkDccUncompressed(context, color.dccAddress, color.bytes);
+        MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
         return;
     }
     storeClearTexels(context, color, texel);
@@ -1546,7 +1552,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         timer.phase(PhaseSetup);
         // Debug aid: APS5_NO_RESIDENT_TARGETS=1 copies every target in and out again.
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
-        if ((binding.gpuTiling || (color.tileMode == ColorTileMode::Standard4KB && context.detiler != nullptr)) && residentTargets) {
+        if ((binding.gpuTiling || (color.tileMode != ColorTileMode::Linear && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
             // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
@@ -1990,7 +1996,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
         else WriteColorTarget(binding.color, binding.transfer->Bytes());
         // The stored texels are the whole target now, so later reads must see them rather than a fast clear.
-        MarkDccUncompressed(binding.color.dccAddress, ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes());
+        const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
+        MarkDccUncompressed(binding.color.dccAddress, targetBytes, colorKeyCount(binding.color, targetBytes));
     }
     timer.phase(PhaseWriteBack);
     if (profile && traceDraws) {
@@ -2130,7 +2137,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
 namespace {
 
 std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, const ColorTarget& color) {
-    if ((color.tileMode != ColorTileMode::RenderTarget && color.tileMode != ColorTileMode::Standard4KB) || context.detiler == nullptr) return nullptr;
+    if (color.tileMode == ColorTileMode::Linear || context.detiler == nullptr) return nullptr;
     std::shared_ptr<StorageTexture> resident;
     try {
         resident = CachedStorageSurface(context, SurfaceForTarget(color));
@@ -2159,7 +2166,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
             const bool current = keys == DccKeys::ClearRegister ? clearToTexel(*resident, texel, color.elementBytes, refusal) : StorageTexture::FindPending(color.address, color.bytes) == resident || resident->UploadedKeys() == keys;
             if (current) {
                 resident->MarkDirty();
-                MarkDccUncompressed(context, color.dccAddress, color.bytes);
+                MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
                 continue;
             }
         }
