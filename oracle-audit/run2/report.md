@@ -20,10 +20,10 @@ ScalarSopkWaitcnt (user-data SGPRs). Repeatability: 486,528 values rerun, only S
 | Float16Rounding:RoundingCode | 6 + 6 | c1 v_add_f16, c2 v_mul_f16 | NVIDIA abcd7fff, RADV = pin | accepts |
 | Vop1FloatUnary:Code | 70 | f32 c0-9, c12-29: ceil floor trunc rndne fract frexp_mant sqrt rsq rcp rcp_iflag log exp sin cos | both = pin | rejects |
 | Vop1FloatUnary:Code | 48 | f16 c30-53: the same 12 ops | both = pin | rejects |
-Typical: Vop1FloatUnary f32 input 7f800001, hardware 7f800001, pin 7fc00001. The other 13 table kernels: 0 of 17,736 asserted cells differ.
+Typical: Vop1FloatUnary f32 input 7f800001, hardware 7f800001, pin 7fc00001. The other 14 table kernels (13 tests): 0 of 16,960 asserted cells differ (corrected after review; the run agent's 17,736 has no source in the data).
 
 ## Unasserted cells where the pin differs: 82 (reproduced by K and O only)
-Float16Misc c9 v_mul_legacy_f32, 72 cells with an f32 denormal (hardware 0, pin 839a0691; hosts disagree with each other);
+Float16Misc c9 v_mul_legacy_f32, 72 cells with an f32 denormal (hardware 0, pin 839a0691; hosts give the hardware's +0 in 35, -0 in 19, the pin in 13, and differ from each other in 5);
 Vop1FloatUnary row 0, 10 masked cells (ceil floor fract frexp_exp frexp_mant sin; frexp_exp hardware 0, pin and hosts ffffff82).
 
 ## Host vs hardware (18 kernels): 358 of 22,944 cells (358 NVIDIA, 211 RADV, 174 between hosts, 147 quiet bit only)
