@@ -1,0 +1,37 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [
+    "v_mov_b32 v12, v0",
+    "s_movk_i32 s21, 0x1234",
+    "s_mov_b32 exec_lo, 1",
+    "v_writelane_b32 v12, s21, 37",
+    "s_mov_b32 exec_lo, -1"
+  ],
+  "post": [],
+  "lds": 0,
+  "file": "WriteLane.cpp",
+  "kernel": "WriteLaneCode",
+  "status": "ready",
+  "words": [
+    12,
+    25
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2
+  },
+  "rows": {
+    "expr": "[(0xa0000000 + tid * 0x01010101) & 0xffffffff, 0x50000000 ^ (tid * 0x00102030), 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "notes": [
+    "Pre copies prologue words 5..10 (they run before s_waitcnt in the test; order relative to the loads does not matter). v_writelane lane 37 wraps to lane 5 in wave32, so column 2 is 0x1234 in lane 5 and tid elsewhere.",
+    "Body loops s20 = 0..31 writing v10[31 - s20] = v4[s20] and v11[s20] = v5[s20]; all 32 lanes of v10/v11 are written, so no initialisation is needed. Branch at word 24 targets word 13, inside.",
+    "Exactly 32 rows (one wave32) are required. Check(): {Input[(31 - tid)*4], Input[tid*4 + 1], tid == 5 ? 0x1234 : tid}; all three columns asserted."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of prologue and words 12..24; Run()/Check() read"
+}

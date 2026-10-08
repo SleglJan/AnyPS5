@@ -1,0 +1,43 @@
+{
+  "file": "ScalarSop1.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "split 4/11",
+  "skip": false,
+  "words": [
+    263,
+    330
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "48": 0,
+    "49": 1,
+    "50": 2,
+    "51": 3,
+    "52": 4,
+    "53": 5,
+    "54": 6,
+    "55": 7,
+    "56": 8,
+    "57": 9,
+    "58": 10,
+    "59": 11,
+    "60": 12,
+    "61": 13,
+    "63": 15
+  },
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Rows are the test's Rows[32][4] table (buffer_load_dwordx4 into v[4:7]); first4 covers all inputs.",
+    "The kernel is 11 independent chunks, each 's_mov_b32 s20, 0; per-lane loop (v_readlane s8..s11 <- v4..v7 of lane s20, SOP1/SOPC/SOPK ops, v_writelane into lane s20 of v10..v25); 4x buffer_store_dwordx4 v[10:25] at offset 64*k'. This is chunk 3 (words [263,330), stores at byte offset 192) = result columns 48..63 in v10..v25; the backward s_cbranch_scc1 at word 329 targets the chunk's first v_readlane (inside the range).",
+    "Self-contained: no SGPR is read before being written inside the chunk (s8..s11 from readlane, s20/s30 initialised in the chunk), and v4..v7 are never modified, so running a chunk alone on the oracle matches its run inside the whole kernel.",
+    "Columns [62] are Names[]=nullptr (not written by this chunk in the test; the store then repeats the previous chunk's register contents) and not asserted: left out of the column map.",
+    "The manifest's alu_word_range [6,80] is chunk 0 only; the manifest's 'non-store instructions between first store and s_endpgm' are the later chunks covered by parts 2..11.",
+    "This chunk sets exec_lo from lane data (s_mov exec_lo, s9 + *_saveexec_b32 / *_wrexec_b32) and restores exec_lo=-1 inside every loop iteration, so EXEC is full at the end of the chunk; no EXEC fix-up needed. Saveexec/wrexec columns: Check() masks them with the host lanes only for host subgroups narrower than 32; on the wave32 oracle compare unmasked."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words [263,330): chunk boundaries (s_mov_b32 s20,0 ... s_cbranch_scc1 back; next word is buffer_store_dwordx4 v[10:13] offset 192), SGPR read-before-write scan of the chunk (none), written v_writelane registers vs Names[] non-null columns (all asserted columns written); Run()/Check() read"
+}

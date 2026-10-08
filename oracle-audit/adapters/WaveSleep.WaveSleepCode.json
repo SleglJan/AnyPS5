@@ -1,0 +1,33 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [
+    "s_wakeup"
+  ],
+  "post": [
+    "v_mov_b32 v10, v4"
+  ],
+  "lds": 0,
+  "file": "WaveSleep.cpp",
+  "kernel": "WaveSleepCode",
+  "status": "ready",
+  "words": [
+    5,
+    9
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[(tid * 0x01010101 + 7) & 0xffffffff, 0, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": false,
+  "notes": [
+    "Pre repeats the prologue's s_wakeup (word 1). Body: s_sleep 1; s_wakeup; v_add_nc_u32 v4, 1, v4; s_wakeup. s_sleep/s_wakeup only affect scheduling.",
+    "Run() sets Input[tid*4] = tid*0x01010101 + 7 (no overflow for tid < 64); Check() expects input + 1. The only column is asserted.",
+    "64 rows = 2 wave32 in one workgroup as in the test; s_wakeup targets the other waves of the workgroup."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030); Run()/Check() read"
+}

@@ -1,0 +1,59 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [],
+ "post": [
+  "v_mov_b32 v10, v26",
+  "v_mov_b32 v11, v27",
+  "v_mov_b32 v12, v28",
+  "v_mov_b32 v13, v29",
+  "v_mov_b32 v14, v30",
+  "v_mov_b32 v15, v31",
+  "v_mov_b32 v16, v32",
+  "v_mov_b32 v17, v33",
+  "v_mov_b32 v18, v34",
+  "v_mov_b32 v19, v35",
+  "v_mov_b32 v20, v36",
+  "v_mov_b32 v21, v37",
+  "v_mov_b32 v22, v38",
+  "v_mov_b32 v23, v39",
+  "v_mov_b32 v24, v40",
+  "v_mov_b32 v25, v41"
+ ],
+ "lds": 0,
+ "wave64": false,
+ "file": "Vop1FloatUnary.cpp",
+ "kernel": "Code",
+ "status": "split 2/4",
+ "words": [
+  5,
+  84
+ ],
+ "columns": {
+  "16": 0,
+  "17": 1,
+  "18": 2,
+  "19": 3,
+  "20": 4,
+  "21": 5,
+  "22": 6,
+  "23": 7,
+  "24": 8,
+  "25": 9,
+  "26": 10,
+  "27": 11,
+  "28": 12,
+  "29": 13,
+  "30": 14,
+  "31": 15
+ },
+ "rows": "first4",
+ "row_count": 32,
+ "notes": [
+  "Rows[32][4] loaded as one dwordx4 at tid*16: exactly the oracle row. Word 5 derives v8 = v6 >> 16 inside the body.",
+  "Results c = 0..53 are in v(10+c); the test also stores v64, v65 (results 54, 55) which the kernel never writes and Check() never reads - not compared.",
+  "Check() skips cells whose Checked[tid] bit is clear (lane 0 skips several) and compares transcendental columns with tolerances (Tolerance[]); f16 results (30..53) are written over v7 copies, so their high half is v7's high half.",
+  "this part compares result columns 16..31"
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

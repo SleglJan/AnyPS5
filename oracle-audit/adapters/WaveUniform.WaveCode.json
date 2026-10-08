@@ -1,0 +1,40 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [
+    "s_mov_b32 s8, 3",
+    "s_mov_b32 s9, 5"
+  ],
+  "post": [
+    "v_mov_b32 v10, v1"
+  ],
+  "lds": 0,
+  "file": "WaveUniform.cpp",
+  "kernel": "WaveCode",
+  "status": "ready",
+  "words": [
+    3,
+    18
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[0, 0, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "notes": [
+    "The prologue's s_buffer_load_dwordx2 s[8:9] from the user-data buffer descriptor reads the fixed Input = {3, 5, 0, 0}; pre replaces it with s_mov s8, 3 / s9, 5. User data s[0:3]/s[4:7] are the input/output descriptors, only used by the stripped load/store, so they are left out.",
+    "Wave64: Run() requests wave size 64 (first RecompileRequest field) with 64 threads. The manifest says wave64_variant=false; that is wrong for this kernel. In wave32 s_bcnt1_i32_b64 of VCC would give 0 for the upper wave and Check() (tid*20 + uniform) would fail.",
+    "Word 18 (v_lshlrev v2, 2, v0: store offset) is excluded, so v2 is untouched. The result lands in v1 (template input offset, dead after the template's load); post moves it to v10. Checker flags the v1 write; it is intended.",
+    "Loop branch at word 10 targets word 5, inside the body.",
+    "Check(): Output[tid] == tid*20 + Accumulated() + 7, Accumulated() over Input[0]=3, Input[1]=5. Asserted."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030); Run()/Check() read incl. the Input buffer and the wave size argument",
+  "accepted_flags": {
+    "15": "v1 (template input offset) is dead after the template's input load; the result lands in v1 and post copies it to v10",
+    "17": "same: v1 is dead after the input load"
+  }
+}

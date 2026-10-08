@@ -1,0 +1,44 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [
+    "s_memtime s[8:9]",
+    "s_memrealtime s[10:11]",
+    "s_waitcnt lgkmcnt(0)"
+  ],
+  "post": [
+    "v_mov_b32 v18, v5"
+  ],
+  "lds": 0,
+  "file": "ShaderClock.cpp",
+  "kernel": "Code",
+  "status": "ready",
+  "words": [
+    9,
+    30
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8
+  },
+  "rows": {
+    "expr": "[tid + 1, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "notes": [
+    "Pre copies the prologue's s_memtime s[8:9] / s_memrealtime s[10:11] (words 4, 6) plus the wait; the body itself reads s_memtime s[12:13] and s_memrealtime s[14:15] after a 2000-iteration loop and waits on lgkmcnt.",
+    "Columns 0..7 are clock values (0/1 memtime start lo/hi, 2/3 memrealtime start, 4/5 memtime end, 6/7 memrealtime end): NOT comparable value-for-value. Check() asserts only relations: columns 0..7 equal across each group of 8 lanes (uniform per wave), pair(4,5) >= pair(0,1), pair(6,7) >= pair(2,3), pair(4,5) != 0 and pair(6,7) != 0. Compare these relations, not values.",
+    "Column 8 (v5, moved to v18 by post) is exact: sum over 2000 steps of sum = (sum & 0xffffff)*3 + in[0] (v_mad_u32_u24), in[0] = tid + 1.",
+    "Loop branch at word 16 targets word 12, inside the body. Uses SGPRs s8..s16 only."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 9..29 and the prologue; Run() Fill() (words[0] = tid + 1) and Check() read; s_memtime/s_memrealtime exist on gfx103x (decoded with gfx1030)"
+}

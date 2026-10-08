@@ -1,0 +1,38 @@
+{
+  "file": "Vop3Lerp.cpp",
+  "kernel": "LerpCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words_file": "generated/Vop3Lerp.LerpCode.words.txt",
+  "words": [
+    9,
+    27
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7
+  },
+  "rows": {
+    "expr": "[*((0xffffffff, 0xffffffff, 0xffffffff), (0xffffffff, 0, 0x01010101), (0xffffffff, 0, 0), (0, 0, 0xffffffff), (0x01010101, 0, 0x01010101), (0x01010101, 0, 0xfefefefe), (0xff00ff00, 0x00ff00ff, 0x01000100), (0x80808080, 0x7f7f7f7f, 0x00010001), (0x000000ff, 0x0000ff00, 0x00010000), (0x12345678, 0x9abcdef0, 0xffffffff), (0xfe01fe01, 0x01fe01fe, 0x80808080), (0, 0, 0))[tid], 0] if tid < 12 else [((6364136223846793005 ** (3 * tid + 1) * 0xd1b54a32d192ed03 + 1442695040888963407 * ((6364136223846793005 ** (3 * tid + 1) - 1) // 6364136223846793004)) % 2 ** 64) >> 32, ((6364136223846793005 ** (3 * tid + 2) * 0xd1b54a32d192ed03 + 1442695040888963407 * ((6364136223846793005 ** (3 * tid + 2) - 1) // 6364136223846793004)) % 2 ** 64) >> 32, ((6364136223846793005 ** (3 * tid + 3) * 0xd1b54a32d192ed03 + 1442695040888963407 * ((6364136223846793005 ** (3 * tid + 3) - 1) // 6364136223846793004)) % 2 ** 64) >> 32, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "The kernel array contains a named constant (`Literal`) that the regex word extractors (audit_modes.words_of, disasm.words) silently drop, shifting every later word by one; use words_file (generated/, built by substituting the constexpr value) \u2014 the manifest's alu_word_range is in true word indices and matches words_file.",
+    "rows expr is a closed form of Run()'s 64-bit LCG (state = state*6364136223846793005 + 1442695040888963407 from seed 0xd1b54a32d192ed03, word = state>>32); checked lane-for-lane against a compiled copy of the test's FillInput().",
+    "Lane tid reads Input[tid*4+0..2] = a,b,c (Edges[tid][0..2] for tid<12; Edges[tid][3] is an expected value); word 3 is 0.",
+    "Outputs v10..v17 -> Output[tid*16+0..7]; Check() asserts columns 0..7."
+  ],
+  "verified": "disassembly of words_file[9:27] (llvm-mc gfx1030): 7 v_lerp_u8 + v_mov; Run()/Check() read; rows expr compared with compiled FillInput() for all 64 lanes"
+}

@@ -1,0 +1,31 @@
+{
+  "file": "Division.cpp",
+  "kernel": "DivisionCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    6,
+    26
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "table": "DivisionVectors",
+    "file": "generated/Division.DivisionCode.rows.txt",
+    "layout": "lane i (0..255) <- [DivisionVectors[i].numerator, DivisionVectors[i].denominator, 0, 0]; quotient is the expected output",
+    "count": 256
+  },
+  "row_count": 256,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Division.cpp has no Rows table: audit_modes.parse_rows cannot build rows for it. Each kernel is its own Shader with 32 lanes per dispatch; the C++ loops dispatch the table 32 vectors at a time (8 dispatches of 256 vectors). Lanes are independent, so one oracle run over all 256 rows (padded to whole waves) is equivalent.",
+    "Body is the full f32 division macro (div_scale x2, rcp, fma chain, div_fmas, div_fixup) ending in v10; s_nop words included. Uses s20 and vcc.",
+    "Only column 0 (Output[lane*4]) is stored and asserted, and only when the host fuses FMA; the oracle always executes real FMA."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 6..25; CheckDivision() read; rows file extracted from the C array (256 x 3 fields)"
+}

@@ -1,0 +1,52 @@
+{
+  "file": "LdsAtomics.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "split 2/2",
+  "skip": false,
+  "words": [
+    10,
+    117
+  ],
+  "pre": [
+    "v_lshlrev_b32 v30, 2, v0"
+  ],
+  "post": [
+    "v_mov_b32 v10, v56",
+    "v_mov_b32 v11, v20",
+    "v_mov_b32 v12, v21",
+    "v_mov_b32 v13, v22",
+    "v_mov_b32 v14, v24",
+    "v_mov_b32 v15, v23",
+    "v_mov_b32 v16, v25",
+    "v_mov_b32 v17, v26",
+    "v_mov_b32 v18, v27"
+  ],
+  "columns": {
+    "16": 0,
+    "17": 1,
+    "18": 2,
+    "19": 3,
+    "20": 4,
+    "21": 5,
+    "22": 6,
+    "23": 7,
+    "24": 8
+  },
+  "rows": {
+    "expr": "(lambda tid, s, f: [s, (s * 0x85ebca6b) & 0xffffffff, s ^ 0xc2b2ae35, 0] if tid % 4 == 0 else [tid % 7, (tid * 3) % 7, tid % 5, 0] if tid % 4 == 1 else [f[tid % 8], f[(tid // 2 + 3) % 8], f[(tid + 5) % 8], 0] if tid % 4 == 2 else [s, s if (tid & 4) != 0 else (s + 1) & 0xffffffff, (s * 3) & 0xffffffff, 0])(tid, (tid * 0x9e3779b9 + 0x7f4a7c15) & 0xffffffff, (0x00000000, 0x80000000, 0x3f800000, 0xbf800000, 0x7fc00000, 0x7f800000, 0x40200000, 0xc0400000))",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 2176,
+  "notes": [
+    "Rows: Fill(tid) copied exactly (kind = tid % 4; seed = tid*0x9e3779b9 + 0x7f4a7c15 mod 2^32); in[3] stays 0 (unused). Loads are offen with v1 = lane*16, so lane tid reads Input[tid*4 .. tid*4+2] into v4..v6.",
+    "Pre recreates the prologue's v30 = lane*4 (word 2). LDS bytes touched: v30 (0..124) + offsets 0..2048 -> highest byte 2175 < 4096; no rebasing. Each lane only touches its own dword in each 128-byte plane, all initialised by words 10..42 before the atomics.",
+    "25 result columns: 0..16 are the post-atomic memory values read back into v40..v56; 17..24 are the returned pre-op values in v20,v21,v22,v24,v23,v25,v26,v27 (store order: v24 before v23). Split into part1 (columns 0-15 = v40..v55) and part2 (columns 16-24).",
+    "Check(): columns 0..16 compare NaN-insensitively (any NaN matches any NaN), and the float-op columns 6,7,10,11,12,14,15,16 are not asserted for lanes where a, b or a+b is a denormal; columns 17..24 must equal in[0] exactly. The comparison should apply the same masks.",
+    "Float DS atomics (ds_add_f32, ds_min/max_f32, ds_cmpst_f32) follow the LDS float rules, which may not honour the kernel's denorm mode the same way as VALU ops; record the oracle mode with the result.",
+    "No EXEC changes; word 45 is ds_nop."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): prologue v30 = v0<<2, loads v4..v6 offen; [10,117) = 17 ds_write_b32 planes, 17 DS atomics (8 returning into v20..v27), 17 ds_read_b32 into v40..v56; stores v40..v56 at offsets 0..64 then v20,v21,v22,v24,v23,v25,v26,v27 at 68..96. Run() (Threads=32, userData = descriptors only) and Check() read."
+}

@@ -1,0 +1,23 @@
+DivFixupF16 Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 21}
+Dpp16InactiveSource Wave32Code no Expected table
+Dpp16InactiveSource Wave64Code no Expected table
+Dpp16RowShareXmask Wave32Code no Expected table
+Dpp16RowShareXmask Wave64Code no Expected table
+Dpp8 Wave32Code no Expected table
+Dpp8 Wave64Code no Expected table
+DsSwizzle Wave32Code no Expected table
+DsSwizzle Wave64Code no Expected table
+F64Arithmetic Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 35}
+F64Conversions Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 1}
+F64Division Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 15}
+F64DivisionModifiers Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 10}
+F64NanConversions Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 13}
+F64Rounding Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee0_keep32+ieee1_flush32'): 28}
+F64Transcendental Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 8}
+FmaLegacy FmaLegacyCode no Expected table
+Permlane16 Wave32Code no Expected table
+Permlane16 Wave64Code no Expected table
+SdwaFloatSelectors Code {('unasserted', 'pin!=title', 'exact-match:old+ieee0_keep32'): 69, ('unasserted', 'pin!=title', 'exact-match:old+ieee1_flush32'): 1}
+SdwaLdexpF16 Code {('ASSERTED', 'pin!=title', 'exact-match:old+ieee1_flush32'): 36}
+Vop2ModifierForms Code {('unasserted', 'pin!=title', 'exact-match:old+ieee0_keep32'): 7}
+Vop3PackLdexp Code {('ASSERTED', 'pin!=title', 'exact-match:none'): 50}

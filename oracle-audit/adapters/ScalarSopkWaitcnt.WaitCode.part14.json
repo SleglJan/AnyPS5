@@ -1,0 +1,34 @@
+{
+  "file": "ScalarSopkWaitcnt.cpp",
+  "kernel": "WaitCode",
+  "manifest_class": "partial",
+  "status": "split 14/24",
+  "skip": false,
+  "words_file": "generated/ScalarSopkWaitcnt.WaitCode.words.txt",
+  "words": [
+    196,
+    206
+  ],
+  "pre": [
+    "s_mov_b32 s8, 0x12345678"
+  ],
+  "post": [
+    "v_mov_b32 v11, s8"
+  ],
+  "columns": {
+    "26": 0,
+    "27": 1
+  },
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "WaitCode is built by constexpr BuildCode(); words dumped from a standalone g++ copy of the generator into generated/ScalarSopkWaitcnt.WaitCode.words.txt (362 words, same count as the manifest).",
+    "The kernel is 24 cases of 15 words: 's_mov s30,0; s_cmp_eq_i32 s8,s8; s_waitcnt_expcnt reg,level; s_cselect s31,1,0; s_or; s_cmp_lg_i32 s8,s8; s_waitcnt_expcnt reg,level; s_cselect s31,2,0; s_or; v_mov v10,s30; store(result 2c); v_mov v10,s8; store(result 2c+1)'. This part is case 13 (s_waitcnt_expcnt null, level 0x003f): words [196,206) leave the SCC mask (result 26) in v10.",
+    "Result 27 is the kernel's own 'v_mov_b32 v10, s8' (word 208, after a store); post re-issues the same read into v11 ('v_mov_b32 v11, s8'), so column 27 -> oracle index 1. No ALU word is altered.",
+    "pre: userData[8] = Value = 0x12345678 -> s8 (Run()). userData[4..7] (output descriptor) only feeds the stripped stores: left out.",
+    "No outstanding memory/export/LGKM operations exist when the waits execute (the template's own s_load and global_load are already waited for), so every s_waitcnt_* returns immediately as in the test; the comparison checks that the SOPK wait leaves SCC (mask == 1) and s8 (== 0x12345678) untouched. Both columns asserted by Check()."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030, whole stream, 314 instructions, none invalid) of the generated words: case 13 starts with s_mov_b32 s30, 0 at word 196, v_mov_b32 v10, s30 at word 205, store at 206, v_mov_b32 v10, s8 at 208; Run() user data and Check() read"
+}

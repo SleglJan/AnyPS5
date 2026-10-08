@@ -1,0 +1,31 @@
+{
+  "file": "ScalarSethalt.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    5,
+    7
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v5"
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[(tid * 0x01010101 + 7) & 0xffffffff, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Body: s_sethalt 0 (clears halt, no effect on a running wave); v_add_nc_u32 v5, 1, v4. The manifest range [5,8) ends with s_branch 3 (word 7, always taken, to word 11 which branches back to the store at word 8); it is dropped because its target is outside and it only routes to the store.",
+    "Column 0 = v5 (Input+1). Column 1 is asserted == 0xdeadbeef (no store after the program end); not observable on the oracle and not mapped.",
+    "Coverage is trivial: the s_branch/s_code_end layout the test exercises is not replayed."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; Run()/Check() read."
+}

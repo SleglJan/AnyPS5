@@ -1,0 +1,27 @@
+{
+  "file": "Division.cpp",
+  "kernel": "FmaCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    8,
+    10
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[0xbff2fb6d, 0xbcaac14c, 0xbd22126e, 0] if tid == 0 else [0, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "FmaCode is fed by neither vector table: HostFusesFma() writes Input[0..2] = 0xbff2fb6d, 0xbcaac14c, 0xbd22126e (rest 0) and reads only Output[0] (expects 0x2f8e8ae0 for a fused FMA). Only row 0 is meaningful; lanes 1..31 compute fma(0,0,0)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): v_fma_f32 v10, v4, v5, v6; HostFusesFma() read"
+}

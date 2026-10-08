@@ -1,0 +1,33 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [],
+ "post": [
+  "v_mov_b32 v10, v58",
+  "v_mov_b32 v11, v59",
+  "v_mov_b32 v12, v60"
+ ],
+ "lds": 0,
+ "wave64": false,
+ "file": "Vop3IntegerAlu.cpp",
+ "kernel": "Code",
+ "status": "split 4/4",
+ "words": [
+  5,
+  112
+ ],
+ "columns": {
+  "48": 0,
+  "49": 1,
+  "50": 2
+ },
+ "rows": "first4",
+ "row_count": 32,
+ "notes": [
+  "Rows[32][4] loaded as one dwordx4 at tid*16: exactly the oracle row.",
+  "Results c = 0..50 are in v(10+c), all asserted exactly; the test also stores v61 (result 51), which the kernel never writes - not compared.",
+  "s8 is the carry-out SGPR of v_add_co_u32/v_sub_co_u32/v_subrev_co_u32 (written in the body, not user data).",
+  "this part compares result columns 48..50"
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

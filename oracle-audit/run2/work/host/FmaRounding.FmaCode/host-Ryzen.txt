@@ -1,0 +1,94 @@
+[src/VulkanDevice.cpp:581 VulkanDevice] VulkanDevice constructor window=(nil)
+[src/VulkanDevice.cpp:590 VulkanDevice] Vulkan loader loaded library=0x561b54bde260
+[src/VulkanDevice.cpp:624 VulkanDevice] Vulkan instance created instance=0x561b54be0960
+[src/VulkanDevice.cpp:635 VulkanDevice] Physical device count=2
+[src/VulkanDevice.cpp:668 VulkanDevice] Physical device candidate=0x561b54fb8f80 name=NVIDIA GeForce RTX 3080 api=0x40415f type=2
+[src/VulkanDevice.cpp:668 VulkanDevice] Physical device candidate=0x561b54fb6db0 name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) api=0x404162 type=1
+[src/VulkanDevice.cpp:715 VulkanDevice] Physical device selected physical=0x561b54fb6db0 queueFamily=0
+[src/VulkanDevice.cpp:728 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+[src/VulkanDevice.cpp:730 VulkanDevice] Memory heap 0 size=10742.0 MiB flags=0x0
+[src/VulkanDevice.cpp:730 VulkanDevice] Memory heap 1 size=21484.1 MiB flags=0x1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 0 heap=1 flags=0x1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 1 heap=1 flags=0x1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 2 heap=0 flags=0x6
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 3 heap=1 flags=0x7
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 4 heap=1 flags=0x7
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 5 heap=0 flags=0xe
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 6 heap=0 flags=0xe
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 7 heap=1 flags=0xc1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 8 heap=0 flags=0xc6
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 9 heap=1 flags=0xc7
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 10 heap=0 flags=0xce
+[src/VulkanDevice.cpp:782 VulkanDevice] Shader clock driver=3 narrowSubgroupClock=1
+[src/VulkanDevice.cpp:942 VulkanDevice] Vulkan features tessellationAvailable=1 mesh=1 depthClip=1 depthRangeUnrestricted=1
+[src/VulkanDevice.cpp:1086 VulkanDevice] Compute wave32 programs run on subgroups of 32
+[src/VulkanDevice.cpp:1131 VulkanDevice] Vulkan device ready device=0x561b54ff6520 queue=0x561b54c98620 family=0
+3e4dd41c 3e4dd41c b30c1d80 b3e6bee8 3e4dd41c 3e4dd41c 00000000 00000000 3e4dd41c 3e4dd41c deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2f8e8ae0 2f8e8ae0 336046bc 33eb9b6e 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+329b46a8 329b46a8 3313a2f6 36c0dae4 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3223ae0e 3223ae0e 3335fb6c 30767908 32000000 32000000 00000000 00000000 32000000 32000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3c1454eb 3c1454eb 316fa780 318c6db0 3c1454ec 3c1454ec 00000000 00000000 3c1454ec 3c1454ec deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b2ce2fc0 b2ce2fc0 32c48c50 b6cbe070 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b59efc70 b59efc70 324e8350 b2b74128 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+302dfc48 302dfc48 32aeb500 b027e740 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+c219e353 c219e353 b3048440 32d81b80 c219e353 c219e353 00000000 00000000 c219e353 c219e353 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b0a8306e b0a8306e 319b7e80 b18d6988 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+ac3b2870 ac3b2870 b0ff6900 b0469fb8 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b3acae4a b3acae4a b2f51990 b5ce7f58 b3800000 b3800000 00000000 00000000 b3800000 b3800000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+bf7030b9 bf7030b9 b3708de0 35766a9c bf7030ba bf7030ba 00000000 00000000 bf7030ba bf7030ba deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+37540cbc 37540cbc b2547090 32f7ab20 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2da0a480 2da0a480 b3275bc0 afd7cf80 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+30eae8c8 30eae8c8 32d91568 afcce1dc 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+c0559398 c0559398 32499900 36b881c0 c0559399 c0559399 00000000 00000000 c0559399 c0559399 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+325ce324 325ce324 b2b34420 3087ee2c 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+302324b8 302324b8 b3025444 2f940d7c 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b5a72358 b5a72358 af0a9000 363d82e0 b5800000 b5800000 00000000 00000000 b5800000 b5800000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+c17d739e c17d739e b2236c68 34b34de2 c17d739e c17d739e 00000000 00000000 c17d739e c17d739e deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b110d740 b110d740 b1c8ecf0 b0878638 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+33553afa 33553afa 3111df80 b10d95b0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+39622a00 39622a00 32fe0c00 b50cd800 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+c2086b1c c2086b1c b36fa350 36e057ee c2086b1c c2086b1c 00000000 00000000 c2086b1c c2086b1c deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b30a8a00 b30a8a00 32da9ebc b2c946e0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2e91ff10 2e91ff10 b320a328 31ccac90 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b697c7c2 b697c7c2 32c8b524 329d9f28 b7000000 b7000000 00000000 00000000 b7000000 b7000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+4212b8df 4212b8df 32dbf3c0 34e9f8f0 4212b8df 4212b8df 00000000 00000000 4212b8df 4212b8df deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b2e8b8c0 b2e8b8c0 305b8000 321da7c0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+37f226f0 37f226f0 b2a3d850 b57fa4d0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b727e900 b727e900 b1a3e800 b4b52680 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+4020a6df 4020a6df 30c5d880 315ee330 4020a6df 4020a6df 00000000 00000000 4020a6df 4020a6df deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3081a000 3081a000 b13dbe00 344bf400 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+afbea000 afbea000 32cb7ff8 b5ab4a4c 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b1b23280 b1b23280 b2935e80 33eb2d00 b1800000 b1800000 00000000 00000000 b1800000 b1800000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+40a5337c 40a5337c b2ad84e0 3136f218 40a5337c 40a5337c 00000000 00000000 40a5337c 40a5337c deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+316ebc68 316ebc68 b2929c70 b2336ec0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b7521300 b7521300 328f80c0 b435e100 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b4dff610 b4dff610 3252b3e8 3242d8c8 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+461f941b 461f941b 32c7e960 b5f404f0 461f941b 461f941b 00000000 00000000 461f941b 461f941b deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b5c4c674 b5c4c674 328fead0 b6d7e88c 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+ac3a3260 ac3a3260 b2954bdc 2f7a8038 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3378789c 3378789c b1daa0c0 353c6582 33800000 33800000 00000000 00000000 33800000 33800000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+424bae4a 424bae4a 31afcc80 b0aff210 424bae4a 424bae4a 00000000 00000000 424bae4a 424bae4a deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b19dc848 b19dc848 3282f5d8 b38e2908 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+357d3f70 357d3f70 3343d0d8 33c1d490 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b58b9560 b58b9560 b11db400 3446e840 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+c100fc3c c100fc3c 326a0b98 b373f738 c100fc3c c100fc3c 00000000 00000000 c100fc3c c100fc3c deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b2a05ab0 b2a05ab0 330ef014 347baf08 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2e191370 2e191370 b31eb764 b0939830 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3424b12c 3424b12c b32c7c88 30984480 34800000 34800000 00000000 00000000 34800000 34800000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+428ba716 428ba716 33117400 b2ad8000 428ba716 428ba716 00000000 00000000 428ba716 428ba716 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b3977ed0 b3977ed0 b2aa1798 b126c938 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+af508c30 af508c30 b1b81b50 327fa6f0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b1a080c0 b1a080c0 b2624290 30746698 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+3e559651 3e559651 b29a3890 b3bead10 3e559651 3e559651 00000000 00000000 3e559651 3e559651 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2f52bce8 2f52bce8 b1c99f60 adede7c0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+35e53018 35e53018 3091b900 334a23f8 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+adc12850 adc12850 b0b93a00 aff94740 ae000000 ae000000 00000000 00000000 ae000000 ae000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+bfc5bbce bfc5bbce 322f5890 33438f14 bfc5bbce bfc5bbce 00000000 00000000 bfc5bbce bfc5bbce deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+32a970a0 32a970a0 32a089b8 b22b2278 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+2ed50e1a 2ed50e1a b2d3ca70 b1e800de 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+b1a46104 b1a46104 b3262090 2f6b5eb0 00000000 00000000 00000000 00000000 00000000 00000000 deadbeef deadbeef deadbeef deadbeef deadbeef deadbeef
+
+# stderr
+[write-watch] host imports resolve write protection: yes (4 of 4 scratch pages written after a GPU read, 4 after the import); imported ranges are compared
+[write-watch] dma-buf imports keep write protection: yes (0 of 4 scratch pages written after a GPU read, 0 after the import, 1 seen after a CPU store); imported ranges stay watched
+[pipeline-cache] loaded 718.0 KiB from /home/slegl/PycharmProjects/anyps5/build/tests/shader_cache/vk-pipelines-1002-164e-06802004-ac3da3d19386ed23d795ff786b3cb33e.bin

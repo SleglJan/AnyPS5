@@ -1,0 +1,20 @@
+  v_mov_b32 v16, 0xabcd0000
+  v_mov_b32 v17, 0xabcd
+  .long 0xcc20400a
+  .long 0x1c1a0b04
+  .long 0xcc20780b
+  .long 0x1c1a0b04
+  .long 0xcc20400c
+  .long 0x941a0af2
+  .long 0xcc20700d
+  .long 0x941a0af2
+  .long 0xcc20100e
+  .long 0x141e0907
+  .long 0xcc204a0f
+  .long 0x1c1a0b04
+  .long 0xcc214010
+  .long 0x1c1a0b04
+  .long 0xcc227811
+  .long 0x1c1a0b04
+  .long 0xcc203812
+  .long 0x041e0f07

@@ -1,0 +1,21 @@
+{
+  "file": "ReadLane.cpp",
+  "kernel": "ReadLaneCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words": [6, 14],
+  "pre": [],
+  "post": [],
+  "columns": {"0": 0, "1": 1, "2": 2},
+  "rows": {"expr": "[(0xa0000000 + tid * 0x01010101) & 0xffffffff, 69 + tid, 0, 0]", "count": 32},
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Run() computes Input[tid*4] = 0xa0000000 + tid*0x01010101, Input[tid*4+1] = 69 + tid; Input[tid*4+2..3] stay 0. The idxen loads use stride 4 bytes with index tid*4, i.e. byte offset tid*16, so lane tid reads exactly that 4-dword row.",
+    "Exactly 32 rows (one wave32): v_readlane lane 37 wraps to lane 5 and v_readfirstlane reads lane 0, so the row count and wave size must match the test; Check() expects {Input[5*4], Input[5*4], 69} in every lane.",
+    "All three columns are asserted by Check()."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): words 6..13 are v_readlane_b32 s8,v4,37; v_readfirstlane_b32 s20,v5; v_readlane_b32 s9,v4,s20; v_mov v10/v11/v12 <- s8/s9/s20; Run()/Check() read"
+}

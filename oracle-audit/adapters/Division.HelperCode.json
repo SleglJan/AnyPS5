@@ -1,0 +1,35 @@
+{
+  "file": "Division.cpp",
+  "kernel": "HelperCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    10,
+    19
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3
+  },
+  "rows": {
+    "table": "HelperVectors",
+    "file": "generated/Division.HelperCode.rows.txt",
+    "layout": "lane i (0..255) <- HelperVectors[i].{s0, s1, s2, vcc} as v4..v7 (struct fields 0..3; scale/scaleVcc/fmas/fixup are the expected outputs, not inputs)",
+    "count": 256
+  },
+  "row_count": 256,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Division.cpp has no Rows table: audit_modes.parse_rows cannot build rows for it. Each kernel is its own Shader with 32 lanes per dispatch; the C++ loops dispatch the table 32 vectors at a time (8 dispatches of 256 vectors). Lanes are independent, so one oracle run over all 256 rows (padded to whole waves) is equivalent.",
+    "Body: v_div_scale_f32 v10, s20, v4, v5, v6; v_cndmask v11 <- s20; v_cmp_ne_u32 vcc, 0, v7 (per-lane VCC from the vcc field); v_div_fmas_f32 v12; v_div_fixup_f32 v13.",
+    "Asserted columns: 0 and 1 only for vectors with s0 == s1 or s0 == s2 (210 of 256); column 2 only when the host fuses FMA (HostFusesFma via FmaCode) \u2014 always comparable on the oracle; column 3 always.",
+    "Output column c = Output[lane*4 + c]."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 10..18; CheckHelpers() read; rows file extracted from the C array (256 x 8 fields, first 4 kept)"
+}

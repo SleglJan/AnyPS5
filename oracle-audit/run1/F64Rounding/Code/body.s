@@ -1,0 +1,11 @@
+  .long 0x7e142f04
+  .long 0x7e183104
+  .long 0x7e1c3504
+  .long 0x7e203304
+  .long 0x7e247d04
+  .long 0x7e287b04
+  .long 0xd58f0016
+  .long 0x0a010104
+  .long 0x7e2e7904
+  .long 0x7e300704
+  .long 0x7e322b04

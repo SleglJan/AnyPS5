@@ -1,0 +1,28 @@
+{
+  "manifest_class": "partial",
+  "skip": true,
+  "pre": [],
+  "post": [],
+  "lds": 0,
+  "file": "WaveIdInWorkgroup.cpp",
+  "kernel": "WaveIdCode",
+  "status": "skip",
+  "reason": "s_get_waveid_in_workgroup (word 4, 0xf4a80100) is a gfx10.1-only SMEM opcode: llvm-mc rejects it for gfx1030 and decodes it only for gfx1013, so the gfx1036 oracle cannot execute it. The kernel also writes the result into s4 (template output pointer) and builds its store index from v1/v2 (workitem ids y/z of 3-D workgroups 8x8x2, 8x13x1), which the 1-D oracle dispatch does not provide.",
+  "words": [
+    0,
+    7
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[0, 0, 0, 0]",
+    "count": 128
+  },
+  "row_count": 128,
+  "wave64": false,
+  "notes": [
+    "Check() expects tid / waveSize per thread for six workgroup shapes (wave32 and wave64). The value is hardware wave state; even on a gfx1013 oracle it would only be comparable through that formula."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030 rejects word 4; gfx1013 decodes it as s_get_waveid_in_workgroup s4); Run()/Check() read"
+}

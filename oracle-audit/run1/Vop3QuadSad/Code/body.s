@@ -1,0 +1,12 @@
+  .long 0xd572000a
+  .long 0x041a0d04
+  .long 0xd573000c
+  .long 0x041a0d04
+  .long 0xd575000e
+  .long 0x04120d04
+  .long 0xd5720012
+  .long 0x02020906
+  .long 0xd5750014
+  .long 0x04120b06
+  .long 0xd5730018
+  .long 0x04120b06

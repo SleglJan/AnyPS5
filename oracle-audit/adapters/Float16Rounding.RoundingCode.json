@@ -1,0 +1,42 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v10, 0xabcdabcd",
+  "v_mov_b32 v11, 0xabcdabcd",
+  "v_mov_b32 v12, 0xabcdabcd"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "Float16Rounding.cpp",
+ "kernel": "RoundingCode",
+ "status": "ready",
+ "words": [
+  15,
+  18
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1,
+  "2": 2
+ },
+ "rows": {
+  "table": "Vectors",
+  "layout": "lane i -> [Vectors[i].a, Vectors[i].b, Vectors[i].c, 0]",
+  "words": [
+   0,
+   1,
+   2,
+   null
+  ],
+  "count": 256
+ },
+ "row_count": 64,
+ "notes": [
+  "Sentinels 0xabcdabcd in v10..v12 (prologue) go in pre: the f16 results keep the high half.",
+  "Test runs 256 vectors 64 per dispatch (wave32, 2 waves); lane-independent ALU, any batching is equivalent.",
+  "Check(): exact, or both f16 NaN with equal high half."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

@@ -1,0 +1,37 @@
+{
+  "file": "ScalarProgramEndSaved.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    15,
+    21
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v5"
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[(tid * 0x01010101 + 7) & 0xffffffff, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Body replayed: v_add_nc_u32 v5, 1, v4; v_mov_b32 v6, 0xbad; s_cmp_eq_u32 s0, s0; s_cbranch_scc0 (x2). s_cmp of s0 with itself always sets SCC=1 so both branches (targets outside the body) are never taken, whatever s0 holds; the checker's 'branch outside' flags are expected.",
+    "Only column 0 (v5 = Input+1, stored before the program end) is comparable. Column 1 is asserted == 0xdeadbeef (nothing is stored past the end); that is a store/program-end property the oracle cannot observe, so it is not mapped.",
+    "Coverage is trivial: the test's subject (stores after the end instruction never happen) is not replayed.",
+    "Words 5-14 (s_nop, s_atc_probe, s_atc_probe_buffer, s_dcache_discard/_x2 [gfx1013-only encodings, not executable on gfx1036], s_round_mode 0) are excluded; s_round_mode 0 selects round-to-nearest, which equals round32 = round16 = 0, and the body has no float ops.",
+    "Input row: Fill() sets dword 0 = tid*0x01010101+7, others 0; offen load with v1 = tid*16."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; Run()/Check() read.",
+  "accepted_flags": {
+    "19": "s_cmp_eq_u32 s0,s0 always sets SCC=1, s_cbranch_scc0 never taken",
+    "20": "same: SCC=1, never taken"
+  }
+}

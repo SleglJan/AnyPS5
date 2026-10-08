@@ -1,0 +1,56 @@
+[src/VulkanDevice.cpp:581 VulkanDevice] VulkanDevice constructor window=(nil)
+[src/VulkanDevice.cpp:590 VulkanDevice] Vulkan loader loaded library=0x5603fcaf3260
+[src/VulkanDevice.cpp:624 VulkanDevice] Vulkan instance created instance=0x5603fcaf5960
+[src/VulkanDevice.cpp:635 VulkanDevice] Physical device count=2
+[src/VulkanDevice.cpp:668 VulkanDevice] Physical device candidate=0x5603fcecc0a0 name=NVIDIA GeForce RTX 3080 api=0x40415f type=2
+[src/VulkanDevice.cpp:668 VulkanDevice] Physical device candidate=0x5603fcecbdb0 name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) api=0x404162 type=1
+[src/VulkanDevice.cpp:715 VulkanDevice] Physical device selected physical=0x5603fcecc0a0 queueFamily=0
+[src/VulkanDevice.cpp:728 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+[src/VulkanDevice.cpp:730 VulkanDevice] Memory heap 0 size=10240.0 MiB flags=0x1
+[src/VulkanDevice.cpp:730 VulkanDevice] Memory heap 1 size=47571.2 MiB flags=0x0
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 0 heap=1 flags=0x0
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 1 heap=0 flags=0x1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 2 heap=0 flags=0x1
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 3 heap=1 flags=0x6
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 4 heap=1 flags=0xe
+[src/VulkanDevice.cpp:731 VulkanDevice] Memory type 5 heap=0 flags=0x7
+[src/VulkanDevice.cpp:782 VulkanDevice] Shader clock driver=4 narrowSubgroupClock=0
+[src/VulkanDevice.cpp:942 VulkanDevice] Vulkan features tessellationAvailable=1 mesh=1 depthClip=1 depthRangeUnrestricted=1
+[src/VulkanDevice.cpp:1086 VulkanDevice] Compute wave32 programs run on subgroups of 32
+[src/VulkanDevice.cpp:1131 VulkanDevice] Vulkan device ready device=0x5603fcf2e920 queue=0x5603fd1605b0 family=0
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 51c9cc7f 010138a0 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 8306e04a 020d8026 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d f3f4a258 24880000 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 39293d31 42000804 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 9f19a513 1c310800 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d c88b3884 0106100a 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d d7a7b3db 26090490 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d c4a344ce 89464052 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d c5e82909 084031c4 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 3d6c61f2 00482306 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 14aa5e80 281014e2 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d d11755bc 22228250 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 02f0fea8 01209120 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d af67e470 5a0688c2 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 5071a51d 20a20000 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 406339cb 80001110 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d ffb89318 db410210 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d ce1d72ef 80300180 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d bef7f277 04e4c040 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 1389c381 221322a0 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 16f45890 0d680002 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 4ac88fcf 91008f80 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 24115267 40000400 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d b437cdc4 684d7a20 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 4f1a9a2c 0c200028 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d b5fb22ef 28d02100 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 7608e951 c800a000 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 66161236 c82c040a 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 8df06f34 1b208000 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 1dcf985b 19931088 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d cd73ee0f 80033c00 00000000 00000000
+51c9bd70 51c9e82a 51c9bf70 0149ce87 80a4df69 0149ee87 80a4df0f 80a6df0f 80a4df0f 80a5df2d 80a4df2d 80a7df2d 99a47dff 0008d060 00000000 00000000
+
+# stderr
+[write-watch] host imports resolve write protection: no (0 of 4 scratch pages written after a GPU read, 4 after the import); imported ranges stay watched
+[pipeline-cache] loaded 2557.5 KiB from /home/slegl/PycharmProjects/anyps5/build/tests/shader_cache/vk-pipelines-10de-2206-99d1c240-500c20ba21b5482d6d930a8d810e373f.bin

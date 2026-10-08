@@ -1,0 +1,6 @@
+  .long 0xd54b000a
+  .long 0x041a0b04
+  .long 0x7e160306
+  .long 0x56160b04
+  .long 0x5a180f04
+  .long 0x3f8ccccd

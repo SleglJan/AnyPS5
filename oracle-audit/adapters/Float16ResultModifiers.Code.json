@@ -1,0 +1,41 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "Float16ResultModifiers.cpp",
+ "kernel": "Code",
+ "status": "ready",
+ "words": [
+  27,
+  59
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9,
+  "10": 10,
+  "11": 11,
+  "12": 12,
+  "13": 13,
+  "14": 14,
+  "15": 15
+ },
+ "rows": "first4",
+ "row_count": 32,
+ "notes": [
+  "The prologue zeroes v10..v25; the template already starts v10..v25 at 0, so no pre is needed (word 57 v_add_f16_sdwa ... dst_sel:WORD_1 UNUSED_PRESERVE reads the old v25 = 0).",
+  "Rows[32][4] table, 4 dwords loaded with offen at tid*16: exactly the oracle row.",
+  "Check(): columns 3 (sin mul:2) and 4 (sin clamp) are compared with a 2^-10 tolerance on the low half (high half exact); all other columns exact per f16 half with any NaN accepted."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

@@ -1,0 +1,23 @@
+{
+  "file": "ScalarRelativeIndexing.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [1, 83],
+  "pre": [],
+  "post": [],
+  "columns": {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10, "11": 11, "12": 12, "13": 13, "14": 14, "15": 15},
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "No per-lane inputs (Fill() empty, no loads); every lane computes the same 16 values. Row contents are irrelevant.",
+    "Word 0 (v_lshlrev_b32 v3, 6, v0: store address) is dropped from the manifest's [0,83]. Words 1..16 zero v10..v25 exactly as the template already does; they are kept (harmless).",
+    "M0 is set inside the body (3, 0xfc03fc02, 0x20001, 1, 0x10002); no pre needed. SGPRs used: s20..s35, s40, s41, all below the template's 48.",
+    "Column 10 (movreld_out_of_range: s_movreld_b32 s30, 0x88 with M0=0x20001) depends on the hardware ignoring an SGPR write far outside the wave's allocation. The index (s30+0x20001) is out of range for both the oracle's 48-SGPR allocation and any test allocation, so the comparison is meaningful; if the oracle disagrees, check whether the hardware masks M0 rather than range-checking.",
+    "All 16 columns asserted by Check() (Expected[16])."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 1..82: s_mov s20..s35 constants, s_movrels_b32/b64, s_movreld_b32/b64, s_movrelsd_2_b32, m0 writes, v_mov v10..v25 <- SGPRs; no memory or branch; Run()/Check() read"
+}

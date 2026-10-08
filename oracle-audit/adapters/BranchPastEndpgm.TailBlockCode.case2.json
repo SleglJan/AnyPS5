@@ -1,0 +1,19 @@
+{
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "TailBlockCode",
+  "manifest_class": "partial",
+  "status": "skip",
+  "skip": true,
+  "reason": "Case 2 (selector 2, expected +3) takes s_cbranch_scc0 to word 14 and reaches its result through tail blocks interleaved with buffer_store/s_endpgm (words 7-19); the path is not a contiguous store-free word range.",
+  "words": [
+    4,
+    7
+  ],
+  "row_count": 64,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Only case 0 is replayable (TailBlockCode.case0.json)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; control flow traced by hand."
+}

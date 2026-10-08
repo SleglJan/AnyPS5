@@ -1,0 +1,16 @@
+  .long 0xd577080a
+  .long 0x041a0b04
+  .long 0xd501000c
+  .long 0x00210280
+  .long 0xd576080d
+  .long 0x041a0b04
+  .long 0xd501000f
+  .long 0x00210280
+  .long 0xd5776a10
+  .long 0x04198304
+  .long 0xd5010012
+  .long 0x01a90280
+  .long 0xd5770913
+  .long 0x03060905
+  .long 0xd5010015
+  .long 0x00250280

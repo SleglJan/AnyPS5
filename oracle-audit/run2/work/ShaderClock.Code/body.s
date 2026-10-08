@@ -1,0 +1,25 @@
+  s_memtime s[8:9]
+  s_memrealtime s[10:11]
+  s_waitcnt lgkmcnt(0)
+  .long 0x7e0a0280
+  .long 0xbe9003ff
+  .long 0x000007d0
+  .long 0xd5430005
+  .long 0x04110705
+  .long 0x80908110
+  .long 0xbf078010
+  .long 0xbf85fffb
+  .long 0xf4900300
+  .long 0x00000000
+  .long 0xf4940380
+  .long 0x00000000
+  .long 0xbf8cc07f
+  .long 0x7e140208
+  .long 0x7e160209
+  .long 0x7e18020a
+  .long 0x7e1a020b
+  .long 0x7e1c020c
+  .long 0x7e1e020d
+  .long 0x7e20020e
+  .long 0x7e22020f
+  v_mov_b32 v18, v5

@@ -1,0 +1,16 @@
+  .long 0xd564000a
+  .long 0x02020d04
+  .long 0xd565000c
+  .long 0x02020d04
+  .long 0xd54c000e
+  .long 0x041a0d04
+  .long 0xd54c0010
+  .long 0x84320d04
+  .long 0xd5660012
+  .long 0x02020d04
+  .long 0xd5670014
+  .long 0x02020d04
+  .long 0xd5680016
+  .long 0x02020d04
+  .long 0xd5640318
+  .long 0x22020d04

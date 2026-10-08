@@ -1,0 +1,30 @@
+{
+  "file": "ScalarGetreg.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    1,
+    9
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1
+  },
+  "rows": {
+    "expr": "[0, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Body: s_mov s20/s21 = 0x55555555; s_getreg_b32 s20, hwreg(MODE,0,4); s_getreg_b32 s21, hwreg(MODE,2,2); v_mov v10, s20; v_mov v11, s21. Word 0 (v_lshlrev v3) is only the store address and is dropped.",
+    "The values read are the oracle's own MODE register: bits 0-1 = round32, bits 2-3 = round16 from the kernel descriptor. Comparable to the test's expected 0 only in modes with round32 = round16 = 0 (true for every mode in audit_modes.py). Column 0 = round32 | round16 << 2, column 1 = round16.",
+    "No inputs (no buffer load); rows are zero. Both columns asserted == 0."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; Run()/Check() read; MODE field layout per the RDNA2 ISA (inferred, not measured)."
+}

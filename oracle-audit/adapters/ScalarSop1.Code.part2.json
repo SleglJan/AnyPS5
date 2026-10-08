@@ -1,0 +1,43 @@
+{
+  "file": "ScalarSop1.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "split 2/11",
+  "skip": false,
+  "words": [
+    88,
+    179
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "16": 0,
+    "17": 1,
+    "18": 2,
+    "19": 3,
+    "20": 4,
+    "21": 5,
+    "22": 6,
+    "23": 7,
+    "24": 8,
+    "25": 9,
+    "26": 10,
+    "27": 11,
+    "28": 12,
+    "29": 13,
+    "30": 14,
+    "31": 15
+  },
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Rows are the test's Rows[32][4] table (buffer_load_dwordx4 into v[4:7]); first4 covers all inputs.",
+    "The kernel is 11 independent chunks, each 's_mov_b32 s20, 0; per-lane loop (v_readlane s8..s11 <- v4..v7 of lane s20, SOP1/SOPC/SOPK ops, v_writelane into lane s20 of v10..v25); 4x buffer_store_dwordx4 v[10:25] at offset 64*k'. This is chunk 1 (words [88,179), stores at byte offset 64) = result columns 16..31 in v10..v25; the backward s_cbranch_scc1 at word 178 targets the chunk's first v_readlane (inside the range).",
+    "Self-contained: no SGPR is read before being written inside the chunk (s8..s11 from readlane, s20/s30 initialised in the chunk), and v4..v7 are never modified, so running a chunk alone on the oracle matches its run inside the whole kernel.",
+    "All 16 columns asserted.",
+    "The manifest's alu_word_range [6,80] is chunk 0 only; the manifest's 'non-store instructions between first store and s_endpgm' are the later chunks covered by parts 2..11."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words [88,179): chunk boundaries (s_mov_b32 s20,0 ... s_cbranch_scc1 back; next word is buffer_store_dwordx4 v[10:13] offset 64), SGPR read-before-write scan of the chunk (none), written v_writelane registers vs Names[] non-null columns (all asserted columns written); Run()/Check() read"
+}

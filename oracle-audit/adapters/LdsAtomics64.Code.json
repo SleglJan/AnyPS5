@@ -1,0 +1,21 @@
+{
+  "file": "LdsAtomics64.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "skip",
+  "skip": true,
+  "reason": "LDS immediates exceed 4 KiB: the kernel uses one 256-byte plane per operation with ds_*_b64 immediate offsets 0..8704 plus a shared contention slot at offset 8960/8968 (test allocates 2244 dwords = 8976 B); the oracle's group segment is a fixed 4096 B and immediates cannot be rebased. It also needs 6 input dwords per lane (v4..v9; c = in[4..5] feeds mskor/cmpst and the contended ds_max_rtn_u64) and uses v2 (template output offset) as its LDS base.",
+  "words": [19, 246],
+  "pre": [],
+  "post": [],
+  "columns": {},
+  "rows": "unsupported: needs 6 inputs",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 8976,
+  "notes": [
+    "To replay later: raise the template's group segment to >= 8976 B, add --extra for in[4..5], pre = 'v_mov_b32 v127, v2' is not enough because the ALU words read v2 as the LDS base (v2 = lane*8 in the test) - pre must set v2 = lane*8 and v124..v126 = 0, post must restore v2 = lane*64 and move the 114 result dwords (v50..v123 memory values + contention words, v10..v49 returned values; Check() order: columns 0..69 = 35 b64 memory words from v50..v119, 70..73 = contention v120..v123, 74..113 = returned values v10..v49 per the manifest output_map) into 8 parts.",
+    "Words 94 and 170 are s_barrier (single wave32 workgroup in the test; harmless on one wave). Columns 70..73 (contended totals) and the per-lane returned contention values are order-dependent and only checked for serialisability, not exact values."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): prologue v2 = v0<<3, v124..v126 = 0, six offen dword loads into v4..v9; [19,246) = 35 ds_write_b64 planes at offsets 0..8704 plus 8960/8968, s_barrier, 17 non-returning and 18 returning 64-bit DS atomics, s_barrier, 37 ds_read_b64 into v50..v123. Run() LDS size 2244 dwords and Fill() (6 dwords from 3 u64 values) read."
+}

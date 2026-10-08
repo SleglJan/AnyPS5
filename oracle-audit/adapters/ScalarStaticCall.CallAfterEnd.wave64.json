@@ -1,0 +1,38 @@
+{
+  "file": "ScalarStaticCall.cpp",
+  "kernel": "CallAfterEnd",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    8,
+    15
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v4",
+    "v_mov_b32 v11, v5",
+    "v_mov_b32 v12, v6",
+    "v_mov_b32 v13, v7"
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3
+  },
+  "rows": {
+    "expr": "[[0, 1, 2, 3, 4, 7, 0x80000000, 0xffffffff][tid % 8], (0x9e3779b9 * (tid + 1)) & 0xffffffff, 0xffffffff - tid, 17 * tid + 1]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "lds": 0,
+  "notes": [
+    "The callee (words 8-14) sits after the caller's buffer_store/s_endpgm (words 5-7), and its s_setpc_b64 (word 15) returns to the store at word 5, so the call itself cannot be inlined faithfully. This adapter replays only the callee's ALU words [8,15) without the s_call/s_setpc: the results are the same values the test asserts, but the call-after-endpgm control flow (the test's subject) is not exercised.",
+    "Results 0..3 are v4..v7 (add 0x13579bdf, xor 0xa5a5a5a5, v6+v7, xor 0x5a5a5a5a); post copies them to v10..v13. All four asserted for every lane.",
+    "Rows: Run() sets Input[tid*4..+3] = {Selectors[tid % 8], 0x9e3779b9*(tid+1), 0xffffffff - tid, 17*tid + 1}; Selectors = {0,1,2,3,4,7,0x80000000,0xffffffff}.",
+    "The test dispatches one wave of 32 lanes and one of 64 lanes (and a 64-lane dispatch on a wave32 target when distinct). The .wave64 file covers the 64-lane run."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; Run()/Check()/Expected() read."
+}

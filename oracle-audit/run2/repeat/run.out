@@ -1,0 +1,234 @@
+# audit_adapters started 2026-10-08T21:55:13Z; 232 adapter files; modes title,old,ieee0_keep32,ieee1_flush32,title_flush16,title_noclamp,title_fp16ovfl; hosts none
+BranchPastEndpgm.LoopBodyCode.case3.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SKIP BranchPastEndpgm.LoopBodyCode.case4.json: Cases[4] (selector 1, expected +1) branches to the loop body at words 11-14, which sits after a buffer_store/s_endpgm (words 8-10) and falls into another store;
+SKIP BranchPastEndpgm.LoopBodyCode.case5.json: Cases[5] (selector 3, expected +3) branches to the loop body at words 11-14, which sits after a buffer_store/s_endpgm (words 8-10) and falls into another store;
+BranchPastEndpgm.TailBlockCode.case0.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SKIP BranchPastEndpgm.TailBlockCode.case1.json: Case 1 (selector 1, expected +2) takes s_cbranch_scc0 to word 14 and reaches its result through tail blocks interleaved with buffer_store/s_endpgm (words 7-19);
+SKIP BranchPastEndpgm.TailBlockCode.case2.json: Case 2 (selector 2, expected +3) takes s_cbranch_scc0 to word 14 and reaches its result through tail blocks interleaved with buffer_store/s_endpgm (words 7-19);
+CacheControl.CacheControlCode.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Division.DivisionCode.json: 256 rows x 1 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 1, 'mode-dependent-quiet-bit-only': 1}
+Division.FmaCode.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Division.HelperCode.json: 256 rows x 4 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 20, 'mode-dependent-quiet-bit-only': 20}
+DsAppendConsume.Code.json: 32 rows x 12 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+DsWrxchg2.Code.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SKIP DsWrxchg2B64.Code.json: needs 8 input dwords per lane in v2..v9 (Fill() gives 8 pseudo-random dwords from a 64-bit LCG); the oracle row carries 4. Adapter below is complete apart from 
+Float16Misc.MiscCode.json: 256 rows x 10 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 378, 'mode-dependent-quiet-bit-only': 12}
+Float16ResultModifiers.Code.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 179}
+Float16Rounding.RoundingCode.json: 256 rows x 3 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 194, 'mode-dependent-quiet-bit-only': 12}
+FmaRounding.FmaCode.part1.json: 64 rows x 3 cols; hosts skipped: --no-hosts; flagged none
+FmaRounding.FmaCode.part2.json: 64 rows x 1 cols; hosts skipped: --no-hosts; flagged none
+FmaRounding.FmaCode.part3.json: 64 rows x 1 cols; hosts skipped: --no-hosts; flagged none
+IntegerDot.DotCode.json: 64 rows x 10 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+LdsAddtid.Wave32Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsAddtid.Wave32Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsAddtid.Wave32Code.part3.json: 32 rows x 4 cols; hosts skipped: --no-hosts; flagged none
+SKIP LdsAddtid.Wave64Code.json: the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB) and its ALU words use immediate LDS offsets up to 7936 (ds_write_b32/ds_read_b32 v80 offset:4096..793
+LdsAtomics.Code.part1.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged {'mode-dependent': 47}
+LdsAtomics.Code.part2.json: 32 rows x 9 cols; hosts skipped: rows are computed (expr), not the test's table; flagged {'mode-dependent': 7}
+SKIP LdsAtomics64.Code.json: LDS immediates exceed 4 KiB: the kernel uses one 256-byte plane per operation with ds_*_b64 immediate offsets 0..8704 plus a shared contention slot at offset 89
+LdsIntegerAtomics.Wave32Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsIntegerAtomics.Wave32Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsIntegerAtomics.Wave32Code.part3.json: 32 rows x 12 cols; hosts skipped: --no-hosts; flagged none
+SKIP LdsIntegerAtomics.Wave64Code.json: the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB); its planes are 256 B apart with immediate offsets up to 7936 (highest byte 8191). The oracle's group
+LdsReadWrite.Wave32Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsReadWrite.Wave32Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsReadWrite.Wave32Code.part3.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+LdsReadWrite.Wave32Code.part4.json: 32 rows x 10 cols; hosts skipped: --no-hosts; flagged none
+SKIP LdsReadWrite.Wave64Code.json: the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB); its planes are 256 B apart with immediate offsets up to 8128 and the out-of-range probes are placed 
+LoopEndingExits.Code.case4.wave32.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+LoopEndingExits.Code.case4.wave64.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SKIP LoopEndingExits.Code.json: Cases[0..3] (selectors 0,1,3,4; expected +32,+33,+35,+36) exit to word 17, which is after a buffer_store/s_endpgm (words 14-16); not a contiguous store-free ran
+MixPrecision.MixCode.json: 64 rows x 9 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ReadFirstLane.ReadFirstLaneWave32Code.json: 32 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ReadFirstLane.ReadFirstLaneWave64Code.json: 64 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ReadLane.ReadLaneCode.json: 32 rows x 3 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+RelativeIndexing.Code.json: 32 rows x 11 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarBitCount.BitCountCode.json: 32 rows x 7 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarGetreg.Code.json: 32 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none; all-zero title cols [0, 1]
+ScalarProgramEnd.Code.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarProgramEnd.SetkillCode.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarProgramEndSaved.Code.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarProgramFlow.Wave32Code.json: 32 rows x 14 cols; hosts skipped: --no-hosts; flagged none
+ScalarProgramFlow.Wave64Code.json: 64 rows x 14 cols; hosts skipped: --no-hosts; flagged none
+ScalarRelativeIndexing.Code.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+ScalarSethalt.Code.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarSop1.Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part10.json: 32 rows x 9 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part11.json: 32 rows x 5 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part3.json: 32 rows x 14 cols; hosts skipped: --no-hosts; flagged none; all-zero title cols [38]
+ScalarSop1.Code.part4.json: 32 rows x 15 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part5.json: 32 rows x 15 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part6.json: 32 rows x 13 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part7.json: 32 rows x 13 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part8.json: 32 rows x 13 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop1.Code.part9.json: 32 rows x 13 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop2.Code.part1.json: 32 rows x 15 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop2.Code.part2.json: 32 rows x 15 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop2.Code.part3.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+ScalarSop2.Code.part4.json: 32 rows x 13 cols; hosts skipped: --no-hosts; flagged none
+ScalarSopkCompare.CompareCode.part1.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part10.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part11.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part12.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part13.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part14.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part15.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part16.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part17.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part18.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part19.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part2.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part20.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part21.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part22.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part23.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part24.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part25.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part26.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part27.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part28.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part29.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part3.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part30.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part31.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part32.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part33.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part34.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part35.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part36.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part37.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part38.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part39.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part4.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part40.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part41.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part42.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part43.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part44.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part45.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part46.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part47.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part48.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part49.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part5.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part50.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part51.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part52.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part53.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part54.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part55.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part56.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part57.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part58.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part59.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part6.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part60.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part7.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part8.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkCompare.CompareCode.part9.json: 32 rows x 1 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkMisc.Code.json: 32 rows x 4 cols; hosts skipped: --no-hosts; flagged none
+ScalarSopkWaitcnt.WaitCode.part1.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part10.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part11.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part12.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part13.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part14.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part15.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part16.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part17.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part18.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part19.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part2.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part20.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part21.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part22.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part23.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part24.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part3.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part4.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part5.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part6.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part7.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part8.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarSopkWaitcnt.WaitCode.part9.json: 32 rows x 2 cols; hosts skipped: the test passes its values in user-data SGPRs s8+, which the harness does not set; flagged none
+ScalarStaticCall.CallAfterEnd.json: 32 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.CallAfterEnd.wave64.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.CallBackward.json: 32 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.CallBackward.wave64.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.CallForward.json: 32 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.CallForward.wave64.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.MixedNested.json: 32 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.MixedNested.wave64.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.SwappcForward.json: 32 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ScalarStaticCall.SwappcForward.wave64.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaDestination.SdwaCode.json: 64 rows x 8 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none; all-zero title cols [7]
+SdwaMoveSelectors.Wave32Code.part1.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part10.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part11.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part12.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part13.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part14.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part15.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part16.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part17.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part18.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part19.json: 32 rows x 7 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part2.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part3.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part4.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part5.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part6.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part7.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part8.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave32Code.part9.json: 32 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part1.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part10.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part11.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part12.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part13.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part14.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part15.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part16.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part17.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part18.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part19.json: 64 rows x 7 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part2.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part3.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part4.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part5.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part6.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part7.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part8.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SdwaMoveSelectors.Wave64Code.part9.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+ShaderClock.Code.json: 32 rows x 9 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop1Control.Vop1ControlCode.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop1FloatUnary.Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 43, 'mode-dependent-quiet-bit-only': 35}
+Vop1FloatUnary.Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 41, 'mode-dependent-quiet-bit-only': 39}
+Vop1FloatUnary.Code.part3.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 44, 'mode-dependent-quiet-bit-only': 32}
+Vop1FloatUnary.Code.part4.json: 32 rows x 6 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 22, 'mode-dependent-quiet-bit-only': 12}
+Vop1Vop2Integer.Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged {'mode-dependent': 6}
+Vop1Vop2Integer.Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+Vop1Vop2Integer.Code.part3.json: 32 rows x 9 cols; hosts skipped: --no-hosts; flagged none
+Vop3Aliases.AliasCode.json: 64 rows x 9 cols; hosts skipped: rows are computed (expr), not the test's table; flagged {'mode-dependent': 188}
+Vop3CarryOut.CarryOutCode.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop3CarryOut.CarryOutCode.wave64.json: 64 rows x 16 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop3CompareModifiers.ModifierCode.json: 32 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop3Integer.IntegerCode.json: 64 rows x 14 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop3IntegerAlu.Code.part1.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+Vop3IntegerAlu.Code.part2.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+Vop3IntegerAlu.Code.part3.json: 32 rows x 16 cols; hosts skipped: --no-hosts; flagged none
+Vop3IntegerAlu.Code.part4.json: 32 rows x 3 cols; hosts skipped: --no-hosts; flagged none
+Vop3Lerp.LerpCode.json: 64 rows x 8 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Vop3Sad.SadCode.json: 64 rows x 10 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+VopcCompare.CompareCode.part1.json: 32 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+VopcCompare.CompareCode.part2.json: 32 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+VopcCompare.CompareCode.part3.json: 192 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged {'mode-dependent': 4}
+VopcCompareF64.CompareCode.part1.json: 544 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged {'mode-dependent': 50}
+VopcCompareF64.CompareCode.part2.json: 544 rows x 2 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+Wave32Subgroup.WaveCode.json: 64 rows x 4 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+SKIP WaveIdInWorkgroup.WaveIdCode.json: s_get_waveid_in_workgroup (word 4, 0xf4a80100) is a gfx10.1-only SMEM opcode: llvm-mc rejects it for gfx1030 and decodes it only for gfx1013, so the gfx1036 ora
+WaveSleep.WaveSleepCode.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+WaveUniform.WaveCode.json: 64 rows x 1 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+WriteLane.WriteLaneCode.json: 32 rows x 3 cols; hosts skipped: rows are computed (expr), not the test's table; flagged none
+# wrote /tmp/claude-1000/-home-slegl-PycharmProjects/559b7e25-a108-4827-8df7-ace0f95d6281/scratchpad/repeat/audit.json (221 adapters run, 11 skipped, 69504 cells)

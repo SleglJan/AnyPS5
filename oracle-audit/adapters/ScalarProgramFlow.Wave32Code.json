@@ -1,0 +1,42 @@
+{
+  "file": "ScalarProgramFlow.cpp",
+  "kernel": "Wave32Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    5,
+    190
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    "11": 11,
+    "12": 12,
+    "13": 13
+  },
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Rows: the first 32 rows of the test's Rows[64][4] table (Run() copies all 64, the 32-lane dispatch reads Rows[0..31]). Use exactly 32 rows = one wave32: columns 0..11 are wave-wide (v_readfirstlane, exec/vcc branches decided by all lanes), so extra rows or a second wave would change nothing in this wave but would add rows Expected32 does not have.",
+    "Words 5..32 are the kernel's own 0xdeadbeef sentinels for v10..v23; they are in the range, so no pre is needed. v24, v25 (columns 14, 15) are never written; the test checks only Checked=14 columns (0..13).",
+    "EXEC: six blocks 's_and_saveexec_b32 s14, vcc_lo ... s_or_b32 exec_lo, exec_lo, s14' restore EXEC to its entry value (full wave) before the next block; the body ends with full EXEC, so no post fix-up. All branches (execnz/execz/vccnz/vccz/cdbg*) jump forward 1..3 words inside the body.",
+    "Column 12 (cdbg_not_taken): s_cbranch_cdbgsys/cdbguser/cdbgsys_or_user/cdbgsys_and_user branch on the wave's conditional-debug bits, which only a debugger/trap handler sets; on a plain HSA dispatch without rocgdb they are 0, so none is taken and s12 = 0x1000+1+2+4+8, as on the PS5 without a debugger. If the oracle ever runs under a debugger this column is not comparable.",
+    "Column 13 (hints): s_setprio, s_inst_prefetch, s_clause, s_waitcnt_depctr, s_ttracedata (writes M0 to the thread-trace buffer only when tracing is enabled; no register effect) have no data effect; m0 is written (0x1234) but not reported.",
+    "Check() skips the 12 cross-lane columns on hosts with subgroups < 32; the oracle always runs a full wave32, so compare all 14."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 5..189 for Wave32Code: sentinel v_movs, 12 readfirstlane/v_cmp/branch blocks writing v10..v21, cdbg chain into v22, hint block into v23; every branch target inside [5,190]; Run()/Check() read (Checked=14, CrossLane flags)."
+}

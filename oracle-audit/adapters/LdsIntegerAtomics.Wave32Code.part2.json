@@ -1,0 +1,63 @@
+{
+  "file": "LdsIntegerAtomics.cpp",
+  "kernel": "Wave32Code",
+  "manifest_class": "partial",
+  "status": "split 2/3",
+  "skip": false,
+  "words": [
+    5,
+    216
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v26",
+    "v_mov_b32 v11, v27",
+    "v_mov_b32 v12, v28",
+    "v_mov_b32 v13, v29",
+    "v_mov_b32 v14, v30",
+    "v_mov_b32 v15, v31",
+    "v_mov_b32 v16, v32",
+    "v_mov_b32 v17, v33",
+    "v_mov_b32 v18, v34",
+    "v_mov_b32 v19, v35",
+    "v_mov_b32 v20, v36",
+    "v_mov_b32 v21, v37",
+    "v_mov_b32 v22, v38",
+    "v_mov_b32 v23, v39",
+    "v_mov_b32 v24, v40",
+    "v_mov_b32 v25, v41"
+  ],
+  "columns": {
+    "16": 0,
+    "17": 1,
+    "18": 2,
+    "19": 3,
+    "20": 4,
+    "21": 5,
+    "22": 6,
+    "23": 7,
+    "24": 8,
+    "25": 9,
+    "26": 10,
+    "27": 11,
+    "28": 12,
+    "29": 13,
+    "30": 14,
+    "31": 15
+  },
+  "rows": {
+    "table": "Rows",
+    "layout": "Rows[tid][0..3] -> v4..v7 (first 32 of the 64 table rows: the wave32 run dispatches waveSize=32 threads)",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 4096,
+  "notes": [
+    "Wave32 run: one workgroup of 32 threads, LDS waveSize*32 = 1024 dwords (4096 B) = the oracle's group segment. v80 = lane*4 (word 5, in the body); per-lane planes at offsets 0..3968 -> bytes 0..4095. v81 = 0 makes words 132..148 contended atomics on the dword at offsets 2688..3712 of lane 0's slot from all 32 lanes. All 32 planes are written (v4, 0x7fff8001 or v7) before any atomic, so uninitialised LDS never leaks.",
+    "Exactly 32 rows are required: the contended results read back by lane 0 (columns for planes 21..29) depend on every lane's v5.",
+    "Body masks EXEC with s_and_saveexec_b32 s20 (lanes with v7 & 3 != 0) around the returning atomics and restores it itself (word 131: s_mov_b32 exec_lo, -1). Masked-off lanes keep v6 in v10..v21 (words 92..103).",
+    "44 asserted columns (Checked = 44 of Results = 64; Check() compares all 44 against Expected32) in v10..v53: split into 3 adapters (0-15, 16-31, 32-43)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): prologue v1/v3 + buffer_load_dwordx4 v[4:7] offen; [5,216) = v80/v81/v82 setup, 32 ds_write_b32 planes, 9 non-returning atomics, 12 masked returning atomics into v10..v21, exec restore, 9 contended atomics through v81 = 0, 32 ds_read_b32 into v22..v53; stores v[10:53] at offsets 0..175. Run()/Check() read."
+}

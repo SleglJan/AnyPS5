@@ -1,0 +1,39 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v3",
+    "v_mov_b32 v11, v4",
+    "v_lshlrev_b32 v2, 6, v0"
+  ],
+  "lds": 0,
+  "file": "ReadFirstLane.cpp",
+  "kernel": "ReadFirstLaneWave32Code",
+  "status": "ready",
+  "words": [
+    1,
+    11
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1
+  },
+  "rows": {
+    "expr": "[0, 0, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "notes": [
+    "The test loads no inputs; rows are dummies, but exactly 32 rows (one wave32) are needed because the body reads lane 0 / the first active lane of a fixed EXEC mask.",
+    "Word 0 (v_lshlrev v1, 2, v0: store index) is prologue address setup and is excluded; the manifest range started at 0.",
+    "Word 1 (v_add_nc_u32 v2, 0x100, v0) is the kernel's own input computation and overwrites v2, the template's output offset. v2's computed value is only read by the two v_readfirstlane in the body, so post recomputes v2 = v0 << 6 (as template.s does) after copying results. Checker flags this v2 write; it is intended.",
+    "Body saves EXEC to s20, sets it to 0 and then to 48 (lanes 4,5), and restores it itself (last EXEC write: s_mov exec, saved copy); no EXEC fix-up needed in post.",
+    "Check(): every lane column 0 == 0x100 (v_readfirstlane with EXEC=0 returns lane 0) and column 1 == 0x100 + 4. Both columns asserted."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of all words; Run()/Check() read; user data holds only the output descriptor (s[4:7] in the test), not used by the replayed words",
+  "accepted_flags": {
+    "1": "v2 is clobbered by the body; post recomputes v2 = v0 << 6 before the template stores"
+  }
+}

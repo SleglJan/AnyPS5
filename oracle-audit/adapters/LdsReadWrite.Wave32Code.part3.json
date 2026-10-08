@@ -1,0 +1,63 @@
+{
+  "file": "LdsReadWrite.cpp",
+  "kernel": "Wave32Code",
+  "manifest_class": "partial",
+  "status": "split 3/4",
+  "skip": false,
+  "words": [
+    5,
+    318
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v42",
+    "v_mov_b32 v11, v43",
+    "v_mov_b32 v12, v44",
+    "v_mov_b32 v13, v45",
+    "v_mov_b32 v14, v46",
+    "v_mov_b32 v15, v47",
+    "v_mov_b32 v16, v48",
+    "v_mov_b32 v17, v49",
+    "v_mov_b32 v18, v50",
+    "v_mov_b32 v19, v51",
+    "v_mov_b32 v20, v52",
+    "v_mov_b32 v21, v53",
+    "v_mov_b32 v22, v54",
+    "v_mov_b32 v23, v55",
+    "v_mov_b32 v24, v56",
+    "v_mov_b32 v25, v57"
+  ],
+  "columns": {
+    "32": 0,
+    "33": 1,
+    "34": 2,
+    "35": 3,
+    "36": 4,
+    "37": 5,
+    "38": 6,
+    "39": 7,
+    "40": 8,
+    "41": 9,
+    "42": 10,
+    "43": 11,
+    "44": 12,
+    "45": 13,
+    "46": 14,
+    "47": 15
+  },
+  "rows": {
+    "table": "Rows",
+    "layout": "Rows[tid][0..3] -> v4..v7 (first 32 of the 64 table rows: the wave32 run dispatches waveSize=32 threads)",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 4096,
+  "notes": [
+    "Wave32 run: one workgroup of 32 threads, LDS waveSize*32 = 1024 dwords (4096 B) = the oracle's group segment, so out-of-range behaviour matches. Bases are set in the body: v80 = lane*4, v81 = lane*8, v82 = lane*16 (words 5..7), sub-dword bases v83..v86 and v88..v91 derived from inputs. Highest addresses: ds_read_b32 v80 offset:4032 (up to byte 4159) and ds_read_b64 v81 offset:3968 (up to 4223) deliberately cross the 4 KiB end for the upper lanes; everything else stays below 4096. No rebasing possible (immediates) or wanted.",
+    "Words 8..136 fill all 32 planes (bytes 0..4095) with v4 + k*0x1000193 before any read, so uninitialised oracle LDS does not leak in-range; out-of-range reads return whatever the hardware returns for a 4 KiB allocation, which is what the test pins.",
+    "Two EXEC-masked sections (s_and_saveexec_b32 s20 on input >> 30 != 0) are restored by the body itself (words 207, 250: s_mov_b32 exec_lo, -1). Masked lanes keep v6 in v10..v35 (words 149..174).",
+    "Check() asserts Checked = 58 columns (v10..v67); v68/v69 are zeroed padding (stored, not asserted). Split into 4 adapters: 0-15, 16-31, 32-47, 48-57."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): prologue v1/v3 + buffer_load_dwordx4 v[4:7] offen; [5,318) = base setup, 32-plane ds_write_b32 fill, masked sub-dword/read2/st64/b64/b96 reads into v10..v35, masked sub-dword/write2/st64/b64/b96 writes, 32 ds_read_b32 into v36..v67, v68 = v69 = 0; stores v[10:69] at offsets 0..239. Run() (waveSize threads, waveSize*32 LDS dwords) and Check() (Checked = 58 vs Expected32) read."
+}

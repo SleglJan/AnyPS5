@@ -1,0 +1,40 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v16, 0xabcd0000",
+  "v_mov_b32 v17, 0xabcd"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "MixPrecision.cpp",
+ "kernel": "MixCode",
+ "status": "ready",
+ "words": [
+  15,
+  33
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8
+ },
+ "rows": {
+  "expr": "(lambda H, F, tid: [H[tid % 17] | (H[(tid * 3 + 5) % 17] << 16), H[(tid * 5 + 2) % 17] | (H[(tid * 7 + 11) % 17] << 16), H[(tid * 11 + 9) % 17] | (H[(tid * 13 + 4) % 17] << 16), F[(tid * 2 + 7) % 17]])([0xc000, 0xbf00, 0xbe00, 0xbd00, 0xbc00, 0xba00, 0xb800, 0xb400, 0x0, 0x3400, 0x3800, 0x3a00, 0x3c00, 0x3d00, 0x3e00, 0x3f00, 0x4000], [0xc0000000, 0xbfe00000, 0xbfc00000, 0xbfa00000, 0xbf800000, 0xbf400000, 0xbf000000, 0xbe800000, 0x0, 0x3e800000, 0x3f000000, 0x3f400000, 0x3f800000, 0x3fa00000, 0x3fc00000, 0x3fe00000, 0x40000000], tid)",
+  "count": 64,
+  "source": "FillInput(): words[0] = Pack(Quarter(tid), Quarter(tid*3+5)); words[1] = Pack(Quarter(tid*5+2), Quarter(tid*7+11)); words[2] = Pack(Quarter(tid*11+9), Quarter(tid*13+4)); words[3] = bit_cast<u32>(Quarter(tid*2+7)); Quarter(i) = ((i % 17) - 8) / 4; H/F are the f16/f32 bit patterns of Quarter for i%17 = 0..16"
+ },
+ "row_count": 64,
+ "notes": [
+  "v16 = 0xabcd0000 and v17 = 0x0000abcd from the prologue go in pre: v_fma_mixlo_f16 / v_fma_mixhi_f16 write one half and Check() asserts the other half keeps 0xabcd.",
+  "Results 0..8 from v10..v18 (identity). All 9 columns asserted (6 and 7 by half)."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns; rows expression checked equal to a g++ build of FillInput() for all 64 lanes"
+}

@@ -1,0 +1,27 @@
+{
+  "file": "LdsIntegerAtomics.cpp",
+  "kernel": "Wave64Code",
+  "manifest_class": "partial",
+  "status": "skip",
+  "skip": true,
+  "reason": "the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB); its planes are 256 B apart with immediate offsets up to 7936 (highest byte 8191). The oracle's group segment is a fixed 4096 B and immediates cannot be rebased.",
+  "words": [
+    5,
+    216
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {},
+  "rows": {
+    "table": "Rows",
+    "layout": "Rows[tid][0..3] -> v4..v7",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "lds": 8192,
+  "notes": [
+    "Replayable once the template's group segment is >= 8192 B: same structure as Wave32Code (44 columns, 3 parts), EXEC restored in the body with s_mov_b64 exec, -1."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): same structure as Wave32Code with 256-byte plane stride, offsets to 7936, s_and_saveexec_b64; Run() LDS size waveSize*32 dwords read."
+}

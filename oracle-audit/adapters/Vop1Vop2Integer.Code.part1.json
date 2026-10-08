@@ -1,0 +1,42 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "Vop1Vop2Integer.cpp",
+ "kernel": "Code",
+ "status": "split 1/3",
+ "words": [
+  5,
+  57
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9,
+  "10": 10,
+  "11": 11,
+  "12": 12,
+  "13": 13,
+  "14": 14,
+  "15": 15
+ },
+ "rows": "first4",
+ "row_count": 32,
+ "notes": [
+  "Rows[32][4] loaded as one dwordx4 at tid*16: exactly the oracle row.",
+  "Results c = 0..40 are in v(10+c), all asserted exactly. The 16-bit VOP1 results 12..15 (v22..v25) start from the template's 0 in v22..v25; the test kernel does not initialise them either.",
+  "VCC and v8 are scratch inside the body.",
+  "this part compares result columns 0..15"
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

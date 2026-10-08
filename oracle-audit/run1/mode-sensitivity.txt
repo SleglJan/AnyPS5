@@ -1,0 +1,189 @@
+DivFixupF16              c 0 md=  5 nanpay= 0 | v_div_fixup_f16 v10, v4, v5, v6                                        | 3x IEEE(q); 1x D16(q) OVFL; 1x D16 OVFL
+DivFixupF16              c 1 md=  3 nanpay= 0 | v_div_fixup_f16 v11, v4, v5, v6 op_sel:[1,1,1,0]                       | 2x IEEE(q); 1x D16
+DivFixupF16              c 2 md=  5 nanpay= 0 | v_div_fixup_f16 v12, v4, v5, v6 op_sel:[0,0,0,1]                       | 3x IEEE(q); 1x D16(q) OVFL; 1x D16 OVFL
+DivFixupF16              c 3 md=  5 nanpay= 0 | v_div_fixup_f16 v13, -v4, |v5|, -|v6|                                  | 3x IEEE(q); 1x D16(q) OVFL; 1x D16 OVFL
+DivFixupF16              c 4 md=  6 nanpay= 0 | v_div_fixup_f16 v14, v4, v6, v5 op_sel:[1,0,1,0]                       | 2x OVFL; 2x IEEE(q); 2x D16
+DivFixupF16              c 5 md= 12 nanpay= 0 | v_div_fixup_f16 v15, v6, -v4, v5 op_sel:[0,1,0,0]                      | 5x OVFL; 4x IEEE(q); 2x D16; 1x D16(q)
+DivFixupF16              c 6 md=  8 nanpay= 0 | v_div_fixup_f16 v16, 1.0, v5, v4 op_sel:[0,1,1,0]                      | 4x D16; 3x IEEE(q); 1x D16(q)
+DivFixupF16              c 7 md=  7 nanpay= 0 | v_div_fixup_f16 v17, v5, -1.0, v6                                      | 3x OVFL; 2x D16; 1x D16 OVFL; 1x IEEE(q)
+DivisionOutputModifiers  c 0 md= 18 nanpay= 0 | v_div_fmas_f32 v10, v4, v5, v6 mul:2                                   | 18x IEEE D32
+DivisionOutputModifiers  c 1 md= 19 nanpay= 0 | v_div_fmas_f32 v11, v5, -v4, v6 div:2                                  | 19x IEEE D32
+DivisionOutputModifiers  c 2 md= 21 nanpay= 0 | v_div_fixup_f32 v12, v4, v5, v6 mul:4                                  | 21x IEEE D32
+DivisionOutputModifiers  c 3 md= 19 nanpay= 0 | v_div_fixup_f32 v13, -v4, |v5|, v6 div:2                               | 19x IEEE D32
+DivisionOutputModifiers  c 4 md=  6 nanpay= 0 | v_div_scale_f32 v14, s12, v4, v5, v6 clamp                             | 6x DX10
+DivisionOutputModifiers  c 5 md= 20 nanpay= 0 | v_div_scale_f32 v15, s12, v4, v5, v6 mul:2                             | 20x IEEE D32
+DivisionOutputModifiers  c 6 md= 23 nanpay= 0 | v_div_scale_f32 v16, s12, v6, v5, v6 div:2                             | 23x IEEE D32
+DivisionOutputModifiers  c 7 md= 13 nanpay= 0 | v_div_scale_f32 v17, s12, v6, v5, v6 clamp mul:4                       | 7x IEEE D32; 6x DX10
+DivisionOutputModifiers  c 9 md=  1 nanpay= 0 | v_div_scale_f64 v[18:19], s12, v[4:5], v[6:7], v[4:5] clamp  [dword 1] | 1x DX10
+DivisionOutputModifiers  c11 md= 29 nanpay= 0 | v_div_scale_f64 v[20:21], s12, v[6:7], v[6:7], v[4:5] mul:2  [dword 1] | 29x D16
+DivisionOutputModifiers  c13 md= 28 nanpay= 1 | v_div_scale_f64 v[22:23], s12, v[4:5], v[6:7], v[4:5] div:2  [dword 1] | 29x D16
+DivisionOutputModifiers  c15 md=  8 nanpay= 0 | v_div_scale_f64 v[24:25], s12, v[6:7], v[6:7], v[4:5] clamp mul:4  [dw | 7x D16; 1x DX10
+DivisionResultModifiers  c 0 md=  4 nanpay= 0 | v_div_fmas_f32 v10, v4, v5, v6 clamp                                   | 4x DX10
+DivisionResultModifiers  c 1 md=  9 nanpay= 0 | v_div_fixup_f32 v11, v4, v5, v6 clamp                                  | 9x DX10
+DivisionResultModifiers  c 2 md=  9 nanpay= 0 | v_div_fixup_f32 v12, -v4, |v5|, v6 clamp                               | 9x DX10
+DivisionResultModifiers  c 3 md=  4 nanpay= 0 | v_div_fmas_f32 v13, v5, -v4, v6 clamp                                  | 4x DX10
+DivisionResultModifiers  c 5 md=  4 nanpay= 0 | v_div_fmas_f64 v[14:15], v[4:5], v[6:7], v[4:5] clamp  [dword 1]       | 4x DX10
+DivisionResultModifiers  c 7 md= 17 nanpay= 0 | v_div_fmas_f64 v[16:17], v[6:7], v[6:7], v[4:5] mul:2  [dword 1]       | 17x D16
+DivisionResultModifiers  c 9 md=  3 nanpay= 0 | v_div_fixup_f64 v[18:19], v[4:5], v[6:7], v[4:5] clamp  [dword 1]      | 3x DX10
+DivisionResultModifiers  c11 md= 22 nanpay= 1 | v_div_fixup_f64 v[20:21], v[6:7], v[4:5], v[6:7] div:2  [dword 1]      | 23x D16
+DivisionResultModifiers  c13 md=  7 nanpay= 0 | v_div_fixup_f64 v[22:23], v[6:7], v[4:5], v[6:7] clamp mul:4  [dword 1 | 4x D16; 3x DX10
+DivisionResultModifiers  c15 md=  3 nanpay= 0 | v_div_fixup_f64 v[24:25], -v[4:5], v[6:7], v[4:5] clamp  [dword 1]     | 3x DX10
+F32MinMaxNan             c 0 md= 24 nanpay=13 | v_min_f32_e32 v10, v4, v5                                              | 28x IEEE; 9x IEEE(q)
+F32MinMaxNan             c 1 md= 24 nanpay=13 | v_max_f32_e32 v11, v4, v5                                              | 28x IEEE; 9x IEEE(q)
+F32MinMaxNan             c 2 md= 32 nanpay= 5 | v_min3_f32 v12, v4, v5, v6                                             | 34x IEEE; 3x IEEE(q)
+F32MinMaxNan             c 3 md= 31 nanpay= 5 | v_max3_f32 v13, v4, v5, v6                                             | 33x IEEE; 3x IEEE(q)
+F32MinMaxNan             c 4 md= 32 nanpay= 5 | v_med3_f32 v14, v4, v5, v6                                             | 34x IEEE; 3x IEEE(q)
+F32MinMaxNan             c 5 md= 24 nanpay=13 | v_min_f32_e64 v15, v4, v5                                              | 28x IEEE; 9x IEEE(q)
+F32MinMaxNan             c 6 md= 24 nanpay=13 | v_max_f32_e64 v16, v4, v5                                              | 28x IEEE; 9x IEEE(q)
+F32OutputModifier        c 0 md= 11 nanpay= 2 | v_mul_f32_e64 v10, v4, v5 mul:2                                        | 11x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 1 md= 11 nanpay= 2 | v_mul_f32_e64 v11, v4, v5 div:2                                        | 11x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 2 md= 11 nanpay= 2 | v_mul_f32_e64 v12, v4, v5 mul:4                                        | 11x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 3 md= 17 nanpay= 2 | v_add_f32_e64 v13, v4, v5 mul:2                                        | 17x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 4 md= 17 nanpay= 2 | v_add_f32_e64 v14, v4, v5 div:2                                        | 17x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 5 md= 24 nanpay= 2 | v_sub_f32_e64 v15, -v4, v5 mul:4                                       | 24x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c 6 md= 11 nanpay= 3 | v_fma_f32 v16, v4, v5, v6 mul:2                                        | 11x IEEE D32; 3x IEEE(q)
+F32OutputModifier        c 7 md= 11 nanpay= 3 | v_fma_f32 v17, v4, v5, v6 div:2                                        | 11x IEEE D32; 3x IEEE(q)
+F32OutputModifier        c 8 md= 19 nanpay= 0 | v_min_f32_e64 v18, v4, v5 div:2                                        | 19x IEEE D32
+F32OutputModifier        c 9 md= 14 nanpay= 3 | v_max_f32_e64 v19, v4, v6 mul:2                                        | 13x IEEE D32; 2x IEEE; 2x IEEE(q)
+F32OutputModifier        c10 md= 11 nanpay= 2 | v_floor_f32_e64 v20, v4 div:2                                          | 11x IEEE D32; 2x IEEE(q)
+F32OutputModifier        c11 md= 21 nanpay= 0 | v_cvt_f32_i32_e64 v21, v4 mul:4                                        | 21x IEEE D32
+F32OutputModifier        c12 md=  7 nanpay= 0 | v_mul_f32_e64 v22, v4, v5 clamp mul:2                                  | 5x DX10; 2x IEEE D32
+F32OutputModifier        c13 md=  7 nanpay= 0 | v_mul_f32_e64 v23, v4, v5 clamp div:2                                  | 5x DX10; 2x IEEE D32
+F32OutputModifier        c14 md= 14 nanpay= 0 | v_add_f32_e64 v24, v4, v6 clamp mul:4                                  | 11x DX10; 3x IEEE D32
+F32OutputModifier        c15 md= 14 nanpay= 3 | v_fma_f32 v25, -v4, v5, v6 mul:4                                       | 14x IEEE D32; 3x IEEE(q)
+F32ResultClamp           c 0 md=  3 nanpay= 0 | v_add_f32_e64 v10, v4, v5 clamp                                        | 3x DX10
+F32ResultClamp           c 1 md=  4 nanpay= 0 | v_sub_f32_e64 v11, v4, v5 clamp                                        | 4x DX10
+F32ResultClamp           c 2 md=  4 nanpay= 0 | v_mul_f32_e64 v12, v4, v5 clamp                                        | 4x DX10
+F32ResultClamp           c 3 md=  4 nanpay= 0 | v_mul_f32_e64 v13, -v4, v5 clamp                                       | 4x DX10
+F32ResultClamp           c 4 md= 10 nanpay= 0 | v_fma_f32 v14, v4, v5, v6 clamp                                        | 10x DX10
+F32ResultClamp           c 5 md= 10 nanpay= 0 | v_fmac_f32_e64 v15, v4, v5 clamp                                       | 10x DX10
+F32ResultClamp           c 6 md=  1 nanpay= 0 | v_min_f32_e64 v16, v4, v5 clamp                                        | 1x DX10
+F32ResultClamp           c 7 md=  1 nanpay= 0 | v_max_f32_e64 v17, -v4, v5 clamp                                       | 1x DX10
+F32ResultClamp           c 8 md=  1 nanpay= 0 | v_med3_f32 v18, v4, v5, v6 clamp                                       | 1x DX10
+F32ResultClamp           c 9 md=  3 nanpay= 0 | v_floor_f32_e64 v19, v4 clamp                                          | 3x DX10
+F32ResultClamp           c10 md=  6 nanpay= 0 | v_fract_f32_e64 v20, v4 clamp                                          | 6x DX10
+F32ResultClamp           c12 md=  3 nanpay= 0 | v_trunc_f32_e64 v22, -v4 clamp                                         | 3x DX10
+F32ResultClamp           c13 md=  3 nanpay= 0 | v_rndne_f32_e64 v23, v4 clamp                                          | 3x DX10
+F32ResultClamp           c14 md=  1 nanpay= 0 | v_max3_f32 v24, v4, v5, v6 clamp                                       | 1x DX10
+F32ResultClamp           c15 md=  3 nanpay= 0 | v_ceil_f32_e64 v25, -v4 clamp                                          | 3x DX10
+F64Arithmetic            c 1 md=  0 nanpay= 4 | v_add_f64 v[10:11], v[4:5], v[6:7]  [dword 1]                          | 4x IEEE(q)
+F64Arithmetic            c 3 md=  0 nanpay= 4 | v_mul_f64 v[12:13], v[4:5], v[6:7]  [dword 1]                          | 4x IEEE(q)
+F64Arithmetic            c 5 md=  0 nanpay= 4 | v_fma_f64 v[14:15], v[4:5], v[6:7], v[6:7]  [dword 1]                  | 4x IEEE(q)
+F64Arithmetic            c 7 md=  0 nanpay= 4 | v_fma_f64 v[16:17], v[4:5], v[6:7], -v[12:13]  [dword 1]               | 4x IEEE(q)
+F64Arithmetic            c 8 md=  3 nanpay= 0 | v_min_f64 v[18:19], v[4:5], v[6:7]  [dword 0]                          | 3x IEEE
+F64Arithmetic            c 9 md=  4 nanpay= 0 | v_min_f64 v[18:19], v[4:5], v[6:7]  [dword 1]                          | 4x IEEE
+F64Arithmetic            c10 md=  3 nanpay= 0 | v_max_f64 v[20:21], v[4:5], v[6:7]  [dword 0]                          | 3x IEEE
+F64Arithmetic            c11 md=  4 nanpay= 0 | v_max_f64 v[20:21], v[4:5], v[6:7]  [dword 1]                          | 4x IEEE
+F64Arithmetic            c13 md=  0 nanpay= 1 | v_ldexp_f64 v[22:23], v[4:5], v6  [dword 1]                            | 1x IEEE(q)
+F64Arithmetic            c15 md=  0 nanpay= 4 | v_add_f64 v[24:25], -|v[4:5]|, |v[6:7]|  [dword 1]                     | 4x IEEE(q)
+F64Conversions           c 1 md=  0 nanpay= 1 | v_cvt_f64_f32_e32 v[10:11], v4  [dword 1]                              | 1x IEEE(q)
+F64Conversions           c 9 md= 24 nanpay= 0 | v_mul_f64 v[18:19], -|v[6:7]|, v[6:7] div:2  [dword 1]                 | 24x D16
+F64Conversions           c14 md=  2 nanpay= 0 | v_fma_f64 v[24:25], v[6:7], 1.0, 0.15915494309189532 mul:4  [dword 0]  | 2x D16
+F64Conversions           c15 md= 26 nanpay= 2 | v_fma_f64 v[24:25], v[6:7], 1.0, 0.15915494309189532 mul:4  [dword 1]  | 28x D16
+F64Division              c 5 md=  0 nanpay= 3 | v_div_fmas_f64 v[14:15], v[4:5], v[6:7], v[4:5]  [dword 1]             | 3x IEEE(q)
+F64Division              c 7 md=  0 nanpay= 3 | v_div_fmas_f64 v[16:17], v[4:5], v[6:7], v[6:7]  [dword 1]             | 3x IEEE(q)
+F64Division              c 9 md=  0 nanpay= 3 | v_div_fixup_f64 v[18:19], v[4:5], v[6:7], v[4:5]  [dword 1]            | 3x IEEE(q)
+F64Division              c11 md=  0 nanpay= 3 | v_div_fixup_f64 v[20:21], v[6:7], v[4:5], v[6:7]  [dword 1]            | 3x IEEE(q)
+F64Division              c13 md=  0 nanpay= 3 | v_div_fixup_f64 v[22:23], 0x7ff80000, v[4:5], v[6:7]  [dword 1]        | 3x IEEE(q)
+F64DivisionModifiers     c 5 md=  0 nanpay= 2 | v_div_fmas_f64 v[14:15], -v[4:5], |v[6:7]|, -|v[4:5]|  [dword 1]       | 2x IEEE(q)
+F64DivisionModifiers     c 7 md=  0 nanpay= 2 | v_div_fmas_f64 v[16:17], v[6:7], v[6:7], v[4:5]  [dword 1]             | 2x IEEE(q)
+F64DivisionModifiers     c 9 md=  0 nanpay= 2 | v_div_fmas_f64 v[18:19], v[4:5], v[6:7], v[6:7]  [dword 1]             | 2x IEEE(q)
+F64DivisionModifiers     c11 md=  0 nanpay= 2 | v_div_fixup_f64 v[20:21], -|v[4:5]|, -v[6:7], |v[4:5]|  [dword 1]      | 2x IEEE(q)
+F64DivisionModifiers     c13 md=  0 nanpay= 2 | v_div_fmas_f64 v[22:23], v[6:7], v[4:5], v[6:7]  [dword 1]             | 2x IEEE(q)
+F64NanConversions        c 1 md=  0 nanpay=13 | v_cvt_f64_f32_e32 v[10:11], v4  [dword 1]                              | 13x IEEE(q)
+F64Rounding              c12 md= 28 nanpay= 0 | v_cvt_f32_f64_e64 v22, v[4:5] mul:2                                    | 28x IEEE D32
+F64Transcendental        c 1 md=  0 nanpay= 2 | v_rcp_f64_e32 v[10:11], v[4:5]  [dword 1]                              | 2x IEEE(q)
+F64Transcendental        c 3 md=  0 nanpay= 2 | v_rsq_f64_e32 v[12:13], v[4:5]  [dword 1]                              | 2x IEEE(q)
+F64Transcendental        c 5 md=  0 nanpay= 2 | v_sqrt_f64_e32 v[14:15], v[4:5]  [dword 1]                             | 2x IEEE(q)
+F64Transcendental        c11 md= 14 nanpay= 0 | v_trig_preop_f64 v[20:21], -|v[4:5]|, v6 mul:2  [dword 1]              | 14x D16
+F64Transcendental        c12 md=  2 nanpay= 0 | v_rcp_f64_e64 v[22:23], v[4:5] clamp  [dword 0]                        | 2x DX10
+F64Transcendental        c13 md=  3 nanpay= 0 | v_rcp_f64_e64 v[22:23], v[4:5] clamp  [dword 1]                        | 3x DX10
+F64Transcendental        c15 md=  0 nanpay= 2 | v_sqrt_f64_e64 v[24:25], -|v[4:5]|  [dword 1]                          | 2x IEEE(q)
+Float16Modifiers         c 0 md=  6 nanpay= 0 | v_add_f16_e64 v10, v4, v5 clamp                                        | 6x DX10
+Float16Modifiers         c 1 md= 23 nanpay= 0 | v_add_f16_e64 v11, v4, v5 mul:2                                        | 23x D16
+Float16Modifiers         c 2 md=  6 nanpay= 0 | v_sub_f16_e64 v12, v4, v5 clamp                                        | 6x DX10
+Float16Modifiers         c 3 md=  8 nanpay= 0 | v_subrev_f16_e64 v13, v4, v5 clamp div:2                               | 6x DX10; 2x D16
+Float16Modifiers         c 4 md=  7 nanpay= 0 | v_mul_f16_e64 v14, v4, v5 clamp                                        | 6x DX10; 1x D16
+Float16Modifiers         c 5 md=  1 nanpay= 0 | v_min_f16_e64 v15, v4, v5 clamp                                        | 1x D16
+Float16Modifiers         c 6 md= 30 nanpay= 0 | v_max_f16_e64 v16, v4, v5 mul:4                                        | 30x D16
+Float16Modifiers         c 7 md=  2 nanpay= 0 | v_ldexp_f16_e64 v17, v4, v5 clamp                                      | 2x DX10
+Float16Modifiers         c 8 md= 18 nanpay= 0 | v_ldexp_f16_e64 v18, v4, v5 mul:2                                      | 10x OVFL; 6x D16; 2x D16 OVFL
+Float16Modifiers         c 9 md=  4 nanpay= 0 | v_frexp_mant_f16_e64 v19, v4 clamp                                     | 2x D16; 2x DX10
+Float16Modifiers         c10 md=  2 nanpay= 0 | v_cvt_norm_i16_f16_e64 v20, v4 clamp                                   | 2x D16
+Float16Modifiers         c11 md=  1 nanpay= 0 | v_cvt_norm_u16_f16_e64 v21, v4 mul:2                                   | 1x D16
+Float16Modifiers         c12 md= 30 nanpay= 0 | v_max3_f16 v22, v4, v5, v6 mul:2                                       | 30x D16
+Float16Modifiers         c13 md= 17 nanpay= 0 | v_med3_f16 v23, v4, v5, v6 clamp mul:4                                 | 16x D16; 1x D16(q)
+Float16Modifiers         c14 md= 30 nanpay= 0 | v_min3_f16 v24, v4, v5, v6 div:2                                       | 30x D16
+Float16Modifiers         c15 md= 21 nanpay= 0 | v_fma_f16 v25, v4, v5, v6 mul:2                                        | 18x D16; 2x OVFL; 1x D16(q)
+Float16TernaryClamp      c 0 md=  6 nanpay= 0 | v_max3_f16 v10, v4, v5, v6 clamp                                       | 2x D16; 2x IEEE D16; 1x DX10; 1x IEEE
+Float16TernaryClamp      c 1 md=  5 nanpay= 0 | v_min3_f16 v11, v4, v5, v6 clamp                                       | 2x D16; 1x DX10; 1x IEEE; 1x IEEE D16
+Float16TernaryClamp      c 2 md=  5 nanpay= 0 | v_med3_f16 v12, v4, v5, v6 clamp                                       | 2x D16; 1x DX10; 1x IEEE; 1x IEEE D16
+Float16TernaryClamp      c 3 md=  7 nanpay= 0 | v_div_fixup_f16 v13, v4, v5, v6 clamp                                  | 7x DX10
+Float16TernaryClamp      c 4 md=  2 nanpay= 0 | v_max3_f16 v14, -v5, |v6|, v4 op_sel:[1,1,1,1] clamp                   | 1x D16; 1x DX10
+Float16TernaryClamp      c 5 md=  4 nanpay= 0 | v_min3_f16 v15, v6, -v4, v5 op_sel:[1,0,1,0] clamp                     | 2x IEEE; 1x DX10; 1x D16
+Float16TernaryClamp      c 6 md=  2 nanpay= 0 | v_med3_f16 v16, v5, v6, -|v4| op_sel:[0,1,1,1] clamp                   | 1x DX10; 1x D16
+Float16TernaryClamp      c 7 md=  7 nanpay= 0 | v_div_fixup_f16 v17, v6, v4, v5 op_sel:[1,1,0,1] clamp                 | 6x DX10; 1x D16
+Float16TernaryClamp      c 8 md=  8 nanpay= 0 | v_div_fixup_f16 v18, -v5, |v6|, -v4 op_sel:[0,0,1,0] clamp             | 8x DX10
+SdwaFloatSelectors       c 0 md=  7 nanpay= 0 | v_add_f32_sdwa v10, v4, v5 dst_sel:DWORD dst_unused:UNUSED_PAD src0_se | 7x D32
+SdwaFloatSelectors       c 1 md= 24 nanpay= 0 | v_sub_f32_sdwa v11, v4, v5 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE s | 24x D32
+SdwaFloatSelectors       c 2 md=  6 nanpay= 0 | v_subrev_f32_sdwa v12, -v4, v5 clamp dst_sel:BYTE_2 dst_unused:UNUSED_ | 6x D32
+SdwaFloatSelectors       c 3 md=  2 nanpay= 0 | v_mul_f32_sdwa v13, |v4|, v5 dst_sel:WORD_0 dst_unused:UNUSED_PAD src0 | 2x D32
+SdwaFloatSelectors       c 4 md=  2 nanpay= 0 | v_mul_legacy_f32_sdwa v14, v4, v5 dst_sel:DWORD dst_unused:UNUSED_PAD  | 2x D32
+SdwaFloatSelectors       c 5 md=  4 nanpay= 0 | v_min_f32_sdwa v15, sext(v4), -v5  dst_sel:DWORD dst_unused:UNUSED_PAD | 4x D32
+SdwaFloatSelectors       c 6 md=  8 nanpay= 0 | v_max_f32_sdwa v16, v4, sext(v5)  dst_sel:BYTE_1 dst_unused:UNUSED_PRE | 8x D32
+SdwaFloatSelectors       c 7 md=  9 nanpay= 0 | v_max_f32_sdwa v17, sext(v4), v5 clamp dst_sel:DWORD dst_unused:UNUSED | 9x D32
+SdwaFloatSelectors       c 8 md= 15 nanpay= 0 | v_add_f16_sdwa v18, v4, v5 dst_sel:BYTE_0 dst_unused:UNUSED_PAD src0_s | 15x D16
+SdwaFloatSelectors       c 9 md= 23 nanpay= 0 | v_sub_f16_sdwa v19, -v4, v5 dst_sel:WORD_1 dst_unused:UNUSED_SEXT src0 | 22x D16; 1x D16(q)
+SdwaFloatSelectors       c10 md= 15 nanpay= 0 | v_subrev_f16_sdwa v20, v4, |v5| dst_sel:BYTE_3 dst_unused:UNUSED_PRESE | 15x D16
+SdwaFloatSelectors       c11 md=  2 nanpay= 0 | v_mul_f16_sdwa v21, v4, v5 dst_sel:DWORD dst_unused:UNUSED_PAD src0_se | 1x D16; 1x IEEE(q)
+SdwaFloatSelectors       c12 md=  2 nanpay= 0 | v_min_f16_sdwa v22, sext(v4), v5  dst_sel:WORD_0 dst_unused:UNUSED_PRE | 2x D16
+SdwaFloatSelectors       c13 md=  4 nanpay= 0 | v_max_f16_sdwa v23, v4, sext(-v5)  dst_sel:BYTE_2 dst_unused:UNUSED_PA | 3x D16; 1x D16(q)
+SdwaFloatSelectors       c14 md=  7 nanpay= 0 | v_add_f32_sdwa v24, v4, v5 clamp dst_sel:BYTE_3 dst_unused:UNUSED_SEXT | 7x D32
+SdwaFloatSelectors       c15 md=  3 nanpay= 0 | v_mul_f16_sdwa v25, v4, v5 dst_sel:BYTE_1 dst_unused:UNUSED_SEXT src0_ | 3x D16
+SdwaLdexpF16             c 0 md= 20 nanpay= 0 | v_ldexp_f16_sdwa v10, v4, v5 dst_sel:DWORD dst_unused:UNUSED_PAD src0_ | 14x D16 OVFL; 6x D16
+SdwaLdexpF16             c 1 md= 15 nanpay= 0 | v_ldexp_f16_sdwa v11, sext(v4), v5  dst_sel:WORD_1 dst_unused:UNUSED_P | 9x D16 OVFL; 6x D16
+SdwaLdexpF16             c 2 md=  0 nanpay=23 | v_ldexp_f16_sdwa v12, -v4, sext(v5) dst_sel:WORD_0 dst_unused:UNUSED_S | 12x D16; 11x D16 OVFL
+SdwaLdexpF16             c 3 md= 30 nanpay= 0 | v_ldexp_f16_sdwa v13, |v4|, v5 dst_sel:BYTE_0 dst_unused:UNUSED_PAD sr | 17x OVFL; 13x D16
+SdwaLdexpF16             c 4 md=  1 nanpay= 0 | v_ldexp_f16_sdwa v14, v4, sext(v5) dst_sel:BYTE_1 dst_unused:UNUSED_PR | 1x D16
+SdwaLdexpF16             c 5 md=  9 nanpay= 0 | v_ldexp_f16_sdwa v15, v4, v5 dst_sel:BYTE_2 dst_unused:UNUSED_SEXT src | 7x OVFL; 1x D16(q); 1x D16
+SdwaLdexpF16             c 6 md=  1 nanpay= 0 | v_ldexp_f16_sdwa v16, -|v4|, v5 dst_sel:BYTE_3 dst_unused:UNUSED_PAD s | 1x D16
+SdwaLdexpF16             c 7 md= 17 nanpay= 0 | v_ldexp_f16_sdwa v17, sext(v4), sext(v5)  dst_sel:DWORD dst_unused:UNU | 12x OVFL; 4x IEEE(q); 1x D16
+SdwaLdexpF16             c 8 md= 18 nanpay= 0 | v_ldexp_f16_sdwa v18, v4, sext(v5) dst_sel:WORD_1 dst_unused:UNUSED_SE | 16x IEEE(q); 1x D16(q); 1x OVFL
+SdwaLdexpF16             c 9 md= 30 nanpay= 0 | v_ldexp_f16_sdwa v19, v4, v5 clamp dst_sel:WORD_1 dst_unused:UNUSED_PA | 29x DX10; 1x D16(q)
+SdwaLdexpF16             c10 md= 12 nanpay= 1 | v_ldexp_f16_sdwa v20, -v4, v5 clamp dst_sel:WORD_0 dst_unused:UNUSED_P | 12x DX10; 1x D16
+SdwaLdexpF16             c11 md= 30 nanpay= 0 | v_ldexp_f16_sdwa v21, |v4|, sext(v5) clamp dst_sel:DWORD dst_unused:UN | 29x DX10; 1x D16
+SdwaLdexpF16             c12 md= 30 nanpay= 0 | v_ldexp_f16_sdwa v22, v4, v5 clamp dst_sel:WORD_0 dst_unused:UNUSED_SE | 29x DX10; 1x D16
+SdwaLdexpF16             c13 md= 18 nanpay= 0 | v_ldexp_f16_sdwa v23, v4, v5 mul:2 dst_sel:DWORD dst_unused:UNUSED_PAD | 16x IEEE(q); 1x D16; 1x OVFL
+SdwaLdexpF16             c14 md= 17 nanpay= 0 | v_ldexp_f16_sdwa v24, -v4, sext(v5) clamp div:2 dst_sel:WORD_1 dst_unu | 12x DX10; 4x D16; 1x D16(q)
+SdwaLdexpF16             c15 md=  6 nanpay= 0 | v_ldexp_f16_sdwa v25, sext(v4), v5  dst_sel:WORD_0 dst_unused:UNUSED_P | 4x D16 OVFL; 2x D16
+Vop2ModifierForms        c 4 md=  3 nanpay= 0 | v_mul_legacy_f32_dpp v14, -v4, |v5| quad_perm:[0,1,2,3] row_mask:0xf b | 3x D32
+Vop2ModifierForms        c 5 md=  2 nanpay= 0 | v_mul_legacy_f32_sdwa v15, -|v4|, -v5 dst_sel:DWORD dst_unused:UNUSED_ | 2x D32
+Vop2ModifierForms        c 6 md=  3 nanpay= 0 | v_mul_legacy_f32_sdwa v16, v4, v5 clamp dst_sel:DWORD dst_unused:UNUSE | 2x D32; 1x DX10
+Vop2ModifierForms        c 7 md= 10 nanpay= 0 | v_mul_legacy_f32_sdwa v17, v4, -v5 mul:2 dst_sel:DWORD dst_unused:UNUS | 7x IEEE D32; 3x D32
+Vop2ModifierForms        c 8 md=  5 nanpay= 0 | v_mul_legacy_f32_e64 v18, v4, v5 clamp div:2                           | 2x IEEE D32; 2x D32; 1x DX10
+Vop2ModifierForms        c 9 md= 10 nanpay= 0 | v_mul_legacy_f32_e64 v19, -v4, v5 mul:4                                | 7x IEEE D32; 3x D32
+Vop2ModifierForms        c10 md=  1 nanpay= 0 | v_mul_legacy_f32_e64 v20, |v4|, -|v5| clamp                            | 1x DX10
+Vop2ModifierForms        c11 md=  2 nanpay= 0 | v_ldexp_f16_e64 v21, -v4, v5                                           | 2x OVFL
+Vop2ModifierForms        c12 md=  2 nanpay= 0 | v_ldexp_f16_dpp v22, |v4|, v5 quad_perm:[0,1,2,3] row_mask:0xf bank_ma | 2x OVFL
+Vop2ModifierForms        c13 md=  2 nanpay= 0 | v_ldexp_f16_sdwa v23, -|v4|, v5 dst_sel:DWORD dst_unused:UNUSED_PAD sr | 2x OVFL
+Vop2ModifierForms        c14 md=  2 nanpay= 0 | v_ldexp_f16_e64 v24, |v4|, v5                                          | 2x OVFL
+Vop3CubeClamp            c 1 md=  0 nanpay= 2 | v_cubesc_f32 v11, v4, v5, v6                                           | 2x IEEE(q)
+Vop3CubeClamp            c 2 md=  0 nanpay= 3 | v_cubetc_f32 v12, v4, v5, v6                                           | 3x IEEE(q)
+Vop3CubeClamp            c 3 md=  0 nanpay= 1 | v_cubema_f32 v13, v4, v5, v6                                           | 1x IEEE(q)
+Vop3CubeClamp            c 5 md=  3 nanpay= 0 | v_cubesc_f32 v15, v4, v5, v6 clamp                                     | 3x DX10
+Vop3CubeClamp            c 6 md=  7 nanpay= 0 | v_cubetc_f32 v16, v4, v5, v6 clamp                                     | 7x DX10
+Vop3CubeClamp            c 7 md=  4 nanpay= 0 | v_cubema_f32 v17, v4, v5, v6 clamp                                     | 4x DX10
+Vop3CubeClamp            c 9 md=  0 nanpay= 2 | v_cubesc_f32 v19, |v4|, -v5, -v6                                       | 2x IEEE(q)
+Vop3CubeClamp            c10 md=  0 nanpay= 3 | v_cubetc_f32 v20, -v4, -v5, |v6|                                       | 3x IEEE(q)
+Vop3CubeClamp            c11 md=  0 nanpay= 1 | v_cubema_f32 v21, |v4|, v5, -v6                                        | 1x IEEE(q)
+Vop3CubeClamp            c13 md=  3 nanpay= 0 | v_cubesc_f32 v23, v4, -v5, |v6| clamp                                  | 3x DX10
+Vop3CubeClamp            c14 md=  7 nanpay= 0 | v_cubetc_f32 v24, |v4|, v5, -v6 clamp                                  | 7x DX10
+Vop3CubeClamp            c15 md=  4 nanpay= 0 | v_cubema_f32 v25, -v4, |v5|, v6 clamp                                  | 4x DX10
+Vop3PackLdexp            c 4 md=  3 nanpay= 2 | v_ldexp_f32 v14, v4, v6                                                | 2x IEEE(q); 2x D32; 1x D32(q)
+Vop3PackLdexp            c 5 md=  3 nanpay= 2 | v_ldexp_f32 v15, -|v4|, v6                                             | 2x IEEE(q); 2x D32; 1x D32(q)
+Vop3PackLdexp            c 6 md=  2 nanpay= 4 | v_ldexp_f32 v16, v5, v7                                                | 4x IEEE(q); 1x D32(q); 1x D32
+Vop3PackLdexp            c 8 md= 19 nanpay= 2 | v_pack_b32_f16 v18, v4, v5                                             | 20x D16; 1x IEEE(q)
+Vop3PackLdexp            c 9 md= 19 nanpay= 2 | v_pack_b32_f16 v19, -v4, |v5|                                          | 20x D16; 1x IEEE(q)
+Vop3PackLdexp            c10 md=  5 nanpay= 0 | v_pack_b32_f16 v20, v4, v5 op_sel:[1,1,0]                              | 5x D16
+Vop3PackLdexp            c11 md= 12 nanpay= 3 | v_pack_b32_f16 v21, -|v4|, v5 op_sel:[0,1,0]                           | 14x D16; 1x IEEE(q)
+Counter({'md': 1691})

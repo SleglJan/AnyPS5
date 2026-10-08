@@ -1,0 +1,123 @@
+  .long 0xd76d000a
+  .long 0x041a0b04
+  .long 0xd747000b
+  .long 0x041a0b04
+  .long 0xd771000c
+  .long 0x041a0b04
+  .long 0xd772000d
+  .long 0x041a0b04
+  .long 0xd578000e
+  .long 0x041a0b04
+  .long 0xd745000f
+  .long 0x041a0b04
+  .long 0xd7460010
+  .long 0x041a0b04
+  .long 0xd76f0011
+  .long 0x041a0b04
+  .long 0xd5480012
+  .long 0x041a0b04
+  .long 0xd5490013
+  .long 0x041a0b04
+  .long 0xd54a0014
+  .long 0x041a0b04
+  .long 0xd7630015
+  .long 0x02020b04
+  .long 0xd7440016
+  .long 0x041a0b04
+  .long 0xd54e0017
+  .long 0x041a0b04
+  .long 0xd54f0018
+  .long 0x041a0b04
+  .long 0xd5690019
+  .long 0x02020b04
+  .long 0xd56a001a
+  .long 0x02020b04
+  .long 0xd56c001b
+  .long 0x02020b04
+  .long 0xd542001c
+  .long 0x041a0b04
+  .long 0xd764001d
+  .long 0x02020b04
+  .long 0xd6ff001e
+  .long 0x02020b04
+  .long 0xd7000020
+  .long 0x02020b04
+  .long 0xd7010022
+  .long 0x02020b04
+  .long 0xd5520024
+  .long 0x041a0b04
+  .long 0xd5550025
+  .long 0x041a0b04
+  .long 0xd5580026
+  .long 0x041a0b04
+  .long 0xd5530027
+  .long 0x041a0b04
+  .long 0xd5560028
+  .long 0x041a0b04
+  .long 0xd5590029
+  .long 0x041a0b04
+  .long 0xd76a002a
+  .long 0x02020b04
+  .long 0xd76b002b
+  .long 0x02020b04
+  .long 0x7e580307
+  .long 0xd703002c
+  .long 0x02020b04
+  .long 0x7e5a0307
+  .long 0xd704002d
+  .long 0x02020b04
+  .long 0x7e5c0307
+  .long 0xd70d002e
+  .long 0x02020b04
+  .long 0x7e5e0307
+  .long 0xd70e002f
+  .long 0x02020b04
+  .long 0x7e600307
+  .long 0xd7140030
+  .long 0x02020b04
+  .long 0x7e620307
+  .long 0xd7070031
+  .long 0x02020b04
+  .long 0x7e640307
+  .long 0xd7080032
+  .long 0x02020b04
+  .long 0x7e660307
+  .long 0xd70b0033
+  .long 0x02020b04
+  .long 0x7e680307
+  .long 0xd7090034
+  .long 0x02020b04
+  .long 0x7e6a0307
+  .long 0xd70c0035
+  .long 0x02020b04
+  .long 0x7e6c0307
+  .long 0xd70a0036
+  .long 0x02020b04
+  .long 0xd70f0837
+  .long 0x02020b04
+  .long 0xd5010038
+  .long 0x00210280
+  .long 0xd7100839
+  .long 0x02020b04
+  .long 0xd501003a
+  .long 0x00210280
+  .long 0xd719083b
+  .long 0x02020b04
+  .long 0xd501003c
+  .long 0x00210280
+  v_mov_b32 v10, v26
+  v_mov_b32 v11, v27
+  v_mov_b32 v12, v28
+  v_mov_b32 v13, v29
+  v_mov_b32 v14, v30
+  v_mov_b32 v15, v31
+  v_mov_b32 v16, v32
+  v_mov_b32 v17, v33
+  v_mov_b32 v18, v34
+  v_mov_b32 v19, v35
+  v_mov_b32 v20, v36
+  v_mov_b32 v21, v37
+  v_mov_b32 v22, v38
+  v_mov_b32 v23, v39
+  v_mov_b32 v24, v40
+  v_mov_b32 v25, v41

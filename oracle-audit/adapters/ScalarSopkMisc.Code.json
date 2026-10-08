@@ -1,0 +1,24 @@
+{
+  "file": "ScalarSopkMisc.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [1, 22],
+  "pre": [],
+  "post": [],
+  "columns": {"0": 0, "1": 1, "2": 2, "3": 3},
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Word 0 (v_lshlrev_b32 v3, 6, v0: output address for the stores) is dropped from the manifest's [0,22]; it is store setup only. Range starts at word 1.",
+    "No inputs: Fill() is empty and the kernel never loads; the row contents are irrelevant (first4 of a zero table).",
+    "s_version 0x1234 (word 13) has no destination and changes no state: it is an encoding annotation, not a hardware-state read, so no column depends on it (manifest's 'reads hardware state' flag is a false positive).",
+    "s_setreg_imm32_b32 hwreg(HW_REG_MODE, 0, 4), 0 (word 14) sets both round modes to nearest-even for the rest of the wave. No float instruction follows, so no column depends on it, but the oracle's round32/round16 settings are overridden from that point (irrelevant here).",
+    "Results go out from v10..v13 = s20, s21, s22, s23: columns 0..3 = cmovk_taken 0xffff8001, cmovk_not_taken 0x22222222, after_setreg_imm32 0x44444444, cmovk_positive 0x00001234; all four asserted by Check(). Results 4..15 are never written by the test kernel (Output pre-filled 0xdeadbeef) and not asserted; do not compare them.",
+    "The ExpectRefused() part of the test (RoundTowardZeroCode must be refused by the recompiler) is a recompiler property with no oracle equivalent."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 1..21: s_mov s20/s21/s23, three s_cmp/s_cmovk_i32 pairs, s_version, s_setreg_imm32_b32 MODE[3:0]=0, s_mov s22, v_mov v10..v13 <- s20..s23; Run() (no user data besides the two buffer descriptors, which the stripped stores alone use) and Check() (indices 0..3) read"
+}

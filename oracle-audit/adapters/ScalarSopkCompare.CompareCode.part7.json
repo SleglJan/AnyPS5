@@ -1,0 +1,39 @@
+{
+  "file": "ScalarSopkCompare.cpp",
+  "kernel": "CompareCode",
+  "manifest_class": "partial",
+  "status": "split 7/60",
+  "skip": false,
+  "words_file": "generated/ScalarSopkCompare.CompareCode.words.txt",
+  "words": [
+    313,
+    363
+  ],
+  "pre": [
+    "s_mov_b32 s8, 0x00000000",
+    "s_mov_b32 s9, 0x00000001",
+    "s_mov_b32 s10, 0x00001234",
+    "s_mov_b32 s11, 0x00007fff",
+    "s_mov_b32 s12, 0x00008000",
+    "s_mov_b32 s13, 0x0000ffff",
+    "s_mov_b32 s14, 0x7fffffff",
+    "s_mov_b32 s15, 0x80000000",
+    "s_mov_b32 s16, 0xffff8000",
+    "s_mov_b32 s17, 0xffffffff"
+  ],
+  "post": [],
+  "columns": {
+    "6": 0
+  },
+  "rows": "first4",
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "CompareCode is built by constexpr BuildCode(); words dumped from a standalone g++ copy of the generator into generated/ScalarSopkCompare.CompareCode.words.txt (3122 words, same count as the manifest).",
+    "The kernel is 60 independent blocks 's_mov_b32 s30, 0; 12 x (s_cmpk_* s(8+value), imm; s_cselect_b32 s31, 1<<k, 0; s_or_b32 s30, s30, s31); v_mov_b32 v10, s30; buffer_store_dword v10 at result*4'. This part is block 6 = Values[1] (s9 = 0x00000001) against immediate 0x0000: words [313,363) end at v_mov_b32 v10, s30, leaving result column 6 in v10.",
+    "pre loads the user-data SGPRs exactly as Run() does: userData[8..17] = Values[0..9] -> s8..s17 (only s9 is read by this block). userData[4..7] is the output buffer descriptor, used only by the stripped stores: left out (s[4:7] stay the oracle's).",
+    "No per-lane inputs: every lane computes the same mask; rows irrelevant. Check() asserts all 60 columns: bit k == Compares[k].evaluate(value, imm) and bits 12..31 zero; Results 60..63 are never written or checked."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030, whole stream, 2342 instructions, none invalid) of the generated words: block 6 starts with s_mov_b32 s30, 0 at word 313 and ends with v_mov_b32 v10, s30 at word 362, followed by buffer_store_dword at 363; Run() user data and Check() read"
+}

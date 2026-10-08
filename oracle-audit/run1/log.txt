@@ -1,0 +1,59 @@
+audit run 1: replayable=yes kernels, hosts NVIDIA+Ryzen, 7 modes, started 20:49:36Z, branch work/oracle-audit b89ad4fd, main 4b6ab6bb
+DivFixupF16/Code: 32 rows x 8 cols; flagged {'mode-dependent': 51, 'recompiler-differs-from-hardware-title-mode': 21}
+Division/HelperCode: extract: Division.cpp: no Rows table (C-array HelperVectors[256], DivisionVectors[256])
+Division/DivisionCode: extract: Division.cpp: no Rows table (C-array HelperVectors[256], DivisionVectors[256])
+Division/FmaCode: extract: Division.cpp: no Rows table (C-array HelperVectors[256], DivisionVectors[256])
+DivisionOutputModifiers/Code: 32 rows x 16 cols; flagged {'mode-dependent': 205, 'mode-dependent-nan-payload': 1}
+DivisionResultModifiers/Code: 32 rows x 16 cols; flagged {'mode-dependent': 82, 'mode-dependent-nan-payload': 1}
+Dpp16InactiveSource/Wave32Code: 64 rows x 16 cols; flagged none
+Dpp16InactiveSource/Wave64Code: 64 rows x 16 cols; flagged none
+Dpp16Operands/Code: 32 rows x 16 cols; flagged none
+Dpp16RowShareXmask/Wave32Code: 64 rows x 16 cols; flagged none
+Dpp16RowShareXmask/Wave64Code: 64 rows x 16 cols; flagged none
+Dpp8/Wave32Code: 64 rows x 12 cols; flagged none
+Dpp8/Wave64Code: 64 rows x 12 cols; flagged none
+DsPermute/Code: 32 rows x 4 cols; flagged none
+DsSwizzle/Wave32Code: 64 rows x 16 cols; flagged none
+DsSwizzle/Wave64Code: 64 rows x 16 cols; flagged none
+F32MinMaxNan/Code: 128 rows x 8 cols; flagged {'mode-dependent': 191, 'mode-dependent-nan-payload': 67}
+F32OutputModifier/Code: 32 rows x 16 cols; flagged {'mode-dependent': 220, 'nan-payload-only': 65, 'mode-dependent-nan-payload': 26}
+F32ResultClamp/Code: 32 rows x 16 cols; flagged {'mode-dependent': 57}
+F64Arithmetic/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 21, 'nan-payload-only': 21, 'mode-dependent': 14, 'recompiler-differs-from-hardware-title-mode': 14}
+F64Conversions/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 3, 'nan-payload-only': 1, 'mode-dependent': 52}
+F64Division/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 15, 'nan-payload-only': 15}
+F64DivisionModifiers/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 10, 'nan-payload-only': 10}
+F64NanConversions/Code: 32 rows x 3 cols; flagged {'mode-dependent-nan-payload': 13, 'nan-payload-only': 13}
+F64Rounding/Code: 32 rows x 16 cols; flagged {'mode-dependent': 28, 'recompiler-differs-from-hardware-title-mode': 28}
+F64Transcendental/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 8, 'nan-payload-only': 8, 'mode-dependent': 19, 'recompiler-differs-from-hardware-title-mode': 4}
+Float16Dot/Code: 32 rows x 16 cols; flagged none
+Float16Modifiers/Code: 32 rows x 16 cols; flagged {'mode-dependent': 206, 'hosts-differ': 14, 'recompiler-differs-from-hardware-title-mode': 14}
+Float16TernaryClamp/Code: 32 rows x 12 cols; flagged {'mode-dependent': 46}
+FmaLegacy/FmaLegacyCode: 20 rows x 5 cols; flagged {'nan-payload-only': 10}
+IntegerDot/DotCode: extract: IntegerDot.cpp: no Rows table (Threads constant)
+PackedIntegerClamp/Code: 32 rows x 16 cols; flagged none
+Permlane16/Wave32Code: 64 rows x 16 cols; flagged none
+Permlane16/Wave64Code: 64 rows x 16 cols; flagged none
+ReadLane/ReadLaneCode: extract: ReadLane.cpp: no Rows table (Threads constant)
+ScalarBitCount/BitCountCode: extract: ScalarBitCount.cpp: no Rows table (Threads constant)
+SdwaFloatSelectors/Code: 32 rows x 16 cols; flagged {'mode-dependent': 133, 'recompiler-differs-from-hardware-title-mode': 19, 'hosts-differ': 4}
+SdwaIntegerClamp/Code: 32 rows x 16 cols; flagged none
+SdwaIntegerSelectors/Code: 32 rows x 16 cols; flagged none
+SdwaLdexpF16/Code: 32 rows x 16 cols; flagged {'mode-dependent': 254, 'mode-dependent-nan-payload': 24, 'recompiler-differs-from-hardware-title-mode': 36}
+Vop2ModifierForms/Code: 32 rows x 16 cols; flagged {'mode-dependent': 42, 'recompiler-differs-from-hardware-title-mode': 3, 'nan-payload-only': 4}
+Vop3AlignOpSel/Code: 32 rows x 16 cols; flagged none
+Vop3CarryOut/CarryOutCode: extract: Vop3CarryOut.cpp: no Rows table (Threads constant)
+Vop3CubeClamp/Code: 32 rows x 16 cols; flagged {'mode-dependent-nan-payload': 12, 'mode-dependent': 28}
+Vop3Integer16TernaryOpSel/Code: 32 rows x 16 cols; flagged none
+Vop3IntegerClamp/Code: 32 rows x 16 cols; flagged none
+Vop3IntegerClampWide/Code: 32 rows x 16 cols; flagged none
+Vop3LegacySourceModifiers/Code: 32 rows x 16 cols; flagged none
+Vop3Lerp/LerpCode: extract: Vop3Lerp.cpp: no Rows table (Threads constant)
+Vop3MadClamp/Code: 32 rows x 6 cols; flagged none
+Vop3MadI64/Code: 32 rows x 12 cols; flagged none
+Vop3PackLdexp/Code: 32 rows x 16 cols; flagged {'mode-dependent': 63, 'recompiler-differs-from-hardware-title-mode': 50, 'mode-dependent-nan-payload': 15}
+Vop3QuadSad/Code: 32 rows x 16 cols; flagged none
+Vop3Sad/SadCode: extract: Vop3Sad.cpp: no Rows table (Threads constant)
+VopcCompareTable/Wave32Code: 64 rows x 12 cols; flagged none
+VopcCompareTable/Wave64Code: 64 rows x 12 cols; flagged none
+wrote /home/slegl/PycharmProjects/anyps5/notes/oracle-audit-run1/audit.json (56 kernels)
+finished 20:50:23Z

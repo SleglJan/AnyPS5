@@ -1,0 +1,39 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v8, v7"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "FmaRounding.cpp",
+ "kernel": "FmaCode",
+ "status": "split 2/3",
+ "words": [
+  19,
+  21
+ ],
+ "columns": {
+  "3": 3
+ },
+ "rows": {
+  "table": "Rows",
+  "layout": "lane tid -> [Rows[tid].a, Rows[tid].b, Rows[tid].c, Rows[tid].mkC] (struct words 0,1,2,4)",
+  "words": [
+   0,
+   1,
+   2,
+   4
+  ],
+  "count": 64
+ },
+ "row_count": 64,
+ "notes": [
+  "Kernel has 5 inputs (a,b,c,akB,mkC at Input[tid*8+0..4]) and words 21,24,25,27,32 are gfx1013-only encodings (v_mad_f32, v_mac_f32, v_madak_f32, v_madmk_f32, v_mac_f32_e64) with no gfx103x encoding, so columns 4,5,6,7,9 cannot be measured on the gfx1036 oracle and are not covered by any part.",
+  "The fused columns 0..3 are asserted only if the host fuses (Check() detects it from column 0); on hardware they always fuse.",
+  "Split by word sub-range (not by column slice): each part replays a contiguous run of unmodified kernel words free of the gfx1013-only encodings.",
+  "Part 2: word 19 v_fmamk_f32 v13, v4, K, v8 reads only v4 and v8; the row carries mkC in dword 3 and pre copies v7 -> v8."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

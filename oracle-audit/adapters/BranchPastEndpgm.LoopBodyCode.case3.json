@@ -1,0 +1,36 @@
+{
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "LoopBodyCode",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    4,
+    8
+  ],
+  "pre": [
+    "s_mov_b32 s8, 0"
+  ],
+  "post": [
+    "v_mov_b32 v10, v4"
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[(tid * 0x01010101 + 7) & 0xffffffff, 0, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Cases[3] 'return before the loop' (selector 0, expected Input+64).",
+    "With s8 = 0 the s_cbranch_scc0 at word 6 (target 13, outside) is not taken; replay runs s_mov s9,0; s_cmp; s_cbranch (fall through); v_add v4, 64, v4. Checker's 'branch outside' flag for word 6 is expected.",
+    "post copies v4 to v10 (column 0, the only asserted column)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; Run()/Check()/Cases read.",
+  "accepted_flags": {
+    "6": "s8=0 so s_cmp_eq_u32 s8,0 sets SCC=1 and s_cbranch_scc0 to word 13 is not taken; target unreachable"
+  }
+}

@@ -1,0 +1,79 @@
+[
+ {
+  "adapter": "BranchPastEndpgm.LoopBodyCode.case4.json",
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "LoopBodyCode",
+  "variant": "case4",
+  "reason": "Cases[4] (selector 1, expected +1) branches to the loop body at words 11-14, which sits after a buffer_store/s_endpgm (words 8-10) and falls into another store; not a contiguous store-free range."
+ },
+ {
+  "adapter": "BranchPastEndpgm.LoopBodyCode.case5.json",
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "LoopBodyCode",
+  "variant": "case5",
+  "reason": "Cases[5] (selector 3, expected +3) branches to the loop body at words 11-14, which sits after a buffer_store/s_endpgm (words 8-10) and falls into another store; not a contiguous store-free range."
+ },
+ {
+  "adapter": "BranchPastEndpgm.TailBlockCode.case1.json",
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "TailBlockCode",
+  "variant": "case1",
+  "reason": "Case 1 (selector 1, expected +2) takes s_cbranch_scc0 to word 14 and reaches its result through tail blocks interleaved with buffer_store/s_endpgm (words 7-19); the path is not a contiguous store-free word range."
+ },
+ {
+  "adapter": "BranchPastEndpgm.TailBlockCode.case2.json",
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "TailBlockCode",
+  "variant": "case2",
+  "reason": "Case 2 (selector 2, expected +3) takes s_cbranch_scc0 to word 14 and reaches its result through tail blocks interleaved with buffer_store/s_endpgm (words 7-19); the path is not a contiguous store-free word range."
+ },
+ {
+  "adapter": "DsWrxchg2B64.Code.json",
+  "file": "DsWrxchg2B64.cpp",
+  "kernel": "Code",
+  "variant": "",
+  "reason": "needs 8 input dwords per lane in v2..v9 (Fill() gives 8 pseudo-random dwords from a 64-bit LCG); the oracle row carries 4. Adapter below is complete apart from the rows and becomes runnable once --extra (or wider rows) exists."
+ },
+ {
+  "adapter": "LdsAddtid.Wave64Code.json",
+  "file": "LdsAddtid.cpp",
+  "kernel": "Wave64Code",
+  "variant": "",
+  "reason": "the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB) and its ALU words use immediate LDS offsets up to 7936 (ds_write_b32/ds_read_b32 v80 offset:4096..7936, highest byte 8191) and addtid M0 bases tuned to the 8 KiB bound (0x7f001f5c, 0xffff0304, 0xff1e80); the oracle has a fixed 4 KiB group segment, so half the planes and the out-of-range addtid cases would behave differently. Offsets are immediates in the words, so no rebase is possible."
+ },
+ {
+  "adapter": "LdsAtomics64.Code.json",
+  "file": "LdsAtomics64.cpp",
+  "kernel": "Code",
+  "variant": "",
+  "reason": "LDS immediates exceed 4 KiB: the kernel uses one 256-byte plane per operation with ds_*_b64 immediate offsets 0..8704 plus a shared contention slot at offset 8960/8968 (test allocates 2244 dwords = 8976 B); the oracle's group segment is a fixed 4096 B and immediates cannot be rebased. It also needs 6 input dwords per lane (v4..v9; c = in[4..5] feeds mskor/cmpst and the contended ds_max_rtn_u64) and uses v2 (template output offset) as its LDS base."
+ },
+ {
+  "adapter": "LdsIntegerAtomics.Wave64Code.json",
+  "file": "LdsIntegerAtomics.cpp",
+  "kernel": "Wave64Code",
+  "variant": "",
+  "reason": "the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB); its planes are 256 B apart with immediate offsets up to 7936 (highest byte 8191). The oracle's group segment is a fixed 4096 B and immediates cannot be rebased."
+ },
+ {
+  "adapter": "LdsReadWrite.Wave64Code.json",
+  "file": "LdsReadWrite.cpp",
+  "kernel": "Wave64Code",
+  "variant": "",
+  "reason": "the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB); its planes are 256 B apart with immediate offsets up to 8128 and the out-of-range probes are placed at the 8 KiB end. The oracle's group segment is a fixed 4096 B and immediates cannot be rebased."
+ },
+ {
+  "adapter": "LoopEndingExits.Code.json",
+  "file": "LoopEndingExits.cpp",
+  "kernel": "Code",
+  "variant": "",
+  "reason": "Cases[0..3] (selectors 0,1,3,4; expected +32,+33,+35,+36) exit to word 17, which is after a buffer_store/s_endpgm (words 14-16); not a contiguous store-free range."
+ },
+ {
+  "adapter": "WaveIdInWorkgroup.WaveIdCode.json",
+  "file": "WaveIdInWorkgroup.cpp",
+  "kernel": "WaveIdCode",
+  "variant": "",
+  "reason": "s_get_waveid_in_workgroup (word 4, 0xf4a80100) is a gfx10.1-only SMEM opcode: llvm-mc rejects it for gfx1030 and decodes it only for gfx1013, so the gfx1036 oracle cannot execute it. The kernel also writes the result into s4 (template output pointer) and builds its store index from v1/v2 (workitem ids y/z of 3-D workgroups 8x8x2, 8x13x1), which the 1-D oracle dispatch does not provide."
+ }
+]

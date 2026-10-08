@@ -1,0 +1,37 @@
+{
+  "file": "LoopEndingExits.cpp",
+  "kernel": "Code",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    4,
+    14
+  ],
+  "pre": [
+    "s_mov_b32 s8, 5"
+  ],
+  "post": [
+    "v_mov_b32 v10, v4"
+  ],
+  "columns": {
+    "0": 0
+  },
+  "rows": {
+    "expr": "[(tid * 0x01010101 + 7) & 0xffffffff, 0, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "lds": 0,
+  "notes": [
+    "Cases[4] 'loop exit to the end of the program' (selector 5, expected Input+68). The test runs every case at wave32 and wave64; this file is the wave64 run.",
+    "With s8 = 5: word 6 s_cbranch_scc1 (to 17) not taken; the loop words 7-12 run 4 times (s9 = 1..4 never equals 5, so word 10's branch to 17 is never taken; word 12 branches back to word 7, inside); then word 13 adds 64. The checker's 'branch outside' flags for words 6 and 10 are expected for this selector.",
+    "Column 0 = v4, the only asserted column."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; loop trip count traced by hand; Run()/Check()/Cases read.",
+  "accepted_flags": {
+    "6": "s8=5: s_cmp_eq_u32 s8,0 is false, branch not taken",
+    "10": "s9 counts 1..4 and the loop exits via s_cmp_lt_u32 s9,4 before s9 can equal s8=5; branch never taken"
+  }
+}

@@ -1,0 +1,53 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v10, 0xabcdabcd",
+  "v_mov_b32 v11, 0xabcdabcd",
+  "v_mov_b32 v12, 0xabcdabcd",
+  "v_mov_b32 v13, 0xabcdabcd",
+  "v_mov_b32 v14, 0xabcdabcd",
+  "v_mov_b32 v18, 0xabcdabcd"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "Float16Misc.cpp",
+ "kernel": "MiscCode",
+ "status": "ready",
+ "words": [
+  21,
+  37
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9
+ },
+ "rows": {
+  "table": "Vectors",
+  "layout": "lane i -> [Vectors[i].a, Vectors[i].b, Vectors[i].c, 0] (struct words 0,1,2; Input[lane*4+3] stays 0)",
+  "words": [
+   0,
+   1,
+   2,
+   null
+  ],
+  "count": 256
+ },
+ "row_count": 32,
+ "notes": [
+  "Prologue sentinels 0xabcdabcd in v10..v14 and v18 go in pre: the 16-bit ops keep the high half (Expected has 0xabcd in the high half).",
+  "Result columns 0..10 are stored from v10..v20 (identity). Column 10 (v20 = v_mov v20,v6 then VOP2 opcode 0x06 at word 36) is EXCLUDED: that encoding is v_mac_legacy_f32 (unfused) on gfx1013 but v_fmac_legacy_f32 (fused) on gfx103x, so the gfx1036 oracle executes a different instruction. Words 35-36 still run (they only write v20).",
+  "The test runs the 256 vectors 32 per dispatch; the ALU is lane-independent, so all 256 rows can go in one oracle run.",
+  "Check(): columns 0,1 accept any f16 NaN with equal high half; columns 9,10 accept any f32 NaN and are skipped when a, b or expected[9] is an f32 denormal."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns; gfx1013/gfx1030 decode differs only at word 36 (mac_legacy vs fmac_legacy)"
+}

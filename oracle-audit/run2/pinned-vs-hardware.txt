@@ -1,0 +1,379 @@
+Run 2: pinned value (the test's own table, & column mask) vs titles'-mode hardware value, bit-exact.
+'reproduced by' = modes whose oracle value equals the pin; 'Check() accepts hw' = the test's own comparison applied to the hardware value.
+Modes: T=title O=old K=ieee0_keep32 F=ieee1_flush32 h=title_flush16 c=title_noclamp v=title_fp16ovfl
+
+## Division.cpp DivisionCode: 1 adapter file(s), 256 cells, 256 with a pin, 256 asserted; pin != hardware: 1 asserted, 0 unasserted
+   pins: Division.cpp:DivisionVectors[256].quotient; Check(): col 0 exact (the test runs it only on hosts that fuse FMA)
+   ASSERTED: 1 cells; reproduced by {'O+F': 1}
+     r 16 c 0 pin=fff58830 hw=ffb58830 by=O+F | NVIDIA=fff58830 Ryzen=fff58830 | Check() accepts hw: NO | in=ffb58830 0b03c189 00000000 00000000 | Division.DivisionCode | w24 v_div_fixup_f32 v10, v8, v5, v4
+
+## Division.cpp HelperCode: 1 adapter file(s), 1024 cells, 1024 with a pin, 932 asserted; pin != hardware: 20 asserted, 0 unasserted
+   pins: Division.cpp:HelperVectors[256].{scale,scaleVcc,fmas,fixup}; Check(): cols 0,1 only when s0 == s1 or s0 == s2; col 2 only when the host fuses FMA (asserted here); col 3 always; exact
+   ASSERTED: 20 cells; reproduced by {'O+F': 20}
+     r 13 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 bf9b99f7 00000001 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r 13 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 bf9b99f7 00000001 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r 42 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 3f96a6b3 00000001 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r 42 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 3f96a6b3 00000001 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r 64 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3f96a6b3 3f96a6b3 7f800001 00000001 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r 64 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3f96a6b3 3f96a6b3 7f800001 00000001 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r 82 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3f96a6b3 7f800001 3f96a6b3 00000000 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r 82 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3f96a6b3 7f800001 3f96a6b3 00000000 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r121 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=bf9b99f7 bf9b99f7 7f800001 00000001 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r121 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=bf9b99f7 bf9b99f7 7f800001 00000001 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r165 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3fac0a5a 7f800001 3fac0a5a 00000000 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r165 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=3fac0a5a 7f800001 3fac0a5a 00000000 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r184 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 3fac0a5a 7f800001 00000000 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r184 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 3fac0a5a 7f800001 00000000 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r238 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 3fac0a5a 00000001 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r238 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 7f800001 3fac0a5a 00000001 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r239 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 3f96a6b3 7f800001 00000000 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r239 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 3f96a6b3 7f800001 00000000 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+     r241 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 bf9b99f7 7f800001 00000000 | Division.HelperCode | w15 v_div_fmas_f32 v12, v4, v5, v6
+     r241 c 3 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 bf9b99f7 7f800001 00000000 | Division.HelperCode | w17 v_div_fixup_f32 v13, v4, v5, v6
+
+## Float16Misc.cpp MiscCode: 1 adapter file(s), 2560 cells, 2560 with a pin, 2457 asserted; pin != hardware: 12 asserted, 72 unasserted
+   pins: Float16Misc.cpp:Vectors[256].expected; Check(): cols >= 9 skipped when a, b or expected[9] is an f32 denormal; cols 0,1 f16-NaN-tolerant, cols 9,10 f32-NaN-tolerant
+   ASSERTED: 12 cells; reproduced by {'O+F': 12}
+     r 17 c 9 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fffffff Ryzen=7f800001 | Check() accepts hw: yes | in=10714d51 7f800001 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 22 c 0 pin=abcd7f00 hw=abcd7d00 by=O+F | NVIDIA=abcd7f00 Ryzen=abcd7f00 | Check() accepts hw: yes | in=38007d00 00000018 15de2f14 00000000 | Float16Misc.MiscCode | w21 v_ldexp_f16_e32 v10, v4, v5
+     r 22 c 1 pin=abcd7f00 hw=abcd7d00 by=O+F | NVIDIA=abcd7f00 Ryzen=abcd7f00 | Check() accepts hw: yes | in=38007d00 00000018 15de2f14 00000000 | Float16Misc.MiscCode | w22 v_frexp_mant_f16_e32 v11, v4
+     r 34 c 9 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fffffff Ryzen=7f800001 | Check() accepts hw: yes | in=479d0cda 7f800001 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 35 c 9 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fffffff Ryzen=7f800001 | Check() accepts hw: yes | in=0577aea9 7f800001 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r149 c 0 pin=abcd7ee4 hw=abcd7ce4 by=O+F | NVIDIA=abcd7ee4 Ryzen=abcd7ee4 | Check() accepts hw: yes | in=c0007ce4 fffffff0 7f800000 00000000 | Float16Misc.MiscCode | w21 v_ldexp_f16_e32 v10, v4, v5
+     r149 c 1 pin=abcd7ee4 hw=abcd7ce4 by=O+F | NVIDIA=abcd7ee4 Ryzen=abcd7ee4 | Check() accepts hw: yes | in=c0007ce4 fffffff0 7f800000 00000000 | Float16Misc.MiscCode | w22 v_frexp_mant_f16_e32 v11, v4
+     r152 c 0 pin=abcdfe52 hw=abcdfc52 by=O+F | NVIDIA=abcdfe52 Ryzen=abcdfe52 | Check() accepts hw: yes | in=5640fc52 00007fff bf800000 00000000 | Float16Misc.MiscCode | w21 v_ldexp_f16_e32 v10, v4, v5
+     r152 c 1 pin=abcdfe52 hw=abcdfc52 by=O+F | NVIDIA=abcdfe52 Ryzen=abcdfe52 | Check() accepts hw: yes | in=5640fc52 00007fff bf800000 00000000 | Float16Misc.MiscCode | w22 v_frexp_mant_f16_e32 v11, v4
+     r251 c 0 pin=abcd7f00 hw=abcd7d00 by=O+F | NVIDIA=abcd7f00 Ryzen=abcd7f00 | Check() accepts hw: yes | in=7bff7d00 5a763800 3f800000 00000000 | Float16Misc.MiscCode | w21 v_ldexp_f16_e32 v10, v4, v5
+     r251 c 1 pin=abcd7f00 hw=abcd7d00 by=O+F | NVIDIA=abcd7f00 Ryzen=abcd7f00 | Check() accepts hw: yes | in=7bff7d00 5a763800 3f800000 00000000 | Float16Misc.MiscCode | w22 v_frexp_mant_f16_e32 v11, v4
+     r255 c 9 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fffffff Ryzen=7f800001 | Check() accepts hw: yes | in=46510173 7f800001 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+   unasserted: 72 cells; reproduced by {'O+K': 72}
+     r  1 c 9 pin=839a0691 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=cac52720 00000064 8fe2c3f4 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r  5 c 9 pin=b17f8acd hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=fbff8acd 00000001 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r  6 c 9 pin=07196949 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=4ca4aaf9 000003ba 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 16 c 9 pin=b9dd560e hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=0001bc00 fbff3c07 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 18 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=88bc03ff 0000001b 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 21 c 9 pin=08972c59 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=4e63fc00 000002a7 9f94c755 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 27 c 9 pin=112d0a52 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=8001fbff d32e6778 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 29 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80019716 0000037f 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 39 c 9 pin=36cd2ba0 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7d00bc00 00000198 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 40 c 9 pin=7fc00000 hw=00000000 by=O+K | NVIDIA=7fffffff Ryzen=7fc00000 | Check() accepts hw: NO | in=00000001 7fc00000 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 42 c 9 pin=845e7b21 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=c6de7bff 0000ffff 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 43 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80013800 00000007 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 45 c 9 pin=b17f7bff hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=fbff7bff 00000001 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 52 c 9 pin=187fe4b4 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5e0a7f07 000003b2 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 54 c 9 pin=b67fc002 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=fc000001 000003ff 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 55 c 9 pin=80000035 hw=80000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=20da0200 9679c7bf bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 57 c 9 pin=351ed47a hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7ba2a454 000000fa bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 60 c 9 pin=000012e1 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=1b2e7c00 1f5d9946 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 63 c 9 pin=80000160 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=00000001 c3affcfe 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 68 c 9 pin=0bc05640 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=56405640 00000001 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 69 c 9 pin=3672de3c hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7c00fe00 000003c4 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 74 c 9 pin=80000008 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=bc00fc00 000003f5 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 75 c 9 pin=0b848f35 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=538d658e 0000001e a2d92973 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 77 c 9 pin=86926f89 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=00016875 c8d00001 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 79 c 9 pin=35d3ab80 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7bff0000 000001a9 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 89 c 9 pin=387fc000 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=fe000000 800003ff 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 90 c 9 pin=340053c9 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7d0053c9 00000008 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 92 c 9 pin=80000479 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=bc406498 00017d00 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 93 c 9 pin=7f800000 hw=00000000 by=O+K | NVIDIA=7fffffff Ryzen=ffc00000 | Check() accepts hw: NO | in=7f800000 00000001 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 94 c 9 pin=0000001d hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=3ff68e52 0000000f 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 95 c 9 pin=80fb0b3a hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=cb7b0b3a 00000001 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 96 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=b297fbff 0000016f bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r 97 c 9 pin=1322b256 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5b58edc8 00000018 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r100 c 9 pin=ffffffff hw=00000000 by=O+K | NVIDIA=7fffffff Ryzen=ffffffff | Check() accepts hw: NO | in=8001fbff ffffffff 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r104 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=9072bc00 00000001 512d126e 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r106 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=8001ecc8 0000001e 9621a9d3 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r109 c 9 pin=000662d8 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=46237c00 00000028 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r125 c 9 pin=b4c96114 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=fc00e1f8 00000064 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r126 c 9 pin=0e343429 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=564037a3 0000001e 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r127 c 9 pin=38768583 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7e00ed2e 000003d3 19f2d5ff 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r131 c 9 pin=0b539d01 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=515a0001 000001f1 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r136 c 9 pin=361373b9 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7bff7bd7 0000024f bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r151 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=9b085640 00000244 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r152 c 9 pin=1340fad0 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5640fc52 00007fff bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r153 c 9 pin=83662000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=cbe62000 00000010 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r160 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80010000 00000028 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r162 c 9 pin=00000001 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=32175640 0200fbff 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r166 c 9 pin=162926b0 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5ea926b0 00000010 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r183 c 9 pin=92907ade hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=d5907bff 00007fff 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r184 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=800022af 00000117 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r186 c 9 pin=1c7d0205 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5f7d03ff 00007fff 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r191 c 9 pin=80000001 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=bf800000 00000001 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r193 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80008bef 000003f6 5cfef954 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r194 c 9 pin=15eba616 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=000048d0 594f20d1 29fd96b2 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r199 c 9 pin=97e43336 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=00000001 e2643336 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r200 c 9 pin=a9d1054e hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=ec51054e 00010000 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r213 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=b1c13112 00000028 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r216 c 9 pin=34f0f002 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=7d008001 0000001e 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r217 c 9 pin=fffffff1 hw=00000000 by=O+K | NVIDIA=7fffffff Ryzen=fffffff1 | Check() accepts hw: NO | in=80017e00 fffffff1 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r219 c 9 pin=03e90740 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=49b48000 00000295 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r220 c 9 pin=1bb029c8 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=61a938f2 00000215 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r223 c 9 pin=154f5c22 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=5fcf5c22 00000001 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r230 c 9 pin=24a2b4bf hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=6c0903ff 0000004c 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r231 c 9 pin=34ffffff hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=00000001 7f7fffff 0ebc4be5 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r232 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80013800 00010000 bf800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r235 c 9 pin=ac2d133f hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=f3d503ff 00000034 00000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r238 c 9 pin=a6fcdb30 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=edd93800 00000095 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r239 c 9 pin=000000ed hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=3f397c00 00000147 3f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r244 c 9 pin=ffffffe8 hw=00000000 by=O+K | NVIDIA=7fffffff Ryzen=ffffffe8 | Check() accepts hw: NO | in=000121d6 ffffffe8 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r247 c 9 pin=3bff3294 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=0001fbff 7e009ac0 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r249 c 9 pin=80000000 hw=00000000 by=O+K | NVIDIA=80000000 Ryzen=80000000 | Check() accepts hw: NO | in=80016cb9 000002a6 80000000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+     r254 c 9 pin=00000022 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=4006fc00 00000010 7f800000 00000000 | Float16Misc.MiscCode | w34 v_mul_legacy_f32_e32 v19, v4, v5
+
+## Float16ResultModifiers.cpp Code: 1 adapter file(s), 512 cells, 512 with a pin, 512 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: Float16ResultModifiers.cpp:Expected[32][16]; Check(): every cell; halves NaN-tolerant; cols 3,4 within 2^-10 (col 4 non-negative)
+
+## Float16Rounding.cpp RoundingCode: 1 adapter file(s), 768 cells, 768 with a pin, 768 asserted; pin != hardware: 12 asserted, 0 unasserted
+   pins: Float16Rounding.cpp:Vectors[256].expected; Check(): every cell; f16 NaN-tolerant with equal high half
+   ASSERTED: 12 cells; reproduced by {'O+F': 12}
+     r 62 c 1 pin=abcdfffb hw=abcdfdfb by=O+F | NVIDIA=abcd7fff Ryzen=abcdfffb | Check() accepts hw: yes | in=ffc00000 12eb0a97 fcf9fdfb 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r 62 c 2 pin=abcdfffb hw=abcdfdfb by=O+F | NVIDIA=abcd7fff Ryzen=abcdfffb | Check() accepts hw: yes | in=ffc00000 12eb0a97 fcf9fdfb 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+     r 91 c 1 pin=abcdffc3 hw=abcdfdc3 by=O+F | NVIDIA=abcd7fff Ryzen=abcdffc3 | Check() accepts hw: yes | in=ff800000 ba07ac37 8e79fdc3 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r 91 c 2 pin=abcdffc3 hw=abcdfdc3 by=O+F | NVIDIA=abcd7fff Ryzen=abcdffc3 | Check() accepts hw: yes | in=ff800000 ba07ac37 8e79fdc3 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+     r136 c 1 pin=abcd7fed hw=abcd7ded by=O+F | NVIDIA=abcd7fff Ryzen=abcd7fed | Check() accepts hw: yes | in=734ae2e3 4ee10f77 3da37ded 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r136 c 2 pin=abcd7fed hw=abcd7ded by=O+F | NVIDIA=abcd7fff Ryzen=abcd7fed | Check() accepts hw: yes | in=734ae2e3 4ee10f77 3da37ded 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+     r184 c 1 pin=abcdff54 hw=abcdfd54 by=O+F | NVIDIA=abcd7fff Ryzen=abcdff54 | Check() accepts hw: yes | in=3fc816a6 31e9f720 fb5cfd54 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r184 c 2 pin=abcdff54 hw=abcdfd54 by=O+F | NVIDIA=abcd7fff Ryzen=abcdff54 | Check() accepts hw: yes | in=3fc816a6 31e9f720 fb5cfd54 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+     r190 c 1 pin=abcdfed4 hw=abcdfcd4 by=O+F | NVIDIA=abcd7fff Ryzen=abcdfed4 | Check() accepts hw: yes | in=994a5d91 8e537545 133efcd4 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r190 c 2 pin=abcdfed4 hw=abcdfcd4 by=O+F | NVIDIA=abcd7fff Ryzen=abcdfed4 | Check() accepts hw: yes | in=994a5d91 8e537545 133efcd4 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+     r254 c 1 pin=abcd7fc8 hw=abcd7dc8 by=O+F | NVIDIA=abcd7fff Ryzen=abcd7fc8 | Check() accepts hw: yes | in=249c62c3 7d747dc8 7c6e9ccc 00000000 | Float16Rounding.RoundingCode | w16 v_add_f16_e32 v11, v5, v6
+     r254 c 2 pin=abcd7fc8 hw=abcd7dc8 by=O+F | NVIDIA=abcd7fff Ryzen=abcd7fc8 | Check() accepts hw: yes | in=249c62c3 7d747dc8 7c6e9ccc 00000000 | Float16Rounding.RoundingCode | w17 v_mul_f16_e32 v12, v5, v6
+
+## FmaRounding.cpp FmaCode: 3 adapter file(s), 320 cells, 320 with a pin, 320 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: FmaRounding.cpp:Rows[64].{fused,fusedAk,fusedMk,separate,...}; Check(): cols 0..3 only when the host fuses FMA (asserted here); cols 4..9 always; exact
+
+## LdsAddtid.cpp Wave32Code: 3 adapter file(s), 1152 cells, 1152 with a pin, 1152 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: LdsAddtid.cpp:Expected32[32][36]; Check(): every cell exact
+
+## LdsIntegerAtomics.cpp Wave32Code: 3 adapter file(s), 1408 cells, 1408 with a pin, 1408 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: LdsIntegerAtomics.cpp:Expected32[32][44]; Check(): every cell exact
+
+## LdsReadWrite.cpp Wave32Code: 4 adapter file(s), 1856 cells, 1856 with a pin, 1856 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: LdsReadWrite.cpp:Expected32[32][58]; Check(): every cell exact
+
+## RelativeIndexing.cpp Code: 1 adapter file(s), 352 cells, 352 with a pin, 352 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: RelativeIndexing.cpp:Expected[32][11]; Check(): every cell exact
+
+## ScalarProgramFlow.cpp Wave32Code: 1 adapter file(s), 448 cells, 448 with a pin, 448 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarProgramFlow.cpp:Expected32[32][14]; Check(): every cell exact; cols 0..11 (CrossLane) only when the host subgroup covers the wave
+
+## ScalarProgramFlow.cpp Wave64Code: 1 adapter file(s), 896 cells, 896 with a pin, 896 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarProgramFlow.cpp:Expected64[64][14]; Check(): every cell exact; cols 0..11 (CrossLane) only when the host subgroup covers the wave
+
+## ScalarRelativeIndexing.cpp Code: 1 adapter file(s), 512 cells, 512 with a pin, 512 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarRelativeIndexing.cpp:Expected[16] (same for every lane); Check(): every cell exact
+
+## ScalarSop1.cpp Code: 11 adapter file(s), 4544 cells, 4544 with a pin, 4544 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarSop1.cpp:Expected[32][176]; Check(): columns whose Names[] entry is not nullptr; exact (ScalarSop1 masks exec-reading results with the host's lanes, all 32 here)
+
+## ScalarSop2.cpp Code: 4 adapter file(s), 1888 cells, 1888 with a pin, 1888 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarSop2.cpp:Expected[32][64]; Check(): columns whose Names[] entry is not nullptr; exact (ScalarSop1 masks exec-reading results with the host's lanes, all 32 here)
+
+## ScalarSopkMisc.cpp Code: 1 adapter file(s), 128 cells, 128 with a pin, 128 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: ScalarSopkMisc.cpp:Expected[4] (same for every lane); Check(): every cell exact
+
+## Vop1FloatUnary.cpp Code: 4 adapter file(s), 1728 cells, 1728 with a pin, 1710 asserted; pin != hardware: 118 asserted, 10 unasserted
+   pins: Vop1FloatUnary.cpp:Expected[32][54]; Check(): Checked[lane] bit mask; Tolerance[col] 0 exact, else relative/absolute tolerance
+   ASSERTED: 118 cells; reproduced by {'O+F': 118}
+     r  1 c 0 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w6 v_ceil_f32_e32 v10, v4
+     r  1 c 2 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w8 v_floor_f32_e32 v12, v4
+     r  1 c 4 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w10 v_trunc_f32_e32 v14, v4
+     r  1 c 6 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w12 v_rndne_f32_e32 v16, v4
+     r  1 c 8 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w14 v_fract_f32_e32 v18, v4
+     r  1 c12 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w18 v_frexp_mant_f32_e32 v22, v4
+     r  1 c14 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part1 | w20 v_sqrt_f32_e32 v24, v4
+     r  7 c 0 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w6 v_ceil_f32_e32 v10, v4
+     r  7 c 1 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w7 v_ceil_f32_e32 v11, v5
+     r  7 c 2 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w8 v_floor_f32_e32 v12, v4
+     r  7 c 3 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w9 v_floor_f32_e32 v13, v5
+     r  7 c 4 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w10 v_trunc_f32_e32 v14, v4
+     r  7 c 5 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w11 v_trunc_f32_e32 v15, v5
+     r  7 c 6 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w12 v_rndne_f32_e32 v16, v4
+     r  7 c 7 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w13 v_rndne_f32_e32 v17, v5
+     r  7 c 8 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w14 v_fract_f32_e32 v18, v4
+     r  7 c 9 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w15 v_fract_f32_e32 v19, v5
+     r  7 c12 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w18 v_frexp_mant_f32_e32 v22, v4
+     r  7 c13 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w19 v_frexp_mant_f32_e32 v23, v5
+     r  7 c14 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w20 v_sqrt_f32_e32 v24, v4
+     r  7 c15 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part1 | w21 v_sqrt_f32_e32 v25, v5
+     r 11 c 0 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w6 v_ceil_f32_e32 v10, v4
+     r 11 c 2 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w8 v_floor_f32_e32 v12, v4
+     r 11 c 4 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w10 v_trunc_f32_e32 v14, v4
+     r 11 c 6 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w12 v_rndne_f32_e32 v16, v4
+     r 11 c 8 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w14 v_fract_f32_e32 v18, v4
+     r 11 c12 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w18 v_frexp_mant_f32_e32 v22, v4
+     r 11 c14 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part1 | w20 v_sqrt_f32_e32 v24, v4
+     r 15 c 0 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w6 v_ceil_f32_e32 v10, v4
+     r 15 c 2 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w8 v_floor_f32_e32 v12, v4
+     r 15 c 4 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w10 v_trunc_f32_e32 v14, v4
+     r 15 c 6 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w12 v_rndne_f32_e32 v16, v4
+     r 15 c 8 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w14 v_fract_f32_e32 v18, v4
+     r 15 c12 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w18 v_frexp_mant_f32_e32 v22, v4
+     r 15 c14 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part1 | w20 v_sqrt_f32_e32 v24, v4
+     r  1 c16 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v10, v26 <- w22 v_rsq_f32_e32 v26, v4
+     r  1 c18 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v12, v28 <- w24 v_rcp_f32_e32 v28, v4
+     r  1 c20 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v14, v30 <- w26 v_rcp_iflag_f32_e32 v30, v4
+     r  1 c22 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v16, v32 <- w28 v_log_f32_e32 v32, v4
+     r  1 c24 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v18, v34 <- w30 v_exp_f32_e32 v34, v4
+     r  1 c26 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v20, v36 <- w32 v_sin_f32_e32 v36, v4
+     r  1 c28 pin=7fc00001 hw=7f800001 by=O+F | NVIDIA=7fc00001 Ryzen=7fc00001 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v22, v38 <- w34 v_cos_f32_e32 v38, v4
+     r  1 c31 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v25, v41 <- w39 v_ceil_f16_e32 v41, v8
+     r  6 c30 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part2 | post v_mov_b32 v24, v40 <- w37 v_ceil_f16_e32 v40, v6
+     r  7 c16 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v10, v26 <- w22 v_rsq_f32_e32 v26, v4
+     r  7 c17 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v11, v27 <- w23 v_rsq_f32_e32 v27, v5
+     r  7 c18 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v12, v28 <- w24 v_rcp_f32_e32 v28, v4
+     r  7 c19 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v13, v29 <- w25 v_rcp_f32_e32 v29, v5
+     r  7 c20 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v14, v30 <- w26 v_rcp_iflag_f32_e32 v30, v4
+     r  7 c21 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v15, v31 <- w27 v_rcp_iflag_f32_e32 v31, v5
+     r  7 c22 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v16, v32 <- w28 v_log_f32_e32 v32, v4
+     r  7 c23 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v17, v33 <- w29 v_log_f32_e32 v33, v5
+     r  7 c24 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v18, v34 <- w30 v_exp_f32_e32 v34, v4
+     r  7 c25 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v19, v35 <- w31 v_exp_f32_e32 v35, v5
+     r  7 c26 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v20, v36 <- w32 v_sin_f32_e32 v36, v4
+     r  7 c27 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v21, v37 <- w33 v_sin_f32_e32 v37, v5
+     r  7 c28 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v22, v38 <- w34 v_cos_f32_e32 v38, v4
+     r  7 c29 pin=ffc00001 hw=ff800001 by=O+F | NVIDIA=ffc00001 Ryzen=ffc00001 | Check() accepts hw: NO | in=7fa00000 ff800001 ebdb4800 fb20bf6c | Vop1FloatUnary.Code.part2 | post v_mov_b32 v23, v39 <- w35 v_cos_f32_e32 v39, v5
+     r 11 c16 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v10, v26 <- w22 v_rsq_f32_e32 v26, v4
+     r 11 c18 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v12, v28 <- w24 v_rcp_f32_e32 v28, v4
+     r 11 c20 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v14, v30 <- w26 v_rcp_iflag_f32_e32 v30, v4
+     r 11 c22 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v16, v32 <- w28 v_log_f32_e32 v32, v4
+     r 11 c24 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v18, v34 <- w30 v_exp_f32_e32 v34, v4
+     r 11 c26 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v20, v36 <- w32 v_sin_f32_e32 v36, v4
+     r 11 c28 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 40b5e831 54ed5567 e779c470 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v22, v38 <- w34 v_cos_f32_e32 v38, v4
+     r 15 c16 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v10, v26 <- w22 v_rsq_f32_e32 v26, v4
+     r 15 c18 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v12, v28 <- w24 v_rcp_f32_e32 v28, v4
+     r 15 c20 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v14, v30 <- w26 v_rcp_iflag_f32_e32 v30, v4
+     r 15 c22 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v16, v32 <- w28 v_log_f32_e32 v32, v4
+     r 15 c24 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v18, v34 <- w30 v_exp_f32_e32 v34, v4
+     r 15 c26 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v20, v36 <- w32 v_sin_f32_e32 v36, v4
+     r 15 c28 pin=7fe00000 hw=7fa00000 by=O+F | NVIDIA=7fe00000 Ryzen=7fe00000 | Check() accepts hw: NO | in=7fa00000 3f800000 bd813570 75dd67de | Vop1FloatUnary.Code.part2 | post v_mov_b32 v22, v38 <- w34 v_cos_f32_e32 v38, v4
+     r 24 c30 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v24, v40 <- w37 v_ceil_f16_e32 v40, v6
+     r 30 c30 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part2 | post v_mov_b32 v24, v40 <- w37 v_ceil_f16_e32 v40, v6
+     r  1 c33 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v11, v43 <- w43 v_floor_f16_e32 v43, v8
+     r  1 c35 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v13, v45 <- w47 v_trunc_f16_e32 v45, v8
+     r  1 c37 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v15, v47 <- w51 v_rndne_f16_e32 v47, v8
+     r  1 c39 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v17, v49 <- w55 v_fract_f16_e32 v49, v8
+     r  1 c41 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v19, v51 <- w59 v_sqrt_f16_e32 v51, v8
+     r  1 c43 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v21, v53 <- w63 v_rsq_f16_e32 v53, v8
+     r  1 c45 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v23, v55 <- w67 v_rcp_f16_e32 v55, v8
+     r  1 c47 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v25, v57 <- w71 v_log_f16_e32 v57, v8
+     r  6 c32 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v10, v42 <- w41 v_floor_f16_e32 v42, v6
+     r  6 c34 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v12, v44 <- w45 v_trunc_f16_e32 v44, v6
+     r  6 c36 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v14, v46 <- w49 v_rndne_f16_e32 v46, v6
+     r  6 c38 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v16, v48 <- w53 v_fract_f16_e32 v48, v6
+     r  6 c40 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v18, v50 <- w57 v_sqrt_f16_e32 v50, v6
+     r  6 c42 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v20, v52 <- w61 v_rsq_f16_e32 v52, v6
+     r  6 c44 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v22, v54 <- w65 v_rcp_f16_e32 v54, v6
+     r  6 c46 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part3 | post v_mov_b32 v24, v56 <- w69 v_log_f16_e32 v56, v6
+     r 24 c32 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v10, v42 <- w41 v_floor_f16_e32 v42, v6
+     r 24 c34 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v12, v44 <- w45 v_trunc_f16_e32 v44, v6
+     r 24 c36 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v14, v46 <- w49 v_rndne_f16_e32 v46, v6
+     r 24 c38 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v16, v48 <- w53 v_fract_f16_e32 v48, v6
+     r 24 c40 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v18, v50 <- w57 v_sqrt_f16_e32 v50, v6
+     r 24 c42 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v20, v52 <- w61 v_rsq_f16_e32 v52, v6
+     r 24 c44 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v22, v54 <- w65 v_rcp_f16_e32 v54, v6
+     r 24 c46 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v24, v56 <- w69 v_log_f16_e32 v56, v6
+     r 30 c32 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v10, v42 <- w41 v_floor_f16_e32 v42, v6
+     r 30 c34 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v12, v44 <- w45 v_trunc_f16_e32 v44, v6
+     r 30 c36 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v14, v46 <- w49 v_rndne_f16_e32 v46, v6
+     r 30 c38 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v16, v48 <- w53 v_fract_f16_e32 v48, v6
+     r 30 c40 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v18, v50 <- w57 v_sqrt_f16_e32 v50, v6
+     r 30 c42 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v20, v52 <- w61 v_rsq_f16_e32 v52, v6
+     r 30 c44 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v22, v54 <- w65 v_rcp_f16_e32 v54, v6
+     r 30 c46 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part3 | post v_mov_b32 v24, v56 <- w69 v_log_f16_e32 v56, v6
+     r  1 c49 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v11, v59 <- w75 v_exp_f16_e32 v59, v8
+     r  1 c51 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v13, v61 <- w79 v_sin_f16_e32 v61, v8
+     r  1 c53 pin=12347e01 hw=12347c01 by=O+F | NVIDIA=12347e01 Ryzen=12347e01 | Check() accepts hw: NO | in=7f800001 ffc00000 7c01fe00 12345678 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v15, v63 <- w83 v_cos_f16_e32 v63, v8
+     r  6 c48 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part4 | post v_mov_b32 v10, v58 <- w73 v_exp_f16_e32 v58, v6
+     r  6 c50 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part4 | post v_mov_b32 v12, v60 <- w77 v_sin_f16_e32 v60, v6
+     r  6 c52 pin=94d3fe01 hw=94d3fc01 by=O+F | NVIDIA=94d3fe01 Ryzen=94d3fe01 | Check() accepts hw: NO | in=c2fc0000 7fc00000 c0c1fc01 94d3d2ff | Vop1FloatUnary.Code.part4 | post v_mov_b32 v14, v62 <- w81 v_cos_f16_e32 v62, v6
+     r 24 c48 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v10, v58 <- w73 v_exp_f16_e32 v58, v6
+     r 24 c50 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v12, v60 <- w77 v_sin_f16_e32 v60, v6
+     r 24 c52 pin=291efe01 hw=291efc01 by=O+F | NVIDIA=291efe01 Ryzen=291efe01 | Check() accepts hw: NO | in=c2473fef bf000000 6bdefc01 291e6ca0 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v14, v62 <- w81 v_cos_f16_e32 v62, v6
+     r 30 c48 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v10, v58 <- w73 v_exp_f16_e32 v58, v6
+     r 30 c50 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v12, v60 <- w77 v_sin_f16_e32 v60, v6
+     r 30 c52 pin=c9717e01 hw=c9717c01 by=O+F | NVIDIA=c9717e01 Ryzen=c9717e01 | Check() accepts hw: NO | in=3df74341 7fc00000 3e007c01 c9717e02 | Vop1FloatUnary.Code.part4 | post v_mov_b32 v14, v62 <- w81 v_cos_f16_e32 v62, v6
+   unasserted: 10 cells; reproduced by {'O+K': 10}
+     r  0 c 1 pin=3f800000 hw=00000000 by=O+K | NVIDIA=3f800000 Ryzen=00000000 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w7 v_ceil_f32_e32 v11, v5
+     r  0 c 2 pin=bf800000 hw=80000000 by=O+K | NVIDIA=bf800000 Ryzen=80000000 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w8 v_floor_f32_e32 v12, v4
+     r  0 c 8 pin=3f7fffff hw=00000000 by=O+K | NVIDIA=3f7fffff Ryzen=00000000 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w14 v_fract_f32_e32 v18, v4
+     r  0 c 9 pin=007fffff hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w15 v_fract_f32_e32 v19, v5
+     r  0 c10 pin=ffffff82 hw=00000000 by=O+K | NVIDIA=ffffff82 Ryzen=ffffff82 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w16 v_frexp_exp_i32_f32_e32 v20, v4
+     r  0 c11 pin=ffffff82 hw=00000000 by=O+K | NVIDIA=ffffff82 Ryzen=ffffff82 | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w17 v_frexp_exp_i32_f32_e32 v21, v5
+     r  0 c12 pin=bf7ffffe hw=80000000 by=O+K | NVIDIA=bf7ffffe Ryzen=bf7ffffe | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w18 v_frexp_mant_f32_e32 v22, v4
+     r  0 c13 pin=3f7ffffe hw=00000000 by=O+K | NVIDIA=3f7ffffe Ryzen=3f7ffffe | Check() accepts hw: NO | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part1 | w19 v_frexp_mant_f32_e32 v23, v5
+     r  0 c26 pin=81c90fd3 hw=80000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: yes | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part2 | post v_mov_b32 v20, v36 <- w32 v_sin_f32_e32 v36, v4
+     r  0 c27 pin=01c90fd3 hw=00000000 by=O+K | NVIDIA=00000000 Ryzen=00000000 | Check() accepts hw: yes | in=807fffff 007fffff 3c003800 13579bdf | Vop1FloatUnary.Code.part2 | post v_mov_b32 v21, v37 <- w33 v_sin_f32_e32 v37, v5
+
+## Vop1Vop2Integer.cpp Code: 3 adapter file(s), 1312 cells, 1312 with a pin, 1312 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: Vop1Vop2Integer.cpp:Expected[32][41]; Check(): every cell exact
+
+## Vop3IntegerAlu.cpp Code: 4 adapter file(s), 1632 cells, 1632 with a pin, 1632 asserted; pin != hardware: 0 asserted, 0 unasserted
+   pins: Vop3IntegerAlu.cpp:Expected[32][51]; Check(): every cell exact
+
+## Summary (kernel: cells with a pin, asserted, asserted pin!=hw, unasserted pin!=hw)
+   Division.cpp:DivisionCode: 256, 256, 1, 0
+   Division.cpp:HelperCode: 1024, 932, 20, 0
+   Float16Misc.cpp:MiscCode: 2560, 2457, 12, 72
+   Float16ResultModifiers.cpp:Code: 512, 512, 0, 0
+   Float16Rounding.cpp:RoundingCode: 768, 768, 12, 0
+   FmaRounding.cpp:FmaCode: 320, 320, 0, 0
+   LdsAddtid.cpp:Wave32Code: 1152, 1152, 0, 0
+   LdsIntegerAtomics.cpp:Wave32Code: 1408, 1408, 0, 0
+   LdsReadWrite.cpp:Wave32Code: 1856, 1856, 0, 0
+   RelativeIndexing.cpp:Code: 352, 352, 0, 0
+   ScalarProgramFlow.cpp:Wave32Code: 448, 448, 0, 0
+   ScalarProgramFlow.cpp:Wave64Code: 896, 896, 0, 0
+   ScalarRelativeIndexing.cpp:Code: 512, 512, 0, 0
+   ScalarSop1.cpp:Code: 4544, 4544, 0, 0
+   ScalarSop2.cpp:Code: 1888, 1888, 0, 0
+   ScalarSopkMisc.cpp:Code: 128, 128, 0, 0
+   Vop1FloatUnary.cpp:Code: 1728, 1710, 118, 10
+   Vop1Vop2Integer.cpp:Code: 1312, 1312, 0, 0
+   Vop3IntegerAlu.cpp:Code: 1632, 1632, 0, 0
+   total: 23296 cells with a pin, 23083 asserted, 163 asserted pin!=hw, 82 unasserted pin!=hw
+
+## Kernels with no Expected table (the test computes its expectation in code; not compared)
+   BranchPastEndpgm.cpp:LoopBodyCode
+   BranchPastEndpgm.cpp:TailBlockCode
+   CacheControl.cpp:CacheControlCode
+   Division.cpp:FmaCode
+   DsAppendConsume.cpp:Code
+   DsWrxchg2.cpp:Code
+   IntegerDot.cpp:DotCode
+   LdsAtomics.cpp:Code
+   LoopEndingExits.cpp:Code
+   MixPrecision.cpp:MixCode
+   ReadFirstLane.cpp:ReadFirstLaneWave32Code
+   ReadFirstLane.cpp:ReadFirstLaneWave64Code
+   ReadLane.cpp:ReadLaneCode
+   ScalarBitCount.cpp:BitCountCode
+   ScalarGetreg.cpp:Code
+   ScalarProgramEnd.cpp:Code
+   ScalarProgramEnd.cpp:SetkillCode
+   ScalarProgramEndSaved.cpp:Code
+   ScalarSethalt.cpp:Code
+   ScalarSopkCompare.cpp:CompareCode
+   ScalarSopkWaitcnt.cpp:WaitCode
+   ScalarStaticCall.cpp:CallAfterEnd
+   ScalarStaticCall.cpp:CallBackward
+   ScalarStaticCall.cpp:CallForward
+   ScalarStaticCall.cpp:MixedNested
+   ScalarStaticCall.cpp:SwappcForward
+   SdwaDestination.cpp:SdwaCode
+   SdwaMoveSelectors.cpp:Wave32Code
+   SdwaMoveSelectors.cpp:Wave64Code
+   ShaderClock.cpp:Code
+   Vop1Control.cpp:Vop1ControlCode
+   Vop3Aliases.cpp:AliasCode
+   Vop3CarryOut.cpp:CarryOutCode
+   Vop3CompareModifiers.cpp:ModifierCode
+   Vop3Integer.cpp:IntegerCode
+   Vop3Lerp.cpp:LerpCode
+   Vop3Sad.cpp:SadCode
+   VopcCompare.cpp:CompareCode
+   VopcCompareF64.cpp:CompareCode
+   Wave32Subgroup.cpp:WaveCode
+   WaveSleep.cpp:WaveSleepCode
+   WaveUniform.cpp:WaveCode
+   WriteLane.cpp:WriteLaneCode

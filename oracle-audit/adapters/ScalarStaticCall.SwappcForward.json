@@ -1,0 +1,39 @@
+{
+  "file": "ScalarStaticCall.cpp",
+  "kernel": "SwappcForward",
+  "manifest_class": "partial",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    4,
+    18
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v4",
+    "v_mov_b32 v11, v5",
+    "v_mov_b32 v12, v6",
+    "v_mov_b32 v13, v7"
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3
+  },
+  "rows": {
+    "expr": "[[0, 1, 2, 3, 4, 7, 0x80000000, 0xffffffff][tid % 8], (0x9e3779b9 * (tid + 1)) & 0xffffffff, 0xffffffff - tid, 17 * tid + 1]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "s_getpc_b64 at word 4 yields the address of word 5; +0x14 bytes = word 10. s_swappc_b64 (word 8) jumps to word 10 with return address word 9; words 10-16 compute; s_setpc_b64 s[8:9] (word 17) returns to word 9; s_branch 8 at word 9 goes to word 18 = the end of the body (first post line). All control targets stay in [4,18], computed relative to the PC, so the inlined copy behaves identically.",
+    "Branch targets equal to the body end land on the first post instruction, so post must directly follow the words (as the template does).",
+    "Results 0..3 are v4..v7 (add 0x13579bdf, xor 0xa5a5a5a5, v6+v7, xor 0x5a5a5a5a); post copies them to v10..v13. All four asserted for every lane.",
+    "Rows: Run() sets Input[tid*4..+3] = {Selectors[tid % 8], 0x9e3779b9*(tid+1), 0xffffffff - tid, 17*tid + 1}; Selectors = {0,1,2,3,4,7,0x80000000,0xffffffff}.",
+    "The test dispatches one wave of 32 lanes and one of 64 lanes (and a 64-lane dispatch on a wave32 target when distinct). The .wave64 file covers the 64-lane run."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; every PC-relative target computed by hand from the word offsets; Run()/Check()/Expected() read."
+}

@@ -1,0 +1,13 @@
+  .long 0x7e145f04
+  .long 0x7e186304
+  .long 0x7e1c6904
+  .long 0xd5740010
+  .long 0x02020d04
+  .long 0xd5740012
+  .long 0x02010104
+  .long 0xd5740114
+  .long 0x2a020d04
+  .long 0xd5af8016
+  .long 0x02010104
+  .long 0xd5b40118
+  .long 0x22010104

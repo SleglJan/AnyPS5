@@ -1,0 +1,8871 @@
+{
+ "BranchPastEndpgm.cpp:LoopBodyCode": {
+  "adapters": [
+   "BranchPastEndpgm.LoopBodyCode.case3.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "BranchPastEndpgm.cpp:TailBlockCode": {
+  "adapters": [
+   "BranchPastEndpgm.TailBlockCode.case0.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "CacheControl.cpp:CacheControlCode": {
+  "adapters": [
+   "CacheControl.CacheControlCode.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Division.cpp:DivisionCode": {
+  "adapters": [
+   "Division.DivisionCode.json"
+  ],
+  "cells": 256,
+  "compared": 256,
+  "asserted": 256,
+  "diff": [
+   {
+    "adapter": "Division.DivisionCode.json",
+    "row": 16,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ffb58830",
+     "0b03c189",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "fff58830",
+    "title": "ffb58830",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ffb58830",
+     "old": "fff58830",
+     "ieee0_keep32": "ffb58830",
+     "ieee1_flush32": "fff58830",
+     "title_flush16": "ffb58830",
+     "title_noclamp": "ffb58830",
+     "title_fp16ovfl": "ffb58830"
+    },
+    "hosts": {
+     "NVIDIA": "fff58830",
+     "Ryzen": "fff58830"
+    },
+    "check_accepts_hardware": false
+   }
+  ],
+  "pins": "Division.cpp:DivisionVectors[256].quotient"
+ },
+ "Division.cpp:FmaCode": {
+  "adapters": [
+   "Division.FmaCode.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Division.cpp:HelperCode": {
+  "adapters": [
+   "Division.HelperCode.json"
+  ],
+  "cells": 1024,
+  "compared": 1024,
+  "asserted": 932,
+  "diff": [
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 13,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "bf9b99f7",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 13,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "bf9b99f7",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 42,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "3f96a6b3",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 42,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "3f96a6b3",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 64,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3f96a6b3",
+     "3f96a6b3",
+     "7f800001",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 64,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3f96a6b3",
+     "3f96a6b3",
+     "7f800001",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 82,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3f96a6b3",
+     "7f800001",
+     "3f96a6b3",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 82,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3f96a6b3",
+     "7f800001",
+     "3f96a6b3",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 121,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "bf9b99f7",
+     "bf9b99f7",
+     "7f800001",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 121,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "bf9b99f7",
+     "bf9b99f7",
+     "7f800001",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 165,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3fac0a5a",
+     "7f800001",
+     "3fac0a5a",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 165,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3fac0a5a",
+     "7f800001",
+     "3fac0a5a",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 184,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "3fac0a5a",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 184,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "3fac0a5a",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 238,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "3fac0a5a",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 238,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "7f800001",
+     "3fac0a5a",
+     "00000001"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 239,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "3f96a6b3",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 239,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "3f96a6b3",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 241,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "bf9b99f7",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Division.HelperCode.json",
+    "row": 241,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "bf9b99f7",
+     "7f800001",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   }
+  ],
+  "pins": "Division.cpp:HelperVectors[256].{scale,scaleVcc,fmas,fixup}"
+ },
+ "DsAppendConsume.cpp:Code": {
+  "adapters": [
+   "DsAppendConsume.Code.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "DsWrxchg2.cpp:Code": {
+  "adapters": [
+   "DsWrxchg2.Code.json"
+  ],
+  "cells": 512,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Float16Misc.cpp:MiscCode": {
+  "adapters": [
+   "Float16Misc.MiscCode.json"
+  ],
+  "cells": 2560,
+  "compared": 2560,
+  "asserted": 2457,
+  "diff": [
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 1,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "cac52720",
+     "00000064",
+     "8fe2c3f4",
+     "00000000"
+    ],
+    "pin": "839a0691",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "839a0691",
+     "ieee0_keep32": "839a0691",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 5,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "fbff8acd",
+     "00000001",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "b17f8acd",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "b17f8acd",
+     "ieee0_keep32": "b17f8acd",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 6,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "4ca4aaf9",
+     "000003ba",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "07196949",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "07196949",
+     "ieee0_keep32": "07196949",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 16,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "0001bc00",
+     "fbff3c07",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "b9dd560e",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "b9dd560e",
+     "ieee0_keep32": "b9dd560e",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 17,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "10714d51",
+     "7f800001",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "7f800001"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 18,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "88bc03ff",
+     "0000001b",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 21,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "4e63fc00",
+     "000002a7",
+     "9f94c755",
+     "00000000"
+    ],
+    "pin": "08972c59",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "08972c59",
+     "ieee0_keep32": "08972c59",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 22,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "38007d00",
+     "00000018",
+     "15de2f14",
+     "00000000"
+    ],
+    "pin": "abcd7f00",
+    "title": "abcd7d00",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7d00",
+     "old": "abcd7f00",
+     "ieee0_keep32": "abcd7d00",
+     "ieee1_flush32": "abcd7f00",
+     "title_flush16": "abcd7d00",
+     "title_noclamp": "abcd7d00",
+     "title_fp16ovfl": "abcd7d00"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7f00",
+     "Ryzen": "abcd7f00"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 22,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "38007d00",
+     "00000018",
+     "15de2f14",
+     "00000000"
+    ],
+    "pin": "abcd7f00",
+    "title": "abcd7d00",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7d00",
+     "old": "abcd7f00",
+     "ieee0_keep32": "abcd7d00",
+     "ieee1_flush32": "abcd7f00",
+     "title_flush16": "abcd7d00",
+     "title_noclamp": "abcd7d00",
+     "title_fp16ovfl": "abcd7d00"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7f00",
+     "Ryzen": "abcd7f00"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 27,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "8001fbff",
+     "d32e6778",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "112d0a52",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "112d0a52",
+     "ieee0_keep32": "112d0a52",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 29,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80019716",
+     "0000037f",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 34,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "479d0cda",
+     "7f800001",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "7f800001"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 35,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "0577aea9",
+     "7f800001",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "7f800001"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 39,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7d00bc00",
+     "00000198",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "36cd2ba0",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "36cd2ba0",
+     "ieee0_keep32": "36cd2ba0",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 40,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "00000001",
+     "7fc00000",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "7fc00000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "7fc00000",
+     "ieee0_keep32": "7fc00000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "7fc00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 42,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c6de7bff",
+     "0000ffff",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "845e7b21",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "845e7b21",
+     "ieee0_keep32": "845e7b21",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 43,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80013800",
+     "00000007",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 45,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "fbff7bff",
+     "00000001",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "b17f7bff",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "b17f7bff",
+     "ieee0_keep32": "b17f7bff",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 52,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5e0a7f07",
+     "000003b2",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "187fe4b4",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "187fe4b4",
+     "ieee0_keep32": "187fe4b4",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 54,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "fc000001",
+     "000003ff",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "b67fc002",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "b67fc002",
+     "ieee0_keep32": "b67fc002",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 55,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "20da0200",
+     "9679c7bf",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "80000035",
+    "title": "80000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "80000000",
+     "old": "80000035",
+     "ieee0_keep32": "80000035",
+     "ieee1_flush32": "80000000",
+     "title_flush16": "80000000",
+     "title_noclamp": "80000000",
+     "title_fp16ovfl": "80000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 57,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7ba2a454",
+     "000000fa",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "351ed47a",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "351ed47a",
+     "ieee0_keep32": "351ed47a",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 60,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "1b2e7c00",
+     "1f5d9946",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "000012e1",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "000012e1",
+     "ieee0_keep32": "000012e1",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 63,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "00000001",
+     "c3affcfe",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "80000160",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000160",
+     "ieee0_keep32": "80000160",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 68,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "56405640",
+     "00000001",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "0bc05640",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "0bc05640",
+     "ieee0_keep32": "0bc05640",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 69,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7c00fe00",
+     "000003c4",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "3672de3c",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "3672de3c",
+     "ieee0_keep32": "3672de3c",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 74,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "bc00fc00",
+     "000003f5",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "80000008",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000008",
+     "ieee0_keep32": "80000008",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 75,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "538d658e",
+     "0000001e",
+     "a2d92973",
+     "00000000"
+    ],
+    "pin": "0b848f35",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "0b848f35",
+     "ieee0_keep32": "0b848f35",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 77,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "00016875",
+     "c8d00001",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "86926f89",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "86926f89",
+     "ieee0_keep32": "86926f89",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 79,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7bff0000",
+     "000001a9",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "35d3ab80",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "35d3ab80",
+     "ieee0_keep32": "35d3ab80",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 89,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "fe000000",
+     "800003ff",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "387fc000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "387fc000",
+     "ieee0_keep32": "387fc000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 90,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7d0053c9",
+     "00000008",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "340053c9",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "340053c9",
+     "ieee0_keep32": "340053c9",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 92,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "bc406498",
+     "00017d00",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "80000479",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000479",
+     "ieee0_keep32": "80000479",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 93,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800000",
+     "00000001",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "7f800000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "7f800000",
+     "ieee0_keep32": "7f800000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "ffc00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 94,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3ff68e52",
+     "0000000f",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "0000001d",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "0000001d",
+     "ieee0_keep32": "0000001d",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 95,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "cb7b0b3a",
+     "00000001",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "80fb0b3a",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80fb0b3a",
+     "ieee0_keep32": "80fb0b3a",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 96,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "b297fbff",
+     "0000016f",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 97,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5b58edc8",
+     "00000018",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "1322b256",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "1322b256",
+     "ieee0_keep32": "1322b256",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 100,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "8001fbff",
+     "ffffffff",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "ffffffff",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "ffffffff",
+     "ieee0_keep32": "ffffffff",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "ffffffff"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 104,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "9072bc00",
+     "00000001",
+     "512d126e",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 106,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "8001ecc8",
+     "0000001e",
+     "9621a9d3",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 109,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "46237c00",
+     "00000028",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "000662d8",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "000662d8",
+     "ieee0_keep32": "000662d8",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 125,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "fc00e1f8",
+     "00000064",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "b4c96114",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "b4c96114",
+     "ieee0_keep32": "b4c96114",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 126,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "564037a3",
+     "0000001e",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "0e343429",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "0e343429",
+     "ieee0_keep32": "0e343429",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 127,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7e00ed2e",
+     "000003d3",
+     "19f2d5ff",
+     "00000000"
+    ],
+    "pin": "38768583",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "38768583",
+     "ieee0_keep32": "38768583",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 131,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "515a0001",
+     "000001f1",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "0b539d01",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "0b539d01",
+     "ieee0_keep32": "0b539d01",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 136,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7bff7bd7",
+     "0000024f",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "361373b9",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "361373b9",
+     "ieee0_keep32": "361373b9",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 149,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c0007ce4",
+     "fffffff0",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "abcd7ee4",
+    "title": "abcd7ce4",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7ce4",
+     "old": "abcd7ee4",
+     "ieee0_keep32": "abcd7ce4",
+     "ieee1_flush32": "abcd7ee4",
+     "title_flush16": "abcd7ce4",
+     "title_noclamp": "abcd7ce4",
+     "title_fp16ovfl": "abcd7ce4"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7ee4",
+     "Ryzen": "abcd7ee4"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 149,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c0007ce4",
+     "fffffff0",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "abcd7ee4",
+    "title": "abcd7ce4",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7ce4",
+     "old": "abcd7ee4",
+     "ieee0_keep32": "abcd7ce4",
+     "ieee1_flush32": "abcd7ee4",
+     "title_flush16": "abcd7ce4",
+     "title_noclamp": "abcd7ce4",
+     "title_fp16ovfl": "abcd7ce4"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7ee4",
+     "Ryzen": "abcd7ee4"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 151,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "9b085640",
+     "00000244",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 152,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5640fc52",
+     "00007fff",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "abcdfe52",
+    "title": "abcdfc52",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfc52",
+     "old": "abcdfe52",
+     "ieee0_keep32": "abcdfc52",
+     "ieee1_flush32": "abcdfe52",
+     "title_flush16": "abcdfc52",
+     "title_noclamp": "abcdfc52",
+     "title_fp16ovfl": "abcdfc52"
+    },
+    "hosts": {
+     "NVIDIA": "abcdfe52",
+     "Ryzen": "abcdfe52"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 152,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5640fc52",
+     "00007fff",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "abcdfe52",
+    "title": "abcdfc52",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfc52",
+     "old": "abcdfe52",
+     "ieee0_keep32": "abcdfc52",
+     "ieee1_flush32": "abcdfe52",
+     "title_flush16": "abcdfc52",
+     "title_noclamp": "abcdfc52",
+     "title_fp16ovfl": "abcdfc52"
+    },
+    "hosts": {
+     "NVIDIA": "abcdfe52",
+     "Ryzen": "abcdfe52"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 152,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5640fc52",
+     "00007fff",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "1340fad0",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "1340fad0",
+     "ieee0_keep32": "1340fad0",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 153,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "cbe62000",
+     "00000010",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "83662000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "83662000",
+     "ieee0_keep32": "83662000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 160,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80010000",
+     "00000028",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 162,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "32175640",
+     "0200fbff",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "00000001",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "00000001",
+     "ieee0_keep32": "00000001",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 166,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5ea926b0",
+     "00000010",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "162926b0",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "162926b0",
+     "ieee0_keep32": "162926b0",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 183,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "d5907bff",
+     "00007fff",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "92907ade",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "92907ade",
+     "ieee0_keep32": "92907ade",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 184,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "800022af",
+     "00000117",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 186,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5f7d03ff",
+     "00007fff",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "1c7d0205",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "1c7d0205",
+     "ieee0_keep32": "1c7d0205",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 191,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "bf800000",
+     "00000001",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "80000001",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000001",
+     "ieee0_keep32": "80000001",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 193,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80008bef",
+     "000003f6",
+     "5cfef954",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 194,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "000048d0",
+     "594f20d1",
+     "29fd96b2",
+     "00000000"
+    ],
+    "pin": "15eba616",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "15eba616",
+     "ieee0_keep32": "15eba616",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 199,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "00000001",
+     "e2643336",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "97e43336",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "97e43336",
+     "ieee0_keep32": "97e43336",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 200,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ec51054e",
+     "00010000",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "a9d1054e",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "a9d1054e",
+     "ieee0_keep32": "a9d1054e",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 213,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "b1c13112",
+     "00000028",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 216,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7d008001",
+     "0000001e",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "34f0f002",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "34f0f002",
+     "ieee0_keep32": "34f0f002",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 217,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80017e00",
+     "fffffff1",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "fffffff1",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "fffffff1",
+     "ieee0_keep32": "fffffff1",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "fffffff1"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 219,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "49b48000",
+     "00000295",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "03e90740",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "03e90740",
+     "ieee0_keep32": "03e90740",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 220,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "61a938f2",
+     "00000215",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "1bb029c8",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "1bb029c8",
+     "ieee0_keep32": "1bb029c8",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 223,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "5fcf5c22",
+     "00000001",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "154f5c22",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "154f5c22",
+     "ieee0_keep32": "154f5c22",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 230,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "6c0903ff",
+     "0000004c",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "24a2b4bf",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "24a2b4bf",
+     "ieee0_keep32": "24a2b4bf",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 231,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "00000001",
+     "7f7fffff",
+     "0ebc4be5",
+     "00000000"
+    ],
+    "pin": "34ffffff",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "34ffffff",
+     "ieee0_keep32": "34ffffff",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 232,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80013800",
+     "00010000",
+     "bf800000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 235,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "f3d503ff",
+     "00000034",
+     "00000000",
+     "00000000"
+    ],
+    "pin": "ac2d133f",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "ac2d133f",
+     "ieee0_keep32": "ac2d133f",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 238,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "edd93800",
+     "00000095",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "a6fcdb30",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "a6fcdb30",
+     "ieee0_keep32": "a6fcdb30",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 239,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3f397c00",
+     "00000147",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "000000ed",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "000000ed",
+     "ieee0_keep32": "000000ed",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 244,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "000121d6",
+     "ffffffe8",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "ffffffe8",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "ffffffe8",
+     "ieee0_keep32": "ffffffe8",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "ffffffe8"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 247,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "0001fbff",
+     "7e009ac0",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "3bff3294",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "3bff3294",
+     "ieee0_keep32": "3bff3294",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 249,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "80016cb9",
+     "000002a6",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "80000000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "80000000",
+     "ieee0_keep32": "80000000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "80000000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 251,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7bff7d00",
+     "5a763800",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "abcd7f00",
+    "title": "abcd7d00",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7d00",
+     "old": "abcd7f00",
+     "ieee0_keep32": "abcd7d00",
+     "ieee1_flush32": "abcd7f00",
+     "title_flush16": "abcd7d00",
+     "title_noclamp": "abcd7d00",
+     "title_fp16ovfl": "abcd7d00"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7f00",
+     "Ryzen": "abcd7f00"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 251,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7bff7d00",
+     "5a763800",
+     "3f800000",
+     "00000000"
+    ],
+    "pin": "abcd7f00",
+    "title": "abcd7d00",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7d00",
+     "old": "abcd7f00",
+     "ieee0_keep32": "abcd7d00",
+     "ieee1_flush32": "abcd7f00",
+     "title_flush16": "abcd7d00",
+     "title_noclamp": "abcd7d00",
+     "title_fp16ovfl": "abcd7d00"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7f00",
+     "Ryzen": "abcd7f00"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 254,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "4006fc00",
+     "00000010",
+     "7f800000",
+     "00000000"
+    ],
+    "pin": "00000022",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "00000022",
+     "ieee0_keep32": "00000022",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Float16Misc.MiscCode.json",
+    "row": 255,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "46510173",
+     "7f800001",
+     "80000000",
+     "00000000"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fffffff",
+     "Ryzen": "7f800001"
+    },
+    "check_accepts_hardware": true
+   }
+  ],
+  "pins": "Float16Misc.cpp:Vectors[256].expected"
+ },
+ "Float16ResultModifiers.cpp:Code": {
+  "adapters": [
+   "Float16ResultModifiers.Code.json"
+  ],
+  "cells": 512,
+  "compared": 512,
+  "asserted": 512,
+  "diff": [],
+  "pins": "Float16ResultModifiers.cpp:Expected[32][16]"
+ },
+ "Float16Rounding.cpp:RoundingCode": {
+  "adapters": [
+   "Float16Rounding.RoundingCode.json"
+  ],
+  "cells": 768,
+  "compared": 768,
+  "asserted": 768,
+  "diff": [
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 62,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ffc00000",
+     "12eb0a97",
+     "fcf9fdfb",
+     "00000000"
+    ],
+    "pin": "abcdfffb",
+    "title": "abcdfdfb",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfdfb",
+     "old": "abcdfffb",
+     "ieee0_keep32": "abcdfdfb",
+     "ieee1_flush32": "abcdfffb",
+     "title_flush16": "abcdfdfb",
+     "title_noclamp": "abcdfdfb",
+     "title_fp16ovfl": "abcdfdfb"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdfffb"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 62,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ffc00000",
+     "12eb0a97",
+     "fcf9fdfb",
+     "00000000"
+    ],
+    "pin": "abcdfffb",
+    "title": "abcdfdfb",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfdfb",
+     "old": "abcdfffb",
+     "ieee0_keep32": "abcdfdfb",
+     "ieee1_flush32": "abcdfffb",
+     "title_flush16": "abcdfdfb",
+     "title_noclamp": "abcdfdfb",
+     "title_fp16ovfl": "abcdfdfb"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdfffb"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 91,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ff800000",
+     "ba07ac37",
+     "8e79fdc3",
+     "00000000"
+    ],
+    "pin": "abcdffc3",
+    "title": "abcdfdc3",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfdc3",
+     "old": "abcdffc3",
+     "ieee0_keep32": "abcdfdc3",
+     "ieee1_flush32": "abcdffc3",
+     "title_flush16": "abcdfdc3",
+     "title_noclamp": "abcdfdc3",
+     "title_fp16ovfl": "abcdfdc3"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdffc3"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 91,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "ff800000",
+     "ba07ac37",
+     "8e79fdc3",
+     "00000000"
+    ],
+    "pin": "abcdffc3",
+    "title": "abcdfdc3",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfdc3",
+     "old": "abcdffc3",
+     "ieee0_keep32": "abcdfdc3",
+     "ieee1_flush32": "abcdffc3",
+     "title_flush16": "abcdfdc3",
+     "title_noclamp": "abcdfdc3",
+     "title_fp16ovfl": "abcdfdc3"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdffc3"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 136,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "734ae2e3",
+     "4ee10f77",
+     "3da37ded",
+     "00000000"
+    ],
+    "pin": "abcd7fed",
+    "title": "abcd7ded",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7ded",
+     "old": "abcd7fed",
+     "ieee0_keep32": "abcd7ded",
+     "ieee1_flush32": "abcd7fed",
+     "title_flush16": "abcd7ded",
+     "title_noclamp": "abcd7ded",
+     "title_fp16ovfl": "abcd7ded"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcd7fed"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 136,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "734ae2e3",
+     "4ee10f77",
+     "3da37ded",
+     "00000000"
+    ],
+    "pin": "abcd7fed",
+    "title": "abcd7ded",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7ded",
+     "old": "abcd7fed",
+     "ieee0_keep32": "abcd7ded",
+     "ieee1_flush32": "abcd7fed",
+     "title_flush16": "abcd7ded",
+     "title_noclamp": "abcd7ded",
+     "title_fp16ovfl": "abcd7ded"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcd7fed"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 184,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3fc816a6",
+     "31e9f720",
+     "fb5cfd54",
+     "00000000"
+    ],
+    "pin": "abcdff54",
+    "title": "abcdfd54",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfd54",
+     "old": "abcdff54",
+     "ieee0_keep32": "abcdfd54",
+     "ieee1_flush32": "abcdff54",
+     "title_flush16": "abcdfd54",
+     "title_noclamp": "abcdfd54",
+     "title_fp16ovfl": "abcdfd54"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdff54"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 184,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3fc816a6",
+     "31e9f720",
+     "fb5cfd54",
+     "00000000"
+    ],
+    "pin": "abcdff54",
+    "title": "abcdfd54",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfd54",
+     "old": "abcdff54",
+     "ieee0_keep32": "abcdfd54",
+     "ieee1_flush32": "abcdff54",
+     "title_flush16": "abcdfd54",
+     "title_noclamp": "abcdfd54",
+     "title_fp16ovfl": "abcdfd54"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdff54"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 190,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "994a5d91",
+     "8e537545",
+     "133efcd4",
+     "00000000"
+    ],
+    "pin": "abcdfed4",
+    "title": "abcdfcd4",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfcd4",
+     "old": "abcdfed4",
+     "ieee0_keep32": "abcdfcd4",
+     "ieee1_flush32": "abcdfed4",
+     "title_flush16": "abcdfcd4",
+     "title_noclamp": "abcdfcd4",
+     "title_fp16ovfl": "abcdfcd4"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdfed4"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 190,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "994a5d91",
+     "8e537545",
+     "133efcd4",
+     "00000000"
+    ],
+    "pin": "abcdfed4",
+    "title": "abcdfcd4",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcdfcd4",
+     "old": "abcdfed4",
+     "ieee0_keep32": "abcdfcd4",
+     "ieee1_flush32": "abcdfed4",
+     "title_flush16": "abcdfcd4",
+     "title_noclamp": "abcdfcd4",
+     "title_fp16ovfl": "abcdfcd4"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcdfed4"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 254,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "249c62c3",
+     "7d747dc8",
+     "7c6e9ccc",
+     "00000000"
+    ],
+    "pin": "abcd7fc8",
+    "title": "abcd7dc8",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7dc8",
+     "old": "abcd7fc8",
+     "ieee0_keep32": "abcd7dc8",
+     "ieee1_flush32": "abcd7fc8",
+     "title_flush16": "abcd7dc8",
+     "title_noclamp": "abcd7dc8",
+     "title_fp16ovfl": "abcd7dc8"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcd7fc8"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Float16Rounding.RoundingCode.json",
+    "row": 254,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "249c62c3",
+     "7d747dc8",
+     "7c6e9ccc",
+     "00000000"
+    ],
+    "pin": "abcd7fc8",
+    "title": "abcd7dc8",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "abcd7dc8",
+     "old": "abcd7fc8",
+     "ieee0_keep32": "abcd7dc8",
+     "ieee1_flush32": "abcd7fc8",
+     "title_flush16": "abcd7dc8",
+     "title_noclamp": "abcd7dc8",
+     "title_fp16ovfl": "abcd7dc8"
+    },
+    "hosts": {
+     "NVIDIA": "abcd7fff",
+     "Ryzen": "abcd7fc8"
+    },
+    "check_accepts_hardware": true
+   }
+  ],
+  "pins": "Float16Rounding.cpp:Vectors[256].expected"
+ },
+ "FmaRounding.cpp:FmaCode": {
+  "adapters": [
+   "FmaRounding.FmaCode.part1.json",
+   "FmaRounding.FmaCode.part2.json",
+   "FmaRounding.FmaCode.part3.json"
+  ],
+  "cells": 320,
+  "compared": 320,
+  "asserted": 320,
+  "diff": [],
+  "pins": "FmaRounding.cpp:Rows[64].{fused,fusedAk,fusedMk,separate,...}"
+ },
+ "IntegerDot.cpp:DotCode": {
+  "adapters": [
+   "IntegerDot.DotCode.json"
+  ],
+  "cells": 640,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "LdsAddtid.cpp:Wave32Code": {
+  "adapters": [
+   "LdsAddtid.Wave32Code.part1.json",
+   "LdsAddtid.Wave32Code.part2.json",
+   "LdsAddtid.Wave32Code.part3.json"
+  ],
+  "cells": 1152,
+  "compared": 1152,
+  "asserted": 1152,
+  "diff": [],
+  "pins": "LdsAddtid.cpp:Expected32[32][36]"
+ },
+ "LdsAtomics.cpp:Code": {
+  "adapters": [
+   "LdsAtomics.Code.part1.json",
+   "LdsAtomics.Code.part2.json"
+  ],
+  "cells": 800,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "LdsIntegerAtomics.cpp:Wave32Code": {
+  "adapters": [
+   "LdsIntegerAtomics.Wave32Code.part1.json",
+   "LdsIntegerAtomics.Wave32Code.part2.json",
+   "LdsIntegerAtomics.Wave32Code.part3.json"
+  ],
+  "cells": 1408,
+  "compared": 1408,
+  "asserted": 1408,
+  "diff": [],
+  "pins": "LdsIntegerAtomics.cpp:Expected32[32][44]"
+ },
+ "LdsReadWrite.cpp:Wave32Code": {
+  "adapters": [
+   "LdsReadWrite.Wave32Code.part1.json",
+   "LdsReadWrite.Wave32Code.part2.json",
+   "LdsReadWrite.Wave32Code.part3.json",
+   "LdsReadWrite.Wave32Code.part4.json"
+  ],
+  "cells": 1856,
+  "compared": 1856,
+  "asserted": 1856,
+  "diff": [],
+  "pins": "LdsReadWrite.cpp:Expected32[32][58]"
+ },
+ "LoopEndingExits.cpp:Code": {
+  "adapters": [
+   "LoopEndingExits.Code.case4.wave32.json",
+   "LoopEndingExits.Code.case4.wave64.json"
+  ],
+  "cells": 128,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "MixPrecision.cpp:MixCode": {
+  "adapters": [
+   "MixPrecision.MixCode.json"
+  ],
+  "cells": 576,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ReadFirstLane.cpp:ReadFirstLaneWave32Code": {
+  "adapters": [
+   "ReadFirstLane.ReadFirstLaneWave32Code.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ReadFirstLane.cpp:ReadFirstLaneWave64Code": {
+  "adapters": [
+   "ReadFirstLane.ReadFirstLaneWave64Code.json"
+  ],
+  "cells": 128,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ReadLane.cpp:ReadLaneCode": {
+  "adapters": [
+   "ReadLane.ReadLaneCode.json"
+  ],
+  "cells": 96,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "RelativeIndexing.cpp:Code": {
+  "adapters": [
+   "RelativeIndexing.Code.json"
+  ],
+  "cells": 352,
+  "compared": 352,
+  "asserted": 352,
+  "diff": [],
+  "pins": "RelativeIndexing.cpp:Expected[32][11]"
+ },
+ "ScalarBitCount.cpp:BitCountCode": {
+  "adapters": [
+   "ScalarBitCount.BitCountCode.json"
+  ],
+  "cells": 224,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarGetreg.cpp:Code": {
+  "adapters": [
+   "ScalarGetreg.Code.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarProgramEnd.cpp:Code": {
+  "adapters": [
+   "ScalarProgramEnd.Code.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarProgramEnd.cpp:SetkillCode": {
+  "adapters": [
+   "ScalarProgramEnd.SetkillCode.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarProgramEndSaved.cpp:Code": {
+  "adapters": [
+   "ScalarProgramEndSaved.Code.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarProgramFlow.cpp:Wave32Code": {
+  "adapters": [
+   "ScalarProgramFlow.Wave32Code.json"
+  ],
+  "cells": 448,
+  "compared": 448,
+  "asserted": 448,
+  "diff": [],
+  "pins": "ScalarProgramFlow.cpp:Expected32[32][14]"
+ },
+ "ScalarProgramFlow.cpp:Wave64Code": {
+  "adapters": [
+   "ScalarProgramFlow.Wave64Code.json"
+  ],
+  "cells": 896,
+  "compared": 896,
+  "asserted": 896,
+  "diff": [],
+  "pins": "ScalarProgramFlow.cpp:Expected64[64][14]"
+ },
+ "ScalarRelativeIndexing.cpp:Code": {
+  "adapters": [
+   "ScalarRelativeIndexing.Code.json"
+  ],
+  "cells": 512,
+  "compared": 512,
+  "asserted": 512,
+  "diff": [],
+  "pins": "ScalarRelativeIndexing.cpp:Expected[16] (same for every lane)"
+ },
+ "ScalarSethalt.cpp:Code": {
+  "adapters": [
+   "ScalarSethalt.Code.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarSop1.cpp:Code": {
+  "adapters": [
+   "ScalarSop1.Code.part1.json",
+   "ScalarSop1.Code.part10.json",
+   "ScalarSop1.Code.part11.json",
+   "ScalarSop1.Code.part2.json",
+   "ScalarSop1.Code.part3.json",
+   "ScalarSop1.Code.part4.json",
+   "ScalarSop1.Code.part5.json",
+   "ScalarSop1.Code.part6.json",
+   "ScalarSop1.Code.part7.json",
+   "ScalarSop1.Code.part8.json",
+   "ScalarSop1.Code.part9.json"
+  ],
+  "cells": 4544,
+  "compared": 4544,
+  "asserted": 4544,
+  "diff": [],
+  "pins": "ScalarSop1.cpp:Expected[32][176]"
+ },
+ "ScalarSop2.cpp:Code": {
+  "adapters": [
+   "ScalarSop2.Code.part1.json",
+   "ScalarSop2.Code.part2.json",
+   "ScalarSop2.Code.part3.json",
+   "ScalarSop2.Code.part4.json"
+  ],
+  "cells": 1888,
+  "compared": 1888,
+  "asserted": 1888,
+  "diff": [],
+  "pins": "ScalarSop2.cpp:Expected[32][64]"
+ },
+ "ScalarSopkCompare.cpp:CompareCode": {
+  "adapters": [
+   "ScalarSopkCompare.CompareCode.part1.json",
+   "ScalarSopkCompare.CompareCode.part10.json",
+   "ScalarSopkCompare.CompareCode.part11.json",
+   "ScalarSopkCompare.CompareCode.part12.json",
+   "ScalarSopkCompare.CompareCode.part13.json",
+   "ScalarSopkCompare.CompareCode.part14.json",
+   "ScalarSopkCompare.CompareCode.part15.json",
+   "ScalarSopkCompare.CompareCode.part16.json",
+   "ScalarSopkCompare.CompareCode.part17.json",
+   "ScalarSopkCompare.CompareCode.part18.json",
+   "ScalarSopkCompare.CompareCode.part19.json",
+   "ScalarSopkCompare.CompareCode.part2.json",
+   "ScalarSopkCompare.CompareCode.part20.json",
+   "ScalarSopkCompare.CompareCode.part21.json",
+   "ScalarSopkCompare.CompareCode.part22.json",
+   "ScalarSopkCompare.CompareCode.part23.json",
+   "ScalarSopkCompare.CompareCode.part24.json",
+   "ScalarSopkCompare.CompareCode.part25.json",
+   "ScalarSopkCompare.CompareCode.part26.json",
+   "ScalarSopkCompare.CompareCode.part27.json",
+   "ScalarSopkCompare.CompareCode.part28.json",
+   "ScalarSopkCompare.CompareCode.part29.json",
+   "ScalarSopkCompare.CompareCode.part3.json",
+   "ScalarSopkCompare.CompareCode.part30.json",
+   "ScalarSopkCompare.CompareCode.part31.json",
+   "ScalarSopkCompare.CompareCode.part32.json",
+   "ScalarSopkCompare.CompareCode.part33.json",
+   "ScalarSopkCompare.CompareCode.part34.json",
+   "ScalarSopkCompare.CompareCode.part35.json",
+   "ScalarSopkCompare.CompareCode.part36.json",
+   "ScalarSopkCompare.CompareCode.part37.json",
+   "ScalarSopkCompare.CompareCode.part38.json",
+   "ScalarSopkCompare.CompareCode.part39.json",
+   "ScalarSopkCompare.CompareCode.part4.json",
+   "ScalarSopkCompare.CompareCode.part40.json",
+   "ScalarSopkCompare.CompareCode.part41.json",
+   "ScalarSopkCompare.CompareCode.part42.json",
+   "ScalarSopkCompare.CompareCode.part43.json",
+   "ScalarSopkCompare.CompareCode.part44.json",
+   "ScalarSopkCompare.CompareCode.part45.json",
+   "ScalarSopkCompare.CompareCode.part46.json",
+   "ScalarSopkCompare.CompareCode.part47.json",
+   "ScalarSopkCompare.CompareCode.part48.json",
+   "ScalarSopkCompare.CompareCode.part49.json",
+   "ScalarSopkCompare.CompareCode.part5.json",
+   "ScalarSopkCompare.CompareCode.part50.json",
+   "ScalarSopkCompare.CompareCode.part51.json",
+   "ScalarSopkCompare.CompareCode.part52.json",
+   "ScalarSopkCompare.CompareCode.part53.json",
+   "ScalarSopkCompare.CompareCode.part54.json",
+   "ScalarSopkCompare.CompareCode.part55.json",
+   "ScalarSopkCompare.CompareCode.part56.json",
+   "ScalarSopkCompare.CompareCode.part57.json",
+   "ScalarSopkCompare.CompareCode.part58.json",
+   "ScalarSopkCompare.CompareCode.part59.json",
+   "ScalarSopkCompare.CompareCode.part6.json",
+   "ScalarSopkCompare.CompareCode.part60.json",
+   "ScalarSopkCompare.CompareCode.part7.json",
+   "ScalarSopkCompare.CompareCode.part8.json",
+   "ScalarSopkCompare.CompareCode.part9.json"
+  ],
+  "cells": 1920,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarSopkMisc.cpp:Code": {
+  "adapters": [
+   "ScalarSopkMisc.Code.json"
+  ],
+  "cells": 128,
+  "compared": 128,
+  "asserted": 128,
+  "diff": [],
+  "pins": "ScalarSopkMisc.cpp:Expected[4] (same for every lane)"
+ },
+ "ScalarSopkWaitcnt.cpp:WaitCode": {
+  "adapters": [
+   "ScalarSopkWaitcnt.WaitCode.part1.json",
+   "ScalarSopkWaitcnt.WaitCode.part10.json",
+   "ScalarSopkWaitcnt.WaitCode.part11.json",
+   "ScalarSopkWaitcnt.WaitCode.part12.json",
+   "ScalarSopkWaitcnt.WaitCode.part13.json",
+   "ScalarSopkWaitcnt.WaitCode.part14.json",
+   "ScalarSopkWaitcnt.WaitCode.part15.json",
+   "ScalarSopkWaitcnt.WaitCode.part16.json",
+   "ScalarSopkWaitcnt.WaitCode.part17.json",
+   "ScalarSopkWaitcnt.WaitCode.part18.json",
+   "ScalarSopkWaitcnt.WaitCode.part19.json",
+   "ScalarSopkWaitcnt.WaitCode.part2.json",
+   "ScalarSopkWaitcnt.WaitCode.part20.json",
+   "ScalarSopkWaitcnt.WaitCode.part21.json",
+   "ScalarSopkWaitcnt.WaitCode.part22.json",
+   "ScalarSopkWaitcnt.WaitCode.part23.json",
+   "ScalarSopkWaitcnt.WaitCode.part24.json",
+   "ScalarSopkWaitcnt.WaitCode.part3.json",
+   "ScalarSopkWaitcnt.WaitCode.part4.json",
+   "ScalarSopkWaitcnt.WaitCode.part5.json",
+   "ScalarSopkWaitcnt.WaitCode.part6.json",
+   "ScalarSopkWaitcnt.WaitCode.part7.json",
+   "ScalarSopkWaitcnt.WaitCode.part8.json",
+   "ScalarSopkWaitcnt.WaitCode.part9.json"
+  ],
+  "cells": 1536,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarStaticCall.cpp:CallAfterEnd": {
+  "adapters": [
+   "ScalarStaticCall.CallAfterEnd.json",
+   "ScalarStaticCall.CallAfterEnd.wave64.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarStaticCall.cpp:CallBackward": {
+  "adapters": [
+   "ScalarStaticCall.CallBackward.json",
+   "ScalarStaticCall.CallBackward.wave64.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarStaticCall.cpp:CallForward": {
+  "adapters": [
+   "ScalarStaticCall.CallForward.json",
+   "ScalarStaticCall.CallForward.wave64.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarStaticCall.cpp:MixedNested": {
+  "adapters": [
+   "ScalarStaticCall.MixedNested.json",
+   "ScalarStaticCall.MixedNested.wave64.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ScalarStaticCall.cpp:SwappcForward": {
+  "adapters": [
+   "ScalarStaticCall.SwappcForward.json",
+   "ScalarStaticCall.SwappcForward.wave64.json"
+  ],
+  "cells": 384,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "SdwaDestination.cpp:SdwaCode": {
+  "adapters": [
+   "SdwaDestination.SdwaCode.json"
+  ],
+  "cells": 512,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "SdwaMoveSelectors.cpp:Wave32Code": {
+  "adapters": [
+   "SdwaMoveSelectors.Wave32Code.part1.json",
+   "SdwaMoveSelectors.Wave32Code.part10.json",
+   "SdwaMoveSelectors.Wave32Code.part11.json",
+   "SdwaMoveSelectors.Wave32Code.part12.json",
+   "SdwaMoveSelectors.Wave32Code.part13.json",
+   "SdwaMoveSelectors.Wave32Code.part14.json",
+   "SdwaMoveSelectors.Wave32Code.part15.json",
+   "SdwaMoveSelectors.Wave32Code.part16.json",
+   "SdwaMoveSelectors.Wave32Code.part17.json",
+   "SdwaMoveSelectors.Wave32Code.part18.json",
+   "SdwaMoveSelectors.Wave32Code.part19.json",
+   "SdwaMoveSelectors.Wave32Code.part2.json",
+   "SdwaMoveSelectors.Wave32Code.part3.json",
+   "SdwaMoveSelectors.Wave32Code.part4.json",
+   "SdwaMoveSelectors.Wave32Code.part5.json",
+   "SdwaMoveSelectors.Wave32Code.part6.json",
+   "SdwaMoveSelectors.Wave32Code.part7.json",
+   "SdwaMoveSelectors.Wave32Code.part8.json",
+   "SdwaMoveSelectors.Wave32Code.part9.json"
+  ],
+  "cells": 9440,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "SdwaMoveSelectors.cpp:Wave64Code": {
+  "adapters": [
+   "SdwaMoveSelectors.Wave64Code.part1.json",
+   "SdwaMoveSelectors.Wave64Code.part10.json",
+   "SdwaMoveSelectors.Wave64Code.part11.json",
+   "SdwaMoveSelectors.Wave64Code.part12.json",
+   "SdwaMoveSelectors.Wave64Code.part13.json",
+   "SdwaMoveSelectors.Wave64Code.part14.json",
+   "SdwaMoveSelectors.Wave64Code.part15.json",
+   "SdwaMoveSelectors.Wave64Code.part16.json",
+   "SdwaMoveSelectors.Wave64Code.part17.json",
+   "SdwaMoveSelectors.Wave64Code.part18.json",
+   "SdwaMoveSelectors.Wave64Code.part19.json",
+   "SdwaMoveSelectors.Wave64Code.part2.json",
+   "SdwaMoveSelectors.Wave64Code.part3.json",
+   "SdwaMoveSelectors.Wave64Code.part4.json",
+   "SdwaMoveSelectors.Wave64Code.part5.json",
+   "SdwaMoveSelectors.Wave64Code.part6.json",
+   "SdwaMoveSelectors.Wave64Code.part7.json",
+   "SdwaMoveSelectors.Wave64Code.part8.json",
+   "SdwaMoveSelectors.Wave64Code.part9.json"
+  ],
+  "cells": 18880,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "ShaderClock.cpp:Code": {
+  "adapters": [
+   "ShaderClock.Code.json"
+  ],
+  "cells": 288,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop1Control.cpp:Vop1ControlCode": {
+  "adapters": [
+   "Vop1Control.Vop1ControlCode.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop1FloatUnary.cpp:Code": {
+  "adapters": [
+   "Vop1FloatUnary.Code.part1.json",
+   "Vop1FloatUnary.Code.part2.json",
+   "Vop1FloatUnary.Code.part3.json",
+   "Vop1FloatUnary.Code.part4.json"
+  ],
+  "cells": 1728,
+  "compared": 1728,
+  "asserted": 1710,
+  "diff": [
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "3f800000",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "3f800000",
+     "ieee0_keep32": "3f800000",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "3f800000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "bf800000",
+    "title": "80000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "80000000",
+     "old": "bf800000",
+     "ieee0_keep32": "bf800000",
+     "ieee1_flush32": "80000000",
+     "title_flush16": "80000000",
+     "title_noclamp": "80000000",
+     "title_fp16ovfl": "80000000"
+    },
+    "hosts": {
+     "NVIDIA": "bf800000",
+     "Ryzen": "80000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 8,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "3f7fffff",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "3f7fffff",
+     "ieee0_keep32": "3f7fffff",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "3f7fffff",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "007fffff",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "007fffff",
+     "ieee0_keep32": "007fffff",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 10,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "ffffff82",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "ffffff82",
+     "ieee0_keep32": "ffffff82",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "ffffff82",
+     "Ryzen": "ffffff82"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 11,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "ffffff82",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "ffffff82",
+     "ieee0_keep32": "ffffff82",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "ffffff82",
+     "Ryzen": "ffffff82"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 12,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "bf7ffffe",
+    "title": "80000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "80000000",
+     "old": "bf7ffffe",
+     "ieee0_keep32": "bf7ffffe",
+     "ieee1_flush32": "80000000",
+     "title_flush16": "80000000",
+     "title_noclamp": "80000000",
+     "title_fp16ovfl": "80000000"
+    },
+    "hosts": {
+     "NVIDIA": "bf7ffffe",
+     "Ryzen": "bf7ffffe"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 0,
+    "col": 13,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "3f7ffffe",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "3f7ffffe",
+     "ieee0_keep32": "3f7ffffe",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "3f7ffffe",
+     "Ryzen": "3f7ffffe"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 4,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 6,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 8,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 12,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 1,
+    "col": 14,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 1,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 3,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 4,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 5,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 6,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 7,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 8,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 9,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 12,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 13,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 14,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 7,
+    "col": 15,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 4,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 6,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 8,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 12,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 11,
+    "col": 14,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 0,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 2,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 4,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 6,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 8,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 12,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part1.json",
+    "row": 15,
+    "col": 14,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 0,
+    "col": 26,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "81c90fd3",
+    "title": "80000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "80000000",
+     "old": "81c90fd3",
+     "ieee0_keep32": "81c90fd3",
+     "ieee1_flush32": "80000000",
+     "title_flush16": "80000000",
+     "title_noclamp": "80000000",
+     "title_fp16ovfl": "80000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 0,
+    "col": 27,
+    "mask": "0xffffffff",
+    "inputs": [
+     "807fffff",
+     "007fffff",
+     "3c003800",
+     "13579bdf"
+    ],
+    "pin": "01c90fd3",
+    "title": "00000000",
+    "asserted": false,
+    "reproduced_by": [
+     "old",
+     "ieee0_keep32"
+    ],
+    "oracle": {
+     "title": "00000000",
+     "old": "01c90fd3",
+     "ieee0_keep32": "01c90fd3",
+     "ieee1_flush32": "00000000",
+     "title_flush16": "00000000",
+     "title_noclamp": "00000000",
+     "title_fp16ovfl": "00000000"
+    },
+    "hosts": {
+     "NVIDIA": "00000000",
+     "Ryzen": "00000000"
+    },
+    "check_accepts_hardware": true
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 16,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 18,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 20,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 22,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 24,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 26,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 28,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "7fc00001",
+    "title": "7f800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7f800001",
+     "old": "7fc00001",
+     "ieee0_keep32": "7f800001",
+     "ieee1_flush32": "7fc00001",
+     "title_flush16": "7f800001",
+     "title_noclamp": "7f800001",
+     "title_fp16ovfl": "7f800001"
+    },
+    "hosts": {
+     "NVIDIA": "7fc00001",
+     "Ryzen": "7fc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 1,
+    "col": 31,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 6,
+    "col": 30,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 16,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 17,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 18,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 19,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 20,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 21,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 22,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 23,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 24,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 25,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 26,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 27,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 28,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 7,
+    "col": 29,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "ff800001",
+     "ebdb4800",
+     "fb20bf6c"
+    ],
+    "pin": "ffc00001",
+    "title": "ff800001",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "ff800001",
+     "old": "ffc00001",
+     "ieee0_keep32": "ff800001",
+     "ieee1_flush32": "ffc00001",
+     "title_flush16": "ff800001",
+     "title_noclamp": "ff800001",
+     "title_fp16ovfl": "ff800001"
+    },
+    "hosts": {
+     "NVIDIA": "ffc00001",
+     "Ryzen": "ffc00001"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 16,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 18,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 20,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 22,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 24,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 26,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 11,
+    "col": 28,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "40b5e831",
+     "54ed5567",
+     "e779c470"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 16,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 18,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 20,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 22,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 24,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 26,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 15,
+    "col": 28,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7fa00000",
+     "3f800000",
+     "bd813570",
+     "75dd67de"
+    ],
+    "pin": "7fe00000",
+    "title": "7fa00000",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "7fa00000",
+     "old": "7fe00000",
+     "ieee0_keep32": "7fa00000",
+     "ieee1_flush32": "7fe00000",
+     "title_flush16": "7fa00000",
+     "title_noclamp": "7fa00000",
+     "title_fp16ovfl": "7fa00000"
+    },
+    "hosts": {
+     "NVIDIA": "7fe00000",
+     "Ryzen": "7fe00000"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 24,
+    "col": 30,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part2.json",
+    "row": 30,
+    "col": 30,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 33,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 35,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 37,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 39,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 41,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 43,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 45,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 1,
+    "col": 47,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 32,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 34,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 36,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 38,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 40,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 42,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 44,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 6,
+    "col": 46,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 32,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 34,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 36,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 38,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 40,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 42,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 44,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 24,
+    "col": 46,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 32,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 34,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 36,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 38,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 40,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 42,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 44,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part3.json",
+    "row": 30,
+    "col": 46,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 1,
+    "col": 49,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 1,
+    "col": 51,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 1,
+    "col": 53,
+    "mask": "0xffffffff",
+    "inputs": [
+     "7f800001",
+     "ffc00000",
+     "7c01fe00",
+     "12345678"
+    ],
+    "pin": "12347e01",
+    "title": "12347c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "12347c01",
+     "old": "12347e01",
+     "ieee0_keep32": "12347c01",
+     "ieee1_flush32": "12347e01",
+     "title_flush16": "12347c01",
+     "title_noclamp": "12347c01",
+     "title_fp16ovfl": "12347c01"
+    },
+    "hosts": {
+     "NVIDIA": "12347e01",
+     "Ryzen": "12347e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 6,
+    "col": 48,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 6,
+    "col": 50,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 6,
+    "col": 52,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2fc0000",
+     "7fc00000",
+     "c0c1fc01",
+     "94d3d2ff"
+    ],
+    "pin": "94d3fe01",
+    "title": "94d3fc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "94d3fc01",
+     "old": "94d3fe01",
+     "ieee0_keep32": "94d3fc01",
+     "ieee1_flush32": "94d3fe01",
+     "title_flush16": "94d3fc01",
+     "title_noclamp": "94d3fc01",
+     "title_fp16ovfl": "94d3fc01"
+    },
+    "hosts": {
+     "NVIDIA": "94d3fe01",
+     "Ryzen": "94d3fe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 24,
+    "col": 48,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 24,
+    "col": 50,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 24,
+    "col": 52,
+    "mask": "0xffffffff",
+    "inputs": [
+     "c2473fef",
+     "bf000000",
+     "6bdefc01",
+     "291e6ca0"
+    ],
+    "pin": "291efe01",
+    "title": "291efc01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "291efc01",
+     "old": "291efe01",
+     "ieee0_keep32": "291efc01",
+     "ieee1_flush32": "291efe01",
+     "title_flush16": "291efc01",
+     "title_noclamp": "291efc01",
+     "title_fp16ovfl": "291efc01"
+    },
+    "hosts": {
+     "NVIDIA": "291efe01",
+     "Ryzen": "291efe01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 30,
+    "col": 48,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 30,
+    "col": 50,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   },
+   {
+    "adapter": "Vop1FloatUnary.Code.part4.json",
+    "row": 30,
+    "col": 52,
+    "mask": "0xffffffff",
+    "inputs": [
+     "3df74341",
+     "7fc00000",
+     "3e007c01",
+     "c9717e02"
+    ],
+    "pin": "c9717e01",
+    "title": "c9717c01",
+    "asserted": true,
+    "reproduced_by": [
+     "old",
+     "ieee1_flush32"
+    ],
+    "oracle": {
+     "title": "c9717c01",
+     "old": "c9717e01",
+     "ieee0_keep32": "c9717c01",
+     "ieee1_flush32": "c9717e01",
+     "title_flush16": "c9717c01",
+     "title_noclamp": "c9717c01",
+     "title_fp16ovfl": "c9717c01"
+    },
+    "hosts": {
+     "NVIDIA": "c9717e01",
+     "Ryzen": "c9717e01"
+    },
+    "check_accepts_hardware": false
+   }
+  ],
+  "pins": "Vop1FloatUnary.cpp:Expected[32][54]"
+ },
+ "Vop1Vop2Integer.cpp:Code": {
+  "adapters": [
+   "Vop1Vop2Integer.Code.part1.json",
+   "Vop1Vop2Integer.Code.part2.json",
+   "Vop1Vop2Integer.Code.part3.json"
+  ],
+  "cells": 1312,
+  "compared": 1312,
+  "asserted": 1312,
+  "diff": [],
+  "pins": "Vop1Vop2Integer.cpp:Expected[32][41]"
+ },
+ "Vop3Aliases.cpp:AliasCode": {
+  "adapters": [
+   "Vop3Aliases.AliasCode.json"
+  ],
+  "cells": 576,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop3CarryOut.cpp:CarryOutCode": {
+  "adapters": [
+   "Vop3CarryOut.CarryOutCode.json",
+   "Vop3CarryOut.CarryOutCode.wave64.json"
+  ],
+  "cells": 2048,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop3CompareModifiers.cpp:ModifierCode": {
+  "adapters": [
+   "Vop3CompareModifiers.ModifierCode.json"
+  ],
+  "cells": 32,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop3Integer.cpp:IntegerCode": {
+  "adapters": [
+   "Vop3Integer.IntegerCode.json"
+  ],
+  "cells": 896,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop3IntegerAlu.cpp:Code": {
+  "adapters": [
+   "Vop3IntegerAlu.Code.part1.json",
+   "Vop3IntegerAlu.Code.part2.json",
+   "Vop3IntegerAlu.Code.part3.json",
+   "Vop3IntegerAlu.Code.part4.json"
+  ],
+  "cells": 1632,
+  "compared": 1632,
+  "asserted": 1632,
+  "diff": [],
+  "pins": "Vop3IntegerAlu.cpp:Expected[32][51]"
+ },
+ "Vop3Lerp.cpp:LerpCode": {
+  "adapters": [
+   "Vop3Lerp.LerpCode.json"
+  ],
+  "cells": 512,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Vop3Sad.cpp:SadCode": {
+  "adapters": [
+   "Vop3Sad.SadCode.json"
+  ],
+  "cells": 640,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "VopcCompare.cpp:CompareCode": {
+  "adapters": [
+   "VopcCompare.CompareCode.part1.json",
+   "VopcCompare.CompareCode.part2.json",
+   "VopcCompare.CompareCode.part3.json"
+  ],
+  "cells": 320,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "VopcCompareF64.cpp:CompareCode": {
+  "adapters": [
+   "VopcCompareF64.CompareCode.part1.json",
+   "VopcCompareF64.CompareCode.part2.json"
+  ],
+  "cells": 2176,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "Wave32Subgroup.cpp:WaveCode": {
+  "adapters": [
+   "Wave32Subgroup.WaveCode.json"
+  ],
+  "cells": 256,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "WaveSleep.cpp:WaveSleepCode": {
+  "adapters": [
+   "WaveSleep.WaveSleepCode.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "WaveUniform.cpp:WaveCode": {
+  "adapters": [
+   "WaveUniform.WaveCode.json"
+  ],
+  "cells": 64,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ },
+ "WriteLane.cpp:WriteLaneCode": {
+  "adapters": [
+   "WriteLane.WriteLaneCode.json"
+  ],
+  "cells": 96,
+  "compared": 0,
+  "asserted": 0,
+  "diff": [],
+  "pins": null
+ }
+}

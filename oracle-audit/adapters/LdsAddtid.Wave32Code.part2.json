@@ -1,0 +1,64 @@
+{
+  "file": "LdsAddtid.cpp",
+  "kernel": "Wave32Code",
+  "manifest_class": "partial",
+  "status": "split 2/3",
+  "skip": false,
+  "words": [
+    5,
+    247
+  ],
+  "pre": [],
+  "post": [
+    "v_mov_b32 v10, v26",
+    "v_mov_b32 v11, v27",
+    "v_mov_b32 v12, v28",
+    "v_mov_b32 v13, v29",
+    "v_mov_b32 v14, v30",
+    "v_mov_b32 v15, v31",
+    "v_mov_b32 v16, v32",
+    "v_mov_b32 v17, v33",
+    "v_mov_b32 v18, v34",
+    "v_mov_b32 v19, v35",
+    "v_mov_b32 v20, v36",
+    "v_mov_b32 v21, v37",
+    "v_mov_b32 v22, v38",
+    "v_mov_b32 v23, v39",
+    "v_mov_b32 v24, v40",
+    "v_mov_b32 v25, v41"
+  ],
+  "columns": {
+    "16": 0,
+    "17": 1,
+    "18": 2,
+    "19": 3,
+    "20": 4,
+    "21": 5,
+    "22": 6,
+    "23": 7,
+    "24": 8,
+    "25": 9,
+    "26": 10,
+    "27": 11,
+    "28": 12,
+    "29": 13,
+    "30": 14,
+    "31": 15
+  },
+  "rows": {
+    "table": "Rows",
+    "layout": "Rows[tid][0..3] -> v4..v7 (only the first 32 of the 64 table rows: the wave32 run dispatches waveSize=32 threads)",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 4096,
+  "notes": [
+    "Test geometry for the wave32 run: one workgroup of 32 threads with waveSize*32 = 1024 dwords (4096 B) of LDS, which equals the oracle's fixed 4096 B group segment exactly. This matters: the ds_read/write_addtid_b32 cases deliberately use M0/offset combinations that land partly or wholly beyond 4 KiB (M0 0x7f000f9c + 36 + tid*4 crosses 0x1000; M0 0xff00 + offset 0xff00 is far out of range), so the expected values encode out-of-range LDS behaviour for a 4 KiB allocation. No rebasing is possible or wanted (M0 is set by s_mov in the body, offsets are immediates).",
+    "Plain ds_write_b32/ds_read_b32 use v80 = lane*4 (set in the body, word 5) plus offsets 0..3968: bytes 0..4095, all written by the fill loop before any read, so the uninitialised oracle LDS does not leak into results.",
+    "Body changes EXEC twice with s_and_saveexec_b32 s20 (lanes where input >> 30 != 0) and restores it itself with s_mov_b32 exec_lo, -1 (words 159, 181). M0 is left at -1, harmless.",
+    "36 asserted result columns (Checked = 36 of Results = 64; Check() compares all 36 against Expected32) in v10..v45: split into 3 adapters (columns 0-15, 16-31, 32-35).",
+    "Output columns 0..3 keep v6 (the third input) in lanes where the addtid read is masked off; words 136..139 initialise them inside the body."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030): prologue = v1/v3 address setup + buffer_load_dwordx4 v[4:7] offen; [5,247) = v80 = v0<<2, 32-plane ds_write_b32 fill, masked ds_read_addtid_b32 (4 M0 settings) into v10..v13, masked ds_write_addtid_b32 (4 M0 settings), 32 ds_read_b32 into v14..v45; stores v[10:45] at offsets 0..143. Run() (waveSize threads, waveSize*32 LDS dwords, userData = input/output descriptors only) and Check() (36 columns vs Expected32) read."
+}

@@ -1,0 +1,8 @@
+  .long 0xbe9403ff
+  .long 0x55555555
+  .long 0xbe9503ff
+  .long 0x55555555
+  .long 0xb9141801
+  .long 0xb9150881
+  .long 0x7e140214
+  .long 0x7e160215

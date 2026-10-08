@@ -1,0 +1,27 @@
+{
+  "file": "LdsAddtid.cpp",
+  "kernel": "Wave64Code",
+  "manifest_class": "partial",
+  "status": "skip",
+  "skip": true,
+  "reason": "the wave64 run allocates waveSize*32 = 2048 dwords (8 KiB) and its ALU words use immediate LDS offsets up to 7936 (ds_write_b32/ds_read_b32 v80 offset:4096..7936, highest byte 8191) and addtid M0 bases tuned to the 8 KiB bound (0x7f001f5c, 0xffff0304, 0xff1e80); the oracle has a fixed 4 KiB group segment, so half the planes and the out-of-range addtid cases would behave differently. Offsets are immediates in the words, so no rebase is possible.",
+  "words": [
+    5,
+    247
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {},
+  "rows": {
+    "table": "Rows",
+    "layout": "Rows[tid][0..3] -> v4..v7",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "lds": 8192,
+  "notes": [
+    "Would need the template's .amdhsa_group_segment_fixed_size raised to 8192 (and the matching metadata) to replay; then it is a 36-column, 3-part split like Wave32Code with s_and_saveexec_b64 / s_mov_b64 exec, -1 restored in the body."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) diffed against Wave32Code: same structure, plane stride 256 B, offsets to 7936, wave64 exec forms; Run() LDS size waveSize*32 dwords read."
+}

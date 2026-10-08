@@ -1,0 +1,38 @@
+{
+  "manifest_class": "partial",
+  "skip": false,
+  "pre": [],
+  "post": [
+    "v_lshlrev_b32 v2, 6, v0"
+  ],
+  "lds": 0,
+  "file": "Wave32Subgroup.cpp",
+  "kernel": "WaveCode",
+  "status": "ready",
+  "words": [
+    1,
+    15
+  ],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3
+  },
+  "rows": {
+    "expr": "[0, 0, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": false,
+  "notes": [
+    "No inputs; 64 dummy rows = 2 wave32 in one workgroup (Threads = 64), needed because results depend on lane and wave position (mbcnt, readlane lane 3 of v0, bcnt of VCC).",
+    "Word 0 (v_lshlrev v1, 4, v0: store offset) is prologue and excluded. Word 3 writes v2 = v0 & 31 (lane in wave) which the body uses at words 4 and 12; it clobbers the template's output offset, so post recomputes v2 = v0 << 6. Checker flags this v2 write; it is intended.",
+    "Body saves EXEC to s30, uses v_cmpx, and restores EXEC itself (s_mov_b32 exec_lo, s30); no post EXEC fix-up needed.",
+    "Check(): lane = tid % 32; expects {lane, 8, tid - lane + 3, lane < 8}. All 4 columns asserted. Relies on oracle v0 = workgroup-local id, same as the test."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030); Run()/Check() read; user data only has the output descriptor",
+  "accepted_flags": {
+    "3": "v2 is clobbered by the body; post recomputes v2 = v0 << 6 before the template stores"
+  }
+}

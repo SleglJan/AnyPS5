@@ -1,0 +1,39 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [],
+ "post": [
+  "v_mov_b32 v10, v58",
+  "v_mov_b32 v11, v59",
+  "v_mov_b32 v12, v60",
+  "v_mov_b32 v13, v61",
+  "v_mov_b32 v14, v62",
+  "v_mov_b32 v15, v63"
+ ],
+ "lds": 0,
+ "wave64": false,
+ "file": "Vop1FloatUnary.cpp",
+ "kernel": "Code",
+ "status": "split 4/4",
+ "words": [
+  5,
+  84
+ ],
+ "columns": {
+  "48": 0,
+  "49": 1,
+  "50": 2,
+  "51": 3,
+  "52": 4,
+  "53": 5
+ },
+ "rows": "first4",
+ "row_count": 32,
+ "notes": [
+  "Rows[32][4] loaded as one dwordx4 at tid*16: exactly the oracle row. Word 5 derives v8 = v6 >> 16 inside the body.",
+  "Results c = 0..53 are in v(10+c); the test also stores v64, v65 (results 54, 55) which the kernel never writes and Check() never reads - not compared.",
+  "Check() skips cells whose Checked[tid] bit is clear (lane 0 skips several) and compares transcendental columns with tolerances (Tolerance[]); f16 results (30..53) are written over v7 copies, so their high half is v7's high half.",
+  "this part compares result columns 48..53"
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns"
+}

@@ -1,0 +1,186 @@
+Run 2 mode sensitivity, bit-exact against the titles' mode (value & column mask).
+Mode letters: O=old (IEEE 1, f32 kept) F=IEEE 1 K=f32 denormals kept h=f16/f64 flushed c=DX10_CLAMP 0 v=FP16_OVFL 1
+
+Total cells: 69504; mode-dependent: 1224 (163 of them only in the NaN quiet bit)
+
+Per field (a cell counts once per field; 'quiet bit only' cells in parentheses):
+  IEEE_MODE                       351 (163)
+  f32 denormals                   324 (0)
+  f16/f64 denormals               478 (0)
+  DX10_CLAMP                       21 (0)
+  FP16_OVFL                       247 (0)
+  old only (IEEE+f32 together)      0 (0)
+  old (IEEE 1 + f32 kept), any    487 (163)
+
+Per kernel and column (only columns with a mode-dependent cell): cells; per mode: differing cells (quiet-bit-only)
+
+## Division.cpp DivisionCode
+   c  0 cells= 256  O=1(1)  F=1(1)
+
+## Division.cpp HelperCode
+   c  2 cells= 256  O=10(10)  F=10(10)
+   c  3 cells= 256  O=10(10)  F=10(10)
+
+## Float16Misc.cpp MiscCode
+   c  0 cells= 256  O=4(4)  F=4(4)  h=25  v=87
+   c  1 cells= 256  O=4(4)  F=4(4)  h=32
+   c  2 cells= 256  h=32
+   c  3 cells= 256  h=14
+   c  4 cells= 256  h=14
+   c  5 cells= 256  h=48
+   c  6 cells= 256  h=51
+   c  9 cells= 256  O=76(4)  F=4(4)  K=72
+
+## Float16ResultModifiers.cpp Code
+   c  0 cells=  32  h=1  c=1
+   c  1 cells=  32  h=29  v=1
+   c  2 cells=  32  h=7  c=16
+   c  3 cells=  32  h=20
+   c  5 cells=  32  h=2  c=1
+   c  6 cells=  32  h=22  v=7
+   c  8 cells=  32  h=1  c=1
+   c  9 cells=  32  h=22  v=8
+   c 10 cells=  32  c=1
+   c 11 cells=  32  h=22  v=8
+   c 12 cells=  32  h=4
+   c 13 cells=  32  h=4
+   c 15 cells=  32  c=1
+
+## Float16Rounding.cpp RoundingCode
+   c  0 cells= 256  h=28  v=76
+   c  1 cells= 256  O=6(6)  F=6(6)  h=6  v=1
+   c  2 cells= 256  O=6(6)  F=6(6)  h=40  v=31
+
+## LdsAtomics.cpp Code
+   c  6 cells=  32  O=6  K=6
+   c  7 cells=  32  O=7  K=7
+   c 10 cells=  32  O=6  K=6
+   c 11 cells=  32  O=7  K=7
+   c 12 cells=  32  O=7  K=7
+   c 14 cells=  32  O=7  K=7
+   c 15 cells=  32  O=7  K=7
+   c 16 cells=  32  O=7  K=7
+
+## Vop1FloatUnary.cpp Code
+   c  0 cells=  32  O=4(4)  F=4(4)
+   c  1 cells=  32  O=2(1)  F=1(1)  K=1
+   c  2 cells=  32  O=5(4)  F=4(4)  K=1
+   c  3 cells=  32  O=1(1)  F=1(1)
+   c  4 cells=  32  O=4(4)  F=4(4)
+   c  5 cells=  32  O=1(1)  F=1(1)
+   c  6 cells=  32  O=4(4)  F=4(4)
+   c  7 cells=  32  O=1(1)  F=1(1)
+   c  8 cells=  32  O=5(4)  F=4(4)  K=1
+   c  9 cells=  32  O=2(1)  F=1(1)  K=1
+   c 10 cells=  32  O=1  K=1
+   c 11 cells=  32  O=1  K=1
+   c 12 cells=  32  O=5(4)  F=4(4)  K=1
+   c 13 cells=  32  O=2(1)  F=1(1)  K=1
+   c 14 cells=  32  O=4(4)  F=4(4)
+   c 15 cells=  32  O=1(1)  F=1(1)
+   c 16 cells=  32  O=4(4)  F=4(4)
+   c 17 cells=  32  O=1(1)  F=1(1)
+   c 18 cells=  32  O=4(4)  F=4(4)
+   c 19 cells=  32  O=1(1)  F=1(1)
+   c 20 cells=  32  O=4(4)  F=4(4)
+   c 21 cells=  32  O=1(1)  F=1(1)
+   c 22 cells=  32  O=4(4)  F=4(4)
+   c 23 cells=  32  O=1(1)  F=1(1)
+   c 24 cells=  32  O=4(4)  F=4(4)
+   c 25 cells=  32  O=1(1)  F=1(1)
+   c 26 cells=  32  O=5(4)  F=4(4)  K=1
+   c 27 cells=  32  O=2(1)  F=1(1)  K=1
+   c 28 cells=  32  O=4(4)  F=4(4)
+   c 29 cells=  32  O=1(1)  F=1(1)
+   c 30 cells=  32  O=3(3)  F=3(3)
+   c 31 cells=  32  O=1(1)  F=1(1)
+   c 32 cells=  32  O=3(3)  F=3(3)
+   c 33 cells=  32  O=1(1)  F=1(1)
+   c 34 cells=  32  O=3(3)  F=3(3)
+   c 35 cells=  32  O=1(1)  F=1(1)
+   c 36 cells=  32  O=3(3)  F=3(3)
+   c 37 cells=  32  O=1(1)  F=1(1)
+   c 38 cells=  32  O=3(3)  F=3(3)
+   c 39 cells=  32  O=1(1)  F=1(1)
+   c 40 cells=  32  O=3(3)  F=3(3)
+   c 41 cells=  32  O=1(1)  F=1(1)
+   c 42 cells=  32  O=3(3)  F=3(3)  v=1
+   c 43 cells=  32  O=1(1)  F=1(1)  v=3
+   c 44 cells=  32  O=3(3)  F=3(3)  v=1
+   c 45 cells=  32  O=1(1)  F=1(1)  v=3
+   c 46 cells=  32  O=3(3)  F=3(3)  v=1
+   c 47 cells=  32  O=1(1)  F=1(1)  v=3
+   c 48 cells=  32  O=3(3)  F=3(3)  v=4
+   c 49 cells=  32  O=1(1)  F=1(1)  v=6
+   c 50 cells=  32  O=3(3)  F=3(3)
+   c 51 cells=  32  O=1(1)  F=1(1)
+   c 52 cells=  32  O=3(3)  F=3(3)
+   c 53 cells=  32  O=1(1)  F=1(1)
+
+## Vop1Vop2Integer.cpp Code
+   c 13 cells=  32  v=6
+
+## Vop3Aliases.cpp AliasCode
+   c  3 cells=  64  O=60  F=60  K=60
+   c  5 cells=  64  O=64  F=64  K=64
+   c  6 cells=  64  O=64  F=64  K=64
+
+## VopcCompare.cpp CompareCode
+   c  1 cells= 256  h=4
+
+## VopcCompareF64.cpp CompareCode
+   c  0 cells=1088  h=18
+   c  1 cells=1088  h=32
+
+## Kernels with no mode-dependent cell (51)
+   BranchPastEndpgm.cpp:LoopBodyCode
+   BranchPastEndpgm.cpp:TailBlockCode
+   CacheControl.cpp:CacheControlCode
+   Division.cpp:FmaCode
+   DsAppendConsume.cpp:Code
+   DsWrxchg2.cpp:Code
+   FmaRounding.cpp:FmaCode
+   IntegerDot.cpp:DotCode
+   LdsAddtid.cpp:Wave32Code
+   LdsIntegerAtomics.cpp:Wave32Code
+   LdsReadWrite.cpp:Wave32Code
+   LoopEndingExits.cpp:Code
+   MixPrecision.cpp:MixCode
+   ReadFirstLane.cpp:ReadFirstLaneWave32Code
+   ReadFirstLane.cpp:ReadFirstLaneWave64Code
+   ReadLane.cpp:ReadLaneCode
+   RelativeIndexing.cpp:Code
+   ScalarBitCount.cpp:BitCountCode
+   ScalarGetreg.cpp:Code
+   ScalarProgramEnd.cpp:Code
+   ScalarProgramEnd.cpp:SetkillCode
+   ScalarProgramEndSaved.cpp:Code
+   ScalarProgramFlow.cpp:Wave32Code
+   ScalarProgramFlow.cpp:Wave64Code
+   ScalarRelativeIndexing.cpp:Code
+   ScalarSethalt.cpp:Code
+   ScalarSop1.cpp:Code
+   ScalarSop2.cpp:Code
+   ScalarSopkCompare.cpp:CompareCode
+   ScalarSopkMisc.cpp:Code
+   ScalarSopkWaitcnt.cpp:WaitCode
+   ScalarStaticCall.cpp:CallAfterEnd
+   ScalarStaticCall.cpp:CallBackward
+   ScalarStaticCall.cpp:CallForward
+   ScalarStaticCall.cpp:MixedNested
+   ScalarStaticCall.cpp:SwappcForward
+   SdwaDestination.cpp:SdwaCode
+   SdwaMoveSelectors.cpp:Wave32Code
+   SdwaMoveSelectors.cpp:Wave64Code
+   ShaderClock.cpp:Code
+   Vop1Control.cpp:Vop1ControlCode
+   Vop3CarryOut.cpp:CarryOutCode
+   Vop3CompareModifiers.cpp:ModifierCode
+   Vop3Integer.cpp:IntegerCode
+   Vop3IntegerAlu.cpp:Code
+   Vop3Lerp.cpp:LerpCode
+   Vop3Sad.cpp:SadCode
+   Wave32Subgroup.cpp:WaveCode
+   WaveSleep.cpp:WaveSleepCode
+   WaveUniform.cpp:WaveCode
+   WriteLane.cpp:WriteLaneCode

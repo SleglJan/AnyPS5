@@ -1,0 +1,43 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v8, v6",
+  "v_mov_b32 v9, v7",
+  "v_mov_b32 v6, v4",
+  "v_mov_b32 v7, v5",
+  "v_mov_b32 v10, 0",
+  "v_mov_b32 v11, 0"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "VopcCompare.cpp",
+ "kernel": "CompareCode",
+ "status": "split 2/3",
+ "words": [
+  21,
+  359
+ ],
+ "columns": {
+  "0": 0,
+  "1": 1
+ },
+ "column_masks": {
+  "0": "0xffffff00",
+  "1": "0x00180001"
+ },
+ "rows": {
+  "expr": "[[0x0, 0x0, 0x0, 0x0], [0xffffffff, 0xffffffff, 0xffffffff, 0x7fffffff], [0x0, 0x80000000, 0x0, 0x1], [0xffffffff, 0x7fffffff, 0xffffffff, 0xffffffff], [0x1, 0x0, 0x1, 0x0], [0xffffffff, 0x1, 0x0, 0xffffffff], [0x0, 0x1, 0x0, 0x80000000], [0x0, 0xffffffff, 0xffffffff, 0x1], [0x0, 0x0, 0xffffffff, 0xffffffff], [0xffffffff, 0xffffffff, 0x1, 0x0], [0x0, 0x80000000, 0x0, 0xffffffff], [0xffffffff, 0x7fffffff, 0x0, 0x80000000], [0x1, 0x0, 0xffffffff, 0x1], [0xffffffff, 0x1, 0x0, 0x0], [0x0, 0x1, 0xffffffff, 0x7fffffff], [0x0, 0xffffffff, 0x0, 0x1], [0x43f60bfd, 0xfbabbe, 0x6b069786, 0x1357e775], [0x6459c89e, 0x6e93e7f3, 0x2ce284b5, 0x752e339], [0xc6cbbfb, 0x3b111c1e, 0x797e8a27, 0x50fa08e2], [0x2a9590f5, 0x41edd323, 0x87fadce, 0x5b2f60b5], [0x591d1fb3, 0x34f836ea, 0x591d1fb3, 0x34f836ea], [0x26eab342, 0x6a0a7476, 0x423d5fac, 0x1f5c86c5], [0x1343b683, 0x5dce57cf, 0x6bb7a9d5, 0x2638a6ff], [0x1a34d098, 0x69e9f739, 0x5873137f, 0x5ab399f5], [0x5f392815, 0x282d4ffc, 0x58736768, 0x70cceb9a], [0x4706820a, 0x758e1951, 0x4706820a, 0x758e1951], [0x7aa41fa2, 0x5f494258, 0x675b9608, 0x2615eaab], [0x7cd03bfa, 0x1bd26413, 0x11d6ab08, 0x7977bf33], [0x22dee40b, 0x4e50d66f, 0x4be7463f, 0x304765d9], [0x130811f4, 0x45020b1f, 0x5c00555a, 0x6e00fe5c], [0x5e86ce9, 0x4580246, 0x5e86ce9, 0x4580246], [0x618b2a39, 0x2c643505, 0x2abe45c8, 0x78855ed0]][tid]",
+  "count": 32,
+  "source": "FillInput(): state = 0x853c49e6748fea9b, next() = u32(state = state*6364136223846793005 + 1442695040888963407 >> 33); words[0] = FloatEdges[tid%12]; words[1] = FloatEdges[(tid/12+tid)%12]; a = tid<16 ? IntegerEdges[tid%8] : next()<<32 | next(); b = tid<16 ? IntegerEdges[(tid/8+tid*3)%8] : (tid%5==0 ? a : next()<<32 | next()); words[2..5] = a lo, a hi, b lo, b hi; words[6] = 0xabcd0000 | HalfEdges[tid%12]; words[7] = 0x12340000 | HalfEdges[(tid/12+tid*5)%12]. The operand order of next()<<32 | next() is unspecified in C++; the literal table is from a g++ build (the compiler that builds the tests)."
+ },
+ "row_count": 32,
+ "notes": [
+  "The test loads 8 dwords per lane: f32 a,b -> v4,v5; u64 a -> v[6:7]; u64 b -> v[8:9]; f16 a,b (with 0xabcd/0x1234 high halves) -> v14,v15. Each compare block reads only one of these groups, and each writes its own bit of v10/v11 (v_lshl_or_b32 vX, v20, bit, vX), so the same words are replayed three times with three row mappings and each part compares only the bits of its group (column_masks: compare (oracle & mask) with (host & mask)).",
+  "EXEC: every v_cmpx block saves exec_lo in s30 and restores it (s_mov_b32 exec_lo, s30) before the next block; the body ends with full EXEC.",
+  "Accumulators v10, v11 start at 0 (pre, as the prologue).",
+  "Part 2 (64-bit integer compares): rows = Input words 2..5 (a lo, a hi, b lo, b hi); pre moves them into v[6:7] and v[8:9] (v6,v7 -> v8,v9 first, then v4,v5 -> v6,v7). Asserted bits: v10 bits 8..31 (compares 8..31), v11 bit 0 (32), v11 bits 19,20 (51, 52)."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns; block boundaries and per-block input registers extracted from the disassembly"
+}

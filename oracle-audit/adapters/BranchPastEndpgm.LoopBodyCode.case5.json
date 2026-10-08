@@ -1,0 +1,19 @@
+{
+  "file": "BranchPastEndpgm.cpp",
+  "kernel": "LoopBodyCode",
+  "manifest_class": "partial",
+  "status": "skip",
+  "skip": true,
+  "reason": "Cases[5] (selector 3, expected +3) branches to the loop body at words 11-14, which sits after a buffer_store/s_endpgm (words 8-10) and falls into another store; not a contiguous store-free range.",
+  "words": [
+    4,
+    8
+  ],
+  "row_count": 64,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "Only Cases[3] (selector 0) is replayable (LoopBodyCode.case3.json)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of the whole kernel; control flow traced by hand."
+}

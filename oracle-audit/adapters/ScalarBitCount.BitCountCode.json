@@ -1,0 +1,37 @@
+{
+  "file": "ScalarBitCount.cpp",
+  "kernel": "BitCountCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words": [
+    7,
+    36
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6
+  },
+  "rows": {
+    "expr": "[((0, 0xffffffffffffffff, 0xffffffff00000000, 0x00000000ffffffff, 1, 0x8000000000000000, 0, 0, 0, 0)[tid] if tid < 10 else ((6364136223846793005 ** (tid + 1) * 0x9e3779b97f4a7c15 + 1442695040888963407 * ((6364136223846793005 ** (tid + 1) - 1) // 6364136223846793004)) % 2 ** 64) >> (tid % 13)) & 0xffffffff, ((0, 0xffffffffffffffff, 0xffffffff00000000, 0x00000000ffffffff, 1, 0x8000000000000000, 0, 0, 0, 0)[tid] if tid < 10 else ((6364136223846793005 ** (tid + 1) * 0x9e3779b97f4a7c15 + 1442695040888963407 * ((6364136223846793005 ** (tid + 1) - 1) // 6364136223846793004)) % 2 ** 64) >> (tid % 13)) >> 32, 0, 0]",
+    "count": 32
+  },
+  "row_count": 32,
+  "wave64": false,
+  "lds": 0,
+  "notes": [
+    "rows expr is a closed form of Run()'s 64-bit LCG (state = state*6364136223846793005 + 1442695040888963407, value = state >> (tid % 13) as u64, split into low/high dwords); checked lane-for-lane against a compiled copy of the test's FillInput().",
+    "Edges has 10 entries of which only 6 are listed; entries 6..9 are value-initialised to 0, so lanes 6..9 get value 0 (expression reproduces this).",
+    "Lane tid reads Input[tid*4] (low) and Input[tid*4+1] (high) into v4,v5; words 2,3 are 0.",
+    "The body is a scalar loop over lanes (s20 = 0..31): v_readlane from lane s20, SOP1 bit ops on s[8:9], v_writelane results into v10..v16 lane s20; branch at word 35 targets word 8, inside [7,36]. It hard-codes 32 lanes: run exactly 32 rows in wave32 (wave64 would leave lanes 32..63 unwritten = 0).",
+    "Outputs v10..v16 -> Output[tid*8+0..6]; Check() asserts columns 0..6. Uses s8..s16, s20 (below s48)."
+  ],
+  "verified": "disassembly (llvm-mc gfx1030) of words 7..35; Run()/FillInput()/Check() read; rows expr compared with compiled FillInput() for all 32 lanes"
+}

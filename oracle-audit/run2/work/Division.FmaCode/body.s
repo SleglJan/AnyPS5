@@ -1,0 +1,2 @@
+  .long 0xd54b000a
+  .long 0x041a0b04

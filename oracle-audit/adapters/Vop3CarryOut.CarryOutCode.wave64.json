@@ -1,0 +1,49 @@
+{
+  "file": "Vop3CarryOut.cpp",
+  "kernel": "CarryOutCode",
+  "manifest_class": "yes",
+  "status": "ready",
+  "skip": false,
+  "words_file": "generated/Vop3CarryOut.CarryOutCode.words.txt",
+  "words": [
+    7,
+    40
+  ],
+  "pre": [],
+  "post": [],
+  "columns": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    "11": 11,
+    "12": 12,
+    "13": 13,
+    "14": 14,
+    "15": 15
+  },
+  "rows": {
+    "expr": "[*((0, 0), (0, 1), (1, 0), (0xffffffff, 1), (1, 0xffffffff), (0xffffffff, 0xffffffff), (0x80000000, 0x80000000), (0x7fffffff, 1), (0x80000000, 0x7fffffff), (0x7fffffff, 0x80000000), (0, 0xffffffff), (0xffffffff, 0), (0x80000001, 0x80000000), (0x12345678, 0x9abcdef0))[tid], 0, 0] if tid < 14 else [((6364136223846793005 ** (2 * tid + 1) * 0x9e3779b97f4a7c15 + 1442695040888963407 * ((6364136223846793005 ** (2 * tid + 1) - 1) // 6364136223846793004)) % 2 ** 64) >> 32, ((6364136223846793005 ** (2 * tid + 2) * 0x9e3779b97f4a7c15 + 1442695040888963407 * ((6364136223846793005 ** (2 * tid + 2) - 1) // 6364136223846793004)) % 2 ** 64) >> 32, 0, 0]",
+    "count": 64
+  },
+  "row_count": 64,
+  "wave64": true,
+  "lds": 0,
+  "notes": [
+    "The kernel array contains a named constant (`Literal`) that the regex word extractors (audit_modes.words_of, disasm.words) silently drop, shifting every later word by one; use words_file (generated/, built by substituting the constexpr value) \u2014 the manifest's alu_word_range is in true word indices and matches words_file.",
+    "rows expr is a closed form of Run()'s 64-bit LCG (state = state*6364136223846793005 + 1442695040888963407, word = state>>32, 2 words per lane); checked lane-for-lane against a compiled copy of the test's FillInput().",
+    "main() runs the same words twice: Run(waveSize=32) and Run(waveSize=64), Check() after each. This file is the wave64 run; the sibling Vop3CarryOut.CarryOutCode.json is the other.",
+    "In wave64 the VOP3 carry destinations s8/s10/vcc_lo name s[8:9]/s[10:11]/vcc (still below s48).",
+    "Lane tid reads Input[tid*4+0..1] = a,b (Edges[tid][0..1] for tid<14, else LCG); Edges columns 2..7 are expected values, not inputs; words 2,3 are 0.",
+    "Outputs v10..v25 -> Output[tid*16+0..15] (value, carry pairs); Check() asserts all 16 columns.",
+    "The manifest's '[gfx1013 only]'/invalid flags for this kernel came from the dropped Literal shifting decode; with the true words every instruction (v_add/sub/subrev_co_u32 VOP3, v_cndmask_b32_e64, literal 0x80000000) decodes on gfx1030 and gfx1036."
+  ],
+  "verified": "disassembly of words_file[7:40] with llvm-mc gfx1030 and gfx1036; Run()/main()/Check() read; rows expr compared with compiled FillInput() for all 64 lanes"
+}

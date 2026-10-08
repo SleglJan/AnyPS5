@@ -1,0 +1,34 @@
+{
+ "manifest_class": "partial",
+ "skip": false,
+ "pre": [
+  "v_mov_b32 v14, v6",
+  "v_mov_b32 v15, v7",
+  "v_mov_b32 v10, 0"
+ ],
+ "post": [],
+ "lds": 0,
+ "wave64": false,
+ "file": "Vop3CompareModifiers.cpp",
+ "kernel": "ModifierCode",
+ "status": "ready",
+ "words": [
+  12,
+  70
+ ],
+ "columns": {
+  "0": 0
+ },
+ "rows": {
+  "expr": "(lambda F, H, tid: [F[tid % 12], F[(tid // 12 + tid * 7) % 12] ^ (0x80000000 if tid & 4 else 0), 0xabcd0000 | H[tid % 12], 0x12340000 | (H[(tid // 12 + tid * 5) % 12] ^ (0x8000 if tid & 8 else 0))])([0x7fc00000, 0x3f800000, 0x80000000, 0x0, 0x7f800000, 0xff800000, 0xbf800000, 0x3f800000, 0x800000, 0x40490fdb, 0xffc00001, 0xc0000000], [0x7e00, 0x3c00, 0x8000, 0x0, 0x7c00, 0xfc00, 0xbc00, 0x3c00, 0x1, 0x4248, 0xfe01, 0xc000], tid)",
+  "count": 32,
+  "source": "FillInput(): words[0] = FloatEdges[tid%12]; words[1] = FloatEdges[(tid/12 + tid*7)%12] ^ (tid&4 ? 0x80000000 : 0); words[2] = 0xabcd0000 | HalfEdges[tid%12]; words[3] = 0x12340000 | (HalfEdges[(tid/12 + tid*5)%12] ^ (tid&8 ? 0x8000 : 0))"
+ },
+ "row_count": 32,
+ "notes": [
+  "The test loads inputs 2 and 3 into v14 and v15 (not v6, v7); the body never reads v6/v7, so pre copies v6 -> v14 and v7 -> v15. v10 = 0 is the prologue's accumulator init (template also zeroes it).",
+  "The body saves EXEC in s30 before each v_cmpx and restores it with s_mov_b32 exec_lo, s30 (words 59, 67), so EXEC is all-ones at the end; no post needed.",
+  "Result column 0 is a bitmask (bits 0..8, one per compare); Check() asserts all 9 bits."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 (gfx1013 cross-check for opcode aliasing) of the word range; Run()/Check() read for register use, row layout and asserted columns; rows expression checked equal to a g++ build of FillInput()"
+}

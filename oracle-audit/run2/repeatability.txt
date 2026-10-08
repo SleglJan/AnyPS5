@@ -1,0 +1,8 @@
+Repeat of the oracle half of run 2 (python3 -s scripts/oracle/audit_adapters.py <dir> --no-hosts), started 2026-10-08T21:55:13Z, compared with the main run:
+compared 486528 oracle values (all adapters, rows, columns, 7 modes); differing: 1344
+  ShaderClock.Code.json col 0 (comparison mask 0x00000000): 224 values differ
+  ShaderClock.Code.json col 2 (comparison mask 0x00000000): 224 values differ
+  ShaderClock.Code.json col 3 (comparison mask 0x00000000): 224 values differ
+  ShaderClock.Code.json col 4 (comparison mask 0x00000000): 224 values differ
+  ShaderClock.Code.json col 6 (comparison mask 0x00000000): 224 values differ
+  ShaderClock.Code.json col 7 (comparison mask 0x00000000): 224 values differ

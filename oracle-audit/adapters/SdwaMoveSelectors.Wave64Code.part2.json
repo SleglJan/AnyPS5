@@ -1,0 +1,276 @@
+{
+ "file": "SdwaMoveSelectors.cpp",
+ "kernel": "Wave64Code",
+ "manifest_class": "partial",
+ "status": "split 2/19",
+ "skip": false,
+ "words_file": "generated/SdwaMoveSelectors.Wave64Code.words.txt",
+ "words": [
+  8,
+  20
+ ],
+ "pre": [],
+ "post": [
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00000d04",
+  "v_mov_b32 v10, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00001504",
+  "v_mov_b32 v11, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00000604",
+  "v_mov_b32 v12, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00000e04",
+  "v_mov_b32 v13, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00001604",
+  "v_mov_b32 v14, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080004",
+  "v_mov_b32 v15, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080804",
+  "v_mov_b32 v16, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00081004",
+  "v_mov_b32 v17, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080104",
+  "v_mov_b32 v18, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080904",
+  "v_mov_b32 v19, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00081104",
+  "v_mov_b32 v20, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080204",
+  "v_mov_b32 v21, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080a04",
+  "v_mov_b32 v22, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00081204",
+  "v_mov_b32 v23, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080304",
+  "v_mov_b32 v24, v6",
+  ".long 0x7e0c0305",
+  ".long 0x7e0c02f9",
+  ".long 0x00080b04",
+  "v_mov_b32 v25, v6"
+ ],
+ "segments": [
+  {
+   "column": 16,
+   "words": [
+    100,
+    103
+   ],
+   "replaces_store_at": 103,
+   "captured_into": "v10",
+   "combination": "src0_sel:BYTE_0 dst_sel:WORD_1 UNUSED_SEXT"
+  },
+  {
+   "column": 17,
+   "words": [
+    105,
+    108
+   ],
+   "replaces_store_at": 108,
+   "captured_into": "v11",
+   "combination": "src0_sel:BYTE_0 dst_sel:WORD_1 UNUSED_PRESERVE"
+  },
+  {
+   "column": 18,
+   "words": [
+    110,
+    113
+   ],
+   "replaces_store_at": 113,
+   "captured_into": "v12",
+   "combination": "src0_sel:BYTE_0 dst_sel:DWORD UNUSED_PAD"
+  },
+  {
+   "column": 19,
+   "words": [
+    115,
+    118
+   ],
+   "replaces_store_at": 118,
+   "captured_into": "v13",
+   "combination": "src0_sel:BYTE_0 dst_sel:DWORD UNUSED_SEXT"
+  },
+  {
+   "column": 20,
+   "words": [
+    120,
+    123
+   ],
+   "replaces_store_at": 123,
+   "captured_into": "v14",
+   "combination": "src0_sel:BYTE_0 dst_sel:DWORD UNUSED_PRESERVE"
+  },
+  {
+   "column": 21,
+   "words": [
+    125,
+    128
+   ],
+   "replaces_store_at": 128,
+   "captured_into": "v15",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_0 UNUSED_PAD"
+  },
+  {
+   "column": 22,
+   "words": [
+    130,
+    133
+   ],
+   "replaces_store_at": 133,
+   "captured_into": "v16",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_0 UNUSED_SEXT"
+  },
+  {
+   "column": 23,
+   "words": [
+    135,
+    138
+   ],
+   "replaces_store_at": 138,
+   "captured_into": "v17",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_0 UNUSED_PRESERVE"
+  },
+  {
+   "column": 24,
+   "words": [
+    140,
+    143
+   ],
+   "replaces_store_at": 143,
+   "captured_into": "v18",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_1 UNUSED_PAD"
+  },
+  {
+   "column": 25,
+   "words": [
+    145,
+    148
+   ],
+   "replaces_store_at": 148,
+   "captured_into": "v19",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_1 UNUSED_SEXT"
+  },
+  {
+   "column": 26,
+   "words": [
+    150,
+    153
+   ],
+   "replaces_store_at": 153,
+   "captured_into": "v20",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_1 UNUSED_PRESERVE"
+  },
+  {
+   "column": 27,
+   "words": [
+    155,
+    158
+   ],
+   "replaces_store_at": 158,
+   "captured_into": "v21",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_2 UNUSED_PAD"
+  },
+  {
+   "column": 28,
+   "words": [
+    160,
+    163
+   ],
+   "replaces_store_at": 163,
+   "captured_into": "v22",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_2 UNUSED_SEXT"
+  },
+  {
+   "column": 29,
+   "words": [
+    165,
+    168
+   ],
+   "replaces_store_at": 168,
+   "captured_into": "v23",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_2 UNUSED_PRESERVE"
+  },
+  {
+   "column": 30,
+   "words": [
+    170,
+    173
+   ],
+   "replaces_store_at": 173,
+   "captured_into": "v24",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_3 UNUSED_PAD"
+  },
+  {
+   "column": 31,
+   "words": [
+    175,
+    178
+   ],
+   "replaces_store_at": 178,
+   "captured_into": "v25",
+   "combination": "src0_sel:BYTE_0 sext dst_sel:BYTE_3 UNUSED_SEXT"
+  }
+ ],
+ "columns": {
+  "16": 0,
+  "17": 1,
+  "18": 2,
+  "19": 3,
+  "20": 4,
+  "21": 5,
+  "22": 6,
+  "23": 7,
+  "24": 8,
+  "25": 9,
+  "26": 10,
+  "27": 11,
+  "28": 12,
+  "29": 13,
+  "30": 14,
+  "31": 15
+ },
+ "rows": {
+  "expr": "(lambda S, tid: [((S[tid % 32] << ((tid // 32) * 8)) | (S[tid % 32] >> (32 - (tid // 32) * 8))) & 0xffffffff if tid // 32 else S[tid % 32], (0xabcd1234 ^ (tid * 0x01030507)) & 0xffffffff, 0, 0])([0x0, 0xffffffff, 0x80808080, 0x7f7f7f7f, 0xff, 0xff00, 0xff0000, 0xff000000, 0x80, 0x8000, 0x800000, 0x80000000, 0x7f, 0x7fff, 0x7fffff, 0x7fffffff, 0x1020384, 0x8504f306, 0x12345678, 0x9abcdef0, 0xfedcba98, 0x76543210, 0xff00ff, 0xff00ff00, 0x80007fff, 0x7fff8000, 0xc3a5815a, 0x5a81a5c3, 0xf1e2d3c, 0xf0e1d2c3, 0x40c08001, 0xdeadbeef], tid)",
+  "count": 64,
+  "source": "FillInput(): Input[tid*2] = Source(tid) = rotl(Sources[tid%32], (tid/32)*8); Input[tid*2+1] = Previous(tid) = 0xabcd1234 ^ tid*0x01030507 (2 dwords per lane, idxen index tid*2, stride 4 -> byte offset tid*8)"
+ },
+ "row_count": 64,
+ "wave64": true,
+ "lds": 0,
+ "notes": [
+  "Code is built by constexpr BuildCode<WaveSize>(); words_file is a g++ build of that generator (1491 / 1493 words, matching the manifest).",
+  "'words' [8,20) is the EXEC-masked broadcast prologue (v_mov v3,v4; s_mov exec_lo = 0xa5a5a5a5 and exec_hi = 0x3c3c3c3c; three in-place v_mov_b32_sdwa v3,v3 BYTE_1/2/3 UNUSED_PRESERVE; then s_mov_b64 exec, -1), so EXEC is all-ones again when the words end.",
+  "Every combination c (0..293) in the kernel is 3 ALU words at word 20+5c (v_mov_b32 v6, v5; v_mov_b32_sdwa v6, v4 <sel>) followed by a buffer_store of v6. The stores interleave the ALU words, so post replays the 3 unmodified kernel words of each combination of this slice as .long and replaces its store by v_mov_b32 v(10+k), v6 (see 'segments'). Result 294 is v3 (the broadcast).",
+  "this part compares result columns 16..31",
+  "Check() asserts all 294 combinations in every lane, and result 294 only when the subgroup holds a wave32 (always on hardware): active lanes (bit tid of 0xa5a5a5a5 / 0x3c3c3c3c) expect byte 0 broadcast, inactive lanes the unchanged source.",
+  "The test also runs Wave64Code split into two wave32 halves on the host (ComputeTarget(32)); on the oracle the Wave64Code adapter is the native wave64 run."
+ ],
+ "verified": "disassembly: llvm-mc gfx1030 of the generated words (broadcast block, first/last combinations, and every combination's 3-word pattern asserted by the generator: v_mov_b32 v6,v5 then an sdwa word pair, store offset = 4*c); rows expression checked equal to a g++ build of Source()/Previous()"
+}
