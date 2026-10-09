@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -63,6 +64,9 @@ struct PthreadSemPrivate {
 
 static constexpr KernelCpumask DEFAULT_THREAD_AFFINITY = 0x1FFF;
 static constexpr int DEFAULT_THREAD_PRIORITY = 700;
+static constexpr std::uint32_t CPU_CLOCK_BIT = 0x80000000u;
+static constexpr std::uint32_t CPU_CLOCK_PROCESS_BIT = 0x40000000u;
+static constexpr std::uint32_t CPU_CLOCK_ID_MASK = ~(CPU_CLOCK_BIT | CPU_CLOCK_PROCESS_BIT);
 
 inline int GuestCpuFromHost(unsigned hostCpu, KernelCpumask threadAffinity) {
     KernelCpumask mask = threadAffinity & DEFAULT_THREAD_AFFINITY;
@@ -96,6 +100,11 @@ struct PthreadPrivate {
     std::atomic<int> waitCount{0};
     std::atomic<KernelCpumask> affinity{DEFAULT_THREAD_AFFINITY};
     std::atomic<int> priority{DEFAULT_THREAD_PRIORITY};
+    int cpuClockThread = 0;
+#ifndef _WIN32
+    clockid_t hostCpuClock{};
+    bool hostCpuClockBound = false;
+#endif
     std::mutex nameLock;
     std::string name;
     std::atomic<bool> _finished;
@@ -105,9 +114,14 @@ struct PthreadPrivate {
     std::mutex _join_mtx;
     std::condition_variable _join_cv;
 
-    PthreadPrivate() : _finished(false), _retval(nullptr), _detached(false), _adopted(false) {}
+    PthreadPrivate();
+    ~PthreadPrivate();
+    PthreadPrivate(const PthreadPrivate&) = delete;
+    PthreadPrivate& operator=(const PthreadPrivate&) = delete;
 };
 
 bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end);
+int GuestThreadCpuClockId(const PthreadPrivate* thread);
+bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos);
 
 #endif
