@@ -678,16 +678,40 @@ std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
     return EmitExt(state, TypeF32(state), GLSLstd450Log2, {EmitFlushF32DenormToSignedZero(state, arg0)});
 }
 
+std::uint32_t TrigReducedTurn(SpirvEmitterState& state, std::uint32_t source) {
+    const auto nearest = EmitExt(state, TypeF32(state), GLSLstd450RoundEven, {source});
+    const auto turn = Binary(state, spv::OpFSub, TypeF32(state), source, nearest);
+    const auto magnitude = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), source), ConstantU32(state, 0x7fffffffu));
+    const auto large = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), magnitude, ConstantU32(state, 0x4b000000u));
+    const auto finite = Binary(state, spv::OpULessThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u));
+    return Select(state, TypeF32(state), Binary(state, spv::OpLogicalAnd, TypeBool(state), large, finite), ConstantF32(state, 0u), turn);
+}
+
+std::uint32_t TrigSineOfTurn(SpirvEmitterState& state, std::uint32_t turn, std::uint32_t linearConstant) {
+    const auto radians = Binary(state, spv::OpFMul, TypeF32(state), turn, ConstantF32(state, 0x40c90fdbu));
+    const auto value = EmitExt(state, TypeF32(state), GLSLstd450Sin, {radians});
+    const auto linear = Binary(state, spv::OpFMul, TypeF32(state), turn, ConstantF32(state, linearConstant));
+    const auto magnitude = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), turn), ConstantU32(state, 0x7fffffffu));
+    const auto small = Binary(state, spv::OpULessThan, TypeBool(state), magnitude, ConstantU32(state, 0x38800000u));
+    return Select(state, TypeF32(state), small, linear, value);
+}
+
 std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto cycle = EmitTrigCycleF32(state, arg0, true);
-    const auto source = Binary(state, spv::OpFMul, TypeF32(state), cycle, ConstantF32(state, 0x40c90fdbu));
-    return EmitExt(state, TypeF32(state), GLSLstd450Sin, {source});
+    const auto turn = TrigReducedTurn(state, arg0);
+    const auto absolute = EmitExt(state, TypeF32(state), GLSLstd450FAbs, {turn});
+    const auto signBits = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), turn), ConstantU32(state, 0x80000000u));
+    const auto beyondQuarter = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e800000u));
+    const auto folded = Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3f000000u), absolute);
+    const auto direct = TrigSineOfTurn(state, absolute, 0x40c90fd5u);
+    const auto reflected = TrigSineOfTurn(state, folded, 0x40c90fdbu);
+    const auto value = Select(state, TypeF32(state), beyondQuarter, reflected, direct);
+    return Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), value), signBits));
 }
 
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto cycle = EmitTrigCycleF32(state, arg0, false);
-    const auto source = Binary(state, spv::OpFMul, TypeF32(state), cycle, ConstantF32(state, 0x40c90fdbu));
-    return EmitExt(state, TypeF32(state), GLSLstd450Cos, {source});
+    const auto turn = TrigReducedTurn(state, arg0);
+    const auto absolute = EmitExt(state, TypeF32(state), GLSLstd450FAbs, {turn});
+    return TrigSineOfTurn(state, Binary(state, spv::OpFSub, TypeF32(state), ConstantF32(state, 0x3e800000u), absolute), 0x40c90fdbu);
 }
 
 std::uint32_t EmitIdentity(SpirvValueEmitContext&, std::uint32_t value) {
