@@ -846,27 +846,18 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     timer.phase(PhaseValidate);
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
     if (draw.indexed) {
-        const auto use = draw.indexSize == 2 ? Recorder::SnapshotUse::Index16 : Recorder::SnapshotUse::Index32;
+        const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
+        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
+        const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         auto copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
         std::uint32_t highest = copy.derived;
         if (!copy.reused) {
-            highest = 0;
-            const auto bytes = copy.buffer->Bytes();
-            for (std::size_t offset = 0; offset < indexBytes; offset += draw.indexSize) {
-                std::uint32_t index = 0;
-                if (draw.indexSize == 2) {
-                    std::uint16_t value = 0;
-                    std::memcpy(&value, bytes.data() + offset, sizeof(value));
-                    index = value;
-                } else {
-                    std::memcpy(&index, bytes.data() + offset, sizeof(index));
-                }
-                highest = std::max(highest, index);
-            }
+            highest = HighestDrawIndex(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart);
             KeepDrawInput(context.recorder, draw.indexAddress, copy, use, highest);
         }
         Require(highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
-        Require(!state.stages.mesh || state.stages.mesh->inputPrimitive != 5 || !state.primitiveRestart || highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
+        Require(!fanGeometry || !state.primitiveRestart || highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = highest;
         inputs.indices = std::move(copy.buffer);
     }
