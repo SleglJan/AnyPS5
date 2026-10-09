@@ -1,4 +1,4 @@
-"""Dense v_log_f32 sample of [0.875, 1.125] on the oracle (every 2^-15 of x, 16,384 rows) with a main-lowering replay on both hosts.
+"""Dense v_log_f32 sample from 0.875 to 1.375 on the oracle (x = 0.875 + i * 2^-15, 16,384 rows) with a main-lowering replay on both hosts.
 
 Usage: python3 -s scripts/oracle/log_dense.py out-dir
 """

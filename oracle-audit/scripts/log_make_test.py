@@ -47,7 +47,6 @@ def main():
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <iostream>
 #include <span>
 #include <string>
