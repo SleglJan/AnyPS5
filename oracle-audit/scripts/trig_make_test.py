@@ -1,7 +1,7 @@
 """Generate core/libs/prx/libSceAgcDriver/tests/execution/SinCosNearZero.cpp: v_sin/v_cos f32 and f16 rows pinned on the oracle.
 
 Usage: python3 -s scripts/oracle/trig_make_test.py out-dir AnyPS5/core/libs/prx/libSceAgcDriver/tests/execution/SinCosNearZero.cpp
-Each lane: f32 x in v4, f16 x in the low half of v5; results v10 sin_f32, v11 cos_f32, v12 sin_f16, v13 cos_f16.
+Each lane: f32 x in v4, f16 x in the low half of v5; results v10 sin_f32, v11 cos_f32, v12 sin_f16, v13 cos_f16. Zero, infinite and NaN results must match the bits; the others are compared in ULPs with a per-lane tolerance.
 The expected table is the oracle's output in the titles' mode (f32 denormals flushed, f16 kept); the test runs in FLOAT_MODE 0xc0.
 """
 import importlib.util
@@ -47,8 +47,8 @@ def main():
     p = subprocess.run([sys.executable, "-s", str(sweep.ORACLE)] + sweep.flags(0) + ["--outs", "4", str(out / "trig-test-body.s"), str(out / "trig-test-rows.txt")], cwd=sweep.ROOT / "AnyPS5", capture_output=True, text=True, check=True)
     (out / "trig-test.txt").write_text(p.stdout)
     expected = [[int(x, 16) for x in l.split()] for l in p.stdout.splitlines() if l.strip()]
-    kernel = "v_lshlrev_b32 v1, 4, v0\nv_lshlrev_b32 v2, 6, v0\nbuffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen\ns_waitcnt vmcnt(0)\n" + "".join(f"v_mov_b32 v{r}, 0\n" for r in range(10, 26)) + BODY
-    kernel += "buffer_store_dwordx4 v[10:13], v2, s[4:7], 0 offen\ns_endpgm\n"
+    kernel = "v_lshlrev_b32 v1, 4, v0\nbuffer_load_dwordx4 v[4:7], v1, s[0:3], 0 offen\ns_waitcnt vmcnt(0)\n" + "".join(f"v_mov_b32 v{r}, 0\n" for r in range(10, 14)) + BODY
+    kernel += "buffer_store_dwordx4 v[10:13], v1, s[4:7], 0 offen\ns_endpgm\n"
     words = hosts.assemble(kernel, False)
     code = ",\n    ".join(", ".join(f"0x{w:08x}u" for w in words[k:k + 8]) for k in range(0, len(words), 8))
     rows_text = ",\n".join("    {" + ", ".join(f"0x{v:08x}u" for v in r) + "}" for r in rows)
@@ -75,7 +75,7 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 4;
-constexpr std::uint32_t Results = 16;
+constexpr std::uint32_t Results = 4;
 constexpr std::uint32_t Columns = 4;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{{}};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{{}};
@@ -117,8 +117,10 @@ std::uint32_t Distance(std::uint32_t actual, std::uint32_t expected, std::uint32
     return a > e ? a - e : e - a;
 }}
 
-bool IsNan(std::uint32_t bits, std::uint32_t width) {{
-    return width == 16u ? (bits & 0x7fffu) > 0x7c00u : (bits & 0x7fffffffu) > 0x7f800000u;
+bool IsPinned(std::uint32_t bits, std::uint32_t width) {{
+    const std::uint32_t magnitude = width == 16u ? bits & 0x7fffu : bits & 0x7fffffffu;
+    const std::uint32_t infinity = width == 16u ? 0x7c00u : 0x7f800000u;
+    return magnitude == 0u || magnitude >= infinity;
 }}
 
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {{
@@ -154,8 +156,8 @@ void Check() {{
             const std::uint32_t actual = out[column] & mask;
             const std::uint32_t expected = Expected[tid][column] & mask;
             const std::string name = "sin cos near zero: lane " + std::to_string(tid) + " " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected);
-            if (IsNan(expected, width)) {{
-                Require(IsNan(actual, width), name);
+            if (IsPinned(expected, width)) {{
+                Require(actual == expected, name);
                 continue;
             }}
             Require(Distance(actual, expected, width) <= Tolerance[tid], name + " (tolerance " + std::to_string(Tolerance[tid]) + " ulp)");

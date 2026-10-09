@@ -5,7 +5,7 @@ Oracle captures (`tools/hw-oracle`, Ryzen 7950X3D iGPU, IEEE 0, f32 denormals fl
 - `f32-flushed.txt.gz`, `f32-kept.txt.gz`: the 32,832 rows of `f32-inputs.json` (every exponent with 64 mantissas of both signs, 13 specials, 26 cycle-count edges, 25 zero padding rows), columns v_rcp, v_rsq, v_sqrt, v_log, v_exp, v_sin, v_cos, v_rcp_iflag _f32.
 - `dense-sincos.txt.gz`: 20,480 inputs in (0, 0.25] (`dense-sincos-rows.txt.gz`), columns v_sin_f32, v_cos_f32.
 - `fold-constants.txt`: 1,920 inputs at q = 2^-k (1 + m/16), k = 8..22, m = 0..15, as q, 0.5 - q, 0.5 + q, 1 - q, -0.5 + q, 0.25 - q, 0.25 + q, 0.75 - q (`fold-constants-rows.txt`), columns v_sin_f32, v_cos_f32.
-- `trig-test.txt`: the 32 rows of the execution test `agc_driver_sin_cos_near_zero` (`trig-test-rows.txt`: f32 in column 0, f16 in column 1).
+- `trig-test.txt`: the 32 rows of the execution test `agc_driver_sin_cos_near_zero` (`trig-test-rows.txt`: f32 in column 0, f16 in column 1); `trig-test-<variant>-<GPU>-results.txt`: the same rows through the recompiler at #1979 (`pr1979b`) and with the follow-up (`band`), columns v_sin_f32, v_cos_f32, v_sin_f16, v_cos_f16 (`scripts/trig_lane_distances.py`).
 
 Host replays through the recompiler (`scripts/transcendental_hosts.py`, kernel-replay harness; Ryzen = RADV Mesa 26.2.4 on the iGPU, NVIDIA = RTX 3080 615.71.09):
 - `hosts-report-main.json`: upstream main d70b8998 (fract-based reduction).

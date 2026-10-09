@@ -1,4 +1,4 @@
-"""Replay the SinCosQuarterTurn test rows on both hosts and print per-lane ULP distances to the oracle. Env LD_LIBRARY_PATH selects the build."""
+"""Replay the SinCosNearZero test rows (the harness keeps 16 result dwords per lane, so the replay kernel stores at lane * 64; the test itself stores at lane * 16) on both hosts and print per-lane ULP distances to the oracle. Env LD_LIBRARY_PATH selects the build."""
 import importlib.util, sys
 from pathlib import Path
 R = Path("/home/slegl/PycharmProjects/anyps5")
@@ -12,6 +12,7 @@ words = t.hosts.assemble(kernel, False)
 tag = sys.argv[1]
 for gpu in ("Ryzen", "NVIDIA"):
     got, err = t.hosts.host_run(gpu, words, rows, 4, 32, "", False, out / "hosts" / f"trig-test-{tag}-{gpu}")
+    (out / "hosts" / f"trig-test-{tag}-{gpu}" / "results.txt").write_text("".join(" ".join(f"{v:08x}" for v in row) + "\n" for row in got))
     line = []; worst = 0
     for i, (e, g) in enumerate(zip(expected, got)):
         ds = []
