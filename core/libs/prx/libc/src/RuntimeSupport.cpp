@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdio>
+#include <cstdint>
 #include <iterator>
 #include <cstdlib>
 #include <stdexcept>
@@ -132,9 +133,9 @@ void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
 #endif
 }
 
-unsigned long APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
+std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
     if (StopAtBinaryPrefix_nid_no_patch(str, endptr, base)) return 0;
-    return std::strtoul(str, endptr, base);
+    return std::strtoull(str, endptr, base);
 }
 
 void APS5_VABI _Locksyslock_nid_postfix() {
