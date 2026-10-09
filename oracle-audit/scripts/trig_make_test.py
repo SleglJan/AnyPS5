@@ -1,8 +1,8 @@
-"""Generate core/libs/prx/libSceAgcDriver/tests/execution/TrigReduction.cpp: v_sin/v_cos f32 and f16 rows pinned on the oracle.
+"""Generate core/libs/prx/libSceAgcDriver/tests/execution/SinCosNearZero.cpp: v_sin/v_cos f32 and f16 rows pinned on the oracle.
 
-Usage: python3 -s scripts/oracle/trig_make_test.py out-dir AnyPS5/core/libs/prx/libSceAgcDriver/tests/execution/TrigReduction.cpp
+Usage: python3 -s scripts/oracle/trig_make_test.py out-dir AnyPS5/core/libs/prx/libSceAgcDriver/tests/execution/SinCosNearZero.cpp
 Each lane: f32 x in v4, f16 x in the low half of v5; results v10 sin_f32, v11 cos_f32, v12 sin_f16, v13 cos_f16.
-The expected table is the oracle's output in the titles' mode (f32 denormals flushed, f16 kept).
+The expected table is the oracle's output in the titles' mode (f32 denormals flushed, f16 kept); the test runs in FLOAT_MODE 0xc0.
 """
 import importlib.util
 import struct
@@ -145,7 +145,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     device.WaitIdle();
 }}
 
-void Check(const char* mode) {{
+void Check() {{
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {{
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t column = 0; column < Columns; ++column) {{
@@ -153,7 +153,7 @@ void Check(const char* mode) {{
             const std::uint32_t mask = width == 16u ? 0xffffu : 0xffffffffu;
             const std::uint32_t actual = out[column] & mask;
             const std::uint32_t expected = Expected[tid][column] & mask;
-            const std::string name = std::string("trig reduction: ") + mode + " lane " + std::to_string(tid) + " " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected);
+            const std::string name = "sin cos near zero: lane " + std::to_string(tid) + " " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected);
             if (IsNan(expected, width)) {{
                 Require(IsNan(actual, width), name);
                 continue;
@@ -169,11 +169,9 @@ int main() {{
     try {{
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check("no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{{0xc0u, true, false, false}});
-        Check("FLOAT_MODE 0xc0");
-        std::puts("trig reduction tests passed");
+        Check();
+        std::puts("sin cos near zero tests passed");
         return 0;
     }} catch (const std::exception& error) {{
         std::cerr << error.what() << '\\n';

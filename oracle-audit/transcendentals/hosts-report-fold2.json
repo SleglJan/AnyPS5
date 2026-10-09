@@ -1,0 +1,636 @@
+{
+ "Ryzen/f16/v_rcp_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_rsq_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_sqrt_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_log_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_exp_f16": {
+  "inputs": 65536,
+  "exact": 65535,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [
+   "in=11c5 host=3c00 hw=3c01 ulp=1"
+  ],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_sin_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f16/v_cos_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_rcp_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_rsq_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_sqrt_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_log_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_exp_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_sin_f32": {
+  "inputs": 32832,
+  "exact": 32450,
+  "class_mismatches": 0,
+  "max_ulp": 15,
+  "mean_ulp": 0.02,
+  "within_1_ulp": 32746,
+  "within_2_ulp": 32784,
+  "worst": [
+   "in=c7ffffff host=3d48fb28 hw=3d48fb37 ulp=15",
+   "in=47ffffff host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=c3ffffff host=39490fd5 hw=39490fdf ulp=10",
+   "in=c1ffffff host=37490fd5 hw=37490fdf ulp=10"
+  ],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_cos_f32": {
+  "inputs": 32832,
+  "exact": 32494,
+  "class_mismatches": 0,
+  "max_ulp": 15,
+  "mean_ulp": 0.0139,
+  "within_1_ulp": 32760,
+  "within_2_ulp": 32810,
+  "worst": [
+   "in=c77befbe host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=477befbe host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=c8e18617 host=be47c5c0 hw=be47c5c3 ulp=3",
+   "in=c8df7df7 host=be47c5c0 hw=be47c5c3 ulp=3"
+  ],
+  "class_examples": []
+ },
+ "Ryzen/f32-flushed/v_rcp_iflag_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_rcp_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_rsq_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_sqrt_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_log_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_exp_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_sin_f32": {
+  "inputs": 32832,
+  "exact": 32320,
+  "class_mismatches": 130,
+  "max_ulp": 15,
+  "mean_ulp": 0.0201,
+  "within_1_ulp": 32616,
+  "within_2_ulp": 32654,
+  "worst": [
+   "in=c7ffffff host=3d48fb28 hw=3d48fb37 ulp=15",
+   "in=47ffffff host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=c3ffffff host=39490fd5 hw=39490fdf ulp=10",
+   "in=c1ffffff host=37490fd5 hw=37490fdf ulp=10"
+  ],
+  "class_examples": [
+   "in=00020820 host=00000000 hw=000cc40a",
+   "in=80020820 host=00000000 hw=800cc40a",
+   "in=00041040 host=00000000 hw=00198815",
+   "in=80041040 host=00000000 hw=80198815"
+  ]
+ },
+ "Ryzen/f32-kept/v_cos_f32": {
+  "inputs": 32832,
+  "exact": 32494,
+  "class_mismatches": 0,
+  "max_ulp": 15,
+  "mean_ulp": 0.0139,
+  "within_1_ulp": 32760,
+  "within_2_ulp": 32810,
+  "worst": [
+   "in=c77befbe host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=477befbe host=bd48fb28 hw=bd48fb37 ulp=15",
+   "in=c8e18617 host=be47c5c0 hw=be47c5c3 ulp=3",
+   "in=c8df7df7 host=be47c5c0 hw=be47c5c3 ulp=3"
+  ],
+  "class_examples": []
+ },
+ "Ryzen/f32-kept/v_rcp_iflag_f32": {
+  "inputs": 32832,
+  "exact": 32832,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_rcp_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_rsq_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_sqrt_f16": {
+  "inputs": 65536,
+  "exact": 65536,
+  "class_mismatches": 0,
+  "max_ulp": 0,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_log_f16": {
+  "inputs": 65536,
+  "exact": 65534,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [
+   "in=3bed host=a2e2 hw=a2e3 ulp=1",
+   "in=3489 host=bf46 hw=bf47 ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_exp_f16": {
+  "inputs": 65536,
+  "exact": 65534,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [
+   "in=a86d host=3bcf hw=3bd0 ulp=1",
+   "in=9bf2 host=3bfa hw=3bfb ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_sin_f16": {
+  "inputs": 65536,
+  "exact": 64324,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0185,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [
+   "in=b7f7 host=a311 hw=a312 ulp=1",
+   "in=a0d6 host=ab97 hw=ab98 ulp=1",
+   "in=a07e host=ab0d hw=ab0e ulp=1",
+   "in=a018 host=aa6d hw=aa6e ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f16/v_cos_f16": {
+  "inputs": 65536,
+  "exact": 65528,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0001,
+  "within_1_ulp": 65536,
+  "within_2_ulp": 65536,
+  "worst": [
+   "in=b409 host=a311 hw=a312 ulp=1",
+   "in=b3ee host=2311 hw=2312 ulp=1",
+   "in=a481 host=3bf4 hw=3bf3 ulp=1",
+   "in=9b34 host=3c00 hw=3bff ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_rcp_f32": {
+  "inputs": 32832,
+  "exact": 29300,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.1076,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=fe7df7de host=80810625 hw=80810626 ulp=1",
+   "in=fe6fbefb host=8088ad90 hw=8088ad8f ulp=1",
+   "in=fe514513 host=809c9522 hw=809c9521 ulp=1",
+   "in=fe41040f host=80a9c4b9 hw=80a9c4b8 ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_rsq_f32": {
+  "inputs": 32832,
+  "exact": 30291,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0774,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=7f6baeba host=1f856738 hw=1f856739 ulp=1",
+   "in=7f638e38 host=1f87c3b6 hw=1f87c3b7 ulp=1",
+   "in=7f534d34 host=1f8ce3b6 hw=1f8ce3b5 ulp=1",
+   "in=7f4b2cb2 host=1f8fadfd hw=1f8fadfe ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_sqrt_f32": {
+  "inputs": 32832,
+  "exact": 31308,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0464,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=7f6baeba host=5f75a19b hw=5f75a19c ulp=1",
+   "in=7f5f7df7 host=5f6f31c5 hw=5f6f31c4 ulp=1",
+   "in=7f4b2cb2 host=5f64101b hw=5f64101c ulp=1",
+   "in=7f41040f host=5f5e49c9 hw=5f5e49ca ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_log_f32": {
+  "inputs": 32832,
+  "exact": 24593,
+  "class_mismatches": 0,
+  "max_ulp": 23947836,
+  "mean_ulp": 729.6705,
+  "within_1_ulp": 32643,
+  "within_2_ulp": 32792,
+  "worst": [
+   "in=3f7fffff host=b24b4000 hw=b3b8aa3c ulp=23947836",
+   "in=3f7df7de host=bc3c5883 hw=bc3c58bf ulp=60",
+   "in=3f841040 host=3d38ae05 hw=3d38ade7 ulp=30",
+   "in=3f820820 host=3cba1f5c hw=3cba1f46 ulp=22"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_exp_f32": {
+  "inputs": 32832,
+  "exact": 31465,
+  "class_mismatches": 0,
+  "max_ulp": 2,
+  "mean_ulp": 0.042,
+  "within_1_ulp": 32820,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=c28c30c2 host=1c6fa5bf hw=1c6fa5c1 ulp=2",
+   "in=c28a28a2 host=1cf24c4c hw=1cf24c4e ulp=2",
+   "in=c2861861 host=1df7b055 hw=1df7b057 ulp=2",
+   "in=c2145144 host=2cf24c4c hw=2cf24c4e ulp=2"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_sin_f32": {
+  "inputs": 32832,
+  "exact": 29170,
+  "class_mismatches": 0,
+  "max_ulp": 5901,
+  "mean_ulp": 11.7196,
+  "within_1_ulp": 30192,
+  "within_2_ulp": 30892,
+  "worst": [
+   "in=c47fffff host=39c8f8cc hw=39c90fd9 ulp=5901",
+   "in=447fffff host=b9c8f8cc hw=b9c90fd9 ulp=5901",
+   "in=b8800000 host=b9c8f8cc hw=b9c90fd5 ulp=5897",
+   "in=38800000 host=39c8f8cc hw=39c90fd5 ulp=5897"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_cos_f32": {
+  "inputs": 32832,
+  "exact": 29114,
+  "class_mismatches": 0,
+  "max_ulp": 227,
+  "mean_ulp": 0.5495,
+  "within_1_ulp": 31406,
+  "within_2_ulp": 32022,
+  "worst": [
+   "in=be7df7de host=3c4c3f3c hw=3c4c401f ulp=227",
+   "in=3e7df7de host=3c4c3f3c hw=3c4c401f ulp=227",
+   "in=c6882081 host=bc490db7 hw=bc490e95 ulp=222",
+   "in=46882081 host=bc490db7 hw=bc490e95 ulp=222"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-flushed/v_rcp_iflag_f32": {
+  "inputs": 32832,
+  "exact": 29300,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.1076,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=fe7df7de host=80810625 hw=80810626 ulp=1",
+   "in=fe6fbefb host=8088ad90 hw=8088ad8f ulp=1",
+   "in=fe514513 host=809c9522 hw=809c9521 ulp=1",
+   "in=fe41040f host=80a9c4b9 hw=80a9c4b8 ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_rcp_f32": {
+  "inputs": 32832,
+  "exact": 29300,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.1076,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=fe7df7de host=80810625 hw=80810626 ulp=1",
+   "in=fe6fbefb host=8088ad90 hw=8088ad8f ulp=1",
+   "in=fe514513 host=809c9522 hw=809c9521 ulp=1",
+   "in=fe41040f host=80a9c4b9 hw=80a9c4b8 ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_rsq_f32": {
+  "inputs": 32832,
+  "exact": 30291,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0774,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=7f6baeba host=1f856738 hw=1f856739 ulp=1",
+   "in=7f638e38 host=1f87c3b6 hw=1f87c3b7 ulp=1",
+   "in=7f534d34 host=1f8ce3b6 hw=1f8ce3b5 ulp=1",
+   "in=7f4b2cb2 host=1f8fadfd hw=1f8fadfe ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_sqrt_f32": {
+  "inputs": 32832,
+  "exact": 31308,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.0464,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=7f6baeba host=5f75a19b hw=5f75a19c ulp=1",
+   "in=7f5f7df7 host=5f6f31c5 hw=5f6f31c4 ulp=1",
+   "in=7f4b2cb2 host=5f64101b hw=5f64101c ulp=1",
+   "in=7f41040f host=5f5e49c9 hw=5f5e49ca ulp=1"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_log_f32": {
+  "inputs": 32832,
+  "exact": 24593,
+  "class_mismatches": 0,
+  "max_ulp": 23947836,
+  "mean_ulp": 729.6705,
+  "within_1_ulp": 32643,
+  "within_2_ulp": 32792,
+  "worst": [
+   "in=3f7fffff host=b24b4000 hw=b3b8aa3c ulp=23947836",
+   "in=3f7df7de host=bc3c5883 hw=bc3c58bf ulp=60",
+   "in=3f841040 host=3d38ae05 hw=3d38ade7 ulp=30",
+   "in=3f820820 host=3cba1f5c hw=3cba1f46 ulp=22"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_exp_f32": {
+  "inputs": 32832,
+  "exact": 31465,
+  "class_mismatches": 0,
+  "max_ulp": 2,
+  "mean_ulp": 0.042,
+  "within_1_ulp": 32820,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=c28c30c2 host=1c6fa5bf hw=1c6fa5c1 ulp=2",
+   "in=c28a28a2 host=1cf24c4c hw=1cf24c4e ulp=2",
+   "in=c2861861 host=1df7b055 hw=1df7b057 ulp=2",
+   "in=c2145144 host=2cf24c4c hw=2cf24c4e ulp=2"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_sin_f32": {
+  "inputs": 32832,
+  "exact": 29040,
+  "class_mismatches": 130,
+  "max_ulp": 5901,
+  "mean_ulp": 11.7662,
+  "within_1_ulp": 30062,
+  "within_2_ulp": 30762,
+  "worst": [
+   "in=c47fffff host=39c8f8cc hw=39c90fd9 ulp=5901",
+   "in=447fffff host=b9c8f8cc hw=b9c90fd9 ulp=5901",
+   "in=b8800000 host=b9c8f8cc hw=b9c90fd5 ulp=5897",
+   "in=38800000 host=39c8f8cc hw=39c90fd5 ulp=5897"
+  ],
+  "class_examples": [
+   "in=00020820 host=00000000 hw=000cc40a",
+   "in=80020820 host=00000000 hw=800cc40a",
+   "in=00041040 host=00000000 hw=00198815",
+   "in=80041040 host=00000000 hw=80198815"
+  ]
+ },
+ "NVIDIA/f32-kept/v_cos_f32": {
+  "inputs": 32832,
+  "exact": 29114,
+  "class_mismatches": 0,
+  "max_ulp": 227,
+  "mean_ulp": 0.5495,
+  "within_1_ulp": 31406,
+  "within_2_ulp": 32022,
+  "worst": [
+   "in=be7df7de host=3c4c3f3c hw=3c4c401f ulp=227",
+   "in=3e7df7de host=3c4c3f3c hw=3c4c401f ulp=227",
+   "in=c6882081 host=bc490db7 hw=bc490e95 ulp=222",
+   "in=46882081 host=bc490db7 hw=bc490e95 ulp=222"
+  ],
+  "class_examples": []
+ },
+ "NVIDIA/f32-kept/v_rcp_iflag_f32": {
+  "inputs": 32832,
+  "exact": 29300,
+  "class_mismatches": 0,
+  "max_ulp": 1,
+  "mean_ulp": 0.1076,
+  "within_1_ulp": 32832,
+  "within_2_ulp": 32832,
+  "worst": [
+   "in=fe7df7de host=80810625 hw=80810626 ulp=1",
+   "in=fe6fbefb host=8088ad90 hw=8088ad8f ulp=1",
+   "in=fe514513 host=809c9522 hw=809c9521 ulp=1",
+   "in=fe41040f host=80a9c4b9 hw=80a9c4b8 ulp=1"
+  ],
+  "class_examples": []
+ }
+}

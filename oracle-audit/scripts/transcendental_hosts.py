@@ -79,6 +79,7 @@ def host_sweep(gpu, body, inputs, mode, work):
         if got is None:
             raise RuntimeError(f"{gpu} batch {start}: {err}")
         results.extend(got)
+    (work / f"{gpu}-results.txt").write_text("".join(" ".join(f"{v:08x}" for v in row) + "\n" for row in results))
     return results
 
 
