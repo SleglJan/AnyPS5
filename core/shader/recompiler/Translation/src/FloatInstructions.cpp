@@ -596,6 +596,50 @@ bool TranslationContext::ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opc
     return true;
 }
 
+bool TranslationContext::minMaxF16(const RdnaInstruction& inst, IrOpcode opcode) {
+    struct Half {
+        IrValue* value;
+        IrU32 bits;
+    };
+    const bool ternary = opcode == IrOpcode::FPMinTri32 || opcode == IrOpcode::FPMaxTri32 || opcode == IrOpcode::FPMedTri32;
+    const auto isNan = [&](const IrU32& bits) {
+        return IrU1(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)));
+    };
+    const auto isSnan = [&](const IrU32& bits) {
+        return IrU1(ir.LogicalAnd(isNan(bits).Value(), ir.IEqual(ir.BitwiseAnd(bits.Value(), ir.Constant(0x0200u)), ir.Constant(0u))));
+    };
+    const auto toBits = [&](IrValue& value) { return packHalf2x16(IrF32(value), IrF32(ir.ConstantF32(0.0f))); };
+    std::array<Half, 3> args{};
+    for (std::uint32_t index = 0u; index < (ternary ? 3u : 2u); ++index) {
+        const RdnaOperand& operand = sourceAt(inst, index);
+        args[index] = Half{&readF16AsF32(operand).Value(), readF16Bits(operand)};
+    }
+    const auto pair = [&](IrOpcode pairOpcode, const Half& lhs, const Half& rhs) {
+        IrValue& value = ir.Emit(pairOpcode, IrType::F32, {lhs.value, rhs.value});
+        IrU32 bits(ir.Select(isNan(lhs.bits).Value(), rhs.bits.Value(), toBits(value).Value()));
+        bits = IrU32(ir.Select(isNan(rhs.bits).Value(), lhs.bits.Value(), bits.Value()));
+        if (ieeeMode) {
+            bits = IrU32(ir.Select(isSnan(rhs.bits).Value(), quietNan16(rhs.bits).Value(), bits.Value()));
+            bits = IrU32(ir.Select(isSnan(lhs.bits).Value(), quietNan16(lhs.bits).Value(), bits.Value()));
+        }
+        return Half{&value, bits};
+    };
+    IrU32 result;
+    if (opcode == IrOpcode::FPMin32 || opcode == IrOpcode::FPMax32) {
+        result = pair(opcode, args[0], args[1]).bits;
+    } else if (opcode == IrOpcode::FPMinTri32 || opcode == IrOpcode::FPMaxTri32) {
+        const auto pairOpcode = opcode == IrOpcode::FPMinTri32 ? IrOpcode::FPMin32 : IrOpcode::FPMax32;
+        result = pair(pairOpcode, pair(pairOpcode, args[0], args[1]), args[2]).bits;
+    } else {
+        const IrU1 anyNan(ir.LogicalOr(ir.LogicalOr(isNan(args[0].bits).Value(), isNan(args[1].bits).Value()), isNan(args[2].bits).Value()));
+        const Half minimum = pair(IrOpcode::FPMin32, pair(IrOpcode::FPMin32, args[0], args[1]), args[2]);
+        IrValue& median = ir.Emit(IrOpcode::FPMedTri32, IrType::F32, {args[0].value, args[1].value, args[2].value});
+        result = IrU32(ir.Select(anyNan.Value(), minimum.bits.Value(), toBits(median).Value()));
+    }
+    write16Bits(inst.destination, clampF16Bits(inst.destination, result));
+    return true;
+}
+
 bool TranslationContext::vFmaLegacyF32(const RdnaInstruction& inst) {
     IrValue* lhs = readOperand(sourceAt(inst, 0u), IrType::F32);
     IrValue* rhs = readOperand(sourceAt(inst, 1u), IrType::F32);
