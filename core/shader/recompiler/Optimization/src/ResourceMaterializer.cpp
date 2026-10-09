@@ -321,8 +321,8 @@ void resolveTableImage(const IrResourcePlan& plan, std::uint32_t imageIndex, con
     if (runtime.readMemory == nullptr) {
         throw std::runtime_error("bindless image table resolution requires runtime memory access");
     }
-    if (image.resourceClass != ImageResourceClass::Sampled) {
-        rejectTable(BindlessRejection::Storage, "bindless storage image tables are unsupported");
+    if (image.atomic) {
+        rejectTable(BindlessRejection::Storage, "bindless atomic image tables are unsupported");
     }
     if (image.packed || image.byElements != 0u) {
         throw std::runtime_error("bindless packed and BY2/BY4 image tables are unsupported");
