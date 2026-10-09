@@ -229,6 +229,11 @@ int main() {
     Require(flock_nid_postfix(recycled, 2 | 4) == 0 && sceKernelClose(recycled) == 0);
     const int kernelRecycled = sceKernelOpen(presentName.c_str(), 0, 0);
     Require(kernelRecycled >= 0 && flock_nid_postfix(kernelRecycled, 8) == 0);
+    Require(flock_nid_postfix(other, 0) == -1 && *__error_nid_postfix() == 9);
+    Require(flock_nid_postfix(other, 4 | 0x10) == -1 && *__error_nid_postfix() == 9);
+    Require(flock_nid_postfix(kernelRecycled, 2 | 4 | 0x10) == 0);
+    Require(flock_nid_postfix(kernelRecycled, 8 | 2) == 0);
+    Require(flock_nid_postfix(other, 2 | 4) == 0 && flock_nid_postfix(other, 8) == 0);
     Require(sceKernelClose(kernelRecycled) == 0 && close_nid_postfix(other) == 0);
     Require(open_nid_postfix(missingName.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 2);
     Require(_open_nid_postfix(missingName.c_str(), 0) == -1 && *__error_nid_postfix() == 2);

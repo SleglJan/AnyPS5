@@ -284,7 +284,9 @@ int APS5_VABI _close_nid_postfix(int descriptor) {
 }
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
-    if (NativeFlock(d, operation) != 0) {
+    const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
+    if (type == 0) return PosixFailure(GUEST_EBADF);
+    if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", error=" + std::to_string(::GetLastError()));
 #else
