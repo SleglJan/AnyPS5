@@ -11,6 +11,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -35,6 +36,28 @@ ShaderRecompiler::RecompileResult Shader(std::span<const std::uint32_t> words, s
     return result;
 }
 
+ShaderRecompiler::RecompileResult GuestPixel(const ShaderRecompiler::SpirvTarget& target) {
+    alignas(256) static constexpr std::array<std::uint32_t, 7> code{0xc8120002u, 0xc8160102u, 0xc81a0202u, 0xc81e0302u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.interpolatorCount = 1;
+    pixel.interpolatorSettings[0] = 0x400u;
+    pixel.inputAddr = 2;
+    pixel.hasPerspectiveCenterVgpr = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderRecompiler::ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = pixel;
+    request.target = target;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    auto result = ShaderRecompiler::Recompile(request);
+    result.variantId = 3;
+    Require(result.fragmentParameters.size() == 1 && result.fragmentParameters[0].flat && !result.fragmentParameters[0].perVertex, "guest P0 shader did not produce a flat input");
+    return result;
+}
+
 void CheckPixel(std::uint32_t x, std::uint32_t y, const Color& expected, const std::string& name) {
     for (std::uint32_t channel = 0; channel < expected.size(); ++channel) {
         const auto actual = std::to_integer<unsigned>(Pixels[(y * Width + x) * 4 + channel]);
@@ -42,7 +65,7 @@ void CheckPixel(std::uint32_t x, std::uint32_t y, const Color& expected, const s
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::span<const AgcDriver::Graphics::CompiledShader> shaders, bool useLast = true) {
+void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::span<const AgcDriver::Graphics::CompiledShader> shaders, bool useLast = true, std::string_view shaderName = "GLSL") {
     Pixels.fill(Sentinel);
     AgcDriver::Graphics::State state{};
     state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
@@ -63,7 +86,7 @@ void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::spa
         device.Draw(state, draw, shaders);
     }
     device.WaitIdle();
-    const auto name = std::string(strip ? "triangle strip" : "triangle list");
+    const auto name = std::string(shaderName) + (strip ? " triangle strip" : " triangle list");
     for (std::uint32_t panel = 0; panel < 3; ++panel) {
         const bool last = panel == 1 && useLast;
         const auto firstTriangle = last ? Blue : Red;
@@ -104,7 +127,13 @@ int main() {
             return VulkanTestSkipped;
         }
         for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP}) Run(*device, topology, shaders);
-        std::puts("provoking vertex rendering tests passed: triangle list and strip, first/last/first");
+        const auto guestPixel = GuestPixel(device->Target());
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> guestShaders{{
+            {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
+            {ShaderRecompiler::ShaderStage::Fragment, &guestPixel, 0}
+        }};
+        for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP}) Run(*device, topology, guestShaders, true, "guest P0");
+        std::puts("provoking vertex rendering tests passed: GLSL and guest P0, triangle list and strip, first/last/first");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
