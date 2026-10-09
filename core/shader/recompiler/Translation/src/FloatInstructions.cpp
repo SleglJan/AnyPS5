@@ -730,7 +730,12 @@ bool TranslationContext::floatCube(const RdnaInstruction& inst, std::uint32_t re
         default:
             throw std::runtime_error("invalid cube result kind");
     }
-    writeOperand(inst.destination, &result.Value());
+    RdnaOperand destination = inst.destination;
+    if (destination.omod != 0u && !ieeeMode) {
+        result = scaleF32Result(destination.omod, result);
+    }
+    destination.omod = 0u;
+    writeOperand(destination, &result.Value());
     return true;
 }
 

@@ -1925,7 +1925,7 @@ bool supportsNativeVop3SourceModifiers(RdnaOpcode opcode) {
 }
 
 bool supportsNativeVop3ResultModifiers(RdnaOpcode opcode) {
-    if (isVop1FloatResultOpcode(opcode)) {
+    if (isVop1FloatResultOpcode(opcode) || isCubeOpcode(opcode)) {
         return true;
     }
     switch (opcode) {
