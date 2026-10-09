@@ -557,6 +557,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/GuestTextureResource.cpp
         tests/GuestSamplerResource.cpp
         tests/TextureDetiler.cpp
+        tests/DepthSurfaceReuse.cpp
         Graphics/src/Draw.cpp
         Graphics/src/DepthSurface.cpp
         Graphics/src/Pipeline.cpp
