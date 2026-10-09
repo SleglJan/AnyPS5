@@ -851,14 +851,22 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         auto copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
-        std::uint32_t highest = copy.derived;
+        std::optional<std::uint32_t> highest;
         if (!copy.reused) {
             highest = HighestDrawIndex(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart);
-            KeepDrawInput(context.recorder, draw.indexAddress, copy, use, highest);
+            KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u));
+        } else if (!skipRestart) {
+            highest = copy.derived;
+        } else if (copy.derived != 0) {
+            highest = copy.derived - 1u;
         }
-        Require(highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
-        Require(!fanGeometry || !state.primitiveRestart || highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
-        inputs.maxIndex = highest;
+        if (!highest) {
+            inputs.nothing = true;
+            return inputs;
+        }
+        Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
+        Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
+        inputs.maxIndex = *highest;
         inputs.indices = std::move(copy.buffer);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Index validation OK");

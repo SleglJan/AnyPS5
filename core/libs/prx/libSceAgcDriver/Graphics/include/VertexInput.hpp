@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <utility>
@@ -196,10 +197,10 @@ inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
     return plan;
 }
 
-inline std::uint32_t HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
+inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> indices, std::uint32_t indexSize, bool skipRestart) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
     const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
-    std::uint32_t highest = 0;
+    std::optional<std::uint32_t> highest;
     for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
         std::uint32_t index = 0;
         if (indexSize == 2) {
@@ -210,7 +211,7 @@ inline std::uint32_t HighestDrawIndex(std::span<const std::byte> indices, std::u
             std::memcpy(&index, indices.data() + offset, sizeof(index));
         }
         if (skipRestart && index == restartIndex) continue;
-        highest = std::max(highest, index);
+        highest = std::max(highest.value_or(0u), index);
     }
     return highest;
 }
