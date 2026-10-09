@@ -3002,6 +3002,8 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
     std::memset(keys, 0x20, extent);
     RunColorMetadataPass(context, pass);
     Require(StorageTexture::FindPending(address, surfaceBytes) != nullptr && texels[0] == 0x55, "the register fast clear eliminate did not stay in the resident image");
+    StorageTexture::FlushAllPending("test");
+    Require(StorageTexture::FindPending(address, surfaceBytes) == nullptr, "storing every pending image left the eliminated target pending");
     Require(keysUncompressed(), "the register fast clear eliminate left the keys compressed");
     Require(CurrentDccKeys(color.dccAddress, surfaceBytes, extent) == DccKeys::Uncompressed, "the register fast clear eliminate did not store uncompressed keys over the target's console DCC extent");
     Require(memoryHolds({0x10, 0x20, 0x40, 0x80}), "the register fast clear eliminate did not store CB_COLOR_CLEAR_WORD");
