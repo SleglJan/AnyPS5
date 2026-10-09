@@ -1,0 +1,77 @@
+clean next-stop run: main 4b6ab6bb relinker + libraries, started 20:06:04Z
+[973/976] Linking CXX executable tests/agc_driver_graphics_tests
+random-word NID in libkernel.prx (expect 0): 0
+relink + audit of 34 titles with main's relinker: 20:06:29Z
+relinked; source commits in run audits:      34 4b6ab6bb 
+runs started 20:06:57Z
+== PPSA17641 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA17641/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA17641/app.elf: undefined symbol: JGfTMBOdUJo
+== PPSA59322 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA59322/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA59322/app.elf: undefined symbol: QuJYZ2KVGGQ
+== PPSA68091 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA68091/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA68091/app.elf: undefined symbol: DRGXpDDh8Ng
+== PPSA69420 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA69420/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA69420/app.elf: undefined symbol: MhC53TKmjVA
+== PPSA74126 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA74126/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA74126/app.elf: undefined symbol: JGfTMBOdUJo
+== PPSA92280 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA92280/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA92280/app.elf: undefined symbol: 2G6i6hMIUUY
+== PPSA97510 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA97510/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA97510/app.elf: undefined symbol: JGfTMBOdUJo
+== PPSA99000 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99000/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99000/app.elf: undefined symbol: DRGXpDDh8Ng
+== PPSA99001 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99001/app.elf: error while loading shared libraries: libSceOpusDec.prx: cannot open shared object file: No such file or directory
+== PPSA99002 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99002/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99002/app.elf: undefined symbol: 72rYuYoDTWk
+== PPSA99003 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99003/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99003/app.elf: undefined symbol: tvpHe5kBO4E
+== PPSA99005 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99005/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99005/app.elf: undefined symbol: uEtgPWgPxOk
+== PPSA99006 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99006/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99006/app.elf: undefined symbol: uEtgPWgPxOk
+== PPSA99007 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99007/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99007/app.elf: undefined symbol: Jc6E7N+dHz0
+== PPSA99009 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99009/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99009/app.elf: undefined symbol: JGfTMBOdUJo
+== PPSA99010 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99010/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99010/app.elf: undefined symbol: pd02UI9TbOA
+== PPSA99039 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99039/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99039/app.elf: undefined symbol: 2G6i6hMIUUY
+== PPSA99050 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99050/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99050/app.elf: undefined symbol: 6kPnj51T62Y
+== PPSA99082 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99082/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99082/app.elf: undefined symbol: JGfTMBOdUJo
+== PPSA99109 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99109/app.elf: error while loading shared libraries: libSceZlib.prx: cannot open shared object file: No such file or directory
+== PPSA99110 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99110/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99110/app.elf: undefined symbol: Jahsnh4KKkg
+== PPSA99169 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99169/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99169/app.elf: undefined symbol: 7p7kTAJcuGg
+== PPSA99177 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99177/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99177/app.elf: undefined symbol: sT4nBQKUPqM
+== PPSA99420 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99420/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99420/app.elf: undefined symbol: KiJEPEWRyUY
+== PPSA99505 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99505/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99505/app.elf: undefined symbol: sT4nBQKUPqM
+== PPSA99515 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99515/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99515/app.elf: undefined symbol: sT4nBQKUPqM
+== PPSA99666 survived=False exit=0 windows=[] log_lines=32
+   tail: [src/Open.cpp:107 sceKernelOpen] path=0+b�TV flags=0x0 nativeFlags=0x0 mode=0113100
+   tail: [src/Open.cpp:107 sceKernelOpen] path=/download0/doom.log flags=0x0 nativeFlags=0x0 mode=0121120
+== PPSA99728 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99728/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99728/app.elf: undefined symbol: 5kBfZ40bAuk
+== PPSA99764 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99764/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99764/app.elf: undefined symbol: 7p7kTAJcuGg
+== PPSA99808 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99808/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99808/app.elf: undefined symbol: a7ToDPsIQrc
+== PPSA99810 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99810/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99810/app.elf: undefined symbol: MZb0GKT3mo8
+== PPSA99920 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99920/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99920/app.elf: undefined symbol: Jahsnh4KKkg
+== PPSA99995 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99995/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99995/app.elf: undefined symbol: MZb0GKT3mo8
+== PPSA99997 survived=False exit=127 windows=[] log_lines=1
+   tail: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99997/app.elf: symbol lookup error: /home/slegl/PycharmProjects/anyps5/runs/catalog/PPSA99997/app.elf: undefined symbol: sT4nBQKUPqM
+finished 20:11:30Z
+checkout restored to feat/libkernel-sandbox-random-word

@@ -1,0 +1,6749 @@
+{
+ "PPSA01153": {
+  "name": "OliSe Player",
+  "kind": "app",
+  "version": "02.000.001",
+  "source": "https://github.com/Marice/OliSePlayer",
+  "license": "GPL-3.0-or-later",
+  "download": "downloaded",
+  "zip_mb": 12.5,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0xb03d47 (offset 0xb03d47)",
+  "guest_modules": []
+ },
+ "PPSA17641": {
+  "name": "SymphonyStation5",
+  "kind": "app",
+  "version": "v0.1.0",
+  "source": "https://github.com/TsvetomirGT/SymphonyStation5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 12.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 314,
+   "stub": 2,
+   "absent": 33,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA19111": {
+  "name": "XashPS5",
+  "kind": "game",
+  "version": "1.2",
+  "source": "https://github.com/GordonProsperoMan/xash3d-ps5",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 27.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0xa42f47 (offset 0xa42f47)",
+  "guest_modules": []
+ },
+ "PPSA59322": {
+  "name": "ccleste",
+  "kind": "game",
+  "version": "1.00",
+  "source": "https://github.com/darkxex/PS5_Celeste",
+  "license": "MIT",
+  "download": "cached",
+  "zip_mb": 28.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 293,
+   "stub": 1,
+   "absent": 49,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "ctime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "dup2"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA68091": {
+  "name": "Ruffle Flash",
+  "kind": "app",
+  "version": "1.2.0",
+  "source": "https://github.com/ZiZc3/Ruffle-Flash-PS5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 13.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 283,
+   "stub": 0,
+   "absent": 70,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinhf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "acosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "log1pf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "coshf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "log1p"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "acoshf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinhf"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "cpuset_setaffinity"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getthreadid_np"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "pause"
+    ],
+    [
+     "libkernel.prx",
+     "readv"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetModuleList"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "writev"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetModuleInfo"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "dup2"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_kill"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA69420": {
+  "name": "ScreenTester5",
+  "kind": "tool",
+  "version": "01.000.000",
+  "source": "https://github.com/Marice/ScreenTester5",
+  "license": "GPL-3.0-or-later",
+  "download": "cached",
+  "zip_mb": 1.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 201,
+   "stub": 0,
+   "absent": 7,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchWebBrowser"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA74126": {
+  "name": "Stremio Plus",
+  "kind": "app",
+  "version": "0.54",
+  "source": "https://github.com/LoZazaMastro/Stremio-Plus",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 34.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 410,
+   "stub": 3,
+   "absent": 48,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fabs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "nextafterf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchWebBrowser"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "kill"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getsid"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "_ioctl"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA77711": {
+  "name": "Stremio",
+  "kind": "app",
+  "version": "0.3.1",
+  "source": "https://github.com/Sp9nky/unofficial-stremio-ps5-port",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 22.9,
+  "error": "BadZipFile: File is not a zip file"
+ },
+ "PPSA92280": {
+  "name": "Capy Mobile",
+  "kind": "app",
+  "version": "0.5.0",
+  "source": "https://github.com/khalifa007/CapyMobile",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 1.0,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 172,
+   "stub": 0,
+   "absent": 7,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA97510": {
+  "name": "PSXS5",
+  "kind": "app",
+  "version": "2.0.0",
+  "source": "https://github.com/SynoPiia/PSXS5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 15.8,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 375,
+   "stub": 2,
+   "absent": 70,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "reallocf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchWebBrowser"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99000": {
+  "name": "ProsperoStore",
+  "kind": "app",
+  "version": "1.000.040",
+  "source": "https://github.com/blackbearreloaded/ProsperoStore",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 24.9,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 366,
+   "stub": 2,
+   "absent": 38,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "_fstatfs"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetSystemSwVersion"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "kill"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99001": {
+  "name": "ProsperoRadio",
+  "kind": "app",
+  "version": "01.000.010",
+  "source": "https://github.com/blackbearreloaded/ProsperoRadio",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 18.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 390,
+   "stub": 2,
+   "absent": 63,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "acosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sqrt"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atanh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "trunc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecDecode"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecDestroy"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecInitialize"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecTerminate"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecGetSize"
+    ],
+    [
+     "libSceOpusCeltDec.prx",
+     "sceOpusCeltDecCreateEx"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecDecode"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecDestroy"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecInitialize"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecCreateEx"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecGetSize"
+    ],
+    [
+     "libSceOpusDec.prx",
+     "sceOpusDecTerminate"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "setegid"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "fdatasync"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {
+    "libSceOpusCeltDec.prx": 6,
+    "libSceOpusDec.prx": 6
+   },
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99002": {
+  "name": "ProsperoLight",
+  "kind": "app",
+  "version": "01.000.090",
+  "source": "https://github.com/blackbearreloaded/ProsperoLight",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 37.5,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 345,
+   "stub": 4,
+   "absent": 74,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "flockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "funlockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "cpuset_setaffinity"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "setegid"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "cpuset_getaffinity"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libScePad.prx",
+     "scePadSetAngularVelocityDeadbandState"
+    ],
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutVrrUnpegFromFixedRate"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99003": {
+  "name": "ProsperoTV",
+  "kind": "app",
+  "version": "01.000.020",
+  "source": "https://github.com/blackbearreloaded/ProsperoTV",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 20.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 370,
+   "stub": 2,
+   "absent": 48,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fabs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "acosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sqrt"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atanh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "trunc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "arc4random_buf"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "setegid"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "fdatasync"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99004": {
+  "name": "ProsperoAI",
+  "kind": "app",
+  "version": "01.000.000",
+  "source": "https://github.com/blackbearreloaded/ProsperoAI",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 65.4,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0xad3597 (offset 0xad3597)",
+  "guest_modules": []
+ },
+ "PPSA99005": {
+  "name": "PS5 OpenGL Showcase",
+  "kind": "app",
+  "version": "1.0.1",
+  "source": "https://github.com/blackbearreloaded/ps5-opengl",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 18.8,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 235,
+   "stub": 0,
+   "absent": 20,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99006": {
+  "name": "ProsperoPuzzles",
+  "kind": "game",
+  "version": "01.000.010",
+  "source": "https://github.com/blackbearreloaded/ProsperoPuzzles",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 39.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 269,
+   "stub": 0,
+   "absent": 21,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99007": {
+  "name": "Yamagi Quake II",
+  "kind": "game",
+  "version": "0.2.0-alpha.1",
+  "source": "https://github.com/blackbearreloaded/ps5-yamagi-quake2",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 58.1,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 352,
+   "stub": 2,
+   "absent": 19,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchWebBrowser"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99008": {
+  "name": "ProsperoEden",
+  "kind": "app",
+  "version": "1.000.080",
+  "source": "https://github.com/blackbearreloaded/ProsperoEden",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 38.4,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0x2088e5a (offset 0x2088e5a)",
+  "guest_modules": []
+ },
+ "PPSA99009": {
+  "name": "ProsperoLichess",
+  "kind": "game",
+  "version": "01.000.000",
+  "source": "https://github.com/blackbearreloaded/ProsperoLichess",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 47.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 360,
+   "stub": 2,
+   "absent": 35,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceHttp.prx",
+     "sceHttpSetRecvBlockSize"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99010": {
+  "name": "vkQuake",
+  "kind": "game",
+  "version": "1.0",
+  "source": "https://github.com/mihawk-99/PS5_vkQuake",
+  "license": "GPL-3.0-or-later",
+  "download": "cached",
+  "zip_mb": 6.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 283,
+   "stub": 2,
+   "absent": 50,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "execvp"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel_sys.prx",
+     "fork"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99011": {
+  "name": "PS5 FSR4 Showcase",
+  "kind": "app",
+  "version": "01.000.010",
+  "source": "https://github.com/blackbearreloaded/ps5-fsr4",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 31.9,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0x511d17 (offset 0x511d17)",
+  "guest_modules": []
+ },
+ "PPSA99039": {
+  "name": "EVO Player",
+  "kind": "app",
+  "version": "0.10.0",
+  "source": "https://github.com/sainsaji/EVO-PLAYER-PS5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 19.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 281,
+   "stub": 1,
+   "absent": 22,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "gethostbyname"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "arc4random_buf"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99050": {
+  "name": "Homebrew UI Lab",
+  "kind": "app",
+  "version": "01.000.000",
+  "source": "https://github.com/blackbearreloaded/ps5-homebrew-ui",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 31.4,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 265,
+   "stub": 1,
+   "absent": 18,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99082": {
+  "name": "OpenNOW PS5 - Prototype",
+  "kind": "app",
+  "version": "0.0.7",
+  "source": "https://github.com/Portablelle/OpenNOW-PS5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 27.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 277,
+   "stub": 2,
+   "absent": 35,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__udivti3"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "cpuset_getaffinity"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_rwlockattr_destroy"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_rwlockattr_init"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99109": {
+  "name": "Prospero Explorer",
+  "kind": "tool",
+  "version": "1.0",
+  "source": "https://github.com/SvenGDK/Prospero-Explorer",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 1.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 241,
+   "stub": 1,
+   "absent": 17,
+   "module": 58,
+   "absent_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchApp"
+    ],
+    [
+     "libSceZlib.prx",
+     "sceZlibGetResult"
+    ],
+    [
+     "libSceZlib.prx",
+     "sceZlibFinalize"
+    ],
+    [
+     "libSceZlib.prx",
+     "sceZlibInflate"
+    ],
+    [
+     "libSceZlib.prx",
+     "sceZlibInitialize"
+    ],
+    [
+     "libSceZlib.prx",
+     "sceZlibWaitForDone"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "pwritev"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sync"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetAllowedSdkVersionOnSystem"
+    ],
+    [
+     "libkernel.prx",
+     "preadv"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetProsperoSystemSwVersion"
+    ],
+    [
+     "libkernel.prx",
+     "waitpid"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceParamGetString"
+    ]
+   ],
+   "missing_libraries": {
+    "libSceZlib.prx": 5
+   },
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99110": {
+  "name": "Prospero Multi Tools",
+  "kind": "tool",
+  "version": "1",
+  "source": "https://github.com/SvenGDK/Prospero-Multi-Tools",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 3.1,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 224,
+   "stub": 1,
+   "absent": 10,
+   "module": 55,
+   "absent_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchApp"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "pwritev"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sync"
+    ],
+    [
+     "libkernel.prx",
+     "preadv"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetProsperoSystemSwVersion"
+    ],
+    [
+     "libkernel.prx",
+     "waitpid"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99169": {
+  "name": "RetroArch",
+  "kind": "app",
+  "version": "0.6.7-alpha.6",
+  "source": "https://github.com/mihawk-99/PS5_RetroArch",
+  "license": "GPL-3.0-or-later",
+  "download": "downloaded",
+  "zip_mb": 715.5,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 400,
+   "stub": 3,
+   "absent": 119,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "ctime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fabs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getc_unlocked"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_ntoa"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_addr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getopt_long"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "powl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "alarm"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "dirname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "logl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "putc_unlocked"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sqrt"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "mbstowcs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "log1p"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fma"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "truncl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "strsep"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "llroundf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "tzset"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "ldiv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "expm1"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "ftrylockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "flockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "logb"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "srandom"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "funlockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__fpclassifyf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "optind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "optarg"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "vsyslog"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "_fstatfs"
+    ],
+    [
+     "libkernel.prx",
+     "__pthread_cleanup_push_imp"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "pause"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getaffinity_np"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cond_reltimedwait_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitCreateAliasOfSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetSystemSwVersion"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "kevent"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "kill"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "sendfile"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitMapSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "sigsetjmp"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitCreateSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "truncate"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "__pthread_cleanup_pop_imp"
+    ],
+    [
+     "libkernel.prx",
+     "dup"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "kqueue"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "siglongjmp"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_spin_lock"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_kill"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99177": {
+  "name": "PS5VR",
+  "kind": "app",
+  "version": "1.0.0",
+  "source": "https://github.com/theghostonline/PS5VR",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 15.4,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 275,
+   "stub": 1,
+   "absent": 37,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_addr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "initstate"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "setstate"
+    ],
+    [
+     "libSceNet.prx",
+     "sceNetResolverStartNtoaMultipleRecordsEx"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "gethostbyname"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getaffinity_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "kill"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "dup"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetModuleInfo"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel_sys.prx",
+     "fstatfs"
+    ],
+    [
+     "libkernel_sys.prx",
+     "link"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ],
+    [
+     "libkernel_sys.prx",
+     "symlink"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99203": {
+  "name": "PS5SX2",
+  "kind": "app",
+  "version": "vk-285-130",
+  "source": "https://github.com/Swordpdf/PS5SX2",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 17.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0xff7237 (offset 0xff7237)",
+  "guest_modules": []
+ },
+ "PPSA99204": {
+  "name": "PS5NES",
+  "kind": "app",
+  "version": "release",
+  "source": "https://github.com/Globaleliteee/PS5NES",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 9.1,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "exit 2: FAIL: Forbidden syscall instruction at code offset 0xc40517 (offset 0xc40517)",
+  "guest_modules": []
+ },
+ "PPSA99206": {
+  "name": "PS5N64",
+  "kind": "app",
+  "version": "release",
+  "source": "https://github.com/Globaleliteee/PS5N64",
+  "license": "GPL-3.0",
+  "error": "HTTPError: HTTP Error 404: Not Found"
+ },
+ "PPSA99420": {
+  "name": "PS5MC",
+  "kind": "app",
+  "version": "1.1",
+  "source": "https://github.com/VivaLaVent/PS5MC",
+  "license": "GPL-2.0-or-later",
+  "download": "cached",
+  "zip_mb": 64.2,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 374,
+   "stub": 3,
+   "absent": 120,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceAgcDriver.prx",
+     "sceAgcDriverGetTFRing"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getc_unlocked"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fstatvfs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_ntoa"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_addr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wcstok"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "alarm"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "putc_unlocked"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "initstate"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "mbstowcs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wcsftime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_aton"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "statvfs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rand_r"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "tzset"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "flockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "srandom"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "funlockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "setstate"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "environ"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "execvp"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getthreadid_np"
+    ],
+    [
+     "libkernel.prx",
+     "setrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "setegid"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetpgrp"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "setreuid"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getlogin_r"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sigtimedwait"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pause"
+    ],
+    [
+     "libkernel.prx",
+     "pwritev"
+    ],
+    [
+     "libkernel.prx",
+     "tcflush"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "readv"
+    ],
+    [
+     "libkernel.prx",
+     "getitimer"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "setuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getaffinity_np"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigismember"
+    ],
+    [
+     "libkernel.prx",
+     "fdatasync"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "setgroups"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitCreateAliasOfSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "tcflow"
+    ],
+    [
+     "libkernel.prx",
+     "setregid"
+    ],
+    [
+     "libkernel.prx",
+     "kevent"
+    ],
+    [
+     "libkernel.prx",
+     "sigwaitinfo"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "kill"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "sync"
+    ],
+    [
+     "libkernel.prx",
+     "sendfile"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitMapSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetpgrp"
+    ],
+    [
+     "libkernel.prx",
+     "writev"
+    ],
+    [
+     "libkernel.prx",
+     "preadv"
+    ],
+    [
+     "libkernel.prx",
+     "sigsetjmp"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelJitCreateSharedMemory"
+    ],
+    [
+     "libkernel.prx",
+     "truncate"
+    ],
+    [
+     "libkernel.prx",
+     "tcdrain"
+    ],
+    [
+     "libkernel.prx",
+     "clock_settime"
+    ],
+    [
+     "libkernel.prx",
+     "waitpid"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getppid"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "getsid"
+    ],
+    [
+     "libkernel.prx",
+     "setitimer"
+    ],
+    [
+     "libkernel.prx",
+     "sigpending"
+    ],
+    [
+     "libkernel.prx",
+     "chflags"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "wait"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "getpriority"
+    ],
+    [
+     "libkernel.prx",
+     "sigwait"
+    ],
+    [
+     "libkernel.prx",
+     "kqueue"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "siglongjmp"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "tcsendbreak"
+    ],
+    [
+     "libkernel.prx",
+     "dup2"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_kill"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutVrrUnpegFromFixedRate"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99505": {
+  "name": "Jelly5",
+  "kind": "app",
+  "version": "0.3.0-remote-test",
+  "source": "https://github.com/02dnot/Jelly5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 56.9,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 302,
+   "stub": 1,
+   "absent": 29,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "initstate"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_aton"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "setstate"
+    ],
+    [
+     "libSceNet.prx",
+     "sceNetResolverStartNtoaMultipleRecordsEx"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99515": {
+  "name": "Emby5",
+  "kind": "app",
+  "version": "0.1.4",
+  "source": "https://github.com/bornaradusin/Emby5",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 26.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 300,
+   "stub": 1,
+   "absent": 30,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "initstate"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_aton"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "setstate"
+    ],
+    [
+     "libSceNet.prx",
+     "sceNetResolverStartNtoaMultipleRecordsEx"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99600": {
+  "name": "Cloud Play",
+  "kind": "app",
+  "version": null,
+  "source": null,
+  "license": null,
+  "error": "no release artifact in the catalog record"
+ },
+ "PPSA99666": {
+  "name": "DOOM Native Port",
+  "kind": "game",
+  "version": "1.1.1",
+  "source": "https://github.com/lowbit/ps5-doom",
+  "license": "GPL-2.0",
+  "download": "cached",
+  "zip_mb": 2.3,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 0,
+   "implemented": 169,
+   "stub": 1,
+   "absent": 0,
+   "module": 0,
+   "absent_list": [],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99728": {
+  "name": "OpenRCT2 Native Port",
+  "kind": "game",
+  "version": "1.0.0",
+  "source": "https://github.com/lowbit/ps5-openrct2",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 78.0,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 260,
+   "stub": 1,
+   "absent": 28,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "acosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "log1p"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atanh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "llroundf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "expm1"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "execvp"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "waitpid"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "dup2"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99764": {
+  "name": "Porpoise",
+  "kind": "app",
+  "version": "2.5",
+  "source": "https://github.com/elripalda/Porpoise-Dolphin-Emulator-for-PS5",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 31.3,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 372,
+   "stub": 2,
+   "absent": 80,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "asinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_ntoa"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_addr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "alarm"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "dirname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "putc_unlocked"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fma"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "expm1"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "ftrylockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "flockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "funlockfile"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__fpclassifyf"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cond_reltimedwait_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "kevent"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "truncate"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "dup"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_spin_lock"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_kill"
+    ],
+    [
+     "libkernel_sys.prx",
+     "chroot"
+    ],
+    [
+     "libkernel_sys.prx",
+     "fchdir"
+    ],
+    [
+     "libkernel_sys.prx",
+     "pathconf"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ],
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99808": {
+  "name": "PICO-8 for PS5",
+  "kind": "app",
+  "version": "0.1.2",
+  "source": "https://github.com/RafaelNGP/pico8-ps5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 1.6,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 282,
+   "stub": 1,
+   "absent": 27,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "memrchr"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__udivti3"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sqrt"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sqrtf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "stpcpy"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__inet_aton"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLaunchWebBrowser"
+    ],
+    [
+     "libkernel.prx",
+     "environ"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_setcanceltype"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sigaddset"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "sysctlbyname"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "sigaltstack"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libkernel.prx",
+     "select_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99810": {
+  "name": "PSBox Cloud Gaming",
+  "kind": "app",
+  "version": "0.4.0",
+  "source": "https://github.com/RafaelNGP/xbox-cloud-gaming-ps5",
+  "license": "GPL-3.0",
+  "download": "cached",
+  "zip_mb": 10.3,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 315,
+   "stub": 0,
+   "absent": 63,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "wctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atol"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "localeconv"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "utime"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towupper"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "fabs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswctype"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswcntrl"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getprogname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswpunct"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "wctob"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalpha"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "towlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "btowc"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "freeifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "malloc_usable_size"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswlower"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswprint"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "syslog"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "sinh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_CurrentRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswxdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__mb_sb_limit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "getifaddrs"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "_DefaultRuneLocale"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "cosh"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswdigit"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswblank"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "srandom"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "realpath"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswspace"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "random"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswalnum"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "iswgraph"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libkernel.prx",
+     "_umtx_op"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "getegid"
+    ],
+    [
+     "libkernel.prx",
+     "getgid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getstackaddr"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetFsSandboxRandomWord"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "system"
+    ],
+    [
+     "libkernel.prx",
+     "sigdelset"
+    ],
+    [
+     "libkernel.prx",
+     "shm_open"
+    ],
+    [
+     "libkernel.prx",
+     "sigfillset"
+    ],
+    [
+     "libkernel.prx",
+     "getrlimit"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getscope"
+    ],
+    [
+     "libkernel.prx",
+     "getuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_getcpuclockid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_getinheritsched"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_rwlockattr_destroy"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_rwlockattr_init"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_attr_setscope"
+    ],
+    [
+     "libkernel_sys.prx",
+     "readlink"
+    ]
+   ],
+   "stub_list": [],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99920": {
+  "name": "Prospero Vibrate",
+  "kind": "app",
+  "version": "1.0",
+  "source": "https://github.com/SvenGDK/Prospero-Vibrate",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 2.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 141,
+   "stub": 1,
+   "absent": 8,
+   "module": 55,
+   "absent_list": [
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "pwritev"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_sigmask"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sync"
+    ],
+    [
+     "libkernel.prx",
+     "preadv"
+    ],
+    [
+     "libkernel.prx",
+     "waitpid"
+    ],
+    [
+     "libkernel.prx",
+     "msync"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99995": {
+  "name": "Prospero Win",
+  "kind": "app",
+  "version": "0.1.1",
+  "source": "https://github.com/mpereiraesaa/prospero-win",
+  "license": "LGPL-2.1",
+  "download": "downloaded",
+  "zip_mb": 138.7,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 120,
+   "stub": 1,
+   "absent": 10,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceSysmodule.prx",
+     "sceSysmoduleGetModuleHandleInternal"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "seteuid"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "dup"
+    ],
+    [
+     "libkernel.prx",
+     "sceKernelGetModuleInfo"
+    ],
+    [
+     "libkernel.prx",
+     "geteuid"
+    ],
+    [
+     "libkernel.prx",
+     "dup2"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceSystemService.prx",
+     "sceSystemServiceLoadExec"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ },
+ "PPSA99997": {
+  "name": "Nuvio PS5",
+  "kind": "app",
+  "version": "0.1.0-alpha.2",
+  "source": "https://github.com/bilawalriaz/nuvio-ps5-homebrew",
+  "license": "GPL-3.0",
+  "download": "downloaded",
+  "zip_mb": 30.8,
+  "containers": {
+   "eboot": "self",
+   "modules": [
+    "sce_module/libc.prx"
+   ]
+  },
+  "relink": "ok",
+  "guest_modules": [
+   "libc.prx.guest.prx"
+  ],
+  "audit": {
+   "exit": 1,
+   "implemented": 303,
+   "stub": 2,
+   "absent": 26,
+   "module": 0,
+   "absent_list": [
+    [
+     "libSceLibcInternal.prx",
+     "gethostname"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "rewind"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "makecontext"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "__isinf"
+    ],
+    [
+     "libSceLibcInternal.prx",
+     "atoll"
+    ],
+    [
+     "libSceNet.prx",
+     "sceNetResolverStartNtoaMultipleRecordsEx"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "gethostbyname"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "isatty"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "arc4random_buf"
+    ],
+    [
+     "libScePosixForWebKit.prx",
+     "mkstemp"
+    ],
+    [
+     "libSceVideoOut.prx",
+     "sceVideoOutGetResolutionStatus"
+    ],
+    [
+     "libkernel.prx",
+     "sigemptyset"
+    ],
+    [
+     "libkernel.prx",
+     "getdents"
+    ],
+    [
+     "libkernel.prx",
+     "setcontext"
+    ],
+    [
+     "libkernel.prx",
+     "tcgetattr"
+    ],
+    [
+     "libkernel.prx",
+     "issetugid"
+    ],
+    [
+     "libkernel.prx",
+     "sysctl"
+    ],
+    [
+     "libkernel.prx",
+     "lstat"
+    ],
+    [
+     "libkernel.prx",
+     "madvise"
+    ],
+    [
+     "libkernel.prx",
+     "sigaction"
+    ],
+    [
+     "libkernel.prx",
+     "tcsetattr"
+    ],
+    [
+     "libkernel.prx",
+     "socketpair"
+    ],
+    [
+     "libkernel.prx",
+     "getcontext"
+    ],
+    [
+     "libkernel.prx",
+     "getdirentries"
+    ],
+    [
+     "libkernel.prx",
+     "mlock"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_set_name_np"
+    ]
+   ],
+   "stub_list": [
+    [
+     "libSceAudioIn.prx",
+     "sceAudioInOpen"
+    ],
+    [
+     "libkernel.prx",
+     "pthread_cancel_nid_postfix"
+    ]
+   ],
+   "missing_libraries": {},
+   "library_mismatch": 0
+  }
+ }
+}

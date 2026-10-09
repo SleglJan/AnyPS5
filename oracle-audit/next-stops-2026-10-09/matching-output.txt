@@ -1,0 +1,135 @@
+TABLE
+| Next stop on `main` | Library | Titles | Open PRs naming it in the title | Mentions in a body |
+|---|---|---:|---|---|
+| `sceKernelGetFsSandboxRandomWord` | `libkernel.prx` | 6: PPSA17641, PPSA74126, PPSA97510, PPSA98510, PPSA99009, PPSA99082 | #1807 | #1772, #1748 |
+| `sceVideoOutGetResolutionStatus` | `libSceVideoOut.prx` | 6: PPSA39410, PPSA99050, PPSA99177, PPSA99505, PPSA99515, PPSA99600 | #1714 | #1978, #1807 |
+| `getdents` | `libkernel.prx` | 3: PPSA92280, PPSA99039, PPSA99997 | #1634 |  |
+| `__inet_addr` | `libSceLibcInternal.prx` | 2: PPSA19111, PPSA99169 | #1972 | #2231, #2208, #1987, #1848 |
+| `lstat` | `libkernel.prx` | 2: PPSA68091, PPSA99000 | #1624 | #2115, #2028 |
+| `madvise` | `libkernel.prx` | 2: PPSA99110, PPSA99920 | #1633 | #1824, #1673 |
+| `mkstemp` | `libScePosixForWebKit.prx` | 2: PPSA99005, PPSA99006 | #1613 | #1859, #1676, #1675 |
+| `__inet_aton` | `libSceLibcInternal.prx` | 1: PPSA99808 | #1848 | #2231, #2208, #2090, #1972 |
+| `dup` | `libkernel.prx` | 1: PPSA97358 | none | #2123 |
+| `dup2` | `libkernel.prx` | 1: PPSA99995 | none |  |
+| `getegid` | `libkernel.prx` | 1: PPSA99002 | #1650 | #1748 |
+| `geteuid` | `libkernel.prx` | 1: PPSA99003 | #1650 | #1807, #1748 |
+| `getifaddrs` | `libSceLibcInternal.prx` | 1: PPSA99810 | #1772 | #1978 |
+| missing library `libSceOpusDec.prx` |  | 1: PPSA99001 | #1823 |  |
+| missing library `libSceZlib.prx` |  | 1: PPSA99109 | #1824 |  |
+| `readlink` | `libkernel_sys.prx` | 1: PPSA99010 | #1627 |  |
+| `sceAudioOutSysGetHdmiMonitorInfo` | `libSceAudioOut.prx` | 1: PPSA99051 | none |  |
+| `sceSystemServiceLaunchWebBrowser` | `libSceSystemService.prx` | 1: PPSA76677 | none | #2065 |
+| `shm_open` | `libkernel.prx` | 1: PPSA59322 | #1860 | #2065, #1859 |
+| `sigaction` | `libkernel.prx` | 1: PPSA99420 | #1916 | #2106, #1857, #1748, #1685, #1431 |
+| `sigemptyset` | `libkernel.prx` | 1: PPSA98001 | none | #2028, #1748, #1641 |
+| `sysctlbyname` | `libkernel.prx` | 1: PPSA69420 | #1685 | #2332, #1807 |
+| `system` | `libkernel.prx` | 1: PPSA99007 | #1859 | #2387, #2373, #2357, #2336, #2331, #2274 … |
+| `tcgetattr` | `libkernel.prx` | 1: PPSA99728 | #1738 | #2123 |
+| `waitpid` | `libkernel.prx` | 1: PPSA85300 | #2123 |  |
+
+MOVED (title, before, now):
+  PPSA99177: sceNetResolverStartNtoaMultipleRecordsEx -> sceVideoOutGetResolutionStatus
+  PPSA99505: sceNetResolverStartNtoaMultipleRecordsEx -> sceVideoOutGetResolutionStatus
+  PPSA99515: sceNetResolverStartNtoaMultipleRecordsEx -> sceVideoOutGetResolutionStatus
+  PPSA99997: sceNetResolverStartNtoaMultipleRecordsEx -> getdents
+  PPSA99810: socketpair -> getifaddrs
+  PPSA99995: socketpair -> dup2
+
+NEW TITLES: PPSA98510, PPSA19111, PPSA39410, PPSA99600, PPSA76677, PPSA85300, PPSA97358, PPSA98001, PPSA99051
+
+STOP COUNTS: {'(no loader stop)': 1}
+
+PRS WITH A CATALOG HIT:
+- #1650 feat(libkernel): implement getuid, geteuid, getgid, getegid and issetugid: next stop for 1 (`getegid`), 1 (`geteuid`) titles; absent import in 28 (`getgid`), 29 (`getuid`), 19 (`issetugid`) titles
+- #1685 feat(libkernel): implement sysctl and sysctlbyname for hw.ncpu: next stop for 1 (`sysctlbyname`) titles; absent import in 35 (`sysctl`) titles
+- #1772 feat(libc): implement getifaddrs and freeifaddrs: next stop for 1 (`getifaddrs`) titles; absent import in 20 (`freeifaddrs`) titles
+- #1738 feat(libkernel): implement tcgetattr and tcsetattr: next stop for 1 (`tcgetattr`) titles; absent import in 19 (`tcsetattr`) titles
+- #1613 feat(posix): implement mkstemp and isatty: next stop for 2 (`mkstemp`) titles; absent import in 9 (`isatty`) titles
+- #1634 feat(libkernel): implement getdents and getdirentries: next stop for 3 (`getdents`) titles; absent import in 7 (`getdirentries`) titles
+- #1624 feat(libkernel): implement lstat: next stop for 2 (`lstat`) titles
+- #1627 feat(libkernel_sys): implement readlink: next stop for 1 (`readlink`) titles
+- #1633 feat(libkernel): implement madvise: next stop for 2 (`madvise`) titles
+- #1714 feat(videoout): implement sceVideoOutGetResolutionStatus: next stop for 6 (`sceVideoOutGetResolutionStatus`) titles
+- #1807 feat(libkernel): implement sceKernelGetFsSandboxRandomWord: next stop for 6 (`sceKernelGetFsSandboxRandomWord`) titles
+- #1848 feat(libc): implement __inet_aton: next stop for 1 (`__inet_aton`) titles
+- #1859 feat(libkernel): implement system: next stop for 1 (`system`) titles
+- #1860 feat(libkernel): implement shm_open for anonymous objects: next stop for 1 (`shm_open`) titles
+- #1916 feat(libkernel): implement sigaction: next stop for 1 (`sigaction`) titles
+- #1972 feat(libc): implement __inet_addr: next stop for 2 (`__inet_addr`) titles
+- #2106 feat(libkernel): implement pthread_sigmask: absent import in 34 (`pthread_sigmask`) titles
+- #2218 feat(libc): implement getprogname: absent import in 30 (`getprogname`) titles
+- #1656 feat(libc): implement malloc_usable_size: absent import in 28 (`malloc_usable_size`) titles
+- #1482 feat(libkernel): implement _umtx_op wait and wake operations: absent import in 27 (`_umtx_op`), 1 (`wait`) titles
+- #1675 feat(libkernel): implement getrlimit for RLIMIT_DATA: absent import in 27 (`getrlimit`) titles
+- #1676 feat(libkernel): implement pthread_getcpuclockid and per-thread CPU clocks: absent import in 27 (`pthread_getcpuclockid`) titles
+- #1729 feat(libc): implement syslog and vsyslog: absent import in 27 (`syslog`), 1 (`vsyslog`) titles
+- #2051 fix(libkernel): implement _umtx_op and let exception delivery interrupt mutex and rwlock w: absent import in 27 (`_umtx_op`) titles
+- #2354 feat(libc): implement rewind: absent import in 20 (`rewind`) titles
+- #2019 feat(libc): implement guest gethostname: absent import in 19 (`gethostname`) titles
+- #2174 feat(libc): implement __isinf: absent import in 17 (`__isinf`) titles
+- #1673 feat(libkernel): implement mlock and munlock: absent import in 16 (`mlock`) titles
+- #1978 feat(agc): implement sceAgcDriverGetTFRing: absent import in 16 (`sceAgcDriverGetTFRing`) titles
+- #1748 feat(libkernel): implement seteuid and setegid: absent import in 4 (`setegid`), 11 (`seteuid`) titles
+- #2186 feat(libc): implement atol and atoll: absent import in 11 (`atol`), 9 (`atoll`) titles
+- #1857 feat(libkernel): implement msync: absent import in 9 (`msync`) titles
+- #2107 feat(libkernel): implement sigaltstack: absent import in 7 (`sigaltstack`) titles
+- #2167 feat(libc): implement fabs, sqrt, trunc and fma: absent import in 5 (`fabs`), 1 (`fma`), 6 (`sqrt`), 2 (`trunc`) titles
+- #1620 feat(libkernel): implement fdatasync: absent import in 5 (`fdatasync`) titles
+- #1796 feat(posix): implement gethostbyname: absent import in 4 (`gethostbyname`) titles
+- #2173 feat(libc): implement log1p, log1pf and expm1: absent import in 3 (`expm1`), 4 (`log1p`), 1 (`log1pf`) titles
+- #2208 feat(libc): implement __inet_ntoa: absent import in 4 (`__inet_ntoa`) titles
+- #1812 feat(libc): implement stpcpy: absent import in 3 (`stpcpy`) titles
+- #2028 feat(libkernel): implement sceKernelGetModuleList and sceKernelGetModuleInfo: absent import in 3 (`sceKernelGetModuleInfo`), 1 (`sceKernelGetModuleList`) titles
+- #2090 feat(libkernel): export environ as an empty environment: absent import in 3 (`environ`) titles
+- #2189 feat(libc): implement llroundf: absent import in 3 (`llroundf`) titles
+- #2037 feat(libc): implement logb, sinhf, nearbyintf and __powisf2: absent import in 1 (`logb`), 2 (`sinhf`) titles
+- #2187 feat(libc): implement strsep: absent import in 2 (`strsep`) titles
+- #1818 feat(libc): implement ldiv: absent import in 1 (`ldiv`) titles
+- #1987 feat(libc): implement __fpclassifyf: absent import in 1 (`__fpclassifyf`) titles
+- #2192 feat(libc): implement nextafterf: absent import in 1 (`nextafterf`) titles
+- #2213 feat(libc): implement sinl, cosl, logl, powl and truncl: absent import in 1 (`cosl`), 1 (`logl`), 1 (`powl`), 1 (`sinl`), 1 (`truncl`) titles
+- #2216 feat(libc): implement rand_r: absent import in 1 (`rand_r`) titles
+- #2220 feat(libc): implement wcstok: absent import in 1 (`wcstok`) titles
+
+PRS WITHOUT A CATALOG HIT:
+- #560 feat(signindialog): implement close, get-result and get-status: `close`
+- #570 feat(audioin): implement sceAudioInHqOpen: `sceAudioInHqOpen`
+- #571 feat(voice): implement sceVoiceWriteToIPort: `sceVoiceWriteToIPort`
+- #759 feat(agc): implement deferred faults for reads through null SRT pointers: `null`
+- #846 feat(relinker): add --module-dir for modules loaded at run time: `run`, `time`
+- #926 feat(libSceNpManager): implement sceNpRegisterGamePresenceCallback and sceNpSetContentRest: `sceNpRegisterGamePresenceCallback`, `sceNpSetContentRestriction`
+- #950 feat(libkernel): implement sceKernelGetEventError: `sceKernelGetEventError`
+- #959 feat(libSceNgs2.native): implement sceNgs2PanInit and sceNgs2PanGetVolumeMatrix: `sceNgs2PanGetVolumeMatrix`, `sceNgs2PanInit`
+- #1060 feat(libSceAgc): implement sceAgcAcquireMemSetEngine: `sceAgcAcquireMemSetEngine`
+- #1091 feat(libkernel): implement read and write events for guest sockets: `read`, `write`
+- #1097 feat(libc): implement abs: `abs`
+- #1188 feat(libkernel): implement sceKernelGetModuleInfoFromAddr on Windows: `sceKernelGetModuleInfoFromAddr`
+- #1192 feat(libkernel): export the POSIX rename: `rename`
+- #1292 feat(agc): implement deferred faults for descriptors read through null SRT pointers: `null`, `read`
+- #1641 feat(libkernel): implement the sigset functions: `sigset`
+- #1693 fix(libSceRazorCpu): add sceRazorCpuNamedSync export: `sceRazorCpuNamedSync`
+- #1713 feat(libSceIme): implement sceImeGetPanelPositionAndForm: `sceImeGetPanelPositionAndForm`
+- #1781 feat(libc): export the C rune locale: `locale`
+- #1783 feat(libc): implement the C locale wide character class functions: `locale`
+- #1798 feat(libkernel): implement pthread_getname_np: `pthread_getname_np`
+- #1849 feat(libSceAudio3d): implement sceAudio3dObjectSetAttributes and sceAudio3dPortFlush: `sceAudio3dObjectSetAttributes`, `sceAudio3dPortFlush`
+- #2038 feat(libc): implement lrand48 and srand48: `lrand48`, `srand48`
+- #2039 feat(libc): implement malloc_stats_fast through the application allocator: `malloc_stats_fast`
+- #2040 feat(libc): implement sceLibcBacktraceSelf on Linux: `sceLibcBacktraceSelf`
+- #2118 feat(libkernel): implement sceKernelAioPollRequests: `sceKernelAioPollRequests`
+- #2129 feat(libkernel): implement sceKernelFdatasync: `sceKernelFdatasync`
+- #2153 feat(libSceUlt): implement sceUltUlthreadTryJoin, sceUltUlthreadRuntimeDestroy and the und: `sceUltUlthreadRuntimeDestroy`, `sceUltUlthreadTryJoin`
+- #2158 feat(libc): implement __powidf2: `__powidf2`
+- #2193 feat(libs): implement font, libc, libkernel and misc prx stubs: `misc`
+- #2195 feat(net): implement sceNetResolverStartNtoaMultipleRecords: `sceNetResolverStartNtoaMultipleRecords`
+- #2205 feat(libs): implement sceGameLiveStreamingGetCurrentStatus2: `sceGameLiveStreamingGetCurrentStatus2`
+- #2217 feat(libc): implement memccpy: `memccpy`
+- #2235 feat(libc): implement rint and lrint families: `lrint`, `rint`
+- #2252 feat(libSceAppContent): implement sceAppContentAddcontEnqueueDownload…: `sceAppContentAddcontEnqueueDownload`
+- #2277 feat(libc): add BSD string and memory helpers: `string`
+- #2281 feat(net): implement synchronous resolver abort state: `abort`
+- #2316 feat(libc): implement abs: `abs`
+- #2358 feat(libSceNpPartner001): implement the EA access initialize and terminate: `access`
+- #2359 feat(libSceRudp): implement sceRudpGetStatus: `sceRudpGetStatus`
+
+SUMMARY: 26 distinct stops; 50 import PRs with a hit, 39 without; 285 absent import names over 52 records
