@@ -2,15 +2,23 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <future>
 #include <string>
+#include <thread>
 #include <utility>
+
+struct AprSubmitResult {
+    std::int32_t result;
+    std::uint32_t errorOffset;
+};
 
 extern "C" {
 int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject*);
@@ -31,6 +39,9 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char*, std::uint32_t);
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
+int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject*, std::uint32_t, std::uint32_t*);
+int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject*, std::uint32_t, struct AprSubmitResult*, std::uint32_t*);
+int APS5_VABI sceKernelAprWaitCommandBuffer(std::uint32_t);
 int APS5_VABI sceAmprCommandBufferWaitOnAddress(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t, std::uint8_t, std::uint8_t);
 int APS5_VABI sceAmprCommandBufferWaitOnCounter(Apr::CommandBufferObject*, std::uint8_t, std::uint32_t, std::uint8_t, std::uint8_t);
 int APS5_VABI sceAmprCommandBufferWriteCounterOnCompletion(Apr::CommandBufferObject*, std::uint8_t, std::uint32_t);
@@ -155,6 +166,32 @@ struct Recorder {
     std::uint32_t Commands() const { return sceAmprCommandBufferGetNumCommands(&buffer); }
 };
 
+template <typename TCall>
+bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+void Wait(std::uint32_t id) {
+    auto waited = std::async(std::launch::async, [id]() { return sceKernelAprWaitCommandBuffer(id); });
+    Require(waited.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    Require(waited.get() == 0);
+}
+
+void SubmitAndWait(const Recorder& recorder, std::uint32_t priority = 0) {
+    std::uint32_t id = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&recorder.buffer, priority, &id) == 0 && id != 0);
+    Wait(id);
+}
+
+std::uint64_t Load(const std::uint64_t& value) {
+    return std::atomic_ref<const std::uint64_t>(value).load(std::memory_order_acquire);
+}
+
 void RequireAppended(const Recorder& recorder, std::uint32_t offset, std::uint32_t commands, Apr::Opcode opcode, std::uint64_t measured) {
     Require(recorder.Offset() == offset + measured);
     Require(recorder.Commands() == commands + 1);
@@ -254,8 +291,60 @@ void TestSubmission() {
     Require(sceAmprCommandBufferPopMarker(&recorder.buffer) == 0);
     Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &second, 0x2222) == 0);
     Require(recorder.Commands() == 8);
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    SubmitAndWait(recorder);
     Require(first == 0x1111 && second == 0x2222);
+}
+
+void TestAsynchronousSubmission() {
+    Recorder recorder;
+    alignas(8) std::uint64_t gate = 0;
+    alignas(8) std::uint64_t done = 0;
+    Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &gate, 1, 0, 0) == 0);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &done, 7) == 0);
+    AprSubmitResult result{-1, 0xffffffffu};
+    std::uint32_t id = 0;
+    auto submitted = std::async(std::launch::async, [&]() { return sceKernelAprSubmitCommandBufferAndGetResult(&recorder.buffer, 0, &result, &id); });
+    Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    Require(submitted.get() == 0 && id != 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(Load(done) == 0);
+    std::atomic_ref<std::uint64_t>(gate).store(1, std::memory_order_release);
+    Wait(id);
+    Require(Load(done) == 7 && result.result == 0 && result.errorOffset == 0);
+}
+
+void TestLanes() {
+    alignas(8) std::uint64_t gate = 0;
+    alignas(8) std::uint64_t queuedDone = 0;
+    alignas(8) std::uint64_t otherDone = 0;
+    Recorder blocked;
+    Require(sceAmprCommandBufferWaitOnAddress(&blocked.buffer, &gate, 1, 0, 0) == 0);
+    Recorder queued;
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&queued.buffer, &queuedDone, 2) == 0);
+    Recorder other;
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&other.buffer, &otherDone, 3) == 0);
+    std::uint32_t blockedId = 0;
+    std::uint32_t queuedId = 0;
+    std::uint32_t otherId = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&blocked.buffer, 2, &blockedId) == 0);
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&queued.buffer, 2, &queuedId) == 0);
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&other.buffer, 3, &otherId) == 0);
+    Require(blockedId != queuedId && queuedId != otherId && blockedId != otherId);
+    Wait(otherId);
+    Require(Load(otherDone) == 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(Load(queuedDone) == 0);
+    std::atomic_ref<std::uint64_t>(gate).store(1, std::memory_order_release);
+    Wait(queuedId);
+    Require(Load(queuedDone) == 2);
+    Wait(blockedId);
+}
+
+void TestRejectedSubmission() {
+    Recorder recorder;
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &recorder.gatherState, 1) == 0);
+    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 7) == -1);
+    Require(Throws([] { sceKernelAprWaitCommandBuffer(0xfffffff0u); }));
 }
 
 void TestKernelEventQueue() {
@@ -265,7 +354,7 @@ void TestKernelEventQueue() {
     Require(sceKernelAddAmprEvent(eq, 7, &userData) == 0);
     Recorder recorder;
     Require(sceAmprCommandBufferWriteKernelEventQueue_04_00(&recorder.buffer, static_cast<std::uint64_t>(eq), 7, 0x1234, 0) == 0);
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    SubmitAndWait(recorder);
     KernelEvent event{};
     int count = 0;
     const KernelUseconds poll = 0;
@@ -285,9 +374,8 @@ void TestWaits() {
     Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &value, 9, 2, 1) == 0);
     Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &value, 4, 3, 0) == 0);
     Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &done, 1) == 0);
-    auto submitted = std::async(std::launch::async, [&]() { return sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0); });
-    Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-    Require(submitted.get() == 0 && done == 1);
+    SubmitAndWait(recorder);
+    Require(done == 1);
 }
 
 void TestCounters() {
@@ -300,7 +388,7 @@ void TestCounters() {
     Require(sceAmprCommandBufferWaitOnCounter(&recorder.buffer, 7, 8, 1, 1) == 0);
     Require(sceAmprCommandBufferWriteAddressFromCounterOnCompletion(&recorder.buffer, &single, 6) == 0);
     Require(sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(&recorder.buffer, &pair, 6) == 0);
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    SubmitAndWait(recorder);
     Require(single == 7 && pair == (7ull | (9ull << 32u)));
 }
 
@@ -341,7 +429,7 @@ void TestNops() {
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(4));
     Require(std::memcmp(recorder.memory.data() + offset + sizeof(Apr::CommandHeader), data, sizeof(data)) == 0);
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, nullptr) == 0);
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    SubmitAndWait(recorder);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
     Require(sceAmprCommandBufferNop(&recorder.buffer, 0) == invalidArgument);
@@ -365,9 +453,8 @@ void TestVersionedCommands() {
     Require(sceAmprCommandBufferWriteAddressFromCounter_04_00(&recorder.buffer, &single, 10, 1) == 0);
     Require(sceAmprCommandBufferWriteAddressFromCounterPair_04_00(&recorder.buffer, &pair, 10, 0) == 0);
     Require(sceAmprCommandBufferWriteAddressFromTimeCounter_04_00(&recorder.buffer, &time, 1) == 0);
-    auto submitted = std::async(std::launch::async, [&]() { return sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0); });
-    Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-    Require(submitted.get() == 0 && single == 3 && pair == (3ull | (4ull << 32u)) && time != 0);
+    SubmitAndWait(recorder);
+    Require(single == 3 && pair == (3ull | (4ull << 32u)) && time != 0);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
     Recorder empty;
@@ -390,9 +477,7 @@ void TestVersionedCommands() {
 }
 
 void SubmitWithin10Seconds(const Recorder& recorder) {
-    auto submitted = std::async(std::launch::async, [&]() { return sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0); });
-    Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
-    Require(submitted.get() == 0);
+    SubmitAndWait(recorder);
 }
 
 void TestVersionedCounters() {
@@ -489,7 +574,7 @@ void TestConstructed() {
     commands = recorder.Commands();
     Require(sceAmprCommandBufferConstructMarker(&recorder.buffer, 3, nullptr, nullptr) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::PopMarker, sceAmprMeasureCommandSizePopMarker());
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    SubmitAndWait(recorder);
 
     Recorder empty;
     Require(sceAmprCommandBufferConstructNop(&empty.buffer, 0, large.data(), 61, nullptr) == invalidArgument);
@@ -940,6 +1025,9 @@ int main() {
     TestRejectedArguments();
     TestFullBuffer();
     TestSubmission();
+    TestAsynchronousSubmission();
+    TestLanes();
+    TestRejectedSubmission();
     TestKernelEventQueue();
     TestWaits();
     TestCounters();
