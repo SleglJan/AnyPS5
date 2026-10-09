@@ -3031,6 +3031,12 @@ void vertexCopyTests() {
         const auto plan = PlanVertexCopies(fetches);
         Require(plan.copies.size() == 1 && plan.copies[0].first == 0x1000 && plan.copies[0].second == 0x1018 + 32 * 9 + 8, "interleaved attributes were not copied as one union");
         Require(plan.copyOf == std::vector<std::size_t>{0, 0, 0} && plan.offsets == std::vector<std::uint64_t>{0x18, 0, 0xc}, "interleaved attribute offsets are wrong");
+        Require(plan.alignments == std::vector<std::uint32_t>{4}, "the union's alignment is not its attributes'");
+    }
+    {
+        const std::array<VertexFetch, 2> fetches{{{0x4000, 0x4100, 16, 0, 2}, {0x4004, 0x4104, 16, 0, 4}}};
+        const auto plan = PlanVertexCopies(fetches);
+        Require(plan.copies.size() == 1 && plan.alignments == std::vector<std::uint32_t>{4}, "a union did not take its strictest attribute alignment");
     }
     {
         const std::array<VertexFetch, 6> fetches{{
