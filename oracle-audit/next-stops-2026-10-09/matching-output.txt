@@ -98,7 +98,6 @@ PRS WITHOUT A CATALOG HIT:
 - #759 feat(agc): implement deferred faults for reads through null SRT pointers: `null`
 - #846 feat(relinker): add --module-dir for modules loaded at run time: `run`, `time`
 - #926 feat(libSceNpManager): implement sceNpRegisterGamePresenceCallback and sceNpSetContentRest: `sceNpRegisterGamePresenceCallback`, `sceNpSetContentRestriction`
-- #950 feat(libkernel): implement sceKernelGetEventError: `sceKernelGetEventError`
 - #959 feat(libSceNgs2.native): implement sceNgs2PanInit and sceNgs2PanGetVolumeMatrix: `sceNgs2PanGetVolumeMatrix`, `sceNgs2PanInit`
 - #1060 feat(libSceAgc): implement sceAgcAcquireMemSetEngine: `sceAgcAcquireMemSetEngine`
 - #1091 feat(libkernel): implement read and write events for guest sockets: `read`, `write`
@@ -132,4 +131,4 @@ PRS WITHOUT A CATALOG HIT:
 - #2358 feat(libSceNpPartner001): implement the EA access initialize and terminate: `access`
 - #2359 feat(libSceRudp): implement sceRudpGetStatus: `sceRudpGetStatus`
 
-SUMMARY: 26 distinct stops; 50 import PRs with a hit, 39 without; 285 absent import names over 52 records
+SUMMARY: 26 distinct stops; 50 import PRs with a hit, 38 without; 285 absent import names over 52 records
