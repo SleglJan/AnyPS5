@@ -26,7 +26,7 @@ alignas(256) constexpr std::array<std::uint32_t, 31> Code{
 
 std::array<std::uint32_t, 4> bufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x01016facu};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
 std::uint32_t expectedMask(std::uint32_t width, std::uint32_t offset) {
@@ -65,8 +65,10 @@ void run(AgcDriver::VulkanDevice& device) {
                 const auto expected = expectedMask(width, offset);
                 const auto description = "bitfield mask width=" + std::to_string(width | upperBits) +
                     " offset=" + std::to_string(offset | upperBits);
-                Require(Output[offset * 4u] == expected, description + " vector result");
-                Require(Output[offset * 4u + 1u] == expected, description + " scalar result");
+                Require(Output[offset * 4u] == expected, description + " vector result " +
+                    std::to_string(Output[offset * 4u]) + ", expected " + std::to_string(expected));
+                Require(Output[offset * 4u + 1u] == expected, description + " scalar result " +
+                    std::to_string(Output[offset * 4u + 1u]) + ", expected " + std::to_string(expected));
                 Require(Output[offset * 4u + 2u] == 1u, description + " changed SCC=1");
                 Require(Output[offset * 4u + 3u] == 0u, description + " changed SCC=0");
             }
