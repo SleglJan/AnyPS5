@@ -2769,6 +2769,8 @@ void ProvokingVertexTests() {
     using namespace AgcDriver::Graphics;
     constexpr std::uint32_t lastVertex = 1u << 19u;
     auto queue = makeState();
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
     const auto first = DecodeState(queue);
     Require(first.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, "the default provoking vertex is not first");
     for (const auto primitive : {2u, 4u, 5u, 6u}) {
@@ -2777,7 +2779,8 @@ void ProvokingVertexTests() {
             queue.context[0x205] = 0x240u | (last ? lastVertex : 0u);
             const auto state = DecodeState(queue);
             Require(state.provokingVertexMode == (last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT), "PROVOKING_VTX_LAST did not select the requested vertex for primitive " + std::to_string(primitive));
-            Require(DrawRejection(queue, false).empty(), "the draw precheck rejected provoking vertex mode for primitive " + std::to_string(primitive));
+            const auto rejection = DrawRejection(queue, false);
+            Require(rejection.empty(), "the draw precheck rejected provoking vertex mode for primitive " + std::to_string(primitive) + ": " + rejection);
             Require(state.cullMode == first.cullMode && state.frontFace == first.frontFace && state.depthBias == first.depthBias, "PROVOKING_VTX_LAST changed another rasterization field");
         }
     }
