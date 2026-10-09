@@ -3,7 +3,7 @@
 Usage: python3 -s scripts/oracle/lds64_hosts.py notes/oracle-lds64 [set ...]
 Sets: f64_minmax f64_cmpst f32 int contention. Each body is wrapped in a host kernel (buffer loads from the input V#
 in s[0:3], stores to the output V# in s[4:7], as the execution tests do), assembled with llvm-mc for gfx1030, and run by
-build/tests/agc_driver_kernel_replay_tests (REPLAY_LDS 4096, REPLAY_MODE per float mode). Cells are compared bit for bit
+build/tests/agc_driver_kernel_replay_tests (REPLAY_LDS 1024 dwords = the oracle's 4 KiB, REPLAY_MODE per float mode). Cells are compared bit for bit
 with the oracle outputs stored by lds64_matrix.py and lds64_contention.py.
 """
 import importlib.util
@@ -60,7 +60,7 @@ def assemble(text, wave64):
     return [int.from_bytes(data[i:i + 4], "little") for i in range(0, len(data), 4)]
 
 
-def host_run(gpu, words, rows, inputs, threads, mode, wave64, work, lds=4096):
+def host_run(gpu, words, rows, inputs, threads, mode, wave64, work, lds=1024):
     work.mkdir(parents=True, exist_ok=True)
     (work / "code.txt").write_text("\n".join(f"0x{w:08x}" for w in words) + "\n")
     (work / "rows.txt").write_text("".join(" ".join(f"0x{v:08x}" for v in r) + "\n" for r in rows))

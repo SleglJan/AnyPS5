@@ -159,28 +159,9 @@
   "examples": []
  },
  "Ryzen/range-wave32": {
-  "differs": 512,
+  "differs": 0,
   "cells": 1536,
-  "examples": [
-   [
-    0,
-    2,
-    "8458b5f6",
-    "00000000"
-   ],
-   [
-    0,
-    3,
-    "77805644",
-    "00000000"
-   ],
-   [
-    1,
-    2,
-    "8867148f",
-    "00000000"
-   ]
-  ]
+  "examples": []
  },
  "Ryzen/contention-wave64": {
   "add_final": [
@@ -196,7 +177,7 @@
  },
  "Ryzen/mixed-wave64": {
   "final": [
-   "0xdfffffff80"
+   "0xbfffffff80"
   ],
   "lanes_agree": true,
   "expected": "0xffffffff80"
@@ -212,28 +193,9 @@
   "examples": []
  },
  "Ryzen/range-wave64": {
-  "differs": 512,
+  "differs": 0,
   "cells": 1536,
-  "examples": [
-   [
-    0,
-    2,
-    "cc588c76",
-    "00000000"
-   ],
-   [
-    0,
-    3,
-    "6701d644",
-    "00000000"
-   ],
-   [
-    1,
-    2,
-    "8827b486",
-    "00000000"
-   ]
-  ]
+  "examples": []
  },
  "NVIDIA/contention-wave32": {
   "add_final": [
@@ -244,12 +206,12 @@
    "0xff34785799e5cbd0"
   ],
   "inc_final": [
-   "0xd6"
+   "0xcf"
   ]
  },
  "NVIDIA/mixed-wave32": {
   "final": [
-   "0xcfffffff80"
+   "0xdfffffff80"
   ],
   "lanes_agree": true,
   "expected": "0xffffffff80"

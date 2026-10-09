@@ -49,8 +49,8 @@ Units: dwords over the 256 lanes (a 64-bit result is two dwords). Before-fix num
 | 29 integer forms | 0 / 7,424 | 0 | |
 | EXEC, offsets | 0 | 0 | |
 | contention add/max | exact, serial | exact, serial | |
-| mixed widths | first run exact; second run **0xcfffffff80 in wave32 (48 of 128 32-bit increments lost)** | **0xbfffffff80 (64 lost) in wave32 both runs; 0xffffffff80 then 0xdfffffff80 (32 lost) in wave64** | the lock orders 64-bit atomics against each other only; 32-bit atomics bypass it (TechnicalDebt); the loss is timing-dependent |
-| out of range 64-bit | returns 0 | returns 0 | first run compared against a harness LDS of 4,096 dwords (16 KiB), not bytes; with 1,024 dwords both hosts return 0 and leave memory unchanged, like the hardware |
+| mixed widths, 20 runs each (`mixed-repeats.json`) | wave32: increments lost in 18 of 20 runs (16 to 80); wave64: 0 in 17, 16 in 3 | wave32: 64 lost in 19, 96 in 1; wave64: 64 in 16, 32 in 2, 96 in 2 | the lock orders 64-bit atomics against each other only; 32-bit atomics bypass it (TechnicalDebt); every loss is a multiple of 16, the low dword is always 0xffffff80; the oracle is exact in 6 of 6 runs per wave size |
+| out of range 64-bit | returns 0 | returns 0 | a first comparison used a harness LDS of 4,096 dwords (16 KiB) by mistake; with 1,024 dwords (the oracle's 4 KiB) both hosts return 0 and leave memory unchanged, like the hardware |
 
 `LdsAtomics64.cpp`'s CPU model has the same signalling-NaN gap as the emitter, and its lanes of kind 2 include the
 signalling NaN 0x7ff0000000000001, so on the console the test would assert the wrong value for those lanes.
