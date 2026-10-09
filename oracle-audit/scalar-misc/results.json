@@ -1,0 +1,96 @@
+{
+ "call-wave32": [
+  [
+   4,
+   0,
+   8738,
+   3
+  ]
+ ],
+ "swappc-wave32": [
+  [
+   43981,
+   61185,
+   0,
+   34,
+   12,
+   0,
+   60
+  ]
+ ],
+ "call-wave64": [
+  [
+   4,
+   0,
+   8738,
+   3
+  ]
+ ],
+ "swappc-wave64": [
+  [
+   43981,
+   61185,
+   0,
+   34,
+   12,
+   0,
+   60
+  ]
+ ],
+ "clock-1000": {
+  "memtime": [
+   44147,
+   67169
+  ],
+  "memrealtime": [
+   1025616033636,
+   1025616037444
+  ],
+  "shader_cycles": [
+   1924,
+   24946
+  ],
+  "uniform": true
+ },
+ "clock-20000": {
+  "memtime": [
+   73473,
+   533495
+  ],
+  "memrealtime": [
+   1025625112263,
+   1025625162659
+  ],
+  "shader_cycles": [
+   1984,
+   462006
+  ],
+  "uniform": true
+ },
+ "clock-400000": {
+  "memtime": [
+   113861,
+   9313883
+  ],
+  "memrealtime": [
+   1025634435617,
+   1025634866519
+  ],
+  "shader_cycles": [
+   1967,
+   813381
+  ],
+  "uniform": true
+ },
+ "lg": {
+  "rows": 192,
+  "mismatches": {
+   "lg_f32 e32 vs e64": 0,
+   "lg_f16 e32 vs e64": 0,
+   "lg_f32 vs model(ordered !=)": 10,
+   "lg_f16 vs model": 0,
+   "nlg_f32 vs !lg": 10,
+   "neq_f32 vs model(unordered or !=)": 10
+  }
+ }
+}
