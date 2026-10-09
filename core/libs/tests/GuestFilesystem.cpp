@@ -244,6 +244,9 @@ int main() {
     Require(flock_nid_postfix(contender, 2 | 4) == -1 && *__error_nid_postfix() == 35);
     Require(flock_nid_postfix(holder, 8) == 0 && flock_nid_postfix(contender, 2 | 4) == 0);
     Require(flock_nid_postfix(contender, 8) == 0);
+    Require(flock_nid_postfix(holder, 1 | 2 | 4 | 0x10) == 0);
+    Require(flock_nid_postfix(contender, 1 | 4) == -1 && *__error_nid_postfix() == 35);
+    Require(flock_nid_postfix(holder, 8) == 0);
     Require(close_nid_postfix(contender) == 0 && close_nid_postfix(holder) == 0);
     Require(open_nid_postfix(missingName.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 2);
     Require(_open_nid_postfix(missingName.c_str(), 0) == -1 && *__error_nid_postfix() == 2);
