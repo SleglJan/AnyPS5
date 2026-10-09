@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <array>
+#include <cerrno>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -182,10 +183,28 @@ void Wait(std::uint32_t id) {
     Require(waited.get() == 0);
 }
 
+std::uint32_t Submit(const Recorder& recorder, std::uint32_t priority) {
+    auto submitted = std::async(std::launch::async, [&]() {
+        std::uint32_t id = 0;
+        const int result = sceKernelAprSubmitCommandBufferAndGetId(&recorder.buffer, priority, &id);
+        return result == 0 ? id : 0u;
+    });
+    Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    const auto id = submitted.get();
+    Require(id != 0);
+    return id;
+}
+
 void SubmitAndWait(const Recorder& recorder, std::uint32_t priority = 0) {
-    std::uint32_t id = 0;
-    Require(sceKernelAprSubmitCommandBufferAndGetId(&recorder.buffer, priority, &id) == 0 && id != 0);
-    Wait(id);
+    Wait(Submit(recorder, priority));
+}
+
+bool Reaches(const std::uint64_t& value, std::uint64_t expected) {
+    for (int i = 0; i < 10000; ++i) {
+        if (std::atomic_ref<const std::uint64_t>(value).load(std::memory_order_acquire) == expected) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
 }
 
 std::uint64_t Load(const std::uint64_t& value) {
@@ -307,10 +326,17 @@ void TestAsynchronousSubmission() {
     Require(submitted.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
     Require(submitted.get() == 0 && id != 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    Require(Load(done) == 0);
+    Require(Load(done) == 0 && std::atomic_ref<std::int32_t>(result.result).load(std::memory_order_acquire) == -1);
     std::atomic_ref<std::uint64_t>(gate).store(1, std::memory_order_release);
     Wait(id);
     Require(Load(done) == 7 && result.result == 0 && result.errorOffset == 0);
+    Wait(id);
+
+    Recorder plain;
+    alignas(8) std::uint64_t plainDone = 0;
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&plain.buffer, &plainDone, 9) == 0);
+    Require(sceKernelAprSubmitCommandBuffer(&plain.buffer, 1) == 0);
+    Require(Reaches(plainDone, 9));
 }
 
 void TestLanes() {
@@ -326,9 +352,9 @@ void TestLanes() {
     std::uint32_t blockedId = 0;
     std::uint32_t queuedId = 0;
     std::uint32_t otherId = 0;
-    Require(sceKernelAprSubmitCommandBufferAndGetId(&blocked.buffer, 2, &blockedId) == 0);
-    Require(sceKernelAprSubmitCommandBufferAndGetId(&queued.buffer, 2, &queuedId) == 0);
-    Require(sceKernelAprSubmitCommandBufferAndGetId(&other.buffer, 3, &otherId) == 0);
+    blockedId = Submit(blocked, 2);
+    queuedId = Submit(queued, 2);
+    otherId = Submit(other, 3);
     Require(blockedId != queuedId && queuedId != otherId && blockedId != otherId);
     Wait(otherId);
     Require(Load(otherDone) == 3);
@@ -343,8 +369,38 @@ void TestLanes() {
 void TestRejectedSubmission() {
     Recorder recorder;
     Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &recorder.gatherState, 1) == 0);
-    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 7) == -1);
+    errno = 0;
+    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 7) == -1 && errno == 22);
+    AprSubmitResult result{-1, 0xffffffffu};
+    std::uint32_t id = 0;
+    errno = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&recorder.buffer, 7, &result, &id) == -1 && errno == 22);
+    Require(result.result == 22 && result.errorOffset == 0 && id == 0);
+    auto detached = recorder.buffer;
+    detached.base = nullptr;
+    errno = 0;
+    Require(sceKernelAprSubmitCommandBuffer(&detached, 0) == -1 && errno == 1);
+    Require(recorder.gatherState == 0);
     Require(Throws([] { sceKernelAprWaitCommandBuffer(0xfffffff0u); }));
+    Require(Throws([] { sceKernelAprWaitCommandBuffer(0); }));
+}
+
+void TestConcurrentSubmitters() {
+    std::array<std::array<std::uint64_t, 50>, 4> values{};
+    std::array<std::thread, 4> threads;
+    for (std::size_t t = 0; t < threads.size(); ++t) {
+        threads[t] = std::thread([&, t] {
+            for (std::size_t i = 0; i < values[t].size(); ++i) {
+                Recorder recorder;
+                Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &values[t][i], t * 100 + i + 1) == 0);
+                SubmitAndWait(recorder, static_cast<std::uint32_t>(t % 2 == 0 ? 4 : 5));
+            }
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    for (std::size_t t = 0; t < values.size(); ++t) {
+        for (std::size_t i = 0; i < values[t].size(); ++i) Require(Load(values[t][i]) == t * 100 + i + 1);
+    }
 }
 
 void TestKernelEventQueue() {
@@ -476,9 +532,6 @@ void TestVersionedCommands() {
     Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(&pair, 10) == sizeof(Apr::WriteAddressFromCounterCommand));
 }
 
-void SubmitWithin10Seconds(const Recorder& recorder) {
-    SubmitAndWait(recorder);
-}
 
 void TestVersionedCounters() {
     enum : std::uint8_t { size8, size4, size2Offset0, size2Offset1, size1Offset0, size1Offset1, size1Offset2, size1Offset3 };
@@ -507,7 +560,7 @@ void TestVersionedCounters() {
     Require(sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(&recorder.buffer, &wide, 22) == 0);
     Require(sceAmprCommandBufferWriteAddressFromCounterOnCompletion(&recorder.buffer, &bits, 24) == 0);
     Require(recorder.Commands() == 19);
-    SubmitWithin10Seconds(recorder);
+    SubmitAndWait(recorder);
     Require(fields == 0x11AA3343u && wide == 0x0000000600000000ull && bits == 0x3Cu);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
@@ -644,7 +697,7 @@ void TestGatherScatter() {
     Require(sceAmprAprCommandBufferReadFile(buffer, map, state, fileId, second.data() + 48, 4, 3000) == 0);
     Require(sceAmprAprCommandBufferReadFileScatter(buffer, map, state, second.data() + 56, 4) == 0);
     Require(recorder.Commands() == 9);
-    SubmitWithin10Seconds(recorder);
+    SubmitAndWait(recorder);
 
     Require(MatchesFile(first.data(), 100, 16) && MatchesFile(first.data() + 16, 500, 8));
     Require(MatchesFile(second.data(), 508, 8));
@@ -765,7 +818,7 @@ void TestAmm() {
     Require(sceAmprAprCommandBufferMapDirectBegin(&apr.buffer, directRegion, direct, page, 0, cpuReadWrite) == 0);
     Require(sceAmprAprCommandBufferMapEnd(&apr.buffer) == 0);
     Require(sceAmprCommandBufferWriteAddressFromCounterOnCompletion(&apr.buffer, &done, 30) == 0);
-    SubmitWithin10Seconds(apr);
+    SubmitAndWait(apr);
     Require(done == 5);
     At(region + page - 8) = 0x6666;
     Require(At(region + page - 8) == 0x6666);
@@ -1028,6 +1081,7 @@ int main() {
     TestAsynchronousSubmission();
     TestLanes();
     TestRejectedSubmission();
+    TestConcurrentSubmitters();
     TestKernelEventQueue();
     TestWaits();
     TestCounters();

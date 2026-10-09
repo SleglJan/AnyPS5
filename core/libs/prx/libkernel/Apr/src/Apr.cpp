@@ -3,11 +3,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -515,10 +517,11 @@ void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor&
     read = {true, command.fileId, command.destination + command.size, command.offset + command.size};
 }
 
-void _execute(const Apr::CommandBufferObject& buffer) {
+void _execute(const Apr::CommandBufferObject& buffer, const std::atomic<bool>* stop = nullptr) {
     std::uint32_t cursor = 0;
     ReadCursor read;
     while (cursor < buffer.offset) {
+        if (stop && stop->load(std::memory_order_acquire)) return;
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
@@ -587,7 +590,10 @@ void _execute(const Apr::CommandBufferObject& buffer) {
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) std::this_thread::sleep_for(std::chrono::microseconds(50));
+            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) {
+                if (stop && stop->load(std::memory_order_acquire)) return;
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
             break;
         }
         case Apr::Opcode::WriteKernelEventQueue: {
@@ -616,15 +622,15 @@ void _execute(const Apr::CommandBufferObject& buffer) {
 }
 
 constexpr std::uint32_t AprPriorities = 7;
+constexpr int GUEST_EPERM = 1;
 
 struct Submission {
     std::uint32_t id;
-    std::vector<std::uint8_t> commands;
+    Apr::CommandBufferObject buffer;
     Apr::SubmitResult* result;
 };
 
 struct Lane {
-    std::mutex lock;
     std::condition_variable ready;
     std::deque<Submission> pending;
 };
@@ -632,7 +638,9 @@ struct Lane {
 struct SubmissionQueue {
     std::mutex lock;
     std::condition_variable retired;
-    std::uint32_t nextId = 1;
+    std::atomic<bool> stopping{false};
+    std::uint64_t issued = 0;
+    std::uint32_t executing = 0;
     std::set<std::uint32_t> inFlight;
     std::array<Lane*, AprPriorities> lanes{};
 };
@@ -642,49 +650,65 @@ SubmissionQueue& _submissions() {
     return *queue;
 }
 
+void _stopLanes() {
+    auto& queue = _submissions();
+    std::unique_lock lock(queue.lock);
+    queue.stopping.store(true, std::memory_order_release);
+    for (auto* lane : queue.lanes) {
+        if (lane) lane->ready.notify_all();
+    }
+    queue.retired.wait(lock, [&] { return queue.executing == 0; });
+}
+
 void _runLane(Lane& lane) {
+    auto& queue = _submissions();
+    std::unique_lock lock(queue.lock);
     for (;;) {
-        Submission submission;
-        {
-            std::unique_lock lock(lane.lock);
-            lane.ready.wait(lock, [&] { return !lane.pending.empty(); });
-            submission = std::move(lane.pending.front());
-            lane.pending.pop_front();
-        }
-        const auto bytes = static_cast<std::uint32_t>(submission.commands.size());
-        _execute(Apr::CommandBufferObject{submission.commands.data(), bytes, bytes, 0, Apr::BufferType::Apr, 0});
-        if (submission.result) *submission.result = {0, 0};
-        auto& queue = _submissions();
-        {
-            const std::lock_guard lock(queue.lock);
-            queue.inFlight.erase(submission.id);
-        }
+        lane.ready.wait(lock, [&] { return queue.stopping.load(std::memory_order_acquire) || !lane.pending.empty(); });
+        if (queue.stopping.load(std::memory_order_acquire)) return;
+        const auto submission = lane.pending.front();
+        lane.pending.pop_front();
+        ++queue.executing;
+        lock.unlock();
+        _execute(submission.buffer, &queue.stopping);
+        const bool stopped = queue.stopping.load(std::memory_order_acquire);
+        if (!stopped && submission.result) *submission.result = {0, 0};
+        lock.lock();
+        --queue.executing;
+        if (!stopped) queue.inFlight.erase(submission.id);
         queue.retired.notify_all();
     }
 }
 
+int _rejected(const Apr::CommandBufferObject* buffer, std::uint32_t priority) {
+    if (!buffer || buffer->type != Apr::BufferType::Apr || priority >= AprPriorities) return GUEST_EINVAL;
+    if (!buffer->base && buffer->offset != 0) return GUEST_EPERM;
+    return 0;
+}
+
 std::uint32_t _submit(const Apr::CommandBufferObject& buffer, std::uint32_t priority, Apr::SubmitResult* result) {
     auto& queue = _submissions();
-    Submission submission{0, std::vector<std::uint8_t>(buffer.base, buffer.base + buffer.offset), result};
-    Lane* lane = nullptr;
-    {
-        const std::lock_guard lock(queue.lock);
-        auto& slot = queue.lanes[priority];
-        if (!slot) {
-            slot = new Lane();
-            std::thread([target = slot] { _runLane(*target); }).detach();
+    const std::lock_guard lock(queue.lock);
+    auto*& lane = queue.lanes[priority];
+    if (!lane) {
+        if (std::none_of(queue.lanes.begin(), queue.lanes.end(), [](const Lane* other) { return other != nullptr; })) {
+            LibcRegisterShutdown_nid_postfix([] { _stopLanes(); });
         }
-        lane = slot;
-        submission.id = queue.nextId++;
-        queue.inFlight.insert(submission.id);
+        auto* created = new Lane();
+        std::thread([created] { _runLane(*created); }).detach();
+        lane = created;
     }
-    const auto id = submission.id;
-    {
-        const std::lock_guard lock(lane->lock);
-        lane->pending.push_back(std::move(submission));
-    }
+    std::uint32_t id = 0;
+    while (id == 0) id = static_cast<std::uint32_t>(++queue.issued);
+    queue.inFlight.insert(id);
+    lane->pending.push_back({id, Apr::CommandBufferObject{buffer.base, buffer.offset, buffer.offset, 0, Apr::BufferType::Apr, 0}, result});
     lane->ready.notify_one();
     return id;
+}
+
+bool _issued(std::uint32_t id) {
+    const auto& queue = _submissions();
+    return id != 0 && (queue.issued > 0xffffffffull || id <= queue.issued);
 }
 
 }
@@ -777,19 +801,24 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
-    if (!buffer || buffer->type != Apr::BufferType::Apr || priority >= AprPriorities) return _fail(GUEST_EINVAL);
+    if (const int error = _rejected(buffer, priority)) return _fail(error);
     static_cast<void>(_submit(*buffer, priority, nullptr));
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
-    if (!id || !buffer || buffer->type != Apr::BufferType::Apr || priority >= AprPriorities) return _fail(GUEST_EINVAL);
+    if (!id) return _fail(GUEST_EINVAL);
+    if (const int error = _rejected(buffer, priority)) return _fail(error);
     *id = _submit(*buffer, priority, nullptr);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBufferObject* buffer, uint32_t priority, Apr::SubmitResult* result, uint32_t* id) {
-    if (!result || !id || !buffer || buffer->type != Apr::BufferType::Apr || priority >= AprPriorities) return _fail(GUEST_EINVAL);
+    if (!result || !id) return _fail(GUEST_EINVAL);
+    if (const int error = _rejected(buffer, priority)) {
+        *result = {error, 0};
+        return _fail(error);
+    }
     *id = _submit(*buffer, priority, result);
     return 0;
 }
@@ -797,8 +826,12 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBuff
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
     auto& queue = _submissions();
     std::unique_lock lock(queue.lock);
-    if (id == 0 || id >= queue.nextId) throw std::invalid_argument("sceKernelAprWaitCommandBuffer: command buffer " + std::to_string(id) + " was never submitted");
-    queue.retired.wait(lock, [&] { return !queue.inFlight.contains(id); });
+    if (!_issued(id)) throw std::invalid_argument("sceKernelAprWaitCommandBuffer: command buffer " + std::to_string(id) + " was never submitted");
+    queue.retired.wait(lock, [&] { return !queue.inFlight.contains(id) || queue.stopping.load(std::memory_order_acquire); });
+    if (queue.inFlight.contains(id)) {
+        lock.unlock();
+        LibcAwaitExit_nid_postfix();
+    }
     return 0;
 }
 
