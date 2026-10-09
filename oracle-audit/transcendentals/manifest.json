@@ -1,0 +1,43 @@
+{
+ "f16-title": {
+  "ops": [
+   "v_rcp_f16",
+   "v_rsq_f16",
+   "v_sqrt_f16",
+   "v_log_f16",
+   "v_exp_f16",
+   "v_sin_f16",
+   "v_cos_f16"
+  ],
+  "rows": 65536,
+  "file": "f16-title.txt"
+ },
+ "f32-flushed": {
+  "ops": [
+   "v_rcp_f32",
+   "v_rsq_f32",
+   "v_sqrt_f32",
+   "v_log_f32",
+   "v_exp_f32",
+   "v_sin_f32",
+   "v_cos_f32",
+   "v_rcp_iflag_f32"
+  ],
+  "rows": 32832,
+  "file": "f32-flushed.txt"
+ },
+ "f32-kept": {
+  "ops": [
+   "v_rcp_f32",
+   "v_rsq_f32",
+   "v_sqrt_f32",
+   "v_log_f32",
+   "v_exp_f32",
+   "v_sin_f32",
+   "v_cos_f32",
+   "v_rcp_iflag_f32"
+  ],
+  "rows": 32832,
+  "file": "f32-kept.txt"
+ }
+}
