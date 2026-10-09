@@ -182,8 +182,8 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 namespace {
 
 bool PreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
-    if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment) {
-        APS5_LOG_ERR("The null pixel program has no artifact for this draw (wave %u, %zu user SGPRs); preparing it at draw", request.context.waveSize, request.context.userData.size());
+    if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
+        APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return true;
     }
     if (!snapshot.header.empty()) return snapshot.prepared->deferred;
@@ -718,6 +718,26 @@ void ResolvePreparedGraphics(const ShaderSnapshot& front, const std::shared_ptr<
     transaction.Commit();
 }
 
+ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
+    ShaderSnapshot null{NullPixelProgramAddress(), reinterpret_cast<std::uintptr_t>(&NullPixelShader), NullPixelShader.type, {}, {}};
+    null.code.assign(std::begin(NullPixelCode), std::end(NullPixelCode));
+    null.header.resize(sizeof(Shader));
+    std::memcpy(null.header.data(), &NullPixelShader, sizeof(Shader));
+    auto nullRegisteredState = DecodeRegisteredState(null);
+    nullRegisteredState.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(null.codeAddress >> 8u));
+    nullRegisteredState.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(null.codeAddress >> 40u));
+    nullRegisteredState.shader.insert_or_assign(0x00bu, 0u);
+    nullRegisteredState.context.insert_or_assign(0x1b3u, 0x2u);
+    nullRegisteredState.context.insert_or_assign(0x1b4u, 0x2u);
+    null.registeredState = std::make_shared<const RegisteredShaderState>(std::move(nullRegisteredState));
+    QueueState nullState{};
+    nullState.shader = null.registeredState->shader;
+    nullState.context = null.registeredState->context;
+    nullState.userConfig = null.registeredState->userConfig;
+    null.prepared->entries = PrepareRegistered(null, device, nullState, true);
+    return null;
+}
+
 void Driver::RegisterShader(const Shader* shader) {
     PerformanceContext timingContext(FrameTiming::Preparation());
     PerformanceTimer timing("Shader.Register");
@@ -789,23 +809,7 @@ void Driver::RegisterShader(const Shader* shader) {
     rethrowFailure();
     PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(std::move(snapshot)));
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
-        ShaderSnapshot null{NullPixelProgramAddress(), reinterpret_cast<std::uintptr_t>(&NullPixelShader), NullPixelShader.type, {}, {}};
-        null.code.assign(std::begin(NullPixelCode), std::end(NullPixelCode));
-        null.header.resize(sizeof(Shader));
-        std::memcpy(null.header.data(), &NullPixelShader, sizeof(Shader));
-        auto nullRegisteredState = DecodeRegisteredState(null);
-        nullRegisteredState.shader.emplace(0x008u, static_cast<std::uint32_t>(null.codeAddress >> 8u));
-        nullRegisteredState.shader.emplace(0x009u, static_cast<std::uint32_t>(null.codeAddress >> 40u));
-        nullRegisteredState.shader.emplace(0x00bu, 0u);
-        nullRegisteredState.context.emplace(0x1b3u, 0x2u);
-        nullRegisteredState.context.emplace(0x1b4u, 0x2u);
-        null.registeredState = std::make_shared<const RegisteredShaderState>(std::move(nullRegisteredState));
-        QueueState nullState{};
-        nullState.shader = null.registeredState->shader;
-        nullState.context = null.registeredState->context;
-        nullState.userConfig = null.registeredState->userConfig;
-        null.prepared->entries = PrepareRegistered(null, *localDevice, nullState, true);
-        PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(std::move(null)));
+        PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice)));
     }
     transaction.Commit();
 }
