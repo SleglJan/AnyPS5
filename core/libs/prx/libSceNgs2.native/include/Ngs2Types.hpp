@@ -17,6 +17,7 @@ static constexpr int SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT = static_cast<int>(0
 
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_SAMPLER = 0x1000;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_SUBMIXER = 0x2000;
+static constexpr std::uint32_t SCE_NGS2_RACK_ID_REVERB = 0x2001;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_MASTERING = 0x3000;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER = 0x4002;
 
@@ -49,6 +50,9 @@ static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x100000
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH = 0x10000005;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER = 0x1000000a;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP = 0x20000000;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX = 0x20000004;
+static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
+static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_GAIN = 0x30000004;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT = 0x30000005;
@@ -158,6 +162,12 @@ struct Ngs2MasteringRackOption {
     std::uint32_t num_peak_meter_blocks;
 };
 
+struct Ngs2ReverbRackOption {
+    Ngs2RackOption rack_option;
+    std::uint32_t max_channels;
+    std::uint32_t reverb_size;
+};
+
 struct Ngs2CustomModuleOption {
     std::uint32_t size;
 };
@@ -172,6 +182,20 @@ struct Ngs2UserFx2SetupContext {
     std::uint64_t reserved[4];
 };
 static_assert(sizeof(Ngs2UserFx2SetupContext) == 72);
+
+struct Ngs2UserFxProcessContext {
+    float** channel_data;
+    std::uintptr_t user_data0;
+    std::uintptr_t user_data1;
+    std::uintptr_t user_data2;
+    std::uint32_t flags;
+    std::uint32_t num_channels;
+    std::uint32_t num_grain_samples;
+    std::uint32_t sample_rate;
+};
+static_assert(sizeof(Ngs2UserFxProcessContext) == 48);
+
+using Ngs2UserFxProcessHandler = std::int32_t (APS5_VABI *)(Ngs2UserFxProcessContext*);
 
 using Ngs2UserFx2CleanupContext = Ngs2UserFx2SetupContext;
 
@@ -405,6 +429,49 @@ struct Ngs2SubmixerVoiceSetupParam {
     std::uint32_t flags;
 };
 static_assert(sizeof(Ngs2SubmixerVoiceSetupParam) == 16);
+
+struct Ngs2ReverbVoiceSetupParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t num_input_channels;
+    std::uint32_t num_output_channels;
+    std::uint32_t flags;
+    std::uint32_t reserved;
+};
+static_assert(sizeof(Ngs2ReverbVoiceSetupParam) == 24);
+
+struct Ngs2ReverbI3DL2Param {
+    float wet;
+    float dry;
+    std::int32_t room;
+    std::int32_t room_hf;
+    std::uint32_t reflection_pattern;
+    float decay_time;
+    float decay_hf_ratio;
+    std::int32_t reflections;
+    float reflections_delay;
+    std::int32_t reverb;
+    float reverb_delay;
+    float diffusion;
+    float density;
+    float hf_reference;
+    std::uint32_t reserved[8];
+};
+static_assert(sizeof(Ngs2ReverbI3DL2Param) == 88);
+
+struct Ngs2ReverbVoiceI3DL2Param {
+    Ngs2VoiceParamHeader header;
+    Ngs2ReverbI3DL2Param i3dl2;
+};
+static_assert(sizeof(Ngs2ReverbVoiceI3DL2Param) == 96);
+
+struct Ngs2SubmixerVoiceUserFxParam {
+    Ngs2VoiceParamHeader header;
+    Ngs2UserFxProcessHandler handler;
+    std::uintptr_t user_data0;
+    std::uintptr_t user_data1;
+    std::uintptr_t user_data2;
+};
+static_assert(sizeof(Ngs2SubmixerVoiceUserFxParam) == 40);
 
 struct Ngs2CustomSubmixerVoiceSetupParam {
     Ngs2VoiceParamHeader header;

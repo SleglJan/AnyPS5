@@ -18,6 +18,7 @@ static constexpr std::uint8_t COMMAND_TYPE_FLOAT = 1;
 static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
 static constexpr std::uint8_t COMMAND_TYPE_UINT = 4;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT_ARRAY = 0x11;
+static constexpr float MAX_MATRIX_LEVEL = 4.0f;
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
     switch (eventId) {
@@ -25,6 +26,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 state = Ngs2PlayState::Playing;
                 stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_INUSE;
+                if (userFxHandler) userFxFlags = 1;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
@@ -33,6 +35,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
         case SCE_NGS2_VOICE_EVENT_STOP_IMM:
         case SCE_NGS2_VOICE_EVENT_KILL:
             state = Ngs2PlayState::Empty;
+            Ngs2ClearReverb(*this);
             break;
         case SCE_NGS2_VOICE_EVENT_PAUSE:
             if (state == Ngs2PlayState::Playing) state = Ngs2PlayState::Paused;
@@ -45,6 +48,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
@@ -62,6 +66,9 @@ void Ngs2Voice::ResetSetup() {
     decodedSamples = 0;
     decodedBytes = 0;
     waveformEnd = nullptr;
+    userFxHandler = nullptr;
+    userFxData = {};
+    userFxFlags = 0;
 }
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
@@ -88,10 +95,12 @@ static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
 }
 
 static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const float* levels, std::uint32_t numLevels) {
-    if (matrixId >= voice.matrices.size() || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || (levels == nullptr && numLevels != 0)) {
+    if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    voice.matrices[matrixId].assign(levels, levels + numLevels);
+    auto& matrix = voice.matrices[matrixId];
+    matrix.resize(numLevels);
+    for (std::uint32_t i = 0; i < numLevels; i++) matrix[i] = std::clamp(levels[i], -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
 }
 
 static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t matrixId) {
@@ -162,6 +171,20 @@ static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
 }
 
 static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlocksParam& param, std::size_t frameBytes) {
+    if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        const bool pendingWaveform = voice.atrac9.remainingSamples != 0 ||
+            std::any_of(voice.blocks.begin(), voice.blocks.end(), [](const Ngs2Block& block) { return block.info.num_samples != 0; });
+        if (!pendingWaveform) throw std::invalid_argument("NGS2: appending compressed data requires a waveform");
+        for (std::uint32_t i = 0; i < param.num_blocks; ++i) {
+            auto block = param.blocks[i];
+            if (block.data_size == 0) continue;
+            block.num_samples = 0;
+            block.num_skip_samples = 0;
+            block.num_repeats = 0;
+            voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
+        }
+        return;
+    }
     if (voice.blocks.empty() || !voice.blocks.back().streaming) throw std::runtime_error("NGS2: appending waveform data to a voice without a streaming waveform is not implemented");
     auto& stream = voice.blocks.back();
     for (std::uint32_t i = 0; i < param.num_blocks; i++) {
@@ -182,6 +205,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     const bool reset = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET) != 0;
     if (!voice.acceptsBlocks && !reset) throw std::invalid_argument("NGS2: the voice waveform was already closed");
     if (reset) {
+        ++voice.waveformRevision;
         voice.blocks.clear();
         voice.phase = 0;
         voice.waveformEnd = nullptr;
@@ -189,7 +213,6 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     }
     const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
-        if (voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: appending waveform data to a voice that is not 16-bit PCM is not implemented");
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
         return;
@@ -202,7 +225,8 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
                                   : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
-        if (!streaming && (block.num_samples == 0 || bytes > block.data_size)) {
+        const bool compressedStream = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && voice.acceptsBlocks && block.num_repeats == 0;
+        if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
@@ -289,10 +313,32 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     switch (rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: ApplySamplerParam(voice, param); return;
         case SCE_NGS2_RACK_ID_SUBMIXER:
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
+                const auto& fx = ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
+                voice.userFxHandler = fx.handler;
+                voice.userFxData = {fx.user_data0, fx.user_data1, fx.user_data2};
+                voice.userFxFlags = fx.handler ? 1 : 0;
+                return;
+            }
             if (param.id != SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) break;
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             return;
+        case SCE_NGS2_RACK_ID_REVERB:
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_SETUP) {
+                const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
+                if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
+                if (setup.num_input_channels != setup.num_output_channels) throw std::runtime_error("NGS2: reverb channel conversion is not implemented");
+                if (setup.num_output_channels != 1 && setup.num_output_channels != 2 && setup.num_output_channels != 6 && setup.num_output_channels != 8) APS5_INVALID_ARG_EX;
+                SetupMixer(voice, setup.num_output_channels);
+                Ngs2SetupReverb(voice);
+                return;
+            }
+            if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_I3DL2) {
+                Ngs2SetReverbParams(voice, ParamAs<Ngs2ReverbVoiceI3DL2Param>(param).i3dl2);
+                return;
+            }
+            break;
         case SCE_NGS2_RACK_ID_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP) {
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
@@ -373,6 +419,12 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             sampler.decoded_data_size = voice.decodedBytes;
             sampler.user_data = voice.blocks.empty() ? 0 : voice.blocks.front().info.user_data;
             sampler.waveform_data = voice.WaveformData();
+            return SCE_NGS2_OK;
+        }
+        case SCE_NGS2_RACK_ID_REVERB: {
+            if (state_size != sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+            *state = {};
+            state->state_flags = voice.stateFlags;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_SUBMIXER: {
