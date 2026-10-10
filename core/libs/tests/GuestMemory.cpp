@@ -466,6 +466,22 @@ static void CheckGpuAccessFollowsProtection() {
     Require(sceKernelMunmap(flexible, page) == 0);
 }
 
+static void CheckHintedVirtualReservation() {
+    constexpr std::size_t page = 0x4000;
+    void* probe = nullptr;
+    Require(sceKernelReserveVirtualRange(&probe, page * 8, 0, 0) == 0);
+    Require(sceKernelMunmap(probe, page * 8) == 0);
+    void* const hint = static_cast<unsigned char*>(probe) + page * 2;
+    void* placed = hint;
+    Require(sceKernelReserveVirtualRange(&placed, page * 2, 0, 0) == 0);
+    Require(placed == hint);
+    void* above = hint;
+    Require(sceKernelReserveVirtualRange(&above, page * 2, 0, 0) == 0);
+    Require(above > hint);
+    Require(sceKernelMunmap(above, page * 2) == 0);
+    Require(sceKernelMunmap(placed, page * 2) == 0);
+}
+
 static void CheckFixedVirtualReservation() {
     constexpr std::size_t page = 0x4000;
     void* probe = nullptr;
@@ -512,6 +528,37 @@ static void CheckFixedVirtualReservation() {
     Require(sceKernelMemoryPoolReserve(requested, page * 2, 0, 0x10, &pooled) == 0);
     Require(pooled == requested);
     Require(sceKernelMunmap(pooled, page * 2) == 0);
+}
+
+static void CheckHintInsideReservation() {
+    constexpr std::size_t page = 0x4000;
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 4, 0, 0) == 0);
+    auto* base = static_cast<unsigned char*>(reserved);
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 3, 0, 0, &phys) == 0);
+    void* direct = base + page;
+    Require(sceKernelMapDirectMemory(&direct, page, 3, 0, phys, 0) == 0);
+    Require(direct == base + page);
+    static_cast<unsigned char*>(direct)[0] = 21;
+    void* flexible = base + page * 2;
+    Require(sceKernelMapFlexibleMemory(&flexible, page, 3, 0) == 0);
+    Require(flexible == base + page * 2);
+    static_cast<unsigned char*>(flexible)[0] = 22;
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(direct, 0, &info, sizeof(info)) == 0);
+    Require(info.is_direct && info.offset == static_cast<std::uint64_t>(phys));
+    Require(sceKernelVirtualQuery(flexible, 0, &info, sizeof(info)) == 0);
+    Require(info.is_flexible);
+    Require(sceKernelVirtualQuery(base + page * 3, 0, &info, sizeof(info)) == 0);
+    Require(!info.is_committed && info.protection == 0);
+    void* overlapping = base + page;
+    Require(sceKernelMapDirectMemory(&overlapping, page * 2, 3, 0, phys + page, 0) == 0);
+    Require(overlapping != base + page);
+    Require(static_cast<unsigned char*>(direct)[0] == 21 && static_cast<unsigned char*>(flexible)[0] == 22);
+    Require(sceKernelMunmap(overlapping, page * 2) == 0);
+    Require(sceKernelMunmap(reserved, page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
 
 static void CheckReservedRangeIsNotCommitted() {
@@ -1526,8 +1573,10 @@ int main() {
     CheckFixedMappingReplacesPartialOverlap();
     CheckDirectMemoryGpuProtBits();
     CheckGpuAccessFollowsProtection();
+    CheckHintedVirtualReservation();
     CheckFixedVirtualReservation();
     CheckReservedRangeIsNotCommitted();
+    CheckHintInsideReservation();
     CheckNoOverwriteRefusesLiveMapping();
     CheckMlock();
     CheckSharedDirectMemoryLifecycle();

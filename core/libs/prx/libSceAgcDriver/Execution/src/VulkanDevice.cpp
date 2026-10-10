@@ -1465,6 +1465,12 @@ bool VulkanDevice::RecordedWritesSettled(std::uint64_t address, std::size_t byte
     return Graphics::Recorder::PendingCompletionLabels() == 0 || !recorder.CompletionLabelIn(address, bytes);
 }
 
+bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) const {
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
+    if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::AnyShadowedOverlaps(range) || state->CopiedWriterOverlaps(address, bytes)) return true;
+    return state->recorder && (state->recorder->PendingWriteOverlaps(address, bytes) || state->recorder->PendingLabelIn(address, bytes));
+}
+
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
     if (!state->recorder || bytes.empty() || bytes.size() > 65536 || address % 4 != 0 || bytes.size() % 4 != 0) return 4;
     auto& recorder = *state->recorder;
@@ -2336,7 +2342,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     require(!slot.inFlight, "presentation slot is still in flight");
     if (display != nullptr && resident == nullptr) {
         static_cast<void>(DisplayBufferSize(*display));
-        state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget);
+        state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget, DisplayTexelBytes(display->pixelFormat));
     }
     if (!pixels.empty()) state->Upload(pixels);
     // The frame's recorded work (and a refresh of the resident image) must reach the queue before the
@@ -2405,12 +2411,12 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
             pipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &residentBarrier);
             Graphics::Recorder::CountBarriers(CommandClass::PresentBlit);
             if (residentConvert) {
-                state->colorTransfer->DetileImage(commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, Graphics::ColorTileMode::RenderTarget, DisplayRedLow(display->pixelFormat), DisplayTenBit(display->pixelFormat));
+                state->colorTransfer->DetileImage(commands, resident->Image(), VK_IMAGE_LAYOUT_GENERAL, width, height, Graphics::ColorTileMode::RenderTarget, DisplayRedLow(display->pixelFormat), DisplayTenBit(display->pixelFormat), DisplayHalfFloat(display->pixelFormat));
                 state->scaler->RecordUpload(commands, state->colorTransfer->LinearBuffer());
             }
         } else {
             if (display != nullptr) {
-                state->colorTransfer->Detile(commands, DisplayRedLow(display->pixelFormat), DisplayTenBit(display->pixelFormat));
+                state->colorTransfer->Detile(commands, DisplayRedLow(display->pixelFormat), DisplayTenBit(display->pixelFormat), DisplayHalfFloat(display->pixelFormat));
             }
             if (uniform != nullptr) state->scaler->RecordClear(commands, *uniform);
             else state->scaler->RecordUpload(commands, display != nullptr ? state->colorTransfer->LinearBuffer() : state->uploadBuffer);

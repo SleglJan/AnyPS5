@@ -59,7 +59,7 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0);
 std::uint32_t EmitIdentity(SpirvValueEmitContext& ctx, std::uint32_t value);
 void EmitVoid(SpirvValueEmitContext& context);
-void EmitBarrier(SpirvEmitterState& state);
+void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);

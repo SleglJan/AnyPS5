@@ -776,6 +776,13 @@ void PatchStructuredPhis(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     }
 }
 
+bool CommunicatesThroughMemory(IrOpcode opcode) {
+    const auto buffer = BufferAccessOf(opcode);
+    const auto address = AddressOpcodeInfoOf(opcode).access;
+    const auto image = ImageOpcodeInfoOf(opcode).access;
+    return SharedAccessOf(opcode) != SharedAccess::None || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
+}
+
 }
 
 void EmitControlFlow(SpirvModule& module, const IrProgram& program) {
@@ -829,7 +836,16 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
 void EmitVoid(SpirvValueEmitContext&) {
 }
 
-void EmitBarrier(SpirvEmitterState& state) {
+void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage == IrShaderStage::Vertex) {
+        for (const auto* block : state.program.BlockOrder()) {
+            for (const auto* instruction : block->Instructions()) {
+                if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented");
+            }
+        }
+        return;
+    }
     const bool tessellation = state.program.Resources().stage == IrShaderStage::TessellationControl;
     const auto memoryScope = tessellation ? spv::ScopeInvocation : spv::ScopeWorkgroup;
     const std::uint32_t semantics = tessellation ? static_cast<std::uint32_t>(spv::MemorySemanticsMaskNone) : spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);

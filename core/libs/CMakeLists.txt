@@ -3,6 +3,12 @@ if(NOT WIN32)
     string(STRIP "${CMAKE_EXE_LINKER_FLAGS}" CMAKE_EXE_LINKER_FLAGS)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(CheckPIESupported)
+    check_pie_supported(LANGUAGES C CXX)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 add_executable(nid_patcher
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp
@@ -237,5 +243,15 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
         set_tests_properties(savedata_native_write_replacement PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
+    add_test_executable(guest_posix_random_tests tests/GuestPosixRandom.cpp)
+    target_include_directories(guest_posix_random_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_posix_random_tests PRIVATE libScePosixForWebKit)
+    configure_windows_unwind(guest_posix_random_tests)
+    add_test(NAME guest_posix_random COMMAND guest_posix_random_tests)
+    if(WIN32)
+        set_tests_properties(guest_posix_random PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePosixForWebKit>")
     endif()
 endif()

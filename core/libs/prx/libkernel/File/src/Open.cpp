@@ -46,7 +46,15 @@ static int NativeClose(int fd) {
     return result;
 }
 static int NativeUnlink(const std::filesystem::path& p) {
-    return ::_wunlink(p.wstring().c_str());
+    const auto path = p.wstring();
+    struct _stat64 status{};
+    const bool unlocked = ::_wstat64(path.c_str(), &status) == 0 && (status.st_mode & _S_IFMT) == _S_IFREG &&
+        !(status.st_mode & _S_IWRITE) && ::_wchmod(path.c_str(), _S_IREAD | _S_IWRITE) == 0;
+    if (::_wunlink(path.c_str()) == 0) return 0;
+    const int error = errno;
+    if (unlocked) ::_wchmod(path.c_str(), _S_IREAD);
+    errno = error;
+    return -1;
 }
 static int MapFlags(int sceFlags) {
     int f = 0;
@@ -199,7 +207,12 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     if (sb == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": sb is null");
     }
-    const auto native = ResolvePath_nid_no_patch(path);
+    std::filesystem::path native;
+    try {
+        native = ResolvePath_nid_no_patch(path);
+    } catch (const std::filesystem::filesystem_error&) {
+        return SceErrorFromErrno(2);
+    }
     std::error_code error;
     constexpr int GuestEnotdir = 20;
     const auto status = std::filesystem::status(native, error);
