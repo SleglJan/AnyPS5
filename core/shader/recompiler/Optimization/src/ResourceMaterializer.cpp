@@ -628,6 +628,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             volume.dimension = RdnaImageDimension::Dim3D;
             modes.push_back(volume);
         }
+        if (image.dimension == RdnaImageDimension::Dim3D && image.flatVolumeCompatible && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+            auto plane = mode;
+            plane.dimension = RdnaImageDimension::Dim2D;
+            modes.push_back(plane);
+        }
         if (image.dimension == RdnaImageDimension::Dim1DArray || image.dimension == RdnaImageDimension::Dim2DArray || image.dimension == RdnaImageDimension::Dim2DMsaaArray) {
             auto plain = mode;
             plain.dimension = image.dimension == RdnaImageDimension::Dim1DArray ? RdnaImageDimension::Dim1D : image.dimension == RdnaImageDimension::Dim2DArray ? RdnaImageDimension::Dim2D : RdnaImageDimension::Dim2DMsaa;
@@ -703,6 +708,21 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
+    if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && image.indirectRoot == ImageResource::NoIndirectImage) {
+        for (const auto numeric : {IrTextureNumericClass::Float, IrTextureNumericClass::Uint, IrTextureNumericClass::Sint}) {
+            auto mode = image;
+            mode.numericClass = numeric;
+            mode.conversionFormat = IrBufferFormat::Invalid;
+            mode.packedFormat = IrBufferFormat::Invalid;
+            mode.depthBits = false;
+            mode.depthUnorm16 = false;
+            mode.cube = false;
+            mode.mipCount = 1u;
+            mode.shaderSwizzle = ShaderImageIdentitySwizzle;
+            mode.constantSwizzle = true;
+            modes.push_back(mode);
+        }
+    }
     if (modes.empty()) throw std::runtime_error("image instruction has no supported runtime modes");
     return modes;
 }
@@ -727,6 +747,11 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
         }
     }
     if (decoded.mipCount > (image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u)) throw std::runtime_error("runtime storage image mip capacity exceeded");
+    if ((descriptorImageSwizzle(descriptor) & 06666u) == 0u && !decoded.fmask && !decoded.depthBits && decoded.conversionFormat == IrBufferFormat::Invalid && !decoded.srgbDecode) {
+        for (std::uint32_t index = 0u; index < modes.size(); ++index) {
+            if (modes[index].constantSwizzle && modes[index].numericClass == decoded.numericClass) return index;
+        }
+    }
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
         const auto& mode = modes[index];
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;

@@ -178,10 +178,12 @@ private:
     bool vDivFixupF16(const RdnaInstruction& inst);
     bool float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
+    IrF32 fmaF16RoundedToOdd(IrF32 lhs, IrF32 rhs, IrF32 addend);
     bool floatUnary(const RdnaInstruction& inst, IrOpcode opcode);
     bool floatBinary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse);
     bool floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix);
     bool ieeeMinMaxF32(const RdnaInstruction& inst, IrOpcode opcode);
+    bool minMaxF16(const RdnaInstruction& inst, IrOpcode opcode);
     bool vDivScaleF32(const RdnaInstruction& inst);
     bool vDivFmasF32(const RdnaInstruction& inst);
     bool vDivFixupF32(const RdnaInstruction& inst);
@@ -200,6 +202,7 @@ private:
     bool vMullitF32(const RdnaInstruction& inst);
     void emitFloat16ClassCompare(const RdnaInstruction& inst, bool cmpx);
     bool float64Operation(const RdnaInstruction& inst, IrOpcode opcode);
+    bool nonIeeeMinMaxF64(const RdnaInstruction& inst, IrOpcode opcode);
     void writeF64Result(const RdnaOperand& operand, IrValue& value);
     bool vDivScaleF64(const RdnaInstruction& inst);
     bool vDivFmasF64(const RdnaInstruction& inst);

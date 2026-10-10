@@ -83,6 +83,9 @@ struct ImageResource {
     bool packed = false;
     bool fmaskCompatible = true;
     bool depthBitsCompatible = true;
+    bool constantSwizzle = false;
+    bool constantSwizzleCompatible = true;
+    bool flatVolumeCompatible = true;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
