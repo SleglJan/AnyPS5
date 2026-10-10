@@ -809,7 +809,9 @@ bool TranslationContext::floatCube(const RdnaInstruction& inst, std::uint32_t re
         default:
             throw std::runtime_error("invalid cube result kind");
     }
-    writeOperand(inst.destination, &result.Value());
+    const IrU32 bits(ir.BitCastU32(result.Value()));
+    const IrU1 nan(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
+    writeOperand(inst.destination, &ir.BitCastF32(ir.Select(nan.Value(), quietNan32(bits).Value(), bits.Value())));
     return true;
 }
 
