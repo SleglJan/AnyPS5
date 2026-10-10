@@ -978,12 +978,12 @@ bool SameAsPreviousStorageElement(const ShaderRecompiler::DescriptorBinding& bin
 
 }
 
-ShaderResources::ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes) : ShaderResources(context, std::array<CompiledShader, 2>{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())}}}, target, indexAddress, indexBytes) {}
+ShaderResources::ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes) : ShaderResources(context, std::array<CompiledShader, 2>{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())}}}, target, 1, indexAddress, indexBytes) {}
 
-ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : context(context), guestMemory(context) {
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : context(context), guestMemory(context) {
     drawBuild = true;
     prepareAddressBindings(shaders, snapshots);
-    build(shaders, &target, indexAddress, indexBytes);
+    build(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots) : ShaderResources(context, compute, snapshots, false) {}
@@ -1006,7 +1006,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
         prepareAddressBindings(shaders, snapshots);
-        build(shaders, nullptr, 0, 0);
+        build(shaders, nullptr, 0, 0, 0);
         forgetDeferredInputs();
         return;
     }
@@ -1018,7 +1018,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     if (lockedBuild) return;
     unlockedPrepare = true;
     prepareAddressBindings(shaders, snapshots);
-    buildPrepare(shaders, nullptr, 0, 0);
+    buildPrepare(shaders, nullptr, 0, 0, 0);
 }
 
 void ShaderResources::Complete() {
@@ -1026,7 +1026,7 @@ void ShaderResources::Complete() {
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (lockedBuild) {
         prepareAddressBindings(shaders, deferredSnapshots);
-        buildPrepare(shaders, nullptr, 0, 0);
+        buildPrepare(shaders, nullptr, 0, 0, 0);
     }
     buildComplete();
     forgetDeferredInputs();
@@ -1040,8 +1040,8 @@ void ShaderResources::forgetDeferredInputs() {
     deferredSnapshots = {};
 }
 
-void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes) {
-    buildPrepare(shaders, target, indexAddress, indexBytes);
+void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
+    buildPrepare(shaders, target, colorAttachments, indexAddress, indexBytes);
     buildComplete();
 }
 
@@ -1206,7 +1206,7 @@ void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std:
 
 }
 
-void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes) {
+void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
     PerformanceTimer frameTiming("Resources.Prepare");
     const auto stageStart = std::chrono::steady_clock::now();
     phaseStart = stageStart;
@@ -1223,7 +1223,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
             const VkShaderStageFlags flags = VulkanStage(shader.stage);
             std::uint64_t stageStorageBuffers = 0;
-            std::uint64_t stageResources = 0;
+            std::uint64_t stageResources = shader.stage == ShaderRecompiler::ShaderStage::Fragment ? colorAttachments : 0;
+            Require(stageResources <= context.limits.maxPerStageResources, "shader descriptors exceed per-stage limits");
             std::vector<std::size_t> offsetsInData;
             std::int64_t shaderData = -1;
             const auto firstSampler = samplers.size();

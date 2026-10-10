@@ -2129,6 +2129,28 @@ void resourceTests() {
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
+        fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32))));
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto limited = mockContext();
+        limited.limits.maxPerStageResources = 2;
+        const auto expectAttachments = [&](std::uint32_t attachments, bool accepted, std::string_view what) {
+            mock = MockVulkan{};
+            if (accepted) {
+                AgcDriver::Graphics::ShaderResources resources(limited, shaders, state.color, attachments, 0, 0);
+            } else {
+                expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(limited, shaders, state.color, attachments, 0, 0); }, "shader descriptors exceed per-stage limits");
+            }
+            Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
+        };
+        expectAttachments(0, true, "a pixel stage at the per-stage limit");
+        expectAttachments(1, false, "a pixel stage over the per-stage limit with its colour attachment");
+        std::swap(vertex.bindings, fragment.bindings);
+        expectAttachments(1, true, "a vertex stage at the per-stage limit");
+        expectAttachments(3, false, "colour attachments over the per-stage limit");
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
         vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestFirst.data(), 16)));
         fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestSecond.data(), 32)));
         expectResourceFailure(vertex, fragment, "duplicate shader binding");
