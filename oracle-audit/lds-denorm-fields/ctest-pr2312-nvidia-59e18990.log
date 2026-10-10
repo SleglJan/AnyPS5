@@ -1,0 +1,21 @@
+head 59e18990 driver=nvidia 2026-10-10T06:19:22Z
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+203: lds 64-bit atomics tests passed
+    Test #203: agc_driver_lds_atomics64 ............   Passed    0.71 sec
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+203: lds 64-bit atomics tests passed
+    Test #203: agc_driver_lds_atomics64 ............   Passed    0.66 sec
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+203: lds 64-bit atomics tests passed
+1/2 Test #203: agc_driver_lds_atomics64 ............   Passed    0.68 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+205: lds float atomic modes tests passed
+    Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.60 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+205: lds float atomic modes tests passed
+    Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.58 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=NVIDIA GeForce RTX 3080 vendor=0x10de device=0x2206 subgroup=32
+205: lds float atomic modes tests passed
+2/2 Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.58 sec
+The following tests passed:
+100% tests passed out of 2

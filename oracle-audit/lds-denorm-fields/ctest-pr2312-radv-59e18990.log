@@ -1,0 +1,21 @@
+head 59e18990 driver=radv 2026-10-10T06:19:19Z
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+203: lds 64-bit atomics tests passed
+    Test #203: agc_driver_lds_atomics64 ............   Passed    0.54 sec
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+203: lds 64-bit atomics tests passed
+    Test #203: agc_driver_lds_atomics64 ............   Passed    0.55 sec
+203: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+203: lds 64-bit atomics tests passed
+1/2 Test #203: agc_driver_lds_atomics64 ............   Passed    0.53 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+205: lds float atomic modes tests passed
+    Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.46 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+205: lds float atomic modes tests passed
+    Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.46 sec
+205: [src/VulkanDevice.cpp:729 VulkanDevice] Selected GPU name=AMD Ryzen 9 7950X3D 16-Core Processor (RADV RAPHAEL_MENDOCINO) vendor=0x1002 device=0x164e subgroup=64
+205: lds float atomic modes tests passed
+2/2 Test #205: agc_driver_lds_float_atomic_modes ...   Passed    0.46 sec
+The following tests passed:
+100% tests passed out of 2
