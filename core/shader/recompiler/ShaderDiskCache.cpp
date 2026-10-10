@@ -78,8 +78,8 @@ namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 200, "CompiledShaderArtifact changed: update the artifact encoder");
-static_assert(sizeof(ShaderInvocation) == 176, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 384, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
+static_assert(sizeof(RecompileResult) == 408, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -101,7 +101,7 @@ static_assert(sizeof(IrResourcePlan) == 584, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 112, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 120, "DescriptorSource changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 80, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
 static_assert(sizeof(UniformFill) == 28, "UniformFill changed: update the plan encoder");
@@ -140,7 +140,7 @@ static_assert(fieldCount<IrResourcePlan>() == 21, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 7, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
+static_assert(fieldCount<TableColumn>() == 9, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
 static_assert(fieldCount<KeyDomain>() == 3, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -486,6 +486,12 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
         out.Value(range.first);
         out.Value(range.second);
     });
+    writer.List(invocation.imageTableReadRanges, [](Writer& out, const auto& ranges) {
+        out.List(ranges, [](Writer& rangeWriter, const auto& range) {
+            rangeWriter.Value(range.first);
+            rangeWriter.Value(range.second);
+        });
+    });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
 }
@@ -518,6 +524,12 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     reader.List(invocation.imageTableRanges, 16, [](Reader& in, std::pair<std::uint64_t, std::uint64_t>& range) {
         in.Value(range.first);
         in.Value(range.second);
+    });
+    reader.List(invocation.imageTableReadRanges, 8, [](Reader& in, auto& ranges) {
+        in.List(ranges, 16, [](Reader& rangeReader, auto& range) {
+            rangeReader.Value(range.first);
+            rangeReader.Value(range.second);
+        });
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
@@ -874,7 +886,9 @@ void encodeTableColumn(Writer& out, const TableColumn& column) {
     out.Value(column.addend);
     out.Value(column.offset);
     out.Value(column.dwordCount);
+    out.Value(column.maxKey);
     out.Value(column.sampler);
+    out.Value(column.address);
     out.Value(column.keyDomain.has_value());
     if (column.keyDomain.has_value()) encodeKeyDomain(out, *column.keyDomain);
 }
@@ -885,7 +899,9 @@ void decodeTableColumn(Reader& in, TableColumn& column) {
     in.Value(column.addend);
     in.Value(column.offset);
     in.Value(column.dwordCount);
+    in.Value(column.maxKey);
     in.Value(column.sampler);
+    in.Value(column.address);
     if (in.Get<bool>()) {
         KeyDomain domain;
         decodeKeyDomain(in, domain);
