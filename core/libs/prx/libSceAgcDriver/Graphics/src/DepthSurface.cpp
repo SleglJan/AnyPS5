@@ -663,8 +663,6 @@ bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words
         return surface->context.device == context.device && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
     });
     if (found == list.rend()) return false;
-    // As in the sampled lookup, a previous depth allocation at the same address alone does not
-    // identify this descriptor. Games reuse temporary GPU memory for ordinary color textures.
     const auto& target = (*found)->target;
     if (resource.width != target.extent.width || resource.height != target.extent.height) return false;
     const bool stencil = target.stencilAddress != 0 && target.stencilAddress == resource.baseAddress;

@@ -19,7 +19,6 @@ void ClearDepthSurfaces(VkDevice device);
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes);
 bool RetireDepthSurfacesForStorage(VkDevice device, const GuestTextureResource& descriptor, VkFormat storageFormat, std::uint64_t bytes);
 bool DepthSurfaceAt(std::uint64_t address);
-// Descriptor-aware lookup distinguishes a depth plane from temporary memory reused for color.
 bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource);
 std::uint64_t HtileDepthClearAddress(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads);
 void NoteHtileDepthClear(std::uint64_t htileAddress);
