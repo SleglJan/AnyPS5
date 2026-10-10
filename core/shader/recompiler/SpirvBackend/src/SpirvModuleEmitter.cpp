@@ -805,11 +805,7 @@ F32Class EmitClassifyF32Bits(SpirvEmitterState& state, std::uint32_t bits) {
     F32Class cls;
     cls.bits = bits;
     const auto absBits = EmitAndConstant(state, cls.bits, 0x7fffffffu);
-    const auto exponentBits = EmitAndConstant(state, absBits, 0x7f800000u);
-    const auto mantissaBits = EmitAndConstant(state, absBits, 0x007fffffu);
-    const auto exponentMax = EmitCompareU32Constant(state, spv::OpIEqual, exponentBits, 0x7f800000u);
-    const auto mantissaNonzero = EmitCompareU32Constant(state, spv::OpINotEqual, mantissaBits, 0u);
-    cls.nan = Binary(state, spv::OpLogicalAnd, TypeBool(state), exponentMax, mantissaNonzero);
+    cls.nan = EmitCompareU32Constant(state, spv::OpUGreaterThan, absBits, 0x7f800000u);
     cls.zero = EmitCompareU32Constant(state, spv::OpIEqual, absBits, 0u);
     return cls;
 }
@@ -872,8 +868,7 @@ std::uint32_t EmitMinMaxF32Value(SpirvEmitterState& state, std::uint32_t lhs, st
     const auto zeroBits = Binary(state, maxValue ? spv::OpBitwiseAnd : spv::OpBitwiseOr, TypeU32(state), lhsClass.bits, rhsClass.bits);
     const auto numericBits = Select(state, TypeU32(state), bothZero, zeroBits, orderedBits);
 
-    const auto lhsNanBits = Select(state, TypeU32(state), lhsClass.nan, rhsClass.bits, numericBits);
-    const auto resultBits = Select(state, TypeU32(state), rhsClass.nan, lhsClass.bits, lhsNanBits);
+    const auto resultBits = Select(state, TypeU32(state), rhsClass.nan, lhsClass.bits, numericBits);
     return Unary(state, spv::OpBitcast, TypeF32(state), resultBits);
 }
 
