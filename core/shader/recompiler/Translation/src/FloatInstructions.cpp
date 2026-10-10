@@ -28,7 +28,7 @@ bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opc
         return applyF32ResultModifiers(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {&lhs.Value(), &rhs.Value()})));
     };
     IrU32 result = packHalf2x16(translateLane(false), translateLane(true));
-    if (!inst.destination.clamp || !dx10Clamp()) {
+    if (!inst.destination.clamp || !dx10Clamp() || quietSnan) {
         const auto laneBits = [&](const RdnaOperand& operand, bool high) {
             const IrU32 source = readF16SourceBits(operand);
             const bool selectHigh = high ? operand.opSelHi : operand.opSel;
