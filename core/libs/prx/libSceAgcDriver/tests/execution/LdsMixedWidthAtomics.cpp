@@ -22,61 +22,75 @@ constexpr std::uint32_t LdsDwords = 4;
 alignas(256) std::array<std::uint32_t, Threads * 2> Output{};
 alignas(256) std::array<std::uint32_t, 4> Unused{};
 
-alignas(256) constexpr auto UniformCode = std::to_array<std::uint32_t>({
-    0x34100083,
-    0x7e020280,
-    0x7e0402c1,
-    0x7e060280,
-    0x7e080281,
-    0x7e0c0280,
-    0x7e0e0280,
-    0xd9340000, 0x00000601,
-    0xbf8cc07f,
-    0xbf8a0000,
-    0xbe800390 | (8u << 16u),
-    0xd9000000, 0x00000201,
-    0xd8000004, 0x00000401,
-    0xbf8cc07f,
-    0x80888108,
-    0xbf078008,
-    0xbf85fff8,
-    0xbf8cc07f,
-    0xbf8a0000,
-    0xd9d80000, 0x0a000001,
-    0xbf8cc07f,
-    0xe0741000, 0x80010a08,
-    0xbf810000,
-});
+template<std::size_t Head, std::size_t Body, std::size_t Tail>
+constexpr auto Unrolled(const std::array<std::uint32_t, Head>& head, const std::array<std::uint32_t, Body>& body, const std::array<std::uint32_t, Tail>& tail) {
+    std::array<std::uint32_t, Head + Body * Iterations + Tail> code{};
+    std::size_t next = 0;
+    for (const auto word : head) code[next++] = word;
+    for (std::uint32_t iteration = 0; iteration < Iterations; ++iteration) {
+        for (const auto word : body) code[next++] = word;
+    }
+    for (const auto word : tail) code[next++] = word;
+    return code;
+}
 
-alignas(256) constexpr auto DivergentCode = std::to_array<std::uint32_t>({
-    0x34100083,
-    0x7e020280,
-    0x7e0402c1,
-    0x7e060280,
-    0x7e080281,
-    0x7e0c0280,
-    0x7e0e0280,
-    0xd9340000, 0x00000601,
-    0xbf8cc07f,
-    0xbf8a0000,
-    0xbe89037e,
-    0xbe800390 | (8u << 16u),
-    0xbefe03ff, 0x55555555,
-    0xd9000000, 0x00000201,
-    0xbefe03ff, 0xaaaaaaaa,
-    0xd8000004, 0x00000401,
-    0xbf8cc07f,
-    0x80888108,
-    0xbf078008,
-    0xbf85fff4,
-    0xbefe0309,
-    0xbf8cc07f,
-    0xbf8a0000,
-    0xd9d80000, 0x0a000001,
-    0xbf8cc07f,
-    0xe0741000, 0x80010a08,
-    0xbf810000,
-});
+alignas(256) constexpr auto UniformCode = Unrolled(
+    std::to_array<std::uint32_t>({
+        0x34100083,
+        0x7e020280,
+        0x7e0402c1,
+        0x7e060280,
+        0x7e080281,
+        0x7e0c0280,
+        0x7e0e0280,
+        0xd9340000, 0x00000601,
+        0xbf8cc07f,
+        0xbf8a0000,
+    }),
+    std::to_array<std::uint32_t>({
+        0xd9000000, 0x00000201,
+        0xd8000004, 0x00000401,
+        0xbf8cc07f,
+    }),
+    std::to_array<std::uint32_t>({
+        0xbf8cc07f,
+        0xbf8a0000,
+        0xd9d80000, 0x0a000001,
+        0xbf8cc07f,
+        0xe0741000, 0x80010a08,
+        0xbf810000,
+    }));
+
+alignas(256) constexpr auto DivergentCode = Unrolled(
+    std::to_array<std::uint32_t>({
+        0x34100083,
+        0x7e020280,
+        0x7e0402c1,
+        0x7e060280,
+        0x7e080281,
+        0x7e0c0280,
+        0x7e0e0280,
+        0xd9340000, 0x00000601,
+        0xbf8cc07f,
+        0xbf8a0000,
+        0xbe89037e,
+    }),
+    std::to_array<std::uint32_t>({
+        0xbefe03ff, 0x55555555,
+        0xd9000000, 0x00000201,
+        0xbefe03ff, 0xaaaaaaaa,
+        0xd8000004, 0x00000401,
+        0xbf8cc07f,
+    }),
+    std::to_array<std::uint32_t>({
+        0xbefe0309,
+        0xbf8cc07f,
+        0xbf8a0000,
+        0xd9d80000, 0x0a000001,
+        0xbf8cc07f,
+        0xe0741000, 0x80010a08,
+        0xbf810000,
+    }));
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
