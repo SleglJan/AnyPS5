@@ -551,7 +551,7 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
     IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
     if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
-    if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
+    if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result);
     writeOperand(inst.destination, result);
     return true;
 }
@@ -596,7 +596,7 @@ bool TranslationContext::vFmaLegacyF32(const RdnaInstruction& inst) {
     const auto factor = [&](IrValue* value) { return &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zero.Value(), &ir.ConstantF32(0.0f), value}); };
     IrValue* lhsFactor = factor(lhs);
     IrValue* rhsFactor = factor(rhs);
-    writeOperand(inst.destination, nanResultF32({lhsFactor, rhsFactor, addend}, &ir.Emit(IrOpcode::FPFma32, IrType::F32, {lhsFactor, rhsFactor, addend}), &invalidProductF32(lhsFactor, rhsFactor)));
+    writeOperand(inst.destination, nanResultF32({lhsFactor, rhsFactor, addend}, &ir.Emit(IrOpcode::FPFma32, IrType::F32, {lhsFactor, rhsFactor, addend})));
     return true;
 }
 
