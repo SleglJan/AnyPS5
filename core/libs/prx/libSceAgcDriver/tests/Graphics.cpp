@@ -750,6 +750,56 @@ void DepthStencilTests() {
     queue.context[0x10b] = 0;
     queue.context[0x000] = 1;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    queue.context[0x000] = 0x22;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    const auto clears = [](const VkStencilOpState& face) {
+        return face.compareOp == VK_COMPARE_OP_ALWAYS && face.passOp == VK_STENCIL_OP_REPLACE && face.failOp == VK_STENCIL_OP_REPLACE && face.depthFailOp == VK_STENCIL_OP_REPLACE && face.writeMask == 0xff && face.reference == 7;
+    };
+    Require(state.stencilTest && clears(state.stencilFront) && clears(state.stencilBack), "a STENCIL_CLEAR_ENABLE draw does not store DB_STENCIL_CLEAR");
+    queue.context[0x200] = 0;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.stencilTest && clears(state.stencilFront), "a STENCIL_CLEAR_ENABLE draw without a stencil test does not store DB_STENCIL_CLEAR");
+    queue.context[0x002] = 0x02000000;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted read-only stencil clear");
+    queue.context[0x002] = 0;
+    for (const auto offset : {0x31bu, 0x31cu, 0x31du}) queue.context[offset + 0xfu] = queue.context.at(offset);
+    for (const auto offset : {0x3b0u, 0x3b8u}) queue.context[offset + 1u] = queue.context.at(offset);
+    const auto secondColor = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
+    queue.context[0x327] = static_cast<std::uint32_t>(secondColor >> 8u);
+    queue.context[0x391] = static_cast<std::uint32_t>(secondColor >> 40u);
+    queue.context[0x1e1] = 0;
+    queue.context[0x8e] = 0xf3;
+    queue.context[0x8f] = 0xff;
+    queue.context[0x1c5] = 0x99;
+    queue.context[0x90] = 0x80000001;
+    queue.context[0x91] = 0x00020003;
+    queue.context[0x10b] = 0x00050050;
+    queue.context[0x10c] = 0x05ffff02;
+    queue.context[0x10d] = 0x090000ff;
+    for (const auto control : {0u, 1u, 0x81u}) {
+        queue.context[0x200] = control;
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.stencilTest && clears(state.stencilFront) && clears(state.stencilBack), "stencil clear used the overridden stencil operations");
+        Require(state.depth && !state.depthTest && !state.depthWrite, "stencil clear changed depth state");
+        Require(state.colors.size() == 2 && state.blends.size() == 2 && state.colors[1].address == secondColor && state.blends[0].colorWriteMask == 3 && state.blends[1].colorWriteMask == 0xf, "stencil clear lost MRT color writes");
+        Require(state.scissor.offset.x == 1 && state.scissor.offset.y == 0 && state.scissor.extent.width == 2 && state.scissor.extent.height == 2, "stencil clear changed scissor coverage");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "precheck rejected combined color/stencil clear");
+    }
+    queue.context[0x002] = 0x01000000;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(!state.depthWrite && clears(state.stencilFront), "read-only depth prevented stencil clear");
+    queue.context[0x002] = 0;
+    for (const auto control : {1u, 4u, 8u}) {
+        queue.context[0x000] = 0x22u | control;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
+    }
+    queue.context[0x000] = 0x22;
+    queue.context[0x011] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted clear without a stencil plane");
+    queue.context[0x010] = 0;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
     queue = makeState();
     queue.context[0x31b] = 1u << 26u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "mip exceeds");
