@@ -2503,6 +2503,10 @@ bool VulkanDevice::ConservativeRasterization() const {
     return state->conservativeRasterization;
 }
 
+VkShaderStageFlags VulkanDevice::SubgroupStages() const {
+    return state->subgroup.supportedStages;
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
