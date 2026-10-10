@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdlib>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -2190,7 +2191,12 @@ int main(int argc, char** argv) {
             0x00010038u
         };
         const auto optimizedSpirv = ValidateAndOptimizeSpirv(minimalSpirv, 0x00401001u, 0x00010000u);
-        require(optimizedSpirv.size() < minimalSpirv.size(), "SPIR-V optimization did not remove the no-op");
+        const auto* optimizationMode = std::getenv("APS5_SPIRV_OPT");
+        if (optimizationMode != nullptr && std::string_view(optimizationMode) == "none") {
+            require(optimizedSpirv == minimalSpirv, "disabled SPIR-V optimization changed the module");
+        } else {
+            require(optimizedSpirv.size() < minimalSpirv.size(), "SPIR-V optimization did not remove the no-op");
+        }
         require(optimizedSpirv == ValidateAndOptimizeSpirv(minimalSpirv, 0x00401001u, 0x00010000u), "SPIR-V optimization is not deterministic");
 #endif
         const std::array<std::uint32_t, 8> code{0xf4040004u, 0xfa000000u, 0xf4000080u, 0xfa000000u, 0x7e000202u, 0xf80008cfu, 0u, 0xbf810000u};

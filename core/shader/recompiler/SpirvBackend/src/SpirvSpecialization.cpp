@@ -242,6 +242,7 @@ public:
             if (hasResult && hasType) resultTypes.emplace(instruction.at(2), instruction.at(1));
             if (op == spv::OpTypeBool) types.emplace(instruction.at(1), ScalarType{1u, true});
             if (op == spv::OpTypeInt) types.emplace(instruction.at(1), ScalarType{instruction.at(2), false});
+            if (op == spv::OpTypeVector) vectorTypes.insert(instruction.at(1));
             if (op == spv::OpConstant && types.contains(instruction.at(1)) && types.at(instruction[1]).width <= 32u) values.emplace(instruction.at(2), instruction.at(3));
             if (op == spv::OpConstantTrue || op == spv::OpConstantFalse) values.emplace(instruction.at(2), op == spv::OpConstantTrue ? 1u : 0u);
             cursor += count;
@@ -349,7 +350,7 @@ private:
             if (op == spv::OpCompositeExtract && instruction.size() == 5u) extracts.emplace(instruction[2], std::pair{instruction[3], instruction[4]});
             if (op == spv::OpCompositeConstruct && instruction.size() == 7u) {
                 const auto first = extracts.find(instruction[3]);
-                bool shuffle = first != extracts.end();
+                bool shuffle = first != extracts.end() && vectorTypes.contains(instruction[1]) && resultTypes.contains(first->second.first) && vectorTypes.contains(resultTypes.at(first->second.first));
                 for (std::size_t index = 4; shuffle && index < instruction.size(); ++index) {
                     const auto found = extracts.find(instruction[index]);
                     shuffle = found != extracts.end() && found->second.first == first->second.first;
@@ -441,7 +442,7 @@ private:
                     if (!retainMerge) instruction.clear();
                 }
                 const auto replacement = !retainMerge ? Make(spv::OpBranch, {target}) : op == spv::OpSwitch ?
-                    Make(spv::OpSwitch, {terminal.at(1), target}) : Make(spv::OpBranchConditional, {terminal.at(1), target, target});
+                    Make(spv::OpSwitch, {terminal.at(1), target}) : terminal;
                 if (terminal != replacement) {
                     terminal = replacement;
                     changed = true;
@@ -612,6 +613,7 @@ private:
     std::vector<Instruction> instructions;
     std::vector<Instruction> constants;
     std::map<std::uint32_t, ScalarType> types;
+    std::set<std::uint32_t> vectorTypes;
     std::map<std::uint32_t, std::uint32_t> values;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::set<std::uint32_t> removed;
