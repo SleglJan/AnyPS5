@@ -1,3 +1,4 @@
+#include <cstdlib>
 // agc_shader_replay <shader_*.req>...: replays compute recompile requests the driver saved with
 // APS5_DUMP_SHADERS=1, running the same resource analysis and recompile steps without the game.
 #include "ControlFlow/GraphBuilder.hpp"
@@ -112,6 +113,11 @@ bool Replay(const char* path) {
     } catch (const std::exception& error) {
         std::printf("  resource analysis failed: %s\n", FirstLine(error.what()).c_str());
         return false;
+    }
+    if (std::getenv("REPLAY_PREPARE")) {
+        static_cast<void>(ShaderRecompiler::PrepareShader(request.request));
+        std::printf("  prepared\n");
+        return true;
     }
     try {
         if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
