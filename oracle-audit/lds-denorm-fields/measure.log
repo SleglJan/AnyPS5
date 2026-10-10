@@ -1,0 +1,9 @@
+ieee0_field0: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+ieee1_field0: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+ieee0_field1: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+ieee1_field1: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+ieee0_field2: pr f32 132/1764 f64 132/1764 | reviewer f32 0/1764 f64 0/1764
+ieee1_field2: pr f32 132/1764 f64 132/1764 | reviewer f32 0/1764 f64 0/1764
+ieee0_field3: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+ieee1_field3: pr f32 0/1764 f64 0/1764 | reviewer f32 0/1764 f64 0/1764
+wrote /home/slegl/PycharmProjects/anyps5/AnyPS5-audit/oracle-audit/lds-denorm-fields/data/matrix.json

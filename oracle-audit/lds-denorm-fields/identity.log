@@ -1,0 +1,12 @@
+f32 ieee0 field2 vs field0: 0 of 196 rows differ
+f32 ieee0 field1 vs field3: 0 of 196 rows differ
+f32 ieee1 field2 vs field0: 0 of 196 rows differ
+f32 ieee1 field1 vs field3: 0 of 196 rows differ
+f64_minmax ieee0 field2 vs field0: 0 of 196 rows differ
+f64_minmax ieee0 field1 vs field3: 0 of 196 rows differ
+f64_minmax ieee1 field2 vs field0: 0 of 196 rows differ
+f64_minmax ieee1 field1 vs field3: 0 of 196 rows differ
+f64_cmpst ieee0 field2 vs field0: 0 of 196 rows differ
+f64_cmpst ieee0 field1 vs field3: 0 of 196 rows differ
+f64_cmpst ieee1 field2 vs field0: 0 of 196 rows differ
+f64_cmpst ieee1 field1 vs field3: 0 of 196 rows differ

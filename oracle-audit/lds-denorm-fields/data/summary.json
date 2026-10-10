@@ -1,0 +1,120 @@
+[
+ {
+  "mode": "ieee0_field0",
+  "field": 0,
+  "ieee": 0,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee1_field0",
+  "field": 0,
+  "ieee": 1,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee0_field1",
+  "field": 1,
+  "ieee": 0,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee1_field1",
+  "field": 1,
+  "ieee": 1,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee0_field2",
+  "field": 2,
+  "ieee": 0,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 132,
+  "pr_f64": 132,
+  "pr_examples": [
+   "f32 col 2 a=00000000 b=00000001 hw=00000000 rule=00000001",
+   "f32 col 4 a=00000000 b=00000001 hw=45464748 rule=00000000",
+   "f32 col 7 a=00000000 b=00000001 hw=00000000 rule=00000001",
+   "f32 col 8 a=00000000 b=00000001 hw=45464748 rule=00000000",
+   "f32 col 0 a=00000000 b=80000001 hw=80000000 rule=80000001",
+   "f32 col 4 a=00000000 b=80000001 hw=45464748 rule=00000000"
+  ],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee1_field2",
+  "field": 2,
+  "ieee": 1,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 132,
+  "pr_f64": 132,
+  "pr_examples": [
+   "f32 col 2 a=00000000 b=00000001 hw=00000000 rule=00000001",
+   "f32 col 4 a=00000000 b=00000001 hw=45464748 rule=00000000",
+   "f32 col 7 a=00000000 b=00000001 hw=00000000 rule=00000001",
+   "f32 col 8 a=00000000 b=00000001 hw=45464748 rule=00000000",
+   "f32 col 0 a=00000000 b=80000001 hw=80000000 rule=80000001",
+   "f32 col 4 a=00000000 b=80000001 hw=45464748 rule=00000000"
+  ],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee0_field3",
+  "field": 3,
+  "ieee": 0,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ },
+ {
+  "mode": "ieee1_field3",
+  "field": 3,
+  "ieee": 1,
+  "results_f32": 1764,
+  "results_f64": 1764,
+  "pr_f32": 0,
+  "pr_f64": 0,
+  "pr_examples": [],
+  "reviewer_f32": 0,
+  "reviewer_f64": 0,
+  "reviewer_examples": []
+ }
+]
