@@ -26,9 +26,8 @@ int APS5_VABI sceTextToSpeech2Cancel() {
     return 0;
 }
 
-int APS5_VABI sceTextToSpeech2Close() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI sceTextToSpeech2Close() {
+    return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceTextToSpeech2GetSpeechStatus() {
@@ -46,9 +45,8 @@ int APS5_VABI sceTextToSpeech2Speak() {
     return 0;
 }
 
-int APS5_VABI sceTextToSpeech2Terminate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int32_t APS5_VABI sceTextToSpeech2Terminate() {
+    return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 }
