@@ -23,6 +23,12 @@ struct CommandBufferObject {
 };
 static_assert(sizeof(CommandBufferObject) == 0x18, "guest reserves 0x18 bytes for sce::Ampr::CommandBuffer");
 
+struct SubmitResult {
+    std::int32_t result;
+    std::uint32_t errorOffset;
+};
+static_assert(sizeof(SubmitResult) == 8);
+
 inline constexpr std::uint16_t ScatterGatherValid = 1;
 inline constexpr std::uint16_t MapActive = 2;
 
