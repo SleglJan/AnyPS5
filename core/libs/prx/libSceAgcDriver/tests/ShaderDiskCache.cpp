@@ -56,7 +56,7 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -97,6 +97,12 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.specialization == right.specialization, prefix + "specialization constants differ");
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
+    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
+    for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
+        const auto& a = left.imageTablePoison[i];
+        const auto& b = right.imageTablePoison[i];
+        require(a.words == b.words && a.dwordCount == b.dwordCount && a.resource == b.resource && a.reason == b.reason, prefix + "image table poison differs");
+    }
     require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
@@ -132,6 +138,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
     binding.imageAtomic = {false, true, false};
+    binding.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
     binding.bufferAtomic = {true};
     binding.bufferWritten = {false, false, true, true, false};
     binding.samplerUnnormalized = {false, true, true};
@@ -176,6 +183,10 @@ RecompileResult sampleResult() {
     result.poisonedSrtReads = 3;
     result.barycentricEmulation = {true, false, true};
     result.variantId = 99;
+    result.imageTablePoison = {{{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, 8u, 2u, 6u}, {{9u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}, 4u, 0xffffffffu, 19u}};
+    result.imageTableRanges = {{0x1000u, 0x200u}, {0x5000000000ull, 48u}};
+    result.imageTableShader = 0x80003aa700ull;
+    result.imageTableFaults = 3u;
     return result;
 }
 
@@ -226,13 +237,13 @@ CompiledVariant sampleVariant() {
     image.foldTexelOffsetsOnly = true;
     image.byElements = 4;
     image.byComponents = 1;
-    image.indirectRoot = 0;
-    image.indirectMappingOffset = 12;
-    image.indirectSearchIterations = 3;
-    image.indirectResources = {1, 2, 3};
+    image.emulatedCompare = 0x1a07u;
+    image.table = 0;
+    image.tableOperation = TableOperation::Unsupported;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
-    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true}};
+    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
+    info.info.usesFaultBuffer = true;
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
@@ -1315,7 +1326,18 @@ IrResourcePlan handBuiltPlan() {
     DescriptorSource table;
     table.dwordCount = 8u;
     table.dwords[0] = &readConst(3);
-    table.indirectImage = DescriptorSource::IndirectImage{3u, 2u, 16u, 4u, 2u, 32u, true};
+    TableColumn column;
+    column.heapSource = 2u;
+    column.stride = 16u;
+    column.addend = 4u;
+    column.offset = 32u;
+    column.dwordCount = 8u;
+    KeyDomain domain;
+    domain.source = 0u;
+    domain.offset = 4u;
+    domain.stride = 8u;
+    column.keyDomain = domain;
+    table.tableColumn = column;
     DescriptorSource heap;
     heap.dwordCount = 4u;
     heap.dwords[1] = &readConst(6);
@@ -1400,7 +1422,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.indirectImage != b.indirectImage) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }
@@ -1562,8 +1584,7 @@ void verifyMalformedPlans() {
     rejects("an image past the sources", [](IrResourcePlan& plan) { plan.info.images[0].source = 5u; });
     rejects("a descriptor of nine dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].dwordCount = 9u; });
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
-    rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].indirectImage->heapSource = 4u; });
-    rejects("an image table material past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].indirectImage->materialSource = 4u; });
+    rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
@@ -1624,7 +1645,7 @@ void verifyPlanRoundTrip() {
     const auto covers = [&](const std::function<bool(const IrResourcePlan&)>& predicate) {
         return std::any_of(plans.begin(), plans.end(), [&](const std::shared_ptr<const IrResourcePlan>& plan) { return predicate(*plan); });
     };
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.indirectImage.has_value(); }); }), "no fixture plans an indirect image table");
+    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value(); }); }), "no fixture plans an image table column");
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.controlFlow.begin(), plan.controlFlow.end(), [](const ResourceBlock& block) { return block.condition != nullptr; }); }), "no fixture plans a control-flow condition");
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.valueStorage.begin(), plan.valueStorage.end(), [](const auto& value) { return value->IsPhi(); }); }), "no fixture plans a phi");
     require(covers([](const IrResourcePlan& plan) { return !plan.guardedSrtSlots.empty(); }), "no fixture plans a guarded SRT read");
@@ -1733,7 +1754,7 @@ std::filesystem::path planEntryPath(PlanFixture& fixture) {
 }
 
 int runPlanLoadingProcess(std::string_view mode) {
-    if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_BINDLESS", "1");
+    if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
     if (mode == "--load-plan-off") setEnvironment("APS5_NO_PERF_DISK_PLANS", "1");
     auto fixtures = planFixtures();
     const auto count = fixtures.size();
