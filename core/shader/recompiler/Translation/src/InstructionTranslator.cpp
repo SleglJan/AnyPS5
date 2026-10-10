@@ -164,6 +164,12 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     const auto builtin = [&entryIr](StageInputKind kind, std::uint32_t component = 0u) -> IrValue& {
         return entryIr.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&entryIr.Constant(static_cast<std::uint32_t>(kind)), &entryIr.Constant(component)});
     };
+    const auto drawIndex = [&entryIr, &options, &builtin](StageInputKind kind) -> IrValue& {
+        const auto* fetch = options.embeddedFetch;
+        const std::int32_t folded = fetch == nullptr ? -1 : kind == StageInputKind::VertexIndex ? fetch->vertexOffsetSgpr : fetch->instanceOffsetSgpr;
+        IrValue& index = builtin(kind);
+        return folded < 0 ? index : entryIr.ISub(index, entryIr.GetUserData(static_cast<ScalarReg>(folded)));
+    };
 
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
@@ -288,9 +294,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         entryIr.SetVectorReg(static_cast<VectorReg>(8), entryIr.IAdd(draw(2u), builtin(StageInputKind::WorkgroupId, 1u)));
     } else if (options.stage == ShaderStageKind::Local) {
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(64u));
-        entryIr.SetVectorReg(static_cast<VectorReg>(2), builtin(StageInputKind::VertexIndex));
+        entryIr.SetVectorReg(static_cast<VectorReg>(2), drawIndex(StageInputKind::VertexIndex));
         entryIr.SetVectorReg(static_cast<VectorReg>(3), entryIr.Constant(0u));
-        entryIr.SetVectorReg(static_cast<VectorReg>(5), builtin(StageInputKind::InstanceIndex));
+        entryIr.SetVectorReg(static_cast<VectorReg>(5), drawIndex(StageInputKind::InstanceIndex));
     } else if (options.stage == ShaderStageKind::TessellationControl) {
         const auto& tess = options.inputInfo.vertex->tess;
         entryIr.SetScalarReg(static_cast<ScalarReg>(2), entryIr.Emit(IrOpcode::TessellationBase, IrOpcodeType(IrOpcode::TessellationBase), {&entryIr.Constant(0u)}));
@@ -339,8 +345,8 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (options.userDataBaseRegister >= 8u) {
             entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(options.waveSize | (options.waveSize << 8u)));
         }
-        entryIr.SetVectorReg(static_cast<VectorReg>(5), builtin(StageInputKind::VertexIndex));
-        entryIr.SetVectorReg(static_cast<VectorReg>(8), builtin(StageInputKind::InstanceIndex));
+        entryIr.SetVectorReg(static_cast<VectorReg>(5), drawIndex(StageInputKind::VertexIndex));
+        entryIr.SetVectorReg(static_cast<VectorReg>(8), drawIndex(StageInputKind::InstanceIndex));
     }
 }
 
@@ -376,8 +382,8 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     if (options.embeddedFetch != nullptr) {
         program.Info().vertexOffsetSgpr = options.embeddedFetch->vertexOffsetSgpr;
         program.Info().instanceOffsetSgpr = options.embeddedFetch->instanceOffsetSgpr;
-        program.Info().vertexOffsetShared = options.embeddedFetch->vertexOffsetShared;
-        program.Info().instanceOffsetShared = options.embeddedFetch->instanceOffsetShared;
+        program.Info().vertexOffsetShared = options.embeddedFetch->vertexOffsetShared || options.embeddedFetch->vertexIndexObserved;
+        program.Info().instanceOffsetShared = options.embeddedFetch->instanceOffsetShared || options.embeddedFetch->instanceIndexObserved;
         program.Info().vertexOffsetConflict = options.embeddedFetch->vertexOffsetConflict;
         program.Info().instanceOffsetConflict = options.embeddedFetch->instanceOffsetConflict;
     }
