@@ -3,7 +3,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device has no|the device reports)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device has no|the device reports|no display)", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
 
@@ -36,7 +36,7 @@ if __name__ == "__main__":
         expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for"
     else:
         unexpected = [name for name, output in found if not DEVICE_LIMITATION.search(output)]
-        expected = "any test that reports the device limitation it needs, such as narrow subgroups or a missing extension"
+        expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension or no display for a Vulkan window"
     for name in unexpected:
         print(f"error: {name} skipped")
     if unexpected:
