@@ -82,6 +82,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < Threads) {
+            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         run(*device);
         std::puts("4096 scalar/vector bitfield mask execution cases passed");
         return 0;
