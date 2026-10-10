@@ -118,6 +118,7 @@ void DisplayWindow::UpdateTitle() {
         currentFps = static_cast<double>(fpsFrames) * static_cast<double>(frequency) / static_cast<double>(now - fpsStart);
         fpsStart = now;
         fpsFrames = 0;
+        std::fprintf(stderr, "[window-title] FPS: %.2f (%llu)\n", currentFps, static_cast<unsigned long long>(frameNum));
     }
     char text[160];
     std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
