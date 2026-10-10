@@ -149,6 +149,15 @@ bool isAttributePropagationAlu(RdnaOpcode opcode) {
     }
 }
 
+std::uint32_t scalarBfeU32(std::uint32_t source, std::uint32_t field) {
+    const std::uint32_t count = std::min((field >> 16u) & 0x7fu, 32u);
+    if (count == 0u) {
+        return 0u;
+    }
+    const std::uint32_t shifted = source >> (field & 31u);
+    return count == 32u ? shifted : shifted & ((1u << count) - 1u);
+}
+
 std::int32_t bufferAttributeFromOffset(std::uint32_t rawOffset, std::uint32_t dword) {
     return static_cast<std::int32_t>((rawOffset + dword * 4u) / 16u);
 }
@@ -546,7 +555,7 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                             dst.constant = src0 << (src1 & 31u);
                             break;
                         case RdnaOpcode::SBfeU32:
-                            dst.constant = src0 >> (src1 & 31u);
+                            dst.constant = scalarBfeU32(src0, src1);
                             break;
                         default:
                             dst.constant = src0 + src1;
