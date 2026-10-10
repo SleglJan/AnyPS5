@@ -3067,6 +3067,17 @@ void validationTests() {
         Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_A2B10G10R10_SINT_PACK32 && std::string_view(AgcDriver::Graphics::DecodeVertexFormat(attribute).scalar) == "i32", "2_10_10_10 sint vertex format was not decoded");
         attribute.resource.fields[3] = 36u << 12u;
         Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_B10G11R11_UFLOAT_PACK32, "10_11_11 float vertex format was not decoded");
+        for (std::uint32_t format = 1; format < 128u; ++format) {
+            attribute.resource.fields[3] = format << 12u;
+            std::string_view scalar;
+            try {
+                scalar = AgcDriver::Graphics::DecodeVertexFormat(attribute).scalar;
+            } catch (const std::exception&) {
+                continue;
+            }
+            const auto numeric = ShaderRecompiler::VertexInputNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(format));
+            Require((scalar == "u32") == (numeric == ShaderRecompiler::IrTextureNumericClass::Uint) && (scalar == "i32") == (numeric == ShaderRecompiler::IrTextureNumericClass::Sint), "vertex format " + std::to_string(format) + " declares a shader input of another numeric type than its attribute");
+        }
         attribute.resource.fields[3] = 43u << 12u;
         expectFailure([&] { AgcDriver::Graphics::DecodeVertexFormat(attribute); }, "unsupported vertex format");
         attribute.resource.fields = {0x1000, 32u << 16u, 3, 77u << 12u};

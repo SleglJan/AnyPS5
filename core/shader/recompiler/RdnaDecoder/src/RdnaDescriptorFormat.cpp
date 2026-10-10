@@ -144,6 +144,7 @@ IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format) {
     case IrBufferFormat::Format8_8UInt:
     case IrBufferFormat::Format32UInt:
     case IrBufferFormat::Format16_16UInt:
+    case IrBufferFormat::Format10_10_10_2UInt:
     case IrBufferFormat::Format8_8_8_8UInt:
     case IrBufferFormat::Format32_32UInt:
     case IrBufferFormat::Format16_16_16_16UInt:
@@ -154,6 +155,7 @@ IrTextureNumericClass VertexInputNumericClass(IrBufferFormat format) {
     case IrBufferFormat::Format8_8SInt:
     case IrBufferFormat::Format32SInt:
     case IrBufferFormat::Format16_16SInt:
+    case IrBufferFormat::Format10_10_10_2SInt:
     case IrBufferFormat::Format8_8_8_8SInt:
     case IrBufferFormat::Format32_32SInt:
     case IrBufferFormat::Format16_16_16_16SInt:
