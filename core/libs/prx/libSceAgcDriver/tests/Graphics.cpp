@@ -2348,6 +2348,10 @@ void rectListTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
+    vertex.bindings = {{DescriptorKind::StorageBuffer, DescriptorRole::GuestBuffers, 0, 0, 1, {}}};
+    const auto faultAuxiliary = BuildRectListShaders(vertex, fragment, target);
+    Require(faultAuxiliary.control.bindings.size() == 1 && faultAuxiliary.control.bindings[0].role == DescriptorRole::FaultBuffer && faultAuxiliary.control.bindings[0].binding == RuntimeAbi::BindingNumber(RuntimeAbi::Stage::TessellationControl, RuntimeAbi::Binding::FaultBuffer), "the rect-list control shader's fault buffer is not in the tessellation control binding group");
+    vertex.bindings.clear();
     for (const auto version : {0x00010300u, 0x00010400u}) {
         target.spirvVersion = version;
         auto auxiliary = BuildRectListShaders(vertex, fragment, target);
