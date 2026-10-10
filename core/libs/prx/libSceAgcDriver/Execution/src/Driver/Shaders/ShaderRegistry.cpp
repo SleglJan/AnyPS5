@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/Structurizer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
