@@ -910,10 +910,9 @@ private:
                 if (planned == nullptr && !TryMakeTableImage(*handle, plan)) {
                     continue;
                 }
-                // A store through a table would mark every bound slot pending write-back.
-                if (imageInfo.resourceClass == ImageResourceClass::Storage) {
+                if (imageInfo.access == ImageAccess::Atomic) {
                     ResourceMaterializer::CountBindlessRejection(BindlessRejection::Storage);
-                    fail("bindless storage image tables are unsupported");
+                    fail("bindless atomic image tables are unsupported");
                 }
                 if (planned == nullptr) {
                     m_indirectImages.push_back(std::move(plan));
