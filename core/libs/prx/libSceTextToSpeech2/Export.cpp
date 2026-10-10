@@ -44,8 +44,9 @@ int APS5_VABI sceTextToSpeech2Speak() {
     return 0;
 }
 
-std::int32_t APS5_VABI sceTextToSpeech2Terminate() {
-    return SCE_KERNEL_ERROR_EOPNOTSUPP;
+int APS5_VABI sceTextToSpeech2Terminate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }
