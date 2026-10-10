@@ -602,6 +602,9 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
         if (output.kind == StageOutputKind::Layer) {
             state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationPerPrimitiveEXT);
         }
+        if (output.kind == StageOutputKind::Position) {
+            state.module.AddAnnotation(spv::OpDecorate, output.variableId, spv::DecorationInvariant);
+        }
     }
     state.meshAllocation = MeshArray(state, spv::StorageClassWorkgroup, TypeU32(state), 2u);
     state.meshPrimitiveData = MeshArray(state, spv::StorageClassPrivate, TypeU32(state), state.laneCount);
