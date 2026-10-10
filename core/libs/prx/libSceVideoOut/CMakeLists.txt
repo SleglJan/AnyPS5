@@ -89,7 +89,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_video_out_output_mode_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
     configure_windows_unwind(guest_video_out_output_mode_tests)
     add_test(NAME guest_video_out_output_mode COMMAND guest_video_out_output_mode_tests)
-    set_tests_properties(guest_video_out_output_mode PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_video_out_output_mode PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(guest_video_out_output_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
