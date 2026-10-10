@@ -1126,7 +1126,7 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF32U32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32I32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VNotB32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VNotB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VFfblB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VFfbhU32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VBfrevB32, sdwaSelAll(), 0, 0, false},
