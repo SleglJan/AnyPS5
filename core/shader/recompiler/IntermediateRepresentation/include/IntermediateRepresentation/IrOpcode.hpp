@@ -461,6 +461,8 @@ enum class IrOpcode : std::uint16_t {
     GetAttribute,
     GetInterpolationParameter,
     GetInterpolationParameterF16,
+    InterpolateHostP1,
+    InterpolateHostP2,
     SetAttribute,
     ControlNop,
     Waitcnt,
