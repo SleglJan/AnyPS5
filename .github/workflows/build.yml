@@ -195,10 +195,11 @@ jobs:
         run: python3 tools/check_test_registration.py build
       - run: cmake --build build
       - run: cmake --build build --target libs
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
+      - run: python3 tools/check_skips.py build/ctest.xml
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash
@@ -261,7 +262,8 @@ jobs:
       - shell: cmd
         run: cmake --build build --target libs
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
+      - run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

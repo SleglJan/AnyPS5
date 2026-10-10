@@ -308,5 +308,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestIntelTrampolinesTests.cpp
         )
         add_test(NAME guest_intel_trampolines_execution COMMAND guest_intel_trampolines_tests $<TARGET_FILE:relinker>)
+
+        add_test_executable(dynamic_table_bounds_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/DynamicTableBoundsTests.cpp
+        )
+        add_test(NAME dynamic_table_bounds COMMAND dynamic_table_bounds_tests $<TARGET_FILE:relinker>)
     endif()
 endif()

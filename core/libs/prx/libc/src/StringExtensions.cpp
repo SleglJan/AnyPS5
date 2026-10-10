@@ -131,4 +131,9 @@ int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
     return 1;
 }
 
+std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char* text) {
+    std::uint32_t address;
+    return __inet_aton_nid_postfix(text, &address) ? address : 0xffffffff;
+}
+
 }

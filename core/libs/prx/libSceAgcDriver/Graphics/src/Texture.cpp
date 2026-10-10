@@ -2285,6 +2285,22 @@ bool StorageTexture::overlaps(std::uint64_t address, std::size_t bytes) const {
     return address < descriptor.baseAddress + guestBytes && descriptor.baseAddress < address + bytes;
 }
 
+bool StorageTexture::overlapsLive(std::uint64_t address, std::size_t bytes) const {
+    return !released && guestBytes != 0 && overlaps(address, bytes);
+}
+
+// A fill of this image's DCC keys starts at the dccAddress and is at least one key per 256 guest
+// bytes. While any live image overlaps the fill (`overlapped`), it must also stay inside the key extent
+// (DccKeyCount, the pipe-aligned count, at least guestBytes / 256): the bytes past the keys may be
+// memory the overlapping image owns, so a longer fill is not a key fill. The bound is inferred, not
+// measured (docs/dev/TechnicalDebt.md). With nothing overlapping, the length rule alone decides, as
+// it did before the bound.
+bool StorageTexture::keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const {
+    constexpr std::uint64_t keyBytes = 256;
+    if (released || descriptor.dccAddress != address || guestBytes / keyBytes == 0 || bytes < guestBytes / keyBytes) return false;
+    return !overlapped || bytes <= DccKeyCount(descriptor, guestBytes);
+}
+
 void StorageTexture::MarkDirty() {
     if (descriptor.dccAddress != 0 && IsDccClear(uploadedKeys) && !IsDccClear(filledKeys)) {
         traceKeyStore("first write", descriptor, guestBytes);
@@ -2762,7 +2778,7 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
     std::lock_guard lock(live.mutex);
     std::vector<StorageTexture*> overlapping;
     for (auto* texture : live.textures) {
-        if (!texture->released && texture->guestBytes != 0 && texture->overlaps(address, bytes)) overlapping.push_back(texture);
+        if (texture->overlapsLive(address, bytes)) overlapping.push_back(texture);
     }
     const auto end = address + bytes;
     StorageTexture* covered = nullptr;
@@ -2803,14 +2819,11 @@ StorageTexture::FillCoverage StorageTexture::ClassifyFill(std::uint64_t address,
                 if (texture->descriptor.baseAddress >= address && texture->descriptor.baseAddress + texture->guestBytes <= end) ++coverage.inside;
             }
         }
-    } else if (overlapping.empty()) {
-        constexpr std::uint64_t keyBytes = 256;
-        for (const auto* texture : live.textures) {
-            if (!texture->released && texture->descriptor.dccAddress == address && texture->guestBytes / keyBytes != 0 && bytes >= texture->guestBytes / keyBytes) coverage.cover = FillCover::Keys;
-        }
+    } else if (std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->keysFillMatches(address, bytes, !overlapping.empty()); })) {
+        coverage.cover = FillCover::Keys;
     } else if (overlapping.size() > 1) {
         coverage.cover = FillCover::Several;
-    } else {
+    } else if (overlapping.size() == 1) {
         auto* single = overlapping.front();
         const auto begin = single->descriptor.baseAddress;
         const auto stop = begin + single->guestBytes;
@@ -2848,13 +2861,13 @@ std::size_t StorageTexture::NoteKeysFill(std::uint64_t address, std::size_t byte
         case 0xff: keys = DccKeys::Uncompressed; break;
         default: return 0;
     }
-    constexpr std::uint64_t keyBytes = 256;
     static const bool traceKeys = std::getenv("APS5_TRACE_DCC_KEYS") != nullptr;
     auto& live = Live();
     std::lock_guard lock(live.mutex);
+    const bool overlapped = std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->overlapsLive(address, bytes); });
     std::size_t covered = 0;
     for (auto* texture : live.textures) {
-        if (texture->released || texture->descriptor.dccAddress != address || texture->guestBytes / keyBytes == 0 || bytes < texture->guestBytes / keyBytes) continue;
+        if (!texture->keysFillMatches(address, bytes, overlapped)) continue;
         texture->filledKeys = keys;
         ++covered;
         if (traceKeys && IsDccClear(keys)) std::fprintf(stderr, "[dcc-keys] %s key fill over 0x%llx+0x%llx (uploaded %s, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), DccKeysName(texture->uploadedKeys), texture->dirty ? 1 : 0);
@@ -2876,13 +2889,13 @@ std::size_t StorageTexture::ClearByKeysFill(std::uint64_t address, std::size_t b
         case 0x20: keys = DccKeys::ClearRegister; break;
         default: return 0;
     }
-    constexpr std::uint64_t keyBytes = 256;
     std::vector<std::shared_ptr<StorageTexture>> covered;
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
+        const bool overlapped = std::any_of(live.textures.begin(), live.textures.end(), [&](const StorageTexture* texture) { return texture->overlapsLive(address, bytes); });
         for (auto* texture : live.textures) {
-            if (texture->released || texture->descriptor.dccAddress != address || texture->guestBytes / keyBytes == 0 || bytes < texture->guestBytes / keyBytes) continue;
+            if (!texture->keysFillMatches(address, bytes, overlapped)) continue;
             if (auto shared = texture->weak_from_this().lock()) covered.push_back(std::move(shared));
         }
     }

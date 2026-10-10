@@ -8,6 +8,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Terminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
@@ -156,6 +157,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_sync COMMAND guest_kernel_sync_tests)
     if(WIN32)
         set_tests_properties(guest_kernel_sync PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_rename_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelRename.cpp)
+    target_include_directories(guest_kernel_rename_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_rename_tests PRIVATE libkernel libc)
+    target_compile_definitions(guest_kernel_rename_tests PRIVATE KERNEL_PRX_PATH="$<TARGET_FILE:libkernel>")
+    configure_windows_unwind(guest_kernel_rename_tests)
+    add_test(NAME guest_kernel_rename COMMAND guest_kernel_rename_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_rename PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_aio_tests ${LIBS_INCLUDE_DIR}/tests/GuestAio.cpp)

@@ -228,8 +228,9 @@ public:
     // `image` and `layer` naming it, whatever other images lie over the range (`others`, of which
     // `inside` wholly inside it: stale images of earlier uses of the memory, which the title's
     // transient allocator hands out again); otherwise part of one image (the fill inside the
-    // surface, the surface inside the fill, or straddling), several, or none but exactly one
-    // surface's DCC metadata. Images the cache let go (see Flush) do not count.
+    // surface, the surface inside the fill, or straddling), several, or a fill of one surface's DCC
+    // keys (Keys: at its dccAddress and at least one key long, and while other images overlap it no
+    // longer than its key extent; see keysFillMatches). Images the cache let go (see Flush) do not count.
     enum class FillCover { None, Exact, Inside, Around, Straddle, Several, Keys, Layer };
     struct FillCoverage {
         FillCover cover = FillCover::None;
@@ -417,6 +418,12 @@ private:
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
+    // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
+    // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
+    bool overlapsLive(std::uint64_t address, std::size_t bytes) const;
+    // Whether a fill of [address, address + bytes) is a fill of this image's DCC keys, `overlapped`
+    // saying whether any live image overlaps the fill (see Texture.cpp).
+    bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
     void release() noexcept;

@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +29,7 @@ char* APS5_VABI strnstr_nid_postfix(const char*, const char*, std::size_t);
 int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
 int APS5_VABI sscanf_s_nid_postfix(const char*, const char*, ...);
 int APS5_VABI __inet_aton_nid_postfix(const char*, void*);
+std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char*);
 }
 
 static void Require(bool condition) {
@@ -166,7 +169,21 @@ int main() {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
         Require(__inet_aton_nid_postfix(invalid, address) == 0);
         Require(address[0] == 0xA5 && address[3] == 0xA5);
+        Require(__inet_addr_nid_postfix(invalid) == 0xffffffff);
     }
+    const auto inetAddr = [](const char* text, std::array<unsigned char, 4> expected) {
+        const std::uint32_t value = __inet_addr_nid_postfix(text);
+        std::array<unsigned char, 4> bytes{};
+        std::memcpy(bytes.data(), &value, sizeof(value));
+        return bytes == expected;
+    };
+    Require(inetAddr("192.0.2.42", {192, 0, 2, 42}));
+    Require(inetAddr("127.1", {127, 0, 0, 1}));
+    Require(inetAddr("0x7f.0.0.0x1", {127, 0, 0, 1}));
+    Require(inetAddr("0.0.0.0", {0, 0, 0, 0}));
+    Require(inetAddr("255.255.255.255", {255, 255, 255, 255}));
+    Require(inetAddr("4294967296", {0, 0, 0, 0}));
+    Require(inetAddr("18446744073709551617", {0, 0, 0, 1}));
     char first[] = ",a,,b,";
     char second[] = "x:y";
     char* firstState = nullptr;
