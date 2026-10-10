@@ -28,8 +28,6 @@ struct GuestImage {
     std::filesystem::path SourcePath;
     std::string OutputName;
     std::string Soname;
-    std::vector<std::string> ModuleNames;
-    std::string ReplacementModule;
     std::vector<std::uint8_t> Bytes;
     std::vector<Codegen::TrampolineSite> Trampolines;
     std::vector<Domain::ProgramHeader> Headers;
@@ -52,6 +50,7 @@ public:
 struct GuestArtifact {
     std::filesystem::path Path;
     std::vector<std::uint8_t> Bytes;
+    std::vector<Domain::CallRegistryEntry> Imports;
 };
 
 class GuestModuleBuilder {

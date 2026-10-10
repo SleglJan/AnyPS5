@@ -51,6 +51,17 @@ int APS5_VABI sceRudpActivate() {
     return 0;
 }
 
+int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (status != nullptr && size != 0) {
+        std::memset(status, 0, size);  // state 0 = idle, no connections
+    }
+    return 0;
+}
+
 int APS5_VABI sceRudpEnd(int ctx_id) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {

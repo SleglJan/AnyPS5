@@ -3,7 +3,6 @@
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
-#include <codegen/x86/X64InstructionRewriter.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <algorithm>
 #include <memory>
@@ -39,7 +38,6 @@ private:
         Amd64OnlyMatch Substitution;
     };
 
-    X64InstructionRewriter _rewriter;
     std::unique_ptr<IAmd64OnlyInstructionMatcher> _matcher = MakeAmd64OnlyInstructionMatcher();
     std::unique_ptr<IInstructionScanner> _scanner = MakeInstructionScanner();
 
@@ -120,7 +118,7 @@ void Amd64OnlyConverter::_convertSegment(
         case Amd64OnlyLowering::InPlace: {
             if (substitution.ReplacementBytes.size() != match.Length)
                 throw CodegenException("Intel substitution changes the instruction length", fileOffset);
-            seg = _atFileOffset(ph.Offset, [&] { return _rewriter.Rewrite(seg, {match.Offset, substitution.ReplacementBytes}).Bytes; });
+            std::copy(substitution.ReplacementBytes.begin(), substitution.ReplacementBytes.end(), seg.begin() + static_cast<std::ptrdiff_t>(match.Offset));
             replacementLength = substitution.ReplacementBytes.size();
             ++result.ReplacedCount;
             break;
@@ -144,7 +142,7 @@ void Amd64OnlyConverter::_convertSegment(
                         if (amdOnly && trailingBytes == 0) {
                             sequence.push_back(bytes);
                             taken.push_back(next);
-                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasRipRelativeDisp || info.HasBranchTarget) {
+                        } else if (amdOnly || info.FlowKind != ControlFlowKind::Sequential || info.HasBranchTarget) {
                             throw CodegenException("AMD-only instruction too short for a jump is followed by an instruction that cannot move", ph.Offset + following.Offset);
                         } else {
                             trailingBytes += following.Length;
@@ -167,7 +165,8 @@ void Amd64OnlyConverter::_convertSegment(
                     siteLength,
                     std::vector<std::uint8_t>(begin, begin + static_cast<std::ptrdiff_t>(siteLength)),
                     stub.StubBody,
-                    stub.ReturnBranchOffset
+                    stub.ReturnBranchOffset,
+                    stub.Relocations
                 });
                 replacementLength = stub.StubBody.size();
                 consumed.insert(taken.begin(), taken.end());

@@ -34,6 +34,7 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 // Whether a storage image of the guest format takes DCC clear `keys` as a GPU clear (see
 // StorageTexture::upload); false for integer formats and non-clear keys.
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
+std::uint64_t SampledTextureMemory();
 
 // A sampled texture's own VkImage with its memory, shared with the recorder while a recorded upload
 // still writes it (see the snapshot constructor), so the texture may go before the batch completes.
@@ -101,6 +102,7 @@ private:
     ViewRange firstLayerRange{};
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
+    VkDeviceSize countedBytes = 0;
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
@@ -226,8 +228,9 @@ public:
     // `image` and `layer` naming it, whatever other images lie over the range (`others`, of which
     // `inside` wholly inside it: stale images of earlier uses of the memory, which the title's
     // transient allocator hands out again); otherwise part of one image (the fill inside the
-    // surface, the surface inside the fill, or straddling), several, or none but exactly one
-    // surface's DCC metadata. Images the cache let go (see Flush) do not count.
+    // surface, the surface inside the fill, or straddling), several, or a fill of one surface's DCC
+    // keys (Keys: at its dccAddress and at least one key long, and while other images overlap it no
+    // longer than its key extent; see keysFillMatches). Images the cache let go (see Flush) do not count.
     enum class FillCover { None, Exact, Inside, Around, Straddle, Several, Keys, Layer };
     struct FillCoverage {
         FillCover cover = FillCover::None;
@@ -290,6 +293,7 @@ public:
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
     std::uint64_t GuestBytes() const;
+    VkDeviceSize AllocationBytes() const { return memoryBytes; }
 
 private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
@@ -297,6 +301,8 @@ private:
     // Uploads the surface, or only the tracked layers `layers` selects (the direct path; the others
     // upload everything).
     void upload(const std::vector<bool>* layers = nullptr);
+    void captureGuestBytes(const std::vector<bool>* layers);
+    bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
     // units asked for in pieces too often are all stored at once for a while (the hysteresis:
@@ -412,6 +418,12 @@ private:
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
+    // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
+    // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
+    bool overlapsLive(std::uint64_t address, std::size_t bytes) const;
+    // Whether a fill of [address, address + bytes) is a fill of this image's DCC keys, `overlapped`
+    // saying whether any live image overlaps the fill (see Texture.cpp).
+    bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
     void release() noexcept;
@@ -425,9 +437,10 @@ private:
     std::uint64_t sliceLinearBytes = 0;
     SurfaceGeometry geometry;
     std::vector<std::byte> original;
+    mutable std::array<std::uint64_t, 4> comparedGuestBytes{};
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
-    DccKeys filledKeys = DccKeys::Uncompressed;
+    mutable DccKeys filledKeys = DccKeys::Uncompressed;
     mutable DccKeyProof keyProof;
     struct ForeignKeyProof {
         std::uint64_t dccAddress = 0;
@@ -457,6 +470,7 @@ private:
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize memoryBytes = 0;
     VkImageView view = VK_NULL_HANDLE;
     std::uint32_t defaultMip = 0;
     std::map<std::uint32_t, VkImageView> extraViews;

@@ -150,9 +150,12 @@ struct MirrorStats {
     std::uint64_t rebuilds = 0;
     std::uint64_t blocksCopied = 0;
     std::uint64_t heapRefills = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t heapChecks = 0;
 };
 MirrorStats MirrorCounters();
 void ClearImageMirrors(VkDevice device);
+void ClearHostImports(VkDevice device);
 
 struct AddressCopy {
     std::uint64_t begin;
@@ -186,6 +189,7 @@ public:
     // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
     // that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void AllowAdjustedRegions() { adjustedRegions = true; }
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
@@ -203,6 +207,7 @@ public:
     void UploadPrepare(bool addressable);
     void UploadFinish(bool addressable);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
+    static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
     // The BDA table of the cached address space when it serves this upload alone (an address-based
     // build with no region outside it): its ranges, immutable while the space lives, and the
@@ -334,16 +339,20 @@ private:
     // and an atomic element or a size within the written-shadow window. Independent of the import,
     // so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool bindableInPlace(std::uint64_t offset, bool addressable) const;
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     Context context;
     bool stagingAllowed = false;
+    bool adjustedRegions = false;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
+    mutable std::uint64_t writeTableSerial = 0;
+    mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> writeTableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while
     // no import was destroyed since.
     std::uint64_t importsEpoch = 0;
