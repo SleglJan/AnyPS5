@@ -3089,7 +3089,15 @@ void keysFillTests(const Device& device, Recorder& recorder) {
 
 int main(int argc, char** argv) {
     try {
-        Device device;
+        std::unique_ptr<Device> created;
+        try {
+            created = std::make_unique<Device>();
+        } catch (const std::exception& error) {
+            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+            std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
+            return 77;
+        }
+        Device& device = *created;
         if (argc == 2 && (std::string_view(argv[1]) == "--benchmark-pipeline-cache" || std::string_view(argv[1]) == "--pipeline-cache-only")) {
             pipelineCacheTests(device, std::string_view(argv[1]) == "--benchmark-pipeline-cache");
             return 0;
