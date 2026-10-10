@@ -486,9 +486,9 @@ bool TranslationContext::vDivFmasF32(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::vDivFixupF32(const RdnaInstruction& inst) {
-    const IrU32 quotient(ir.BitCastU32(*readOperand(sourceAt(inst, 0u), IrType::F32)));
-    const IrU32 denominator(ir.BitCastU32(*readOperand(sourceAt(inst, 1u), IrType::F32)));
-    const IrU32 numerator(ir.BitCastU32(*readOperand(sourceAt(inst, 2u), IrType::F32)));
+    const IrU32 quotient = readU32(sourceAt(inst, 0u));
+    const IrU32 denominator = flushF32Denormal(readU32(sourceAt(inst, 1u)));
+    const IrU32 numerator = flushF32Denormal(readU32(sourceAt(inst, 2u)));
     const auto magnitude = [&](IrU32 word) { return IrU32(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fffffffu))); };
     const auto isNan = [&](IrU32 word) { return IrU1(ir.UGreaterThan(magnitude(word).Value(), ir.Constant(0x7f800000u))); };
     const auto isInf = [&](IrU32 word) { return IrU1(ir.IEqual(magnitude(word).Value(), ir.Constant(0x7f800000u))); };

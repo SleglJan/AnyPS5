@@ -85,6 +85,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VCvtPkU8F32:
     case RdnaOpcode::VCvtPkrtzF16F32:
     case RdnaOpcode::VCvtF16F32:
+    case RdnaOpcode::VDivFixupF32:
         flush = 1u;
         break;
     default:
