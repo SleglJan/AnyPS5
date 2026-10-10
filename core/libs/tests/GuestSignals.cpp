@@ -10,6 +10,7 @@ Handler APS5_VABI signal_nid_postfix(int, Handler);
 int APS5_VABI raise_nid_postfix(int);
 int APS5_VABI sigaction_nid_postfix(int, const void*, void*);
 int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
+int APS5_VABI pthread_sigmask_nid_postfix(int, const void*, void*);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t);
 }
@@ -59,6 +60,16 @@ int main() {
     Require(sigprocmask_nid_postfix(2, &blocked, nullptr) == 0);
     Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0);
     Require(previous.bits[0] == 0);
+    *__error_nid_postfix() = 0;
+    Require(pthread_sigmask_nid_postfix(1, &blocked, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(0, &blocked, &previous) == 22);
+    Require(pthread_sigmask_nid_postfix(4, &blocked, &previous) == 22);
+    Require(*__error_nid_postfix() == 0);
+    Require(pthread_sigmask_nid_postfix(0, nullptr, &previous) == 0);
+    Require(previous.bits[0] == 0x20);
+    Require(sigprocmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0x20);
+    Require(pthread_sigmask_nid_postfix(2, &blocked, &previous) == 0 && previous.bits[0] == 0x20);
+    Require(pthread_sigmask_nid_postfix(1, nullptr, &previous) == 0 && previous.bits[0] == 0);
 
     const auto callback = reinterpret_cast<std::uintptr_t>(Callback);
     const auto infoCallback = reinterpret_cast<std::uintptr_t>(InfoCallback);

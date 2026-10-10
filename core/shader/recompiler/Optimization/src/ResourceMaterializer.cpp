@@ -711,6 +711,9 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         modes.push_back(mode);
         if (image.dimension == RdnaImageDimension::Dim2DArray) {
+            auto plain = mode;
+            plain.dimension = RdnaImageDimension::Dim2D;
+            modes.push_back(plain);
             mode.cube = true;
             modes.push_back(mode);
         }
