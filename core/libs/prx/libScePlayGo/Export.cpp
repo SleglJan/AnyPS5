@@ -2,10 +2,12 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <regex>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 // The game is fully installed on the host, so every chunk is local and nothing is pending.
@@ -24,14 +26,34 @@ static constexpr int SCE_PLAYGO_ERROR_BAD_CHUNK_ID = static_cast<int>(0x80B2000C
 static constexpr int SCE_PLAYGO_ERROR_BAD_SIZE = static_cast<int>(0x80B2000B);
 static constexpr int SCE_PLAYGO_ERROR_BAD_LOCUS = static_cast<int>(0x80B20010);
 
-// The package's chunk table is not part of the dump, so the chunk set comes from the title's
-// playgo-chunkdefs.xml: every listed chunk plus chunks 0 through the default chunk. Games probe
-// chunk IDs and size arrays from the result, so unknown IDs must be rejected.
+static std::set<uint16_t> PackageChunks(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::runtime_error("scePlayGo: " + path.string() + " cannot be read");
+    const std::string data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto read16 = [&](std::size_t offset) {
+        return static_cast<uint32_t>(static_cast<uint8_t>(data[offset])) | (static_cast<uint32_t>(static_cast<uint8_t>(data[offset + 1])) << 8u);
+    };
+    const auto read32 = [&](std::size_t offset) { return read16(offset) | (read16(offset + 2) << 16u); };
+    if (data.size() < 0x100 || data.compare(0, 4, "plgx") != 0 || read32(0x10) != data.size())
+        throw std::runtime_error("scePlayGo: " + path.string() + " has no valid plgx header");
+    const uint32_t count = read16(0x0A);
+    const uint32_t offset = read32(0xC0);
+    const uint32_t size = read32(0xC4);
+    if (count == 0 || size != count * 32u || offset < 0x100 || offset > data.size() || size > data.size() - offset)
+        throw std::runtime_error("scePlayGo: " + path.string() + " chunk records do not match its chunk count");
+    std::set<uint16_t> result;
+    for (uint32_t id = 0; id < count; ++id) result.insert(static_cast<uint16_t>(id));
+    return result;
+}
+
 static const std::set<uint16_t>& ValidChunks() {
     static const std::set<uint16_t> chunks = [] {
         std::set<uint16_t> result{0};
         std::ifstream file(ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml"));
-        if (!file) return result;
+        if (!file) {
+            const auto table = ResolvePath_nid_no_patch("/app0/sce_sys/playgo-chunk.dat");
+            return std::filesystem::exists(table) ? PackageChunks(table) : result;
+        }
         const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         static const std::regex chunk(R"re(<chunk\s+id="(\d+)")re");
         for (auto it = std::sregex_iterator(text.begin(), text.end(), chunk); it != std::sregex_iterator(); ++it)
