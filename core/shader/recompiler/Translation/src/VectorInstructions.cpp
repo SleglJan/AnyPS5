@@ -1116,16 +1116,10 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return simpleInteger(inst, IrOpcode::BitReverse32, IrType::U32, false, false, false);
     case RdnaOpcode::VFfblB32:
         return simpleInteger(inst, IrOpcode::FindILsb32, IrType::U32, false, false, false);
-    case RdnaOpcode::VLshlB32:
-        return simpleInteger(inst, IrOpcode::ShiftLeftLogical32, IrType::U32, false, true, false);
     case RdnaOpcode::VLshlrevB32:
         return simpleInteger(inst, IrOpcode::ShiftLeftLogical32, IrType::U32, true, true, false);
-    case RdnaOpcode::VLshrB32:
-        return simpleInteger(inst, IrOpcode::ShiftRightLogical32, IrType::U32, false, true, false);
     case RdnaOpcode::VLshrrevB32:
         return simpleInteger(inst, IrOpcode::ShiftRightLogical32, IrType::U32, true, true, false);
-    case RdnaOpcode::VAshrI32:
-        return simpleInteger(inst, IrOpcode::ShiftRightArithmetic32, IrType::U32, false, true, false);
     case RdnaOpcode::VAshrrevI32:
         return simpleInteger(inst, IrOpcode::ShiftRightArithmetic32, IrType::U32, true, true, false);
     case RdnaOpcode::VLshlrevB64:
