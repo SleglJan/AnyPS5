@@ -463,6 +463,13 @@ DrawProfile& Profile() {
     return profile;
 }
 
+// DIAG: nanoseconds of the cacheable draws' lookups by sub-phase: 0 key, 1 find, 2 revalidate,
+// 3 moved buffers (and copied-region proofs); 4 counts the finds that returned an object.
+std::array<std::atomic<std::uint64_t>, 5>& DiagLookup() {
+    static std::array<std::atomic<std::uint64_t>, 5> lookup{};
+    return lookup;
+}
+
 // DIAG: keep outcomes of cacheable builds: [0..9] ShaderResources::KeepRefusal, 10 inserted, 12 not
 // recorded, 13 copied reads it can neither prove nor copy.
 std::array<std::atomic<std::uint64_t>, 14>& DiagKeeps() {
@@ -567,6 +574,10 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         auto& keeps = DiagKeeps();
         std::fprintf(stderr, "[rescache-diag] cacheable recorded builds: inserted %llu; refused: completion %llu lease %llu refreshed %llu bigdata %llu nodirect %llu noserial %llu copied %llu copiedread %llu; not recorded %llu; purged draw %llu dispatch %llu\n", static_cast<unsigned long long>(keeps[10].load()), static_cast<unsigned long long>(keeps[1].load()), static_cast<unsigned long long>(keeps[2].load()), static_cast<unsigned long long>(keeps[3].load()), static_cast<unsigned long long>(keeps[4].load()), static_cast<unsigned long long>(keeps[5].load()), static_cast<unsigned long long>(keeps[6].load()), static_cast<unsigned long long>(keeps[9].load()), static_cast<unsigned long long>(keeps[13].load()), static_cast<unsigned long long>(keeps[12].load()), static_cast<unsigned long long>(ResourceCachePurged(true)), static_cast<unsigned long long>(ResourceCachePurged(false)));
         std::fprintf(stderr, "[rescache-diag] non-direct (all builds):%s\n", DiagNonDirectText().c_str());
+        auto& lookup = DiagLookup();
+        const auto found = std::max<std::uint64_t>(lookup[4].exchange(0), 1u);
+        const auto key = lookup[0].exchange(0), find = lookup[1].exchange(0), revalidate = lookup[2].exchange(0), movedNs = lookup[3].exchange(0);
+        std::fprintf(stderr, "[rescache-diag] lookup (10 s): key %.1f ms, find %.1f ms, revalidate %.1f ms (%.1f us per found), moved/copied proofs %.1f ms (%.1f us per found); %llu found\n", key / 1e6, find / 1e6, revalidate / 1e6, revalidate / 1e3 / static_cast<double>(found), movedNs / 1e6, movedNs / 1e3 / static_cast<double>(found), static_cast<unsigned long long>(found));
     }
     std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
@@ -1277,12 +1288,27 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
     if (resolved.cacheable) {
+        // DIAG: the lookup's sub-phases (APS5_PROFILE_DRAW), [rescache-diag] lookup line.
+        static const bool lookupProfiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        auto stamp = lookupProfiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const auto lap = [&](std::size_t phase) {
+            if (!lookupProfiled) return;
+            const auto now = std::chrono::steady_clock::now();
+            DiagLookup()[phase] += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - stamp).count());
+            stamp = now;
+        };
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
+        lap(0);
+        auto cached = SharedResourceCache().Find(resolved.contentKey);
+        lap(1);
+        if (cached != nullptr) {
+            ++DiagLookup()[4];
             const bool valid = cached->Revalidate(shaders);
+            lap(2);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
+            lap(3);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 resolved.resources = std::move(cached);

@@ -378,10 +378,23 @@ std::vector<LookupRecord>& lookupLog() {
     return ShaderRecompiler::ThreadOwned(lookupLogSlot);
 }
 
+// The bound drops the oldest half, never everything: one build's lookups are the newest records, and
+// a capture must find them even when the bound trips mid-build. An image-table draw looks up one
+// texture per table element (thousands), so the old bound of 1024 dropped most of them: those
+// textures had no record, every Revalidate of the object failed its fast proof ("no record") and
+// repeated every lookup in the full walk, which lost the records again. APS5_LOOKUP_LOG_BOUND sets
+// the bound (default 65536; 1024 is the previous behaviour).
+std::size_t LookupLogBound() {
+    static const std::size_t bound = [] {
+        const char* value = std::getenv("APS5_LOOKUP_LOG_BOUND");
+        const auto parsed = value != nullptr ? std::strtoull(value, nullptr, 10) : 65536ull;
+        return static_cast<std::size_t>(std::max<unsigned long long>(parsed, 2ull));
+    }();
+    return bound;
+}
+
 void logLookup(const LookupRecord& record) {
-    // The bound drops the oldest half, never everything: one build's lookups (a few dozen at most)
-    // are the newest records, and a capture must find them even when the bound trips mid-build.
-    constexpr std::size_t bound = 1024;
+    const auto bound = LookupLogBound();
     auto& log = lookupLog();
     if (log.size() >= bound) log.erase(log.begin(), log.begin() + bound / 2);
     log.push_back(record);
@@ -2291,17 +2304,21 @@ bool EpochRevalidate() {
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation() {
-    const auto record = [](const void* object) -> const LookupRecord* {
-        const auto& log = lookupLog();
-        for (auto it = log.rbegin(); it != log.rend(); ++it) {
-            if (it->object == object) return &*it;
-        }
-        return nullptr;
+    // The newest record of each object: one pass over the log instead of a reverse scan per texture
+    // (thousands of table textures against as many records).
+    thread_local std::unordered_map<const void*, const LookupRecord*>* newestSlot = nullptr;
+    auto& newest = ShaderRecompiler::ThreadOwned(newestSlot);
+    newest.clear();
+    for (const auto& entry : lookupLog()) newest[entry.object] = &entry;
+    const auto record = [&](const void* object) -> const LookupRecord* {
+        const auto found = newest.find(object);
+        return found != newest.end() ? found->second : nullptr;
     };
     validatedTextures.assign(textures.size(), {});
     for (std::size_t i = 0; i < textures.size(); ++i) {
         if (const auto* found = record(textures[i].get())) validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true};
     }
+    newest.clear();
     lookupLog().clear();
 }
 
