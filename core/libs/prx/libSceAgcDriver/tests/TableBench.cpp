@@ -7,6 +7,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "BdaAbi.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "ResultKey.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -94,9 +95,73 @@ int collectBench(int argc, char** argv) {
     return 0;
 }
 
+// check: captures of one table over write-watched memory with CPU stores into the table between
+// some of them; every snapshot must hold the table's current descriptors (a skipped column, a
+// whole reused snapshot or a full walk alike), and a carried hash must be the snapshot's.
+int checkReuse() {
+    require(AgcDriver::GuestMemory::WriteWatched(), "write tracking unavailable");
+    constexpr std::uint32_t Entries = 4096;
+    const std::size_t bytes = 1u << 20u;
+    std::int64_t physical = -1;
+    void* data = nullptr;
+    require(sceKernelAllocateDirectMemory(0, 0x10000000000ll, bytes, 65536, 3, &physical) == 0, "allocate direct memory failed");
+    require(sceKernelMapDirectMemory(&data, bytes, 3, 0, physical, 65536) == 0, "map direct memory failed");
+    const auto base = reinterpret_cast<std::uint64_t>(data);
+    auto* words = static_cast<std::uint32_t*>(data);
+    const auto heap = base + 0x10000u;
+    const auto textures = base + 0xc0000u;
+    auto* table = words + (heap - base) / 4u;
+    const auto entry = [&](std::uint32_t index, std::uint32_t salt) {
+        const auto t = TableT(textures + ((index + salt) % 61u) * 0x100u, (index + salt) % 5u == 0u ? 20u : 56u, 9u, 3u + (index + salt) % 7u);
+        std::memcpy(table + index * 8u, t.data(), sizeof(t));
+    };
+    for (std::uint32_t index = 0; index < Entries; ++index) entry(index, 0u);
+    const auto heapV = TableV(heap, 32u, Entries);
+    const auto outputV = TableV(base + 0x8000u, 0u, 16u);
+    std::memcpy(words, heapV.data(), 16u);
+    std::memset(words + 4, 0, 16u);
+    std::memcpy(words + 8, outputV.data(), 16u);
+    std::memcpy(words + 12, outputV.data(), 16u);
+    const std::array<std::uint32_t, 2> user{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    std::uint32_t carried = 0;
+    std::uint32_t stores = 0;
+    for (std::uint32_t round = 0; round < 60u; ++round) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        if (round % 9 == 4) {
+            entry((round * 977u) % Entries, round);
+            ++stores;
+        }
+        auto request = TableRequest(TableWholeCode, user);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto regions = memory.Regions();
+        request.context.memory = regions;
+        const auto& tables = capture->snapshot.tables;
+        require(tables.tables.size() == 1u && tables.tables[0].keys == Entries && tables.tables[0].codes.size() == Entries, "check: the table was not snapshotted whole");
+        for (std::uint32_t index = 0; index < Entries; ++index) {
+            const auto code = tables.tables[0].codes[index];
+            require(code < tables.words.size(), "check: a code is not a word");
+            const auto& value = tables.words[code];
+            require(value.dwordCount == 8u && std::memcmp(value.dwords.data(), table + index * 8u, 32u) == 0, "check: a snapshot holds a descriptor the table no longer has");
+        }
+        if (tables.hash != 0u) {
+            require(tables.hash == ShaderRecompiler::ResultKey::TablesHash(tables), "check: a carried hash is not the snapshot's");
+            ++carried;
+        }
+        bool hit = false;
+        const auto result = ShaderRecompiler::Recompile(request, *capture, &hit);
+        require(result != nullptr, "check: nothing compiled");
+    }
+    const bool reuse = std::getenv("APS5_NO_WHOLE_TABLE_REUSE") == nullptr && std::getenv("APS5_NO_TABLE_SKIP") == nullptr && std::getenv("APS5_NO_TABLE_MEMO") == nullptr && std::getenv("APS5_NO_TABLE_OUTPUT_REUSE") == nullptr;
+    require(!reuse || carried >= 30u, "check: few snapshots carried a hash (whole reuse did not happen)");
+    std::printf("table reuse check passed: 60 captures, %u table stores, %u snapshots with a carried hash\n", stores, carried);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc > 1 && std::string_view(argv[1]) == "collect") return collectBench(argc, argv);
+        if (argc > 1 && std::string_view(argv[1]) == "check") return checkReuse();
         const auto captures = argc > 1 ? std::strtoul(argv[1], nullptr, 0) : 2000ul;
         const auto entries = argc > 2 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0)) : 18960u;
         // SRT copies the per-capture user data cycles through: equal contents ("same"), or each

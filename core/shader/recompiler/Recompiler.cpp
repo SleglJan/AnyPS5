@@ -1422,7 +1422,7 @@ std::uint64_t fullSnapshotHash(const RecompileRequest& request, const ResourceSn
 // variant's result reads (ResultKey::ConsumedUserDataHash) and the tables through
 // ResultKey::TablesHash, which `tablesHash` receives (0 without tables) for the table memo.
 std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, const CompiledVariant& variant, std::uint64_t& tablesHash) {
-    tablesHash = snapshot.tables.tables.empty() ? 0u : ResultKey::TablesHash(snapshot.tables);
+    tablesHash = snapshot.tables.tables.empty() ? 0u : snapshot.tables.hash != 0u ? snapshot.tables.hash : ResultKey::TablesHash(snapshot.tables);
     if (!CanonicalResultKey()) return fullSnapshotHash(request, snapshot);
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {

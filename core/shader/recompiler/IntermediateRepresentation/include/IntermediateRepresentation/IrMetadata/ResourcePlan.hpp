@@ -53,8 +53,13 @@ struct ImageTableSnapshot {
     std::vector<DescriptorValue> words;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::uint64_t shader = 0;
+    // ResultKey::TablesHash of the fields above when the snapshotter knows it (a snapshot reused
+    // whole carries its memo's), 0 when not computed. Not part of the value.
+    std::uint64_t hash = 0;
 
-    bool operator==(const ImageTableSnapshot& other) const = default;
+    bool operator==(const ImageTableSnapshot& other) const {
+        return tables == other.tables && words == other.words && ranges == other.ranges && shader == other.shader;
+    }
 };
 
 struct ResourceSnapshot {

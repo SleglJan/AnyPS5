@@ -67,10 +67,17 @@ inline std::uint64_t TablesHash(const ImageTableSnapshot& tables) {
         }
     }
     hash = Step(hash, tables.words.size(), LaneMultipliers[2]);
+    // The words four lanes wide, a descriptor's dwords past its count read as zero.
+    std::uint64_t lanes[4] = {hash ^ LaneMultipliers[0], hash ^ LaneMultipliers[1], Rotate(hash, 21u) ^ LaneMultipliers[2], Rotate(hash, 43u) ^ LaneMultipliers[3]};
     for (const auto& value : tables.words) {
-        const auto count = value.dwordCount < value.dwords.size() ? value.dwordCount : static_cast<std::uint32_t>(value.dwords.size());
-        hash = Step(hash, HashWords(std::span<const std::uint32_t>(value.dwords).first(count), value.dwordCount), LaneMultipliers[3]);
+        std::uint32_t dwords[8];
+        for (std::uint32_t dword = 0; dword < 8u; ++dword) dwords[dword] = dword < value.dwordCount ? value.dwords[dword] : 0u;
+        lanes[0] = Step(Step(lanes[0], value.dwordCount, LaneMultipliers[1]), dwords[0] | (static_cast<std::uint64_t>(dwords[1]) << 32u), LaneMultipliers[0]);
+        lanes[1] = Step(lanes[1], dwords[2] | (static_cast<std::uint64_t>(dwords[3]) << 32u), LaneMultipliers[1]);
+        lanes[2] = Step(lanes[2], dwords[4] | (static_cast<std::uint64_t>(dwords[5]) << 32u), LaneMultipliers[2]);
+        lanes[3] = Step(lanes[3], dwords[6] | (static_cast<std::uint64_t>(dwords[7]) << 32u), LaneMultipliers[3]);
     }
+    for (std::size_t lane = 0; lane < 4u; ++lane) hash = Step(hash, lanes[lane], LaneMultipliers[(lane + 3u) & 3u]);
     hash = Step(hash, tables.ranges.size(), LaneMultipliers[0]);
     for (const auto& [base, size] : tables.ranges) {
         hash = Step(hash, base, LaneMultipliers[1]);

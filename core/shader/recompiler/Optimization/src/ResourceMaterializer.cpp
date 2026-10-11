@@ -5,6 +5,7 @@
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "ImageTableAbi.hpp"
+#include "ResultKey.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -334,6 +335,11 @@ struct TableCounters {
     std::atomic<std::uint64_t> walkNanoseconds{0};
     std::atomic<std::uint64_t> codesNanoseconds{0};
     std::atomic<std::uint64_t> outputsReused{0};
+    // Snapshots reused whole (TableSnapshotter::ReuseWhole), and those checked against the full
+    // path with their differences (APS5_VERIFY_TABLE_MEMO=1).
+    std::atomic<std::uint64_t> wholeReused{0};
+    std::atomic<std::uint64_t> wholeVerified{0};
+    std::atomic<std::uint64_t> wholeMismatches{0};
     std::atomic<std::uint64_t> verified{0};
     std::atomic<std::uint64_t> verifyMismatches{0};
     std::atomic<long long> lastReport{0};
@@ -362,11 +368,12 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; whole snapshots reused %llu (verified %llu, %llu mismatches); phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
         static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.outputsReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(counters.wholeReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeVerified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeMismatches.load(std::memory_order_relaxed)),
         static_cast<double>(counters.setupNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.proofNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.outputNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.walkNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.codesNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
 }
 
@@ -385,6 +392,9 @@ struct ColumnRecords {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     // Every record was read (no poison code): the snapshot's codes are `words` as they are.
     bool allRead = false;
+    // The memo whose skip gave this column's output whole (its codes taken as they were); null
+    // when anything else made it (a whole-snapshot memo is built only from such columns).
+    struct ColumnMemo* pure = nullptr;
 };
 
 bool TableMemo() {
@@ -462,13 +472,21 @@ struct ColumnMemo {
     std::vector<std::uint32_t> codes;
     std::size_t codeBase = std::numeric_limits<std::size_t>::max();
     bool allRead = false;
+    // Moves with every change of what a skip of this memo outputs (a disarm, a walk that was not a
+    // pure skip, the slot taken for another column): a whole-snapshot memo records it.
+    std::uint64_t version = 0;
 
     void Disarm() {
+        ++version;
         generation = 0;
         spans.clear();
         images.clear();
         codes.clear();
         codeBase = std::numeric_limits<std::size_t>::max();
+    }
+
+    bool SameColumn(const TableColumn& column) const {
+        return address == column.address && sampler == column.sampler && dwordCount == column.dwordCount && stride == column.stride && addend == column.addend && offset == column.offset;
     }
 
     bool Matches(const TableColumn& column, const ColumnRecords& records) const {
@@ -486,8 +504,53 @@ struct ColumnMemos {
 };
 
 ColumnMemos& columnMemos() {
-    thread_local ColumnMemos memos;
+    // Reserved whole: a whole-snapshot memo refers to its column memos by address.
+    thread_local ColumnMemos memos = [] {
+        ColumnMemos made;
+        made.entries.reserve(ColumnMemoEntries);
+        return made;
+    }();
     return memos;
+}
+
+// A plan's whole snapshot made of pure skips only (every column's output its memo's, unchanged):
+// while every column's memo is the same (version), its table the same (base, size, records, keys)
+// and its skip proof holds again, the snapshot is this output again, hash included
+// (TableSnapshotter::ReuseWhole; APS5_NO_WHOLE_TABLE_REUSE=1 disables).
+struct SnapshotMemoColumn {
+    std::uint32_t source = 0;
+    ColumnMemo* memo = nullptr;
+    std::uint64_t version = 0;
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
+    std::uint32_t records = 0;
+    std::uint32_t keys = 0;
+    bool outside = false;
+};
+
+struct SnapshotMemo {
+    const IrResourcePlan* plan = nullptr;
+    std::uint64_t shaderHash = 0;
+    std::vector<SnapshotMemoColumn> columns;
+    ImageTableSnapshot output;
+    std::uint64_t used = 0;
+};
+
+constexpr std::size_t SnapshotMemoEntries = 8;
+
+struct SnapshotMemos {
+    std::vector<SnapshotMemo> entries;
+    std::uint64_t clock = 0;
+};
+
+SnapshotMemos& snapshotMemos() {
+    thread_local SnapshotMemos memos;
+    return memos;
+}
+
+bool WholeTableReuse() {
+    static const bool reuse = std::getenv("APS5_NO_WHOLE_TABLE_REUSE") == nullptr;
+    return reuse;
 }
 
 struct TableTrace {
@@ -532,12 +595,9 @@ public:
         }
         const auto started = std::chrono::steady_clock::now();
         tables.shader = plan.shaderHash;
-        tables.tables.resize(count);
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) Snapshot(image.source, image.table);
-        }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+        if (!ReuseWhole(count)) {
+            RunColumns(count);
+            RememberWhole(count);
         }
         auto& counters = tableCounters();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
@@ -557,6 +617,136 @@ public:
 
 private:
     static constexpr std::uint64_t PageBytes = 4096u;
+
+    void RunColumns(std::uint32_t count) {
+        tables.tables.resize(count);
+        for (const auto& image : plan.info.images) {
+            if (image.table != NoTable) Snapshot(image.source, image.table);
+        }
+        for (const auto& sampler : plan.info.samplers) {
+            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+        }
+    }
+
+    // The table sources in the order RunColumns takes them, each once.
+    std::vector<std::uint32_t> TableSources() const {
+        std::vector<std::uint32_t> sources;
+        const auto add = [&](std::uint32_t source) {
+            if (std::find(sources.begin(), sources.end(), source) == sources.end()) sources.push_back(source);
+        };
+        for (const auto& image : plan.info.images) {
+            if (image.table != NoTable) add(image.source);
+        }
+        for (const auto& sampler : plan.info.samplers) {
+            if (sampler.table != NoTable) add(sampler.source);
+        }
+        return sources;
+    }
+
+    // A column's table as Column() evaluates it (the same reads): base, size, records, keys and
+    // outside; false for a fault (not a buffer).
+    bool TableInputs(const TableColumn& column, ColumnRecords& records) {
+        if (column.address) {
+            DescriptorValue pointer;
+            walker.EvaluateDescriptorSource(plan, column.heapSource, runtime, pointer);
+            records.base = (static_cast<std::uint64_t>(pointer.dwords[1]) << 32u) | pointer.dwords[0];
+            records.records = ImageTableAbi::ScalarAddressRecords(column.stride);
+        } else {
+            const auto heap = EvaluateBuffer(column.heapSource);
+            if (heap.Type() != 0u) {
+                records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::NotBuffer));
+                return false;
+            }
+            records.base = heap.Base48();
+            records.size = heap.GetSize();
+            records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset, records.size);
+        }
+        records.records = std::min(records.records, ImageTableAbi::KeyRecords(column.maxKey, column.stride));
+        records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
+        records.outside = records.keys < records.records;
+        return true;
+    }
+
+    // The whole previous snapshot of the plan when every column would be a pure skip of the same
+    // memo over the same table: the tables' inputs are evaluated (their reads recorded as the full
+    // path records them), every memo's skip proof is made (its pages replayed), and the output is
+    // taken whole, hash included.
+    bool ReuseWhole(std::uint32_t count) {
+        if (!WholeTableReuse() || !TableMemo() || runtime.tableMemory == nullptr) return false;
+        auto& memos = snapshotMemos();
+        const auto found = std::find_if(memos.entries.begin(), memos.entries.end(), [&](const SnapshotMemo& entry) { return entry.plan == &plan && entry.shaderHash == plan.shaderHash && entry.output.tables.size() == count; });
+        if (found == memos.entries.end()) return false;
+        auto& memo = *found;
+        for (const auto& entry : memo.columns) {
+            if (entry.memo->version != entry.version || entry.memo->generation == 0) return false;
+            const auto& column = *plan.descriptorSources.at(entry.source).tableColumn;
+            if (column.keyDomain.has_value() || !entry.memo->SameColumn(column)) return false;
+            if (entry.source < activeSources.size() && activeSources[entry.source] == 0u) return false;
+            ColumnRecords inputs;
+            if (!TableInputs(column, inputs) || inputs.base != entry.base || inputs.size != entry.size || inputs.records != entry.records || inputs.keys != entry.keys || inputs.outside != entry.outside) return false;
+        }
+        const bool profiled = MaterializeProfiled();
+        const auto started = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        for (const auto& entry : memo.columns) {
+            if (!SkipReads(*entry.memo)) return false;
+        }
+        auto& counters = tableCounters();
+        if (profiled) counters.proofNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        tables = memo.output;
+        memo.used = ++memos.clock;
+        auto& columnClock = columnMemos();
+        for (const auto& entry : memo.columns) entry.memo->used = ++columnClock.clock;
+        const auto columnsReused = static_cast<std::uint64_t>(memo.columns.size());
+        counters.memoHits.fetch_add(columnsReused, std::memory_order_relaxed);
+        counters.memoSkipped.fetch_add(columnsReused, std::memory_order_relaxed);
+        counters.outputsReused.fetch_add(columnsReused, std::memory_order_relaxed);
+        counters.wholeReused.fetch_add(1, std::memory_order_relaxed);
+        for (const auto& table : tables.tables) counters.keys.fetch_add(table.keys, std::memory_order_relaxed);
+        if (TableMemoVerified()) VerifyWhole(count);
+        return true;
+    }
+
+    // APS5_VERIFY_TABLE_MEMO=1: the full path again (into its own snapshot), compared with the
+    // reused one, and the carried hash with one computed from it.
+    void VerifyWhole(std::uint32_t count) {
+        ImageTableSnapshot fresh;
+        fresh.shader = plan.shaderHash;
+        TableSnapshotter full(plan, runtime, walker, activeSources, fresh);
+        full.RunColumns(count);
+        auto& counters = tableCounters();
+        counters.wholeVerified.fetch_add(1, std::memory_order_relaxed);
+        const bool same = fresh == tables;
+        const bool hashed = ResultKey::TablesHash(fresh) == tables.hash;
+        if (same && hashed) return;
+        counters.wholeMismatches.fetch_add(1, std::memory_order_relaxed);
+        static std::atomic<std::uint32_t> reports{0};
+        if (reports.fetch_add(1, std::memory_order_relaxed) < 20u) std::fprintf(stderr, "[image-table] verify: shader 0x%llx's whole reused snapshot differs from the full path (%s)\n", static_cast<unsigned long long>(plan.shaderHash), !same ? "the snapshot" : "the hash");
+    }
+
+    // After the full path: a snapshot whose every column is a pure skip is kept for ReuseWhole,
+    // with its hash (computed once here).
+    void RememberWhole(std::uint32_t count) {
+        if (!WholeTableReuse() || !TableMemo() || runtime.tableMemory == nullptr) return;
+        SnapshotMemo memo;
+        for (const auto source : TableSources()) {
+            const auto found = columns.find(source);
+            if (found == columns.end()) return;
+            const auto& records = found->second;
+            if (records.pure == nullptr || records.fault != 0u || records.narrowed) return;
+            memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.outside});
+        }
+        if (memo.columns.empty()) return;
+        tables.hash = ResultKey::TablesHash(tables);
+        memo.plan = &plan;
+        memo.shaderHash = plan.shaderHash;
+        memo.output = tables;
+        auto& memos = snapshotMemos();
+        memo.used = ++memos.clock;
+        const auto same = std::find_if(memos.entries.begin(), memos.entries.end(), [&](const SnapshotMemo& entry) { return entry.plan == &plan && entry.shaderHash == plan.shaderHash && entry.output.tables.size() == count; });
+        if (same != memos.entries.end()) *same = std::move(memo);
+        else if (memos.entries.size() < SnapshotMemoEntries) memos.entries.push_back(std::move(memo));
+        else *std::min_element(memos.entries.begin(), memos.entries.end(), [](const SnapshotMemo& a, const SnapshotMemo& b) { return a.used < b.used; }) = std::move(memo);
+    }
 
     bool Accessible(std::uint64_t address, std::uint64_t bytes) const {
         return runtime.accessible == nullptr || runtime.accessible(runtime.userContext, address, bytes);
@@ -1020,8 +1210,10 @@ private:
                 widths.at(width) += static_cast<std::uint32_t>(memo->distinct.size());
                 records.words = memo->codes;
                 records.allRead = memo->allRead;
+                records.pure = memo;
                 counters.outputsReused.fetch_add(1, std::memory_order_relaxed);
             } else {
+                ++memo->version;
                 const bool bulk = widths.at(width) == 0u;
                 const auto first = tables.words.size();
                 Reuse(*memo, records);
@@ -1102,7 +1294,10 @@ private:
                 memo->local = std::move(local);
             }
         }
-        if (memo != nullptr) memo->used = ++memos.clock;
+        if (memo != nullptr) {
+            memo->used = ++memos.clock;
+            ++memo->version;
+        }
         if (profiled) counters.walkNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
         if (TableMemoVerified()) Verify(column, records, memo != nullptr ? memo->plan : fresh, statesIn);
     }
@@ -1119,25 +1314,8 @@ private:
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
             return records;
         }
-        if (column.address) {
-            DescriptorValue pointer;
-            walker.EvaluateDescriptorSource(plan, column.heapSource, runtime, pointer);
-            records.base = (static_cast<std::uint64_t>(pointer.dwords[1]) << 32u) | pointer.dwords[0];
-            records.records = ImageTableAbi::ScalarAddressRecords(column.stride);
-        } else {
-            const auto heap = EvaluateBuffer(column.heapSource);
-            if (heap.Type() != 0u) {
-                records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::NotBuffer));
-                return records;
-            }
-            records.base = heap.Base48();
-            records.size = heap.GetSize();
-            records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset, records.size);
-            if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
-        }
-        records.records = std::min(records.records, ImageTableAbi::KeyRecords(column.maxKey, column.stride));
-        records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
-        records.outside = records.keys < records.records;
+        if (!TableInputs(column, records)) return records;
+        if (!column.address && records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
         records.states.assign(records.keys, RecordState::Read);
         if (column.keyDomain.has_value() && records.keys != 0u) {
             Narrow(column, records);
