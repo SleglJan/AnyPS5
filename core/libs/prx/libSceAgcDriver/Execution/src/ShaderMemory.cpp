@@ -310,6 +310,64 @@ bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_
     return true;
 }
 
+bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const {
+    if (initial.empty()) return false;
+    const auto after = initial.lower_bound(begin);
+    if (after != initial.end() && after->first < end) return true;
+    return after != initial.begin() && std::prev(after)->first + std::prev(after)->second.size() > begin;
+}
+
+std::uint64_t ShaderMemory::tableCollect(void*, std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes) return 0;
+    return GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes));
+}
+
+bool ShaderMemory::tableUnchanged(void* context, std::uint64_t address, std::uint64_t bytes, std::uint64_t generation) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    if (generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
+    const auto size = static_cast<std::size_t>(bytes);
+    // A page recorded work writes is read word by word (and may wait): never replayed.
+    if (self.pendingWrite != nullptr && self.pendingWrite(address, size, {}) != PendingWrite::None) return false;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), size)) return false;
+    // What a read through the flush hook would store into the range before reading it.
+    GuestMemory::FlushGpuWrites(address, size);
+    static_cast<void>(GuestMemory::CollectWrites(address, size));
+    return GuestMemory::UnchangedSince(address, size, generation);
+}
+
+bool ShaderMemory::tableReadPage(void*, std::uint64_t base, std::uint32_t* words) {
+    if (base % PageBytes != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
+    GuestMemory::Read(base, std::as_writable_bytes(std::span(words, PageWords)), sizeof(std::uint32_t));
+    return true;
+}
+
+bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    // A page under an initial region is served from it, not cached: read normally.
+    if (base % PageBytes != 0 || self.overlapsInitial(base, base + PageBytes)) return false;
+    Page* page = nullptr;
+    if (const auto found = self.pages.find(base); found != self.pages.end()) {
+        // Fetched earlier in this capture: after the caller's generation, so equal to `words`.
+        page = &found->second;
+        if (page->wordwise || !page->valid.all()) return false;
+    } else {
+        // What `page` would fetch: the caller proved the page unchanged since `words` were read.
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
+        page = &self.pages[base];
+        std::memcpy(page->words.data(), words, PageBytes);
+        page->valid.set();
+        ++CaptureTotals().pages;
+    }
+    std::bitset<PageWords> bits;
+    for (std::size_t word = 0; word < PageWords / 64; ++word) {
+        if (mask[word] != 0) bits |= std::bitset<PageWords>(mask[word]) << (word * 64);
+    }
+    page->read |= bits;
+    page->recent |= bits;
+    if (CaptureProfiled()) CaptureTotals().reads += bits.count();
+    return true;
+}
+
 bool ShaderMemory::pending(void* context, std::uint64_t address, std::uint64_t bytes) {
     const auto& self = *static_cast<const ShaderMemory*>(context);
     if (self.pendingWrite == nullptr || bytes == 0) return false;
@@ -352,6 +410,10 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.accessible = &accessible;
     runtime.pendingWrite = &pending;
     runtime.readWords = &readWords;
+    // APS5_NO_TABLE_SKIP=1: image-table snapshots read every table (no unchanged-table replay).
+    static const bool tableSkip = std::getenv("APS5_NO_TABLE_SKIP") == nullptr;
+    static const ShaderRecompiler::SrtTableMemory tableMemory{&tableCollect, &tableUnchanged, &tableReadPage, &tableReplayPage};
+    if (tableSkip) runtime.tableMemory = &tableMemory;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);

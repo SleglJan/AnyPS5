@@ -90,6 +90,13 @@ private:
     static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
+    // ShaderRecompiler::SrtTableMemory for image-table snapshots that skip an unchanged table.
+    static std::uint64_t tableCollect(void* context, std::uint64_t address, std::uint64_t bytes);
+    static bool tableUnchanged(void* context, std::uint64_t address, std::uint64_t bytes, std::uint64_t generation);
+    static bool tableReadPage(void* context, std::uint64_t base, std::uint32_t* words);
+    static bool tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask);
+    // Whether an initial region overlaps [begin, end).
+    bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
     Page& page(std::uint64_t base);
 
     // Regions given at construction (the registered shader's code and header), referenced as given:

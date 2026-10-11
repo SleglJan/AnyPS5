@@ -320,6 +320,10 @@ struct TableCounters {
     std::atomic<std::uint64_t> memoHits{0};
     std::atomic<std::uint64_t> memoChanged{0};
     std::atomic<std::uint64_t> memoPlanned{0};
+    // Memo hits that skipped the reads (the column's pages proved unchanged and replayed), and the
+    // memos armed for that (page images taken after a hit).
+    std::atomic<std::uint64_t> memoSkipped{0};
+    std::atomic<std::uint64_t> memoArmed{0};
     std::atomic<std::uint64_t> verified{0};
     std::atomic<std::uint64_t> verifyMismatches{0};
     std::atomic<long long> lastReport{0};
@@ -348,10 +352,10 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits, %llu changed words, %llu planned; verified %llu columns, %llu mismatches\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed), %llu changed words, %llu planned; verified %llu columns, %llu mismatches\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
-        static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
+        static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)));
 }
 
@@ -379,6 +383,17 @@ bool TableMemoVerified() {
     static const bool verify = std::getenv("APS5_VERIFY_TABLE_MEMO") != nullptr;
     return verify;
 }
+
+// The most pages a column memo keeps images of for skipping its reads (16 MiB of table).
+constexpr std::size_t TableSkipPages = 4096;
+
+// A page of a column's table as read after the memo's generation was collected, and the dwords the
+// column's runs read in it.
+struct TablePageImage {
+    std::uint64_t base = 0;
+    std::array<std::uint32_t, 1024> words{};
+    std::array<std::uint64_t, 16> mask{};
+};
 
 // What a column's record walk reads, without the words: the accessibility answers it depended on
 // (one per change of page, in walk order: PageAccessible for a buffer column, the whole-page answer
@@ -420,6 +435,19 @@ struct ColumnMemo {
     std::vector<DescriptorValue> distinct;
     std::vector<std::uint32_t> local;
     std::uint64_t used = 0;
+    // Armed (nonzero): the write generation collected before the reads of a hit whose words these
+    // are, the page-aligned spans the plan's runs read, and those pages' images taken after it.
+    // While SrtTableMemory::unchanged holds for every span, a capture replays the images instead of
+    // reading (WalkRecords); anything else disarms the memo until a later hit arms it again.
+    std::uint64_t generation = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
+    std::vector<TablePageImage> images;
+
+    void Disarm() {
+        generation = 0;
+        spans.clear();
+        images.clear();
+    }
 
     bool Matches(const TableColumn& column, const ColumnRecords& records) const {
         return address == column.address && sampler == column.sampler && dwordCount == column.dwordCount && stride == column.stride && addend == column.addend && offset == column.offset && keys == records.keys && base == records.base && size == records.size && statesIn == records.states;
@@ -757,6 +785,102 @@ private:
         }
     }
 
+    // The page-aligned spans [begin, end) the plan's runs read, sorted and merged; empty when the
+    // plan cannot be skipped (an accessibility answer was false, or more than TableSkipPages pages).
+    static std::vector<std::pair<std::uint64_t, std::uint64_t>> SkipSpans(const ColumnPlan& plan) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
+        if (!plan.replayable || plan.runs.empty()) return spans;
+        for (const auto& [address, answer] : plan.checks) {
+            if (!answer) return spans;
+        }
+        spans.reserve(plan.runs.size());
+        for (const auto& [address, count] : plan.runs) {
+            const auto bytes = count * sizeof(std::uint32_t);
+            if (address > std::numeric_limits<std::uint64_t>::max() - bytes - PageBytes) return {};
+            spans.emplace_back(address & ~(PageBytes - 1u), (address + bytes + PageBytes - 1u) & ~(PageBytes - 1u));
+        }
+        std::sort(spans.begin(), spans.end());
+        std::size_t merged = 0;
+        std::uint64_t pages = 0;
+        for (const auto& span : spans) {
+            if (merged != 0u && span.first <= spans[merged - 1u].second) {
+                spans[merged - 1u].second = std::max(spans[merged - 1u].second, span.second);
+            } else {
+                spans[merged++] = span;
+            }
+        }
+        spans.resize(merged);
+        for (const auto& [begin, end] : spans) pages += (end - begin) / PageBytes;
+        if (pages > TableSkipPages) spans.clear();
+        return spans;
+    }
+
+    // One generation for every span (the newest of their collects; 0 when any is untracked).
+    std::uint64_t CollectSpans(const std::vector<std::pair<std::uint64_t, std::uint64_t>>& spans) const {
+        std::uint64_t generation = 0;
+        for (const auto& [begin, end] : spans) {
+            const auto collected = runtime.tableMemory->collect(runtime.userContext, begin, end - begin);
+            if (collected == 0) return 0;
+            generation = std::max(generation, collected);
+        }
+        return generation;
+    }
+
+    // Takes the images of an unchanged column's pages after a hit: read now (after `generation` was
+    // collected), they must give the very words the hit read, which the memo's lookups describe.
+    void Arm(ColumnMemo& memo, const std::vector<std::uint32_t>& words, std::vector<std::pair<std::uint64_t, std::uint64_t>> spans, std::uint64_t generation) const {
+        memo.Disarm();
+        if (generation == 0 || spans.empty()) return;
+        std::vector<TablePageImage> images;
+        for (const auto& [begin, end] : spans) {
+            for (auto base = begin; base < end; base += PageBytes) {
+                auto& image = images.emplace_back();
+                image.base = base;
+                if (!runtime.tableMemory->readPage(runtime.userContext, base, image.words.data())) return;
+            }
+        }
+        std::size_t at = 0;
+        std::size_t page = 0;
+        for (const auto& [address, count] : memo.plan.runs) {
+            for (std::uint64_t index = 0; index < count; ++index, ++at) {
+                const auto dword = address + index * sizeof(std::uint32_t);
+                const auto base = dword & ~(PageBytes - 1u);
+                if (images[page].base != base) {
+                    const auto found = std::lower_bound(images.begin(), images.end(), base, [](const TablePageImage& image, std::uint64_t value) { return image.base < value; });
+                    if (found == images.end() || found->base != base) return;
+                    page = static_cast<std::size_t>(found - images.begin());
+                }
+                const auto slot = static_cast<std::size_t>((dword - base) / sizeof(std::uint32_t));
+                if (at >= words.size() || images[page].words[slot] != words[at]) return;
+                images[page].mask[slot / 64u] |= std::uint64_t{1} << (slot % 64u);
+            }
+        }
+        memo.spans = std::move(spans);
+        memo.images = std::move(images);
+        memo.generation = generation;
+        tableCounters().memoArmed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // An armed memo's column without its reads: every span unchanged since the generation (after
+    // what a read would flush, with no recorded work writing it), its pages recorded as the full
+    // path's reads would have recorded them. False disarms the memo (the full path follows).
+    bool SkipReads(ColumnMemo& memo) const {
+        const auto& memory = *runtime.tableMemory;
+        for (const auto& [begin, end] : memo.spans) {
+            if (!memory.unchanged(runtime.userContext, begin, end - begin, memo.generation)) {
+                memo.Disarm();
+                return false;
+            }
+        }
+        for (const auto& image : memo.images) {
+            if (!memory.replayPage(runtime.userContext, image.base, image.words.data(), image.mask.data())) {
+                memo.Disarm();
+                return false;
+            }
+        }
+        return true;
+    }
+
     // APS5_VERIFY_TABLE_MEMO=1: the word-by-word walk again (its reads hit the dwords already
     // fetched), compared with what the planned walk produced.
     void Verify(const TableColumn& column, const ColumnRecords& records, const ColumnPlan& plan, const std::vector<RecordState>& statesIn) {
@@ -846,6 +970,28 @@ private:
                 }
             }
         }
+        // APS5_NO_TABLE_SKIP=1 (ShaderMemory gives no SrtTableMemory): every column reads.
+        const bool skips = TableMemo() && runtime.tableMemory != nullptr;
+        if (skips && memo != nullptr && memo->generation != 0 && SkipReads(*memo)) {
+            auto statesIn = std::move(records.states);
+            records.states = memo->plan.states;
+            records.readRanges = memo->plan.readRanges;
+            if (column.address && memo->plan.low < memo->plan.high) tables.ranges.emplace_back(memo->plan.low, memo->plan.high - memo->plan.low);
+            Reuse(*memo, records);
+            counters.memoHits.fetch_add(1, std::memory_order_relaxed);
+            counters.memoSkipped.fetch_add(1, std::memory_order_relaxed);
+            memo->used = ++memos.clock;
+            if (TableMemoVerified()) Verify(column, records, memo->plan, statesIn);
+            return;
+        }
+        // A memo that can be armed collects its generation before the plan's accessibility checks
+        // fetch the column's pages, so what this capture reads is no older than the generation.
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> armSpans;
+        std::uint64_t armGeneration = 0;
+        if (skips && memo != nullptr && memo->valued) {
+            armSpans = SkipSpans(memo->plan);
+            if (!armSpans.empty()) armGeneration = CollectSpans(armSpans);
+        }
         ColumnPlan fresh;
         const bool replayed = memo != nullptr && Replay(memo->plan, column, records);
         if (!replayed) {
@@ -862,7 +1008,9 @@ private:
         if (replayed && memo->valued && memo->words == words) {
             Reuse(*memo, records);
             counters.memoHits.fetch_add(1, std::memory_order_relaxed);
+            if (armGeneration != 0) Arm(*memo, words, std::move(armSpans), armGeneration);
         } else {
+            if (memo != nullptr) memo->Disarm();
             if (replayed) counters.memoChanged.fetch_add(1, std::memory_order_relaxed);
             std::vector<DescriptorValue> distinct;
             std::vector<std::uint32_t> local;
@@ -884,6 +1032,7 @@ private:
                     memo->base = records.base;
                     memo->size = records.size;
                     memo->statesIn = statesIn;
+                    memo->Disarm();
                 }
                 if (!replayed) memo->plan = std::move(fresh);
                 memo->valued = memo->plan.replayable;
