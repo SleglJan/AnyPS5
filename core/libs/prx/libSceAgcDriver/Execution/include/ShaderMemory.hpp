@@ -14,6 +14,7 @@
 
 namespace ShaderRecompiler {
 struct SourceHandle;
+struct SrtRuntime;
 class PreparedShaderInvocation;
 }
 
@@ -63,6 +64,7 @@ public:
     // resolution.
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle = nullptr);
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> Capture(const ShaderRecompiler::PreparedShaderInvocation& invocation);
+    [[nodiscard]] ShaderRecompiler::SrtRuntime MakeRuntime(std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     [[nodiscard]] std::vector<ShaderRecompiler::MemoryRegion> Regions() const;
     // The page regions read since the previous call (or construction), a word read again
     // included, the initial regions excluded: one stage's own reads on the draw path's shared
@@ -85,14 +87,18 @@ private:
     };
 
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
+    static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
     Page& page(std::uint64_t base);
+    [[nodiscard]] bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
 
     // Regions given at construction (the registered shader's code and header), referenced as given:
     // the caller keeps them alive for as long as the capture is used.
     std::map<std::uint64_t, std::span<const std::byte>> initial;
     std::map<std::uint64_t, Page> pages;
+    std::uint64_t bulkBase = ~std::uint64_t{0};
+    Page* bulkPage = nullptr;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

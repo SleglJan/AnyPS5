@@ -22,6 +22,7 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <map>
@@ -31,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -1166,6 +1168,195 @@ void verifyPointerImageTable() {
     VirtualFree(block, 0, MEM_RELEASE);
 #else
     munmap(block, Reserved);
+#endif
+}
+
+std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> RegionCopies(const std::vector<ShaderRecompiler::MemoryRegion>& regions) {
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> copies;
+    for (const auto& region : regions) copies.emplace_back(region.guestAddress, std::vector<std::byte>(region.bytes.begin(), region.bytes.end()));
+    return copies;
+}
+
+std::uint64_t bulkPendingPage = 0;
+
+AgcDriver::ShaderMemory::PendingWrite BulkPendingWrites(std::uint64_t address, std::size_t bytes, std::span<std::byte> known) {
+    using Policy = AgcDriver::ShaderMemory::PendingWrite;
+    if (address + bytes <= bulkPendingPage || address >= bulkPendingPage + 4096u) return Policy::None;
+    if (bytes == sizeof(std::uint32_t) && address == bulkPendingPage + 8u) {
+        const std::uint32_t value = 0x0badf00du;
+        if (known.size() == sizeof(value)) std::memcpy(known.data(), &value, sizeof(value));
+        return Policy::KnownValue;
+    }
+    return bytes == sizeof(std::uint32_t) && address % 16u == 4u ? Policy::Sync : Policy::Raw;
+}
+
+void verifyBulkWordReads() {
+    using namespace ShaderRecompiler;
+    alignas(4096) static std::array<std::uint32_t, 3 * 1024> guest{};
+    static std::array<std::uint32_t, 16> shadow{};
+    for (std::uint32_t index = 0; index < guest.size(); index++) guest[index] = 0x9e3779b9u * (index + 1u);
+    for (std::uint32_t index = 0; index < shadow.size(); index++) shadow[index] = 0x51000000u + index;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.data()));
+    bulkPendingPage = base + 2u * 4096u;
+    const std::array<MemoryRegion, 1> initial{{{base + 4096u + 64u, std::as_bytes(std::span(shadow))}}};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 7> runs{{{base + 4u * 1000u, 60u}, {base + 4096u + 2048u, 100u}, {base + 40u, 5u}, {base + 2u * 4096u - 16u, 12u}, {base + 2u * 4096u + 4000u, 24u}, {base, 1024u}, {base + 4096u + 60u, 3u}}};
+    AgcDriver::ShaderMemory words(initial, &BulkPendingWrites);
+    AgcDriver::ShaderMemory bulk(initial, &BulkPendingWrites);
+    const std::array<std::uint32_t, 2> userData{};
+    const auto wordRuntime = words.MakeRuntime(userData, 0u);
+    const auto bulkRuntime = bulk.MakeRuntime(userData, 0u);
+    require(bulkRuntime.readWords != nullptr && bulkRuntime.readMemory != nullptr, "bulk word reads: the runtime has no bulk reader");
+    std::vector<std::uint32_t> wordValues;
+    std::vector<std::uint32_t> bulkValues;
+    for (const auto& [address, count] : runs) {
+        for (std::uint64_t word = 0; word < count; word++) {
+            std::uint32_t value = 0;
+            require(wordRuntime.readMemory(wordRuntime.userContext, address + word * 4u, &value), "bulk word reads: a word read failed");
+            wordValues.push_back(value);
+        }
+        const auto at = bulkValues.size();
+        bulkValues.resize(at + count);
+        require(bulkRuntime.readWords(bulkRuntime.userContext, address, bulkValues.data() + at, count), "bulk word reads: a bulk read failed");
+        require(RegionCopies(words.TakeRecentRegions()) == RegionCopies(bulk.TakeRecentRegions()), "bulk word reads: a run marked other recent words than its word reads");
+    }
+    require(wordValues == bulkValues, "bulk word reads: the values differ from word reads");
+    require(RegionCopies(words.Regions()) == RegionCopies(bulk.Regions()), "bulk word reads: the read marks differ from word reads");
+    const auto valueAt = [&](std::uint64_t address) {
+        std::uint64_t position = 0;
+        for (const auto& [runAddress, count] : runs) {
+            if (address >= runAddress && address < runAddress + count * 4u) return bulkValues.at(position + (address - runAddress) / 4u);
+            position += count;
+        }
+        throw std::runtime_error("bulk word reads: the address was not read");
+    };
+    require(valueAt(base + 4096u + 64u) == shadow[0] && valueAt(base + 4096u + 4u * 28u) == shadow[12], "bulk word reads: a word under an initial region did not come from it");
+    require(valueAt(bulkPendingPage + 8u) == 0x0badf00du && valueAt(bulkPendingPage + 4u) == guest[2u * 1024u + 1u], "bulk word reads: a word over a pending write was not read through the pending-write policy");
+    require(valueAt(base + 4096u + 2048u) == guest[1024u + 512u] && valueAt(base + 40u) == guest[10], "bulk word reads: a fetched word is wrong");
+    expectFailure([&] { std::uint32_t value = 0; static_cast<void>(bulkRuntime.readWords(bulkRuntime.userContext, base + 2u, &value, 1u)); }, "invalid shader memory read address", "bulk word reads: a misaligned bulk read was accepted");
+}
+
+struct TableTake {
+    ShaderRecompiler::ImageTableSnapshot tables;
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> regions;
+};
+
+std::uint64_t orderBegin = 0;
+std::uint64_t orderEnd = 0;
+std::vector<std::uint64_t> orderReads;
+
+AgcDriver::ShaderMemory::PendingWrite OrderPendingWrites(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+    if (address + bytes <= orderBegin || address >= orderEnd) return AgcDriver::ShaderMemory::PendingWrite::None;
+    if (bytes == sizeof(std::uint32_t)) orderReads.push_back(address);
+    return AgcDriver::ShaderMemory::PendingWrite::Raw;
+}
+
+TableTake TakeTable(const ShaderRecompiler::RecompileRequest& request, AgcDriver::ShaderMemory::PendingWriteQuery query = nullptr) {
+    AgcDriver::ShaderMemory memory({}, query);
+    const auto capture = memory.Capture(request);
+    return {capture->snapshot.tables, RegionCopies(memory.Regions())};
+}
+
+TableTake TakeTableOnNewThread(const ShaderRecompiler::RecompileRequest& request) {
+    TableTake taken;
+    std::exception_ptr failure;
+    std::thread([&] {
+        try {
+            taken = TakeTable(request);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }).join();
+    if (failure != nullptr) std::rethrow_exception(failure);
+    return taken;
+}
+
+void requireSameTake(const TableTake& reused, const TableTake& fresh, const char* message) {
+    require(reused.tables == fresh.tables && reused.regions == fresh.regions, message);
+}
+
+void verifyImageTableSnapshotReuse() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::uint32_t Entries = 300;
+    constexpr std::size_t Mapped = 3u * 4096u;
+    static TableTexture textures[3];
+    alignas(4096) static TableGuest guest;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, Mapped, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    require(block != nullptr, "image table reuse: cannot map the table");
+    const auto protect = [&](bool accessible) {
+        DWORD previous = 0;
+        require(VirtualProtect(static_cast<std::byte*>(block) + 4096u, 4096u, accessible ? PAGE_READWRITE : PAGE_NOACCESS, &previous) != 0, "image table reuse: cannot protect a page");
+    };
+#else
+    void* block = mmap(nullptr, Mapped, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(block != MAP_FAILED, "image table reuse: cannot map the table");
+    const auto protect = [&](bool accessible) {
+        require(mprotect(static_cast<std::byte*>(block) + 4096u, 4096u, accessible ? PROT_READ | PROT_WRITE : PROT_NONE) == 0, "image table reuse: cannot protect a page");
+    };
+#endif
+    auto* heap = static_cast<std::array<std::uint32_t, 8>*>(block);
+    for (std::uint32_t entry = 0; entry < Entries; entry++) heap[entry] = TableT(textures[entry % 3u].bytes.data(), entry % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, 3u + entry % 5u);
+    FillTableSrt(guest, heap, 32u, Entries);
+    const auto userData = TableUserData(guest);
+    const auto whole = TableRequest(TableWholeCode, userData);
+
+    const auto first = TakeTable(whole);
+    const auto second = TakeTable(whole);
+    const auto fresh = TakeTableOnNewThread(whole);
+    require(first.tables.tables.size() == 1u && first.tables.tables[0].keys == Entries && first.tables.words.size() == 30u, "image table reuse: the table was not snapshotted whole");
+    requireSameTake(first, fresh, "image table reuse: the first snapshot differs from a fresh one");
+    requireSameTake(second, fresh, "image table reuse: a repeated snapshot differs from a fresh one");
+
+    const auto heapBegin = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(heap));
+    orderBegin = heapBegin;
+    orderEnd = heapBegin + Entries * 32u;
+    for (std::uint32_t round = 0; round < 2u; round++) {
+        orderReads.clear();
+        requireSameTake(TakeTable(whole, &OrderPendingWrites), fresh, "image table reuse: a snapshot over pending writes differs from a fresh one");
+        require(orderReads.size() == Entries * 8u, "image table reuse: a record dword was not read exactly once");
+        for (std::size_t read = 0; read < orderReads.size(); read++) require(orderReads[read] == heapBegin + read * 4u, "image table reuse: the records were not read in key and dword order");
+    }
+
+    heap[7][1] ^= (TableFormat8888UNorm ^ TableFormat32UInt) << 20u;
+    const auto changed = TakeTable(whole);
+    requireSameTake(changed, TakeTableOnNewThread(whole), "image table reuse: a snapshot after a changed descriptor word differs from a fresh one");
+    require(changed.tables != fresh.tables, "image table reuse: a changed descriptor word did not change the snapshot");
+
+    protect(false);
+    const auto unmapped = TakeTable(whole);
+    requireSameTake(unmapped, TakeTableOnNewThread(whole), "image table reuse: a snapshot after a page became inaccessible differs from a fresh one");
+    const auto& unmappedCodes = unmapped.tables.tables.at(0).codes;
+    const auto poison = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
+    require(unmappedCodes.at(127) != poison && unmappedCodes.at(128) == poison && unmappedCodes.at(255) == poison && unmappedCodes.at(256) != poison, "image table reuse: the records on the inaccessible page are not Unmapped poison");
+    protect(true);
+    const auto remapped = TakeTable(whole);
+    requireSameTake(remapped, TakeTableOnNewThread(whole), "image table reuse: a snapshot after a page became accessible again differs from a fresh one");
+    requireSameTake(remapped, changed, "image table reuse: a remapped page did not restore the snapshot");
+
+    const auto material = TableRequest(TableMaterialCode, userData);
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
+    const auto narrowed = TakeTable(material);
+    requireSameTake(narrowed, TakeTableOnNewThread(material), "image table reuse: a narrowed snapshot differs from a fresh one");
+    guest.materials = {{{0u, 5u, 0u, 0u}, {0u, 299u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
+    const auto renarrowed = TakeTable(material);
+    requireSameTake(renarrowed, TakeTableOnNewThread(material), "image table reuse: a snapshot with other records in the key domain differs from a fresh one");
+    require(renarrowed.tables != narrowed.tables, "image table reuse: other records in the key domain did not change the snapshot");
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}};
+    requireSameTake(TakeTable(material), narrowed, "image table reuse: the first key domain did not give the first snapshot again");
+
+    const std::vector<std::uint32_t> twoTablesCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf42c0902u, 0x20000020u, 0xf09c0f08u, 0x00490400u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xe0700000u, 0x80070400u, 0xbf810000u};
+    const auto twoTables = TableRequest(twoTablesCode, userData);
+    const auto pairFirst = TakeTable(twoTables);
+    const auto pairSecond = TakeTable(twoTables);
+    const auto pairFresh = TakeTableOnNewThread(twoTables);
+    require(pairFirst.tables.tables.size() == 2u && pairFirst.tables.tables[0].keys != 0u && pairFirst.tables.tables[1].keys != 0u, "image table reuse: the program does not snapshot two image tables");
+    requireSameTake(pairFirst, pairFresh, "image table reuse: a first snapshot of two tables differs from a fresh one");
+    requireSameTake(pairSecond, pairFresh, "image table reuse: a repeated snapshot of two tables sharing descriptors differs from a fresh one");
+#ifdef _WIN32
+    VirtualFree(block, 0, MEM_RELEASE);
+#else
+    munmap(block, Mapped);
 #endif
 }
 
@@ -3248,6 +3439,8 @@ int main(int argc, char** argv) {
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();
+            verifyBulkWordReads();
+            verifyImageTableSnapshotReuse();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -3264,6 +3457,8 @@ int main(int argc, char** argv) {
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
+        verifyBulkWordReads();
+        verifyImageTableSnapshotReuse();
         verifyDescriptorPhis();
         verifyLaneSelectedDescriptors();
         verifyProgramCounterRelativeData();

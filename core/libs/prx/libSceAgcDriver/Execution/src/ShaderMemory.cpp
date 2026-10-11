@@ -201,6 +201,60 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     return true;
 }
 
+bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const {
+    if (initial.empty()) return false;
+    const auto after = initial.lower_bound(begin);
+    if (after != initial.end() && after->first < end) return true;
+    return after != initial.begin() && std::prev(after)->first + std::prev(after)->second.size() > begin;
+}
+
+bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count) {
+    auto& self = *static_cast<ShaderMemory*>(context);
+    while (count != 0) {
+        const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+        const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(std::uint32_t));
+        const auto words = static_cast<std::size_t>(std::min<std::uint64_t>(count, PageWords - index));
+        const auto bytes = static_cast<std::uint64_t>(words) * sizeof(std::uint32_t);
+        Page* page = nullptr;
+        if (address % sizeof(std::uint32_t) == 0 && address <= std::numeric_limits<std::uint64_t>::max() - bytes) {
+            if (base == self.bulkBase) {
+                page = self.bulkPage;
+            } else if (!self.overlapsInitial(base, base + PageBytes)) {
+                page = &self.page(base);
+                self.bulkBase = base;
+                self.bulkPage = page;
+            } else if (!self.overlapsInitial(address, address + bytes)) {
+                page = &self.page(base);
+            }
+        }
+        if (page != nullptr && page->valid.all()) {
+            std::memcpy(values, page->words.data() + index, bytes);
+            if (words < 64) {
+                for (std::size_t word = index; word < index + words; ++word) {
+                    page->read.set(word);
+                    page->recent.set(word);
+                }
+            } else {
+                std::bitset<PageWords> mask;
+                mask.set();
+                mask >>= PageWords - words;
+                mask <<= index;
+                page->read |= mask;
+                page->recent |= mask;
+            }
+            CaptureTotals().reads += words;
+        } else {
+            for (std::size_t word = 0; word < words; ++word) {
+                if (!read(context, address + word * sizeof(std::uint32_t), values + word)) return false;
+            }
+        }
+        address += bytes;
+        values += words;
+        count -= words;
+    }
+    return true;
+}
+
 bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_t bytes) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes) return false;
@@ -256,14 +310,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     // The hook's GPU waits made anywhere inside the capture.
     const auto waitedBefore = profile ? WaitedMs() : 0.0;
     const auto started = std::chrono::steady_clock::now();
-    ShaderRecompiler::SrtRuntime runtime;
-    runtime.userData = request.context.userData;
-    runtime.shaderBase = request.shader.codeAddress;
-    runtime.userContext = this;
-    runtime.readMemory = &read;
-    runtime.readSpecializationMemory = &read;
-    runtime.accessible = &accessible;
-    runtime.pendingWrite = &pending;
+    const auto runtime = MakeRuntime(request.context.userData, request.shader.codeAddress);
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
@@ -284,6 +331,19 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
         }
     }
     return capture;
+}
+
+ShaderRecompiler::SrtRuntime ShaderMemory::MakeRuntime(std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = userData;
+    runtime.shaderBase = shaderBase;
+    runtime.userContext = this;
+    runtime.readMemory = &read;
+    runtime.readSpecializationMemory = &read;
+    runtime.accessible = &accessible;
+    runtime.pendingWrite = &pending;
+    runtime.readWords = &readWords;
+    return runtime;
 }
 
 std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
