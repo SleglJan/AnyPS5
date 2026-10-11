@@ -457,7 +457,13 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    // With `unrecorded`, a texture the build's lookups left no record of (a depth surface's
+    // texture: DepthSurfaceTexture logs none) is no failure: its index is listed there instead and
+    // the proof covers the rest (lookUpUnrecorded then repeats those elements' lookups).
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, std::vector<std::size_t>* unrecorded = nullptr);
+    // The full walk's lookups of the listed texture indices alone (in its order, through the same
+    // descriptors): each must return the very object again. Takes their new records.
+    bool lookUpUnrecorded(std::span<const CompiledShader> shaders, std::span<const std::size_t> unrecorded);
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's

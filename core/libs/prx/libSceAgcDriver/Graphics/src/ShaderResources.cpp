@@ -2201,6 +2201,13 @@ struct RevalidateProfile {
     std::atomic<std::uint64_t> ownSourceViews{0};
     std::atomic<std::uint64_t> refreshedOverlaps{0};
     std::atomic<std::uint64_t> proofsVerified{0};
+    // Fast proofs that left unrecorded elements to their own lookups (lookUpUnrecorded): the
+    // proofs, the elements looked up, those whose lookup returned another object, and the
+    // proofs APS5_VERIFY_PARTIAL_REVALIDATE checked against the full walk.
+    std::atomic<std::uint64_t> partialProofs{0};
+    std::atomic<std::uint64_t> partialElements{0};
+    std::atomic<std::uint64_t> partialFailed{0};
+    std::atomic<std::uint64_t> partialVerified{0};
     std::atomic<std::int64_t> lastReport{0};
 };
 
@@ -2260,6 +2267,11 @@ bool VerifyProofs() {
     return enabled;
 }
 
+bool VerifyPartialRevalidate() {
+    static const bool enabled = std::getenv("APS5_VERIFY_PARTIAL_REVALIDATE") != nullptr;
+    return enabled;
+}
+
 // Whether a sampled surface's keys are the very keys of the image the view follows (the same
 // metadata, extent, format and alpha placement: the same scan), so the image's proof serves it.
 bool SameKeySurface(const StorageTexture* source, const GuestTextureResource& resource, std::uint64_t guestBytes) {
@@ -2289,7 +2301,7 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
     const auto reasons = byReason(profile.fastFails, FastFailNames);
     const auto fullReasons = byReason(profile.fullByReason, FastFailNames);
     const auto fallbacks = byReason(profile.ownFallbacks, OwnRefreshFallbackNames);
-    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped\n", static_cast<unsigned long long>(profile.calls.load()), profile.nanoseconds.load() / 1e6, static_cast<unsigned long long>(profile.fast.load()), static_cast<unsigned long long>(profile.full.load()), static_cast<unsigned long long>(profile.failed.load()), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.load()), static_cast<unsigned long long>(profile.ownStorageRefreshes.load()), static_cast<unsigned long long>(profile.ownViewRefreshes.load()), static_cast<unsigned long long>(profile.ownSourceViews.load()), static_cast<unsigned long long>(profile.refreshedOverlaps.load()), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.load()), static_cast<unsigned long long>(profile.pendingForeign.load()), static_cast<unsigned long long>(profile.pendingSnapshot.load()), static_cast<unsigned long long>(profile.pendingT1Eligible.load()), static_cast<unsigned long long>(profile.keysProven.load()), static_cast<unsigned long long>(profile.storageKeysProven.load()), static_cast<unsigned long long>(profile.serialSkips.load()), static_cast<unsigned long long>(profile.importSkips.load()));
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; partial proofs %llu (%llu unrecorded elements looked up, %llu failed, %llu verified)\n", static_cast<unsigned long long>(profile.calls.load()), profile.nanoseconds.load() / 1e6, static_cast<unsigned long long>(profile.fast.load()), static_cast<unsigned long long>(profile.full.load()), static_cast<unsigned long long>(profile.failed.load()), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.load()), static_cast<unsigned long long>(profile.ownStorageRefreshes.load()), static_cast<unsigned long long>(profile.ownViewRefreshes.load()), static_cast<unsigned long long>(profile.ownSourceViews.load()), static_cast<unsigned long long>(profile.refreshedOverlaps.load()), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.load()), static_cast<unsigned long long>(profile.pendingForeign.load()), static_cast<unsigned long long>(profile.pendingSnapshot.load()), static_cast<unsigned long long>(profile.pendingT1Eligible.load()), static_cast<unsigned long long>(profile.keysProven.load()), static_cast<unsigned long long>(profile.storageKeysProven.load()), static_cast<unsigned long long>(profile.serialSkips.load()), static_cast<unsigned long long>(profile.importSkips.load()), static_cast<unsigned long long>(profile.partialProofs.load()), static_cast<unsigned long long>(profile.partialElements.load()), static_cast<unsigned long long>(profile.partialFailed.load()), static_cast<unsigned long long>(profile.partialVerified.load()));
 }
 
 // APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
@@ -2337,10 +2349,11 @@ void ShaderResources::captureValidation() {
 // registry mutex), so the pending-image checks are skipped; otherwise one scan answers them for
 // every surface at once. The stamp checks go through one tracker lock, the cache checks through
 // the images' cached flags and one touch of the cache.
-bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted) {
+bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, std::vector<std::size_t>* unrecorded) {
     reason = FastFail::Count;
     overlapping.clear();
     accepted = false;
+    if (unrecorded != nullptr) unrecorded->clear();
     if (!EpochRevalidate()) return fastRevalidateEach();
     const auto fail = [&reason](FastFail why) {
         reason = why;
@@ -2372,7 +2385,11 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     };
     for (std::size_t i = 0; i < textures.size(); ++i) {
         auto& surface = validatedTextures[i];
-        if (!surface.valid) return fail(FastFail::NoRecord);
+        if (!surface.valid) {
+            if (unrecorded == nullptr) return fail(FastFail::NoRecord);
+            unrecorded->push_back(i);
+            continue;
+        }
         if (surface.depth) {
             if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
@@ -2484,9 +2501,59 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     for (const auto* image : images) image->NoteProved();
     for (std::size_t i = 0; i < validatedTextures.size(); ++i) {
         auto& surface = validatedTextures[i];
+        if (!surface.valid) continue;
         if (surface.source == nullptr) surface.generation = surface.collected;
         surface.keys = scannedKeys[i];
     }
+    return true;
+}
+
+bool ShaderResources::lookUpUnrecorded(std::span<const CompiledShader> shaders, std::span<const std::size_t> unrecorded) {
+    lookupLog().clear();
+    std::size_t next = 0;
+    std::size_t textureIndex = 0;
+    const auto lookUp = [&](std::span<const std::uint32_t> words, bool depthCompare) {
+        if (next >= unrecorded.size() || unrecorded[next] != textureIndex) return true;
+        ++next;
+        const auto resource = DecodeTextureResource(words);
+        return textureIndex < textures.size() && cachedTexture(context, words, resource, ViewComponents(resource), 0, depthCompare) == textures[textureIndex];
+    };
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) return false;
+        for (const auto& binding : shader.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
+            const auto elementWords = binding.count != 0 ? binding.guestDescriptor.size() / binding.count : 0;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+                if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
+                if (!lookUp(words, !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element))) return false;
+                ++textureIndex;
+            }
+        }
+    }
+    for (const auto& table : tableStages) {
+        if (table.elementTextures.empty()) continue;
+        const auto* images = tableImages(shaders, table.stage);
+        if (images == nullptr || images->count != table.elementTextures.size()) return false;
+        for (std::uint32_t element = 0; element < images->count; ++element) {
+            if (table.elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
+            if (table.elementTextures[element] != textureIndex) return false;
+            if (!lookUp(std::span<const std::uint32_t>(images->guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u), images->imageDepthCompare.at(element))) return false;
+            ++textureIndex;
+        }
+    }
+    if (next != unrecorded.size() || textureIndex != textures.size()) return false;
+    // The records of the lookups just made (a depth surface's carries its depth flag, as
+    // captureValidation takes it).
+    for (const auto index : unrecorded) {
+        const auto& log = lookupLog();
+        for (auto it = log.rbegin(); it != log.rend(); ++it) {
+            if (it->object != textures[index].get()) continue;
+            validatedTextures[index] = {it->resource, it->bytes, it->keys, it->generation, 0, it->source, it->depth, true};
+            break;
+        }
+    }
+    lookupLog().clear();
     return true;
 }
 
@@ -2773,7 +2840,11 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     refreshed.clear();
     FastFail reason = FastFail::Count;
     bool accepted = false;
-    bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
+    // APS5_NO_PARTIAL_REVALIDATE=1: an unrecorded element fails the fast proof (the full walk follows).
+    static const bool partial = std::getenv("APS5_NO_PARTIAL_REVALIDATE") == nullptr;
+    thread_local std::vector<std::size_t>* unrecordedSlot = nullptr;
+    auto& unrecorded = ShaderRecompiler::ThreadOwned(unrecordedSlot);
+    bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted, partial ? &unrecorded : nullptr);
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
@@ -2788,11 +2859,33 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             fallback = refreshOwnObjects(shaders, refreshed);
         }
         if (fallback == OwnRefreshFallback::Count) {
-            fast = fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
+            fast = fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted, partial ? &unrecorded : nullptr);
             if (fast) ownRefreshed = true;
             else fallback = OwnRefreshFallback::Rerun;
         }
         if (fallback != OwnRefreshFallback::Count) countOwnRefreshFallback(fallback);
+    }
+    // Elements the build's lookups left no record of (dropped from the bounded log): their own
+    // lookups, as the full walk makes them, must return the very objects; the proof covers the
+    // rest. Anything else takes the full walk, as an unrecorded element did before.
+    if (fast && partial && !unrecorded.empty()) {
+        if (profile) {
+            Revalidations().partialProofs.fetch_add(1, std::memory_order_relaxed);
+            Revalidations().partialElements.fetch_add(unrecorded.size(), std::memory_order_relaxed);
+        }
+        if (!lookUpUnrecorded(shaders, unrecorded)) {
+            if (profile) Revalidations().partialFailed.fetch_add(1, std::memory_order_relaxed);
+            fast = false;
+            reason = FastFail::NoRecord;
+        } else if (VerifyPartialRevalidate()) {
+            // The full walk must find every object in place too.
+            if (!fullWalk()) {
+                std::fprintf(stderr, "[rescache] APS5_VERIFY_PARTIAL_REVALIDATE: the partial proof (%zu unrecorded elements) disagrees with the full walk\n", unrecorded.size());
+                std::fflush(stderr);
+                std::abort();
+            }
+            if (profile) Revalidations().partialVerified.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (report != nullptr) report->path = !fast ? ProofPath::Full : ownRefreshed ? ProofPath::OwnRefreshed : ProofPath::Fast;
     if (!fast) {
