@@ -2065,7 +2065,11 @@ void ShaderResources::noteReusable() {
 }
 
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
-    const bool loopGuard = LoopGuardEnabled();
+    // Local A/B switch (APS5_NO_TABLE_FAULT_CACHE=1, kept from 21a5e9f7f, whose per-use fault buffers
+    // main's 024cb1fed replaced): every draw with a fault buffer, image-table draws included, stays
+    // out of the resource cache, as before either.
+    static const bool noFaultCache = std::getenv("APS5_NO_TABLE_FAULT_CACHE") != nullptr;
+    const bool loopGuard = LoopGuardEnabled() || noFaultCache;
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
         return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
     });
