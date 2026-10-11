@@ -88,8 +88,74 @@ void NullPixelAtDraw(AgcDriver::VulkanDevice& device) {
     Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == snapshot.prepared->entries.back().handle && snapshot.prepared->entries.size() == 2, "the null pixel program was prepared again for the same draw");
 }
 
+// A pixel shader prepared at registration for the fixed push slot ([128,128] and [128,0], wave64),
+// then drawn with a pixel state registration did not predict: before #2917 the draw threw "prepared
+// shader artifact is missing for the requested static ABI: ... stage=5 wave=64 pushOffset=128
+// pushCapacity=128 preparedLayouts= [128,128] [128,0]" (007 First Light loading into gameplay on the
+// perf stack). The artifact is prepared at use, kept and reused.
+void UnpredictedPixelState(AgcDriver::VulkanDevice& device) {
+    alignas(256) static const std::array<std::uint32_t, 64> code{0xbf810000u};
+    AgcDriver::DriverDetail::ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code.data()), 0, 1, {code.begin(), code.end()}, {}};
+    snapshot.header.resize(sizeof(Shader));
+    std::array<std::uint32_t, 4> users{};
+    const auto pixel = AgcDriver::Graphics::DecodePixelStageInfo({}, {}, true);
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Fragment, snapshot.codeAddress, snapshot.code, 0, {}}, {64, 0, users, {}, pixel, {}, {}}, device.Target(), {0, 0, 128, 128}};
+    snapshot.prepared->entries.push_back({0, ShaderRecompiler::PrepareShader(request)});
+    request.layout.pushConstantSizeBytes = 0;
+    snapshot.prepared->entries.push_back({0, ShaderRecompiler::PrepareShader(request)});
+    request.layout.pushConstantSizeBytes = 128;
+    Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == snapshot.prepared->entries.front().handle, "the registered pixel state did not find its artifact");
+    request.context.pixel->earlyZ = !request.context.pixel->earlyZ;
+    static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request));
+    Require(snapshot.prepared->entries.size() == 3, "a pixel state that registration did not predict was not prepared at the draw");
+    static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request));
+    Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == snapshot.prepared->entries.back().handle && snapshot.prepared->entries.size() == 3, "an artifact prepared at a draw was not reused");
+}
+
+// The prepared invocation's result memo keys user data by what the result reads (the canonical key;
+// APS5_NO_CANONICAL_RESULT_KEY=1 keys all of it): v_mov_b32 v0, s4; buffer_store_dword v0 to the V#
+// in s[0:3], so s4 reaches the push constants and s5 is user data the result never reads.
+void PreparedUserDataKey(AgcDriver::VulkanDevice& device) {
+    alignas(256) static std::array<std::uint32_t, 16> stored{};
+    alignas(256) static const std::array<std::uint32_t, 4> code{0x7e000204u, 0xe0700000u, 0x80000000u, 0xbf810000u};
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(stored.data()));
+    std::array<std::uint32_t, 6> users{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 0xffffu), 64u, 0x31016facu, 0x1234567u, 1u};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1, {}};
+    AgcDriver::DriverDetail::ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code.data()), 0, 0, {code.begin(), code.end()}, {}};
+    snapshot.header.resize(sizeof(Shader));
+    ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, snapshot.codeAddress, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
+    request.useCache = true;
+    snapshot.prepared->entries.push_back({0, ShaderRecompiler::PrepareShader(request)});
+    const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request);
+    ShaderRecompiler::SrtRuntime runtime{};
+    runtime.userData = users;
+    const auto materialize = [&] {
+        const auto capture = invocation.Capture(runtime);
+        return invocation.Materialize(*capture);
+    };
+    const auto pushes = [](const ShaderRecompiler::RecompileResult& result, std::uint32_t word) {
+        std::vector<std::uint32_t> words(result.pushConstants.size() / 4u);
+        std::memcpy(words.data(), result.pushConstants.data(), words.size() * 4u);
+        return std::ranges::find(words, word) != words.end();
+    };
+    const auto first = materialize();
+    Require(pushes(*first, 0x1234567u), "the user SGPR stored as data is not in the push constants");
+    users[5] = 2u;
+    const auto unread = materialize();
+    const bool canonical = std::getenv("APS5_NO_CANONICAL_RESULT_KEY") == nullptr;
+    Require((unread == first) == canonical && unread->pushConstants == first->pushConstants, "prepared invocation: user data the result never reads changed the result key (or the switch did not restore it)");
+    users[5] = 1u;
+    users[4] = 0x7654321u;
+    const auto read = materialize();
+    Require(read != first && read != unread && pushes(*read, 0x7654321u) && !pushes(*read, 0x1234567u), "prepared invocation did not distinguish user data its result reads");
+    users[4] = 0x1234567u;
+    Require(materialize() == first, "prepared invocation evicted the previous user data");
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     NullPixelAtDraw(device);
+    UnpredictedPixelState(device);
+    PreparedUserDataKey(device);
     alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
     std::array<std::uint32_t, 4> users{};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{1, 1, 1}, 0, {false, false, false}, false, 1, {}};
@@ -140,7 +206,12 @@ void Run(AgcDriver::VulkanDevice& device) {
     users[0] += 1;
     const auto changedCapture = invocation.Capture(preparedRuntime);
     const auto changedResult = invocation.Materialize(*changedCapture);
-    Require(changedResult != firstResult && changedResult->spirv.data() == firstResult->spirv.data(), "prepared invocation did not distinguish changed runtime data");
+    // s_endpgm reads none of its user data: the canonical result key (only the user data at the
+    // registers the result reads) takes the memoized result, the full key
+    // (APS5_NO_CANONICAL_RESULT_KEY=1) builds another one. PreparedUserDataKey changes user data a
+    // result reads.
+    const bool canonical = std::getenv("APS5_NO_CANONICAL_RESULT_KEY") == nullptr;
+    Require((changedResult == firstResult) == canonical && changedResult->spirv.data() == firstResult->spirv.data(), canonical ? "prepared invocation keyed user data its result never reads" : "prepared invocation did not distinguish changed runtime data");
     users[0] -= 1;
     Require(invocation.Materialize(*preparedCapture) == firstResult, "prepared invocation evicted the previous runtime data");
     auto replacement = OpenVulkanTestDevice();

@@ -1421,7 +1421,7 @@ if(BUILD_TESTING)
             endif()
         endforeach()
     endforeach()
-    foreach(preparedMode IN ITEMS indirect uncached debug debug_failure deferred deferred_undecodable registered_workgroup registered_workgroup_sync)
+    foreach(preparedMode IN ITEMS indirect uncached debug debug_failure deferred deferred_undecodable registered_workgroup registered_workgroup_sync full_key)
         set(preparedTest "agc_driver_prepared_shaders_${preparedMode}")
         if(preparedMode STREQUAL "indirect")
             add_test(NAME ${preparedTest} COMMAND agc_driver_prepared_shaders_tests --indirect)
@@ -1442,6 +1442,8 @@ if(BUILD_TESTING)
             set_property(TEST ${preparedTest} APPEND PROPERTY ENVIRONMENT "APS5_NO_DISPATCH_CACHE=1")
         elseif(preparedMode STREQUAL "registered_workgroup_sync")
             set_property(TEST ${preparedTest} APPEND PROPERTY ENVIRONMENT "APS5_SYNC_SHADER_PREPARE=1")
+        elseif(preparedMode STREQUAL "full_key")
+            set_property(TEST ${preparedTest} APPEND PROPERTY ENVIRONMENT "APS5_NO_CANONICAL_RESULT_KEY=1")
         elseif(preparedMode STREQUAL "debug" OR preparedMode STREQUAL "debug_failure")
             set_property(TEST ${preparedTest} APPEND PROPERTY ENVIRONMENT "APS5_PROFILE_DRAW=1" "APS5_NO_UNLOCKED_DEVICE=1")
         endif()
@@ -1457,6 +1459,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_prepared_shaders
         agc_driver_prepared_shaders_indirect agc_driver_prepared_shaders_uncached
         agc_driver_prepared_shaders_debug agc_driver_prepared_shaders_debug_failure
+        agc_driver_prepared_shaders_full_key
         PROPERTIES RESOURCE_LOCK shader_failure_capture)
 endif()
 
