@@ -472,7 +472,9 @@ struct ColumnMemo {
     }
 
     bool Matches(const TableColumn& column, const ColumnRecords& records) const {
-        return address == column.address && sampler == column.sampler && dwordCount == column.dwordCount && stride == column.stride && addend == column.addend && offset == column.offset && keys == records.keys && base == records.base && size == records.size && statesIn == records.states;
+        // The states as bytes: the element-wise compare of the enum vector ran a byte at a time
+        // (~19k compares per matched column of a large table).
+        return address == column.address && sampler == column.sampler && dwordCount == column.dwordCount && stride == column.stride && addend == column.addend && offset == column.offset && keys == records.keys && base == records.base && size == records.size && statesIn.size() == records.states.size() && (statesIn.empty() || std::memcmp(statesIn.data(), records.states.data(), statesIn.size() * sizeof(RecordState)) == 0);
     }
 };
 

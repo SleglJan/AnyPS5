@@ -134,6 +134,8 @@ public:
     using WaitedMsProvider = double (*)();
     static void SetWaitedMsProvider(WaitedMsProvider provider);
     explicit ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> initial, PendingWriteQuery pendingWrite = nullptr, PendingWriteObserver observe = nullptr, HookWaitCounter hookWaits = nullptr);
+    ShaderMemory(const ShaderMemory&) = delete;
+    ShaderMemory& operator=(const ShaderMemory&) = delete;
     // Returns what the capture resolved (plan, snapshot, specialization) for
     // ShaderRecompiler::Recompile(request, capture), which then skips its own materialization. One
     // result per call: the draw path captures several stages on one ShaderMemory. With `handle`
@@ -155,18 +157,24 @@ private:
     static constexpr std::size_t PageWords = PageBytes / sizeof(std::uint32_t);
 
     struct Page {
-        // Not zero-filled: only valid dwords are ever read (a fetch fills the whole page).
         Page() {}
-        std::array<std::uint32_t, PageWords> words;
+        // The page's own dwords (a fetch fills it whole, a word-wise page a word at a time), allocated
+        // at first use and not zero-filled: only valid dwords are ever read. A page an image-table
+        // snapshot replayed (tableReplayPage) refers to the snapshot memo's image instead, shared and
+        // never written (the page is valid whole), so its node stays small (a 4 KiB array in every
+        // node made each replayed page a large allocation, freed and faulted in again per capture).
+        std::unique_ptr<std::uint32_t[]> own;
         PageBits valid;
         PageBits read;
         PageBits recent;
         bool wordwise = false;
-        // A page an image-table snapshot replayed (tableReplayPage): the dwords are the snapshot
-        // memo's image, shared and never written (the page is valid whole), not `words`.
         std::shared_ptr<const void> imageOwner;
         const std::uint32_t* image = nullptr;
-        const std::uint32_t* data() const { return image != nullptr ? image : words.data(); }
+        const std::uint32_t* data() const { return image != nullptr ? image : own.get(); }
+        std::uint32_t* words() {
+            if (own == nullptr) own.reset(new std::uint32_t[PageWords]);
+            return own.get();
+        }
     };
 
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
@@ -193,6 +201,13 @@ private:
     static constexpr std::uint64_t NoPage = ~std::uint64_t{0};
     std::uint64_t lastBase = NoPage;
     Page* lastPage = nullptr;
+    // The page tableReplayPage took last: a column's pages come in address order, so the next one
+    // is found or inserted beside it instead of by a walk down the tree; and the ranges
+    // tableUnchanged proved accessible whole in this capture, whose pages a replay takes without
+    // asking again (APS5_NO_REPLAY_SHORTCUTS=1: the tree walk and a query per page).
+    std::map<std::uint64_t, Page>::iterator replayLast{};
+    bool replayHint = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> provenSpans;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

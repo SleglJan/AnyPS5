@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace AgcDriver {
@@ -65,6 +66,11 @@ bool WordwisePages() {
 bool PageRuns() {
     static const bool runs = std::getenv("APS5_NO_PAGE_RUNS") == nullptr;
     return runs;
+}
+
+bool ReplayShortcuts() {
+    static const bool shortcuts = std::getenv("APS5_NO_REPLAY_SHORTCUTS") == nullptr;
+    return shortcuts;
 }
 
 bool VerifyPageRuns() {
@@ -120,7 +126,7 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
             return page;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        GuestMemory::Read(base, std::as_writable_bytes(std::span(page.words)), sizeof(std::uint32_t));
+        GuestMemory::Read(base, std::as_writable_bytes(std::span(page.words(), PageWords)), sizeof(std::uint32_t));
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
         page.valid.set();
     }
@@ -234,7 +240,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
             if (observed) report(waitsBefore, before == word);
         }
         if (CaptureProfiled()) CaptureTotals().wordReadNanoseconds += NanosecondsSince(fetchStarted);
-        page.words[index] = word;
+        page.words()[index] = word;
         page.valid.set(index);
     }
     page.read.set(index);
@@ -333,7 +339,9 @@ bool ShaderMemory::tableUnchanged(void* context, std::uint64_t address, std::uin
     // What a read through the flush hook would store into the range before reading it.
     GuestMemory::FlushGpuWrites(address, size);
     static_cast<void>(GuestMemory::CollectWrites(address, size));
-    return GuestMemory::UnchangedSince(address, size, generation);
+    if (!GuestMemory::UnchangedSince(address, size, generation)) return false;
+    if (ReplayShortcuts()) self.provenSpans.emplace_back(address, address + bytes);
+    return true;
 }
 
 bool ShaderMemory::tableReadPage(void*, std::uint64_t base, std::uint32_t* words) {
@@ -347,25 +355,40 @@ bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std:
     // A page under an initial region is served from it, not cached: read normally.
     if (base % PageBytes != 0 || self.overlapsInitial(base, base + PageBytes)) return false;
     Page* page = nullptr;
-    if (const auto found = self.pages.find(base); found != self.pages.end()) {
+    auto at = self.pages.end();
+    bool placed = false;
+    if (ReplayShortcuts() && self.replayHint && self.replayLast->first < base) {
+        const auto next = std::next(self.replayLast);
+        if (next == self.pages.end() || next->first >= base) {
+            at = next;
+            placed = true;
+        }
+    }
+    if (!placed) at = self.pages.lower_bound(base);
+    if (at != self.pages.end() && at->first == base) {
         // Fetched earlier in this capture: after the caller's generation, so equal to `words`.
-        page = &found->second;
+        page = &at->second;
         if (page->wordwise || !page->valid.all()) return false;
     } else {
-        // What `page` would fetch: the caller proved the page unchanged since `words` were read.
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
-        page = &self.pages[base];
+        // What `page` would fetch: the caller proved the page unchanged since `words` were read,
+        // and accessible whole when a span tableUnchanged proved covers it.
+        const auto proven = ReplayShortcuts() && std::any_of(self.provenSpans.begin(), self.provenSpans.end(), [&](const std::pair<std::uint64_t, std::uint64_t>& span) { return span.first <= base && base + PageBytes <= span.second; });
+        if (!proven && !GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
+        at = self.pages.emplace_hint(at, std::piecewise_construct, std::forward_as_tuple(base), std::forward_as_tuple());
+        page = &at->second;
         // APS5_NO_SHARED_TABLE_PAGES=1 copies the image into the page instead of sharing it.
         static const bool shared = std::getenv("APS5_NO_SHARED_TABLE_PAGES") == nullptr;
         if (shared && owner != nullptr) {
             page->imageOwner = owner;
             page->image = words;
         } else {
-            std::memcpy(page->words.data(), words, PageBytes);
+            std::memcpy(page->words(), words, PageBytes);
         }
         page->valid.set();
         ++CaptureTotals().pages;
     }
+    self.replayLast = at;
+    self.replayHint = true;
     if (PageRuns()) {
         page->read.orWords(mask);
         page->recent.orWords(mask);
