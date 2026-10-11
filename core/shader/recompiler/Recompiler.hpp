@@ -547,6 +547,18 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
 
+// The result memo's outcomes since start (Recompile(request, capture) and the prepared paths):
+// result hits and misses, the misses' tables taken from the table memo or resolved, and the hits
+// compared with a fresh materialization (APS5_VERIFY_RESULT_MEMO=1).
+struct ResultMemoTotals {
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t tableHits = 0;
+    std::uint64_t tableMisses = 0;
+    std::uint64_t verified = 0;
+};
+[[nodiscard]] ResultMemoTotals ResultMemoTotalCounts();
+
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile
 // cache keys on it.

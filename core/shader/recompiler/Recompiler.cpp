@@ -7,11 +7,13 @@
 #include <cstdio>
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
+#include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "VertexInputSpecialization.hpp"
 #include "FragmentOutputSpecialization.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
+#include "ResultKey.hpp"
 #include <list>
 #include <functional>
 #include <map>
@@ -334,6 +336,15 @@ struct SourceEntry {
     // indices evicted since (a miss on one of them is a capacity miss, not a new snapshot).
     std::unordered_map<std::uint64_t, std::shared_ptr<const ResultKeyParts>> diagParts;
     std::unordered_set<std::uint64_t> diagEvicted;
+    // The table memo (under mutex), most recently used first: a variant's resolved tables by the
+    // inputs ResolveImageTables reads (the tables and the samplers), so a result memo miss whose
+    // tables are a recent snapshot's skips the per-key resolution (APS5_NO_TABLE_RESULT_MEMO=1).
+    struct TableMemoEntry {
+        std::uint64_t variantId;
+        std::uint64_t key;
+        std::shared_ptr<const ResolvedImageTables> tables;
+    };
+    std::list<TableMemoEntry> tableMemo;
 };
 
 namespace {
@@ -802,7 +813,9 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
     return entry->module;
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults = false) {
+// `resolved`: the snapshot's tables as ResolveImageTables gives them for the variant (the table
+// memo's), resolved here when null.
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults = false, const ResolvedImageTables* resolved = nullptr) {
     RecompileResult result;
     const auto& artifact = variant.artifact;
     static_cast<CompiledShaderArtifact&>(result) = {
@@ -919,7 +932,9 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     } else {
         result.spirv = artifact.spirv;
     }
-    const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    ResolvedImageTables own;
+    if (resolved == nullptr) own = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    const auto& tables = resolved != nullptr ? *resolved : own;
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
@@ -1262,11 +1277,42 @@ bool ResultMemo() {
     return resultMemo;
 }
 
-constexpr std::size_t ResultMemoEntries = 256;
+// APS5_RESULT_MEMO_ENTRIES=<n>: the result memo's entries per shader (256).
+std::size_t ResultMemoEntries() {
+    static const std::size_t entries = [] {
+        const char* text = std::getenv("APS5_RESULT_MEMO_ENTRIES");
+        const auto value = text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull;
+        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 65536ull)) : std::size_t{256};
+    }();
+    return entries;
+}
+
+// APS5_NO_CANONICAL_RESULT_KEY=1: the key hashes the whole user data and the tables with FNV-1a, as
+// before ResultKey.
+bool CanonicalResultKey() {
+    static const bool canonical = std::getenv("APS5_NO_CANONICAL_RESULT_KEY") == nullptr;
+    return canonical;
+}
+
+bool TableResultMemo() {
+    static const bool memo = std::getenv("APS5_NO_TABLE_RESULT_MEMO") == nullptr;
+    return memo;
+}
+
+// APS5_VERIFY_RESULT_MEMO=1: every result memo hit and every table memo hit is materialized
+// (resolved) again from the snapshot and compared; a difference aborts.
+bool VerifyResultMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_RESULT_MEMO") != nullptr;
+    return verify;
+}
+
+constexpr std::size_t TableMemoEntries = 8;
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
+    std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0}, tableHits{0}, tableMisses{0}, verified{0};
     std::atomic<std::int64_t> lastReport{0};
+    // Never reset (ResultMemoTotalCounts).
+    std::atomic<std::uint64_t> totalHits{0}, totalMisses{0}, totalTableHits{0}, totalTableMisses{0}, totalVerified{0};
 };
 
 ResultMemoCounters& resultMemoCounters() {
@@ -1289,14 +1335,15 @@ void reportResultMemo() {
     const auto misses = counters.misses.exchange(0, std::memory_order_relaxed);
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
+    const auto tableHits = counters.tableHits.exchange(0, std::memory_order_relaxed);
+    const auto tableMisses = counters.tableMisses.exchange(0, std::memory_order_relaxed);
+    const auto verified = counters.verified.exchange(0, std::memory_order_relaxed);
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions (%zu entries per shader, %s key); tables of the misses: %llu from the table memo, %llu resolved; %llu verified\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions), ResultMemoEntries(), CanonicalResultKey() ? "canonical" : "full", static_cast<unsigned long long>(tableHits), static_cast<unsigned long long>(tableMisses), static_cast<unsigned long long>(verified));
     if (ResultMemoDiag()) reportResultMemoDiag();
 }
 
-// Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
-// flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
-// attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot) {
+// The key as it was before ResultKey (APS5_NO_CANONICAL_RESULT_KEY=1).
+std::uint64_t fullSnapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -1369,31 +1416,200 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     return hash;
 }
 
+// Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
+// flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
+// attributes are resolved from. Canonical (the default): the user data only at the registers the
+// variant's result reads (ResultKey::ConsumedUserDataHash) and the tables through
+// ResultKey::TablesHash, which `tablesHash` receives (0 without tables) for the table memo.
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, const CompiledVariant& variant, std::uint64_t& tablesHash) {
+    tablesHash = snapshot.tables.tables.empty() ? 0u : ResultKey::TablesHash(snapshot.tables);
+    if (!CanonicalResultKey()) return fullSnapshotHash(request, snapshot);
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    const auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 0x100000001b3ull;
+    };
+    const auto mixDescriptors = [&](const std::vector<DescriptorValue>& values) {
+        mix(values.size());
+        for (const auto& value : values) {
+            mix(value.dwordCount);
+            for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
+        }
+    };
+    mixDescriptors(snapshot.buffers);
+    mixDescriptors(snapshot.images);
+    mixDescriptors(snapshot.samplers);
+    mix(ResultKey::HashWords(snapshot.flattenedSrt, snapshot.flattenedSrt.size()));
+    mix(ResultKey::ConsumedUserDataHash(snapshot.userData, variant.bindings.layout.userDataRegisters, variant.info.userDataBase));
+    mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
+    mix(snapshot.uniformFill.resource);
+    for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
+    mix(snapshot.uniformFill.words);
+    mix(snapshot.uniformFill.value);
+    mix(tablesHash);
+    for (const auto threads : partialThreads(request)) mix(threads);
+    mix(request.layout.pushConstantOffsetBytes);
+    if (request.context.pixel) {
+        for (const auto mapping : request.context.pixel->targetExportMapping) mix(mapping);
+        for (const auto packing : request.context.pixel->targetExportPacking) mix(static_cast<std::uint64_t>(packing));
+        mix(request.context.pixel->dualSourceBlend);
+    }
+    if (request.context.vertex) {
+        const auto& vertex = *request.context.vertex;
+        const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
+        mix(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            for (const auto field : vertex.resources[i].fields) mix(field);
+            mix(vertex.resourcesDst[i].fetchIndex);
+        }
+    } else {
+        mix(1ull << 32u);
+    }
+    return hash;
+}
+
+// The table memo's key: the tables and every sampler descriptor (ResolveImageTables reads the
+// samplers paired with table images), for one variant.
+std::uint64_t tableMemoKey(std::uint64_t tablesHash, const ResourceSnapshot& snapshot) {
+    auto key = tablesHash;
+    for (const auto& sampler : snapshot.samplers) key = ResultKey::Detail::Step(key, ResultKey::HashWords(std::span<const std::uint32_t>(sampler.dwords).first(std::min<std::size_t>(sampler.dwordCount, sampler.dwords.size())), sampler.dwordCount), ResultKey::Detail::LaneMultipliers[3]);
+    return key;
+}
+
+// APS5_VERIFY_RESULT_MEMO: the first field in which two results differ (empty when none).
+std::string resultDifference(const RecompileResult& left, const RecompileResult& right) {
+    if (left.variantId != right.variantId || left.specializationId != right.specializationId || !(left.specialization == right.specialization)) return "variant or specialization";
+    if (!(left.spirv == right.spirv)) return "SPIR-V";
+    if (left.pushConstants != right.pushConstants) return "push constants";
+    if (left.bindings.size() != right.bindings.size()) return "binding count";
+    for (std::size_t index = 0; index < left.bindings.size(); ++index) {
+        const auto& a = left.bindings[index];
+        const auto& b = right.bindings[index];
+        const auto at = [&](const char* field) { return "binding " + std::to_string(index) + " " + field; };
+        if (a.kind != b.kind || a.role != b.role || a.descriptorSet != b.descriptorSet || a.binding != b.binding || a.count != b.count || a.readOnly != b.readOnly) return at("header");
+        if (a.guestDescriptor != b.guestDescriptor) return at("guest descriptor");
+        if (a.imageShape != b.imageShape || a.imageShapes != b.imageShapes) return at("image shapes");
+        if (a.samplerDepthCompare != b.samplerDepthCompare || a.imageDepthCompare != b.imageDepthCompare) return at("depth compare");
+        if (a.imageWritten != b.imageWritten || a.imageAtomic != b.imageAtomic || a.imageAtomic64 != b.imageAtomic64) return at("image access");
+        if (a.bufferAtomic != b.bufferAtomic || a.bufferWritten != b.bufferWritten || a.bufferRead != b.bufferRead) return at("buffer access");
+        if (a.samplerUnnormalized != b.samplerUnnormalized || a.imageUnnormalized != b.imageUnnormalized || a.imageSamplers != b.imageSamplers) return at("samplers");
+    }
+    if (left.vertexAttributes.size() != right.vertexAttributes.size()) return "vertex attribute count";
+    for (std::size_t index = 0; index < left.vertexAttributes.size(); ++index) {
+        const auto& a = left.vertexAttributes[index];
+        const auto& b = right.vertexAttributes[index];
+        if (a.location != b.location || a.components != b.components || a.resource.fields != b.resource.fields || a.fetchIndex != b.fetchIndex || a.formatComponents != b.formatComponents) return "vertex attribute " + std::to_string(index);
+    }
+    if (left.poisonedSrtReads != right.poisonedSrtReads) return "poisoned SRT reads";
+    if (left.imageTablePoison.size() != right.imageTablePoison.size()) return "image table poison count";
+    for (std::size_t index = 0; index < left.imageTablePoison.size(); ++index) {
+        const auto& a = left.imageTablePoison[index];
+        const auto& b = right.imageTablePoison[index];
+        if (a.words != b.words || a.dwordCount != b.dwordCount || a.resource != b.resource || a.reason != b.reason) return "image table poison " + std::to_string(index);
+    }
+    if (left.imageTableRanges != right.imageTableRanges || left.imageTableReadRanges != right.imageTableReadRanges) return "image table ranges";
+    if (left.imageTableShader != right.imageTableShader || left.imageTableFaults != right.imageTableFaults) return "image table shader or faults";
+    if (left.workgroupMemoryDwords != right.workgroupMemoryDwords) return "workgroup memory";
+    return {};
+}
+
+std::string tablesDifference(const ResolvedImageTables& left, const ResolvedImageTables& right) {
+    if (left.map != right.map) return "map";
+    if (left.faults != right.faults) return "faults";
+    if (left.elements.size() != right.elements.size() || left.samplers.size() != right.samplers.size() || left.poison.size() != right.poison.size()) return "counts";
+    for (std::size_t index = 0; index < left.elements.size(); ++index) {
+        const auto& a = left.elements[index];
+        const auto& b = right.elements[index];
+        if (a.words != b.words || a.dimension != b.dimension || a.depthCompare != b.depthCompare || a.kind != b.kind || a.samplers != b.samplers) return "element " + std::to_string(index);
+    }
+    for (std::size_t index = 0; index < left.samplers.size(); ++index) {
+        const auto& a = left.samplers[index];
+        const auto& b = right.samplers[index];
+        if (a.words != b.words || a.compare != b.compare || a.point != b.point) return "sampler " + std::to_string(index);
+    }
+    for (std::size_t index = 0; index < left.poison.size(); ++index) {
+        const auto& a = left.poison[index];
+        const auto& b = right.poison[index];
+        if (a.words != b.words || a.dwordCount != b.dwordCount || a.resource != b.resource || a.reason != b.reason) return "poison " + std::to_string(index);
+    }
+    return {};
+}
+
+[[noreturn]] void verifyFailed(const char* what, const RecompileRequest& request, const std::string& field) {
+    std::fprintf(stderr, "[recompile] APS5_VERIFY_RESULT_MEMO: a %s of shader 0x%llx differs from a fresh materialization in %s\n", what, static_cast<unsigned long long>(request.shader.codeAddress), field.c_str());
+    std::fflush(stderr);
+    std::abort();
+}
+
 // The memo'd result of `source`'s variant for the snapshot (design13 R5): a hit returns the shared
 // object, a miss materializes outside the source mutex and inserts (a concurrent miss's object is
 // as good). `memoHit` reports the hit.
 std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto hash = snapshotHash(request, snapshot);
+    std::uint64_t tablesHash = 0;
+    const auto hash = snapshotHash(request, snapshot, *variant, tablesHash);
     std::uint64_t index = 0;
     auto& counters = resultMemoCounters();
     {
-        std::lock_guard lock(source.mutex);
-        index = (variant->artifact.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
-        const auto found = source.memoIndex.find(index);
-        if (found != source.memoIndex.end() && found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
-            source.memo.splice(source.memo.begin(), source.memo, found->second);
+        std::shared_ptr<const RecompileResult> hit;
+        {
+            std::lock_guard lock(source.mutex);
+            index = (variant->artifact.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
+            const auto found = source.memoIndex.find(index);
+            if (found != source.memoIndex.end() && found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
+                source.memo.splice(source.memo.begin(), source.memo, found->second);
+                hit = found->second->result;
+            }
+        }
+        if (hit != nullptr) {
             counters.hits.fetch_add(1, std::memory_order_relaxed);
+            counters.totalHits.fetch_add(1, std::memory_order_relaxed);
+            if (VerifyResultMemo()) {
+                if (const auto field = resultDifference(*hit, materializeResult(*variant, request, snapshot)); !field.empty()) verifyFailed("result memo hit", request, field);
+                counters.verified.fetch_add(1, std::memory_order_relaxed);
+                counters.totalVerified.fetch_add(1, std::memory_order_relaxed);
+            }
             if (memoHit != nullptr) *memoHit = true;
             reportResultMemo();
-            return found->second->result;
+            return hit;
         }
     }
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot));
+    // The tables of a recent snapshot of the variant with the same table inputs, resolved once.
+    std::shared_ptr<const ResolvedImageTables> tables;
+    if (TableResultMemo() && tablesHash != 0u) {
+        const auto key = tableMemoKey(tablesHash, snapshot);
+        {
+            std::lock_guard lock(source.mutex);
+            for (auto entry = source.tableMemo.begin(); entry != source.tableMemo.end(); ++entry) {
+                if (entry->variantId != variant->artifact.variantId || entry->key != key) continue;
+                source.tableMemo.splice(source.tableMemo.begin(), source.tableMemo, entry);
+                tables = entry->tables;
+                break;
+            }
+        }
+        if (tables != nullptr) {
+            counters.tableHits.fetch_add(1, std::memory_order_relaxed);
+            counters.totalTableHits.fetch_add(1, std::memory_order_relaxed);
+            if (VerifyResultMemo()) {
+                if (const auto field = tablesDifference(*tables, ResourceMaterializer::ResolveImageTables(variant->info.info, snapshot, variant->artifact.variantId)); !field.empty()) verifyFailed("table memo hit", request, field);
+                counters.verified.fetch_add(1, std::memory_order_relaxed);
+                counters.totalVerified.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else {
+            tables = std::make_shared<const ResolvedImageTables>(ResourceMaterializer::ResolveImageTables(variant->info.info, snapshot, variant->artifact.variantId));
+            counters.tableMisses.fetch_add(1, std::memory_order_relaxed);
+            counters.totalTableMisses.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard lock(source.mutex);
+            source.tableMemo.push_front({variant->artifact.variantId, key, tables});
+            if (source.tableMemo.size() > TableMemoEntries) source.tableMemo.pop_back();
+        }
+    }
+    auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, tables.get()));
     result->cacheHit = cacheHit;
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
+    counters.totalMisses.fetch_add(1, std::memory_order_relaxed);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
     const auto parts = ResultMemoDiag() ? std::make_shared<const ResultKeyParts>(resultKeyParts(request, snapshot)) : nullptr;
     {
@@ -1417,7 +1633,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             }
             source.memo.push_front({variant->artifact.variantId, hash, shared});
             source.memoIndex.emplace(index, source.memo.begin());
-            while (source.memo.size() > ResultMemoEntries) {
+            while (source.memo.size() > ResultMemoEntries()) {
                 const auto& last = source.memo.back();
                 const auto evicted = (last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash;
                 source.memoIndex.erase(evicted);
@@ -1650,6 +1866,11 @@ RecompileResult Recompile(const RecompileRequest& request) {
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
     return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+}
+
+ResultMemoTotals ResultMemoTotalCounts() {
+    const auto& counters = resultMemoCounters();
+    return {counters.totalHits.load(std::memory_order_relaxed), counters.totalMisses.load(std::memory_order_relaxed), counters.totalTableHits.load(std::memory_order_relaxed), counters.totalTableMisses.load(std::memory_order_relaxed), counters.totalVerified.load(std::memory_order_relaxed)};
 }
 
 }

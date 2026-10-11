@@ -18,6 +18,7 @@
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
 #include "CacheKey.hpp"
+#include "ResultKey.hpp"
 #include "BdaAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "ShaderDiskCache.hpp"
@@ -29,6 +30,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <map>
+#include <functional>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -1054,6 +1056,196 @@ void verifyImageTables() {
     const auto typedFault = typedMap[Abi::TableHeader(0) + Abi::TableFault];
     require((typedFault & Abi::PoisonFlag) != 0u && typed.result->imageTablePoison.at(typedFault & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotBuffer), "image tables: a typed table V# was not a whole-table fault");
     FillTableSrt(guest, heap.data(), 32u, 4u);
+}
+
+// The result memo key's canonical parts (ResultKey) and the memo built on them: a key changes
+// with every input the result is made of and with nothing else.
+void verifyResultKeyHashes() {
+    using namespace ShaderRecompiler;
+    std::vector<std::uint32_t> words(37);
+    for (std::uint32_t index = 0; index < words.size(); ++index) words[index] = index * 0x01010101u + 7u;
+    const auto base = ResultKey::HashWords(words, 1u);
+    require(ResultKey::HashWords(std::vector<std::uint32_t>(words), 1u) == base, "result key: equal words hash differently");
+    require(ResultKey::HashWords(words, 2u) != base, "result key: the seed is ignored");
+    for (std::size_t index = 0; index < words.size(); ++index) {
+        auto changed = words;
+        changed[index] ^= 1u << (index % 32u);
+        require(ResultKey::HashWords(changed, 1u) != base, "result key: a changed word keeps the hash");
+        if (index + 1u < words.size()) {
+            std::swap(changed[index], changed[index + 1u]);
+            changed[index + 1u] ^= 1u << (index % 32u);
+            require(ResultKey::HashWords(changed, 1u) != base, "result key: swapped words keep the hash");
+        }
+    }
+    for (std::size_t length = 0; length < 20u; ++length) {
+        const std::vector<std::uint32_t> zeros(length, 0u);
+        const std::vector<std::uint32_t> longer(length + 1u, 0u);
+        require(ResultKey::HashWords(zeros, 0u) != ResultKey::HashWords(longer, 0u), "result key: a trailing zero keeps the hash");
+    }
+
+    ImageTableSnapshot tables;
+    tables.shader = 0x1234u;
+    tables.tables.resize(2);
+    for (std::uint32_t table = 0; table < 2u; ++table) {
+        auto& column = tables.tables[table];
+        column.base = 0x10000u + table * 0x1000u;
+        column.size = 0x800u;
+        column.records = 64u;
+        column.keys = 64u;
+        column.codes.resize(64u);
+        for (std::uint32_t key = 0; key < 64u; ++key) column.codes[key] = (key * 3u + table) % 5u;
+        column.readRanges = {{column.base, 0x100u}};
+    }
+    for (std::uint32_t value = 0; value < 5u; ++value) {
+        DescriptorValue descriptor;
+        descriptor.dwordCount = value < 3u ? 8u : 4u;
+        for (std::uint32_t dword = 0; dword < descriptor.dwordCount; ++dword) descriptor.dwords[dword] = value * 16u + dword;
+        tables.words.push_back(descriptor);
+    }
+    tables.ranges = {{0x10000u, 0x800u}, {0x11000u, 0x800u}};
+    const auto tablesHash = ResultKey::TablesHash(tables);
+    require(ResultKey::TablesHash(ImageTableSnapshot(tables)) == tablesHash, "result key: equal tables hash differently");
+    auto unread = tables;
+    unread.words[4].dwords[6] = 0xdeadbeefu;
+    require(ResultKey::TablesHash(unread) == tablesHash, "result key: a dword past a descriptor's count changed the tables hash");
+    const std::vector<std::pair<const char*, std::function<void(ImageTableSnapshot&)>>> changes{
+        {"shader", [](ImageTableSnapshot& t) { t.shader++; }},
+        {"base", [](ImageTableSnapshot& t) { t.tables[1].base += 0x100u; }},
+        {"size", [](ImageTableSnapshot& t) { t.tables[0].size += 4u; }},
+        {"records", [](ImageTableSnapshot& t) { t.tables[0].records++; }},
+        {"keys", [](ImageTableSnapshot& t) { t.tables[1].keys--; }},
+        {"fault", [](ImageTableSnapshot& t) { t.tables[0].fault = 1u; }},
+        {"outside", [](ImageTableSnapshot& t) { t.tables[1].outside = true; }},
+        {"code", [](ImageTableSnapshot& t) { t.tables[1].codes[63] ^= 1u; }},
+        {"code order", [](ImageTableSnapshot& t) { std::swap(t.tables[0].codes[0], t.tables[0].codes[1]); }},
+        {"read range", [](ImageTableSnapshot& t) { t.tables[0].readRanges[0].second += 4u; }},
+        {"read range count", [](ImageTableSnapshot& t) { t.tables[1].readRanges.emplace_back(0x20000u, 4u); }},
+        {"word", [](ImageTableSnapshot& t) { t.words[2].dwords[7] ^= 0x10u; }},
+        {"word width", [](ImageTableSnapshot& t) { t.words[3].dwordCount = 8u; }},
+        {"range", [](ImageTableSnapshot& t) { t.ranges[1].first += 0x1000u; }},
+        {"table moved between columns", [](ImageTableSnapshot& t) { std::swap(t.tables[0], t.tables[1]); }},
+    };
+    for (const auto& [name, change] : changes) {
+        auto changed = tables;
+        change(changed);
+        if (ResultKey::TablesHash(changed) == tablesHash) throw std::runtime_error(std::string("result key: the tables hash ignores the ") + name);
+    }
+
+    const std::array<std::uint32_t, 8> userData{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u};
+    const std::array<std::uint32_t, 2> registers{6u, 3u};
+    const auto userHash = ResultKey::ConsumedUserDataHash(userData, registers, 2u);
+    auto unconsumed = userData;
+    unconsumed[0] = 100u;
+    unconsumed[7] = 200u;
+    require(ResultKey::ConsumedUserDataHash(unconsumed, registers, 2u) == userHash, "result key: an unread user-data word changed the hash");
+    for (const auto word : {1u, 4u}) {
+        auto consumed = userData;
+        consumed[word] ^= 0x80u;
+        require(ResultKey::ConsumedUserDataHash(consumed, registers, 2u) != userHash, "result key: a read user-data word kept the hash");
+    }
+    const std::array<std::uint32_t, 2> swapped{3u, 6u};
+    require(ResultKey::ConsumedUserDataHash(userData, swapped, 2u) != userHash, "result key: the register order is ignored");
+    require(ResultKey::ConsumedUserDataHash(userData, registers, 0u) != userHash, "result key: the user-data base is ignored");
+    const std::array<std::uint32_t, 1> outside{40u};
+    const std::array<std::uint32_t, 1> zeroWord{2u};
+    std::array<std::uint32_t, 8> zeros{};
+    require(ResultKey::ConsumedUserDataHash(zeros, outside, 0u) != ResultKey::ConsumedUserDataHash(zeros, zeroWord, 0u), "result key: a register outside the user data hashes as a zero word");
+}
+
+void verifyResultMemoKey() {
+    using namespace ShaderRecompiler;
+    verifyResultKeyHashes();
+    const auto sameResult = [](const RecompileResult& left, const RecompileResult& right, const char* message) {
+        require(left.pushConstants == right.pushConstants && left.bindings.size() == right.bindings.size() && left.imageTableFaults == right.imageTableFaults && left.imageTableRanges == right.imageTableRanges && left.imageTableReadRanges == right.imageTableReadRanges && left.spirv == right.spirv, message);
+        for (std::size_t index = 0; index < left.bindings.size(); ++index) {
+            const auto& a = left.bindings[index];
+            const auto& b = right.bindings[index];
+            require(a.role == b.role && a.kind == b.kind && a.binding == b.binding && a.count == b.count && a.guestDescriptor == b.guestDescriptor && a.imageShapes == b.imageShapes && a.imageSamplers == b.imageSamplers, message);
+        }
+    };
+    struct Compiled {
+        std::shared_ptr<const RecompileResult> result;
+        RecompileResult fresh;
+        bool hit = false;
+    };
+    const auto compile = [](RecompileRequest request) {
+        Compiled out;
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto regions = memory.Regions();
+        request.context.memory = regions;
+        out.result = Recompile(request, *capture, &out.hit);
+        out.fresh = Recompile(request);
+        return out;
+    };
+
+    // A user SGPR stored as data (v_mov_b32 v0, s4; buffer_store_dword v0 to the V# in s[0:3]);
+    // s5 is user data the result never reads.
+    alignas(64) static std::array<std::uint32_t, 16> stored{};
+    const std::vector<std::uint32_t> code{0x7e000204u, 0xe0700000u, 0x80000000u, 0xbf810000u};
+    const auto v = TableV(stored.data(), 0u, 64u);
+    const std::array<std::uint32_t, 6> first{v[0], v[1], v[2], v[3], 0x1234567u, 1u};
+    auto unread = first;
+    unread[5] = 2u;
+    auto read = first;
+    read[4] = 0x7654321u;
+    const std::array<std::uint32_t, 2> none{};
+    const auto userRequest = [&](std::span<const std::uint32_t> userData) {
+        auto request = TableRequest(code, none);
+        request.context.userData = userData;
+        return request;
+    };
+    const auto a = compile(userRequest(first));
+    const auto b = compile(userRequest(unread));
+    const auto c = compile(userRequest(read));
+    const auto words = [](const RecompileResult& result) {
+        std::vector<std::uint32_t> out(result.pushConstants.size() / 4u);
+        std::memcpy(out.data(), result.pushConstants.data(), out.size() * 4u);
+        return out;
+    };
+    const auto aWords = words(*a.result);
+    require(std::find(aWords.begin(), aWords.end(), 0x1234567u) != aWords.end(), "result memo: the user SGPR stored as data is not in the push constants");
+    const bool canonical = std::getenv("APS5_NO_CANONICAL_RESULT_KEY") == nullptr;
+    const bool memo = std::getenv("APS5_NO_RESULT_MEMO") == nullptr;
+    require(b.hit == (canonical && memo), "result memo: user data the result never reads changed the key (or the switch did not restore it)");
+    require(!c.hit, "result memo: user data the result reads did not change the key");
+    sameResult(*a.result, a.fresh, "result memo: the first result differs from a fresh materialization");
+    sameResult(*b.result, b.fresh, "result memo: a hit over unread user data differs from a fresh materialization");
+    sameResult(*c.result, c.fresh, "result memo: a miss over read user data differs from a fresh materialization");
+    const auto cWords = words(*c.result);
+    require(std::find(cWords.begin(), cWords.end(), 0x7654321u) != cWords.end() && cWords != aWords, "result memo: the new user SGPR value is not in the push constants");
+
+    // One table read through two SRT copies: the user data (the SRT pointer, pushed as data) differs,
+    // so the results differ, but the tables are the same snapshot and resolve once.
+    static TableTexture textures[3];
+    alignas(4096) static TableGuest guests[2];
+    for (auto& guest : guests) {
+        std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+        for (std::uint32_t entry = 0; entry < 100u; ++entry) guest.heap[entry] = TableT(textures[entry % 3u].bytes.data(), entry % 4u == 0u ? TableFormat32UInt : TableFormat8888UNorm, TableType2D, 3u + entry % 5u);
+    }
+    FillTableSrt(guests[0], guests[0].heap.data(), 32u, 100u);
+    FillTableSrt(guests[1], guests[0].heap.data(), 32u, 100u);
+    const auto before = ResultMemoTotalCounts();
+    const auto t0 = compile(TableRequest(TableWholeCode, TableUserData(guests[0])));
+    const auto t1 = compile(TableRequest(TableWholeCode, TableUserData(guests[1])));
+    const auto after = ResultMemoTotalCounts();
+    sameResult(*t0.result, t0.fresh, "table memo: the first table result differs from a fresh materialization");
+    sameResult(*t1.result, t1.fresh, "table memo: a result over memoized tables differs from a fresh materialization");
+    const auto* map0 = TableBinding(*t0.result, DescriptorRole::ImageTableMap);
+    const auto* map1 = TableBinding(*t1.result, DescriptorRole::ImageTableMap);
+    require(map0 != nullptr && map1 != nullptr && map0->guestDescriptor == map1->guestDescriptor, "table memo: the two SRT copies did not give one table map");
+    if (memo && !t1.hit) {
+        const bool tableMemo = std::getenv("APS5_NO_TABLE_RESULT_MEMO") == nullptr;
+        require(after.tableHits - before.tableHits == (tableMemo ? 1u : 0u), "table memo: the second snapshot of the same tables was resolved again (or the switch did not disable the memo)");
+    }
+    // Different table contents must not take the memoized tables.
+    guests[1].heap = guests[0].heap;
+    guests[1].heap[7] = TableT(textures[0].bytes.data(), TableFormat32UInt, TableType2D, 9u);
+    FillTableSrt(guests[1], guests[1].heap.data(), 32u, 100u);
+    const auto t2 = compile(TableRequest(TableWholeCode, TableUserData(guests[1])));
+    sameResult(*t2.result, t2.fresh, "table memo: a result over changed tables differs from a fresh materialization");
+    const auto* map2 = TableBinding(*t2.result, DescriptorRole::ImageTableMap);
+    require(map2 != nullptr && map2->guestDescriptor != map0->guestDescriptor, "table memo: changed table contents reused the memoized tables");
 }
 
 void verifyImageTableRegistration() {
@@ -3944,6 +4136,7 @@ int main(int argc, char** argv) {
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();
+            verifyResultMemoKey();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -3954,6 +4147,7 @@ int main(int argc, char** argv) {
         }
         require(argc == 1, "unknown shader memory test arguments");
         verifyPageBits();
+        verifyResultMemoKey();
         verifyRegisterSources();
         verifyEvaluatedValues();
         verifyFrontendPair();
