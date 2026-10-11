@@ -295,6 +295,8 @@ struct ResultMemoEntry {
     std::uint64_t variantId;
     std::uint64_t hash;
     std::shared_ptr<const RecompileResult> result;
+    // resultBytes(*result): what the entry keeps alive, for the memo's byte budget.
+    std::size_t bytes = 0;
 };
 
 struct EmissionFailure {
@@ -1277,14 +1279,61 @@ bool ResultMemo() {
     return resultMemo;
 }
 
-// APS5_RESULT_MEMO_ENTRIES=<n>: the result memo's entries per shader (256).
+// APS5_RESULT_MEMO_ENTRIES=<n>: the result memo's entries per shader (2048; 256 before the p7 diag
+// counted 78% of the misses as keys evicted earlier).
 std::size_t ResultMemoEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_RESULT_MEMO_ENTRIES");
         const auto value = text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull;
-        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 65536ull)) : std::size_t{256};
+        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 65536ull)) : std::size_t{2048};
     }();
     return entries;
+}
+
+// APS5_RESULT_MEMO_MB=<n>: the bytes all shaders' result memos may keep together (1024 MiB). An
+// image-table shader's result carries its whole table map and element list (~0.25-0.4 MiB for
+// 007's 19k-key tables), so 2048 of them would be ~0.5-0.8 GiB per shader: past the budget, an
+// insert evicts the inserting shader's least recently used entries (it keeps at least
+// ResultMemoKeep), so the shaders that miss most give back what they take.
+std::size_t ResultMemoBudget() {
+    static const std::size_t bytes = [] {
+        const char* text = std::getenv("APS5_RESULT_MEMO_MB");
+        const auto value = text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull;
+        return static_cast<std::size_t>(value != 0ull ? std::min<unsigned long long>(value, 1ull << 20u) : 1024ull) << 20u;
+    }();
+    return bytes;
+}
+
+constexpr std::size_t ResultMemoKeep = 64;
+
+// What a memoized result keeps alive besides its shared SPIR-V (the module's, shared by every
+// result of the variant): the bindings with their descriptor words and per-element vectors, the
+// push constants, the image-table fields and the artifact's small copies.
+std::size_t resultBytes(const RecompileResult& result) {
+    std::size_t bytes = sizeof(RecompileResult);
+    const auto bits = [](const std::vector<bool>& flags) { return (flags.size() + 7u) / 8u; };
+    for (const auto& binding : result.bindings) {
+        bytes += sizeof(DescriptorBinding) + binding.guestDescriptor.capacity() * sizeof(std::uint32_t) + binding.imageShapes.capacity() * sizeof(DescriptorImageShape) + binding.imageSamplers.capacity() * sizeof(std::uint32_t);
+        bytes += bits(binding.samplerDepthCompare) + bits(binding.imageWritten) + bits(binding.imageDepthCompare) + bits(binding.imageAtomic) + bits(binding.imageAtomic64) + bits(binding.bufferAtomic) + bits(binding.bufferWritten) + bits(binding.samplerUnnormalized) + bits(binding.imageUnnormalized) + bits(binding.bufferRead);
+    }
+    bytes += result.specialization.capacity() * sizeof(PipelineSpecializationConstant) + result.pushConstants.capacity() + result.vertexAttributes.capacity() * sizeof(VertexAttribute);
+    bytes += result.imageTablePoison.capacity() * sizeof(ImageTableEntryPoison) + result.imageTableRanges.capacity() * sizeof(std::pair<std::uint64_t, std::uint64_t>);
+    for (const auto& ranges : result.imageTableReadRanges) bytes += sizeof(ranges) + ranges.capacity() * sizeof(std::pair<std::uint64_t, std::uint64_t>);
+    bytes += result.vertexInputPatches.capacity() * sizeof(VertexInputPatch) + result.runtimeImageResources.capacity() * sizeof(std::uint32_t) + result.vertexInputs.capacity() * sizeof(VertexInput) + result.parameterExports.capacity() * sizeof(std::uint32_t) + result.fragmentParameters.capacity() * sizeof(FragmentParameter);
+    return bytes;
+}
+
+// The bytes and entries all result memos keep, and the largest entry inserted in the window.
+struct ResultMemoHeld {
+    std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> entries{0};
+    std::atomic<std::uint64_t> largest{0};
+    std::atomic<std::uint64_t> budgetEvictions{0};
+};
+
+ResultMemoHeld& resultMemoHeld() {
+    static ResultMemoHeld held;
+    return held;
 }
 
 // APS5_NO_CANONICAL_RESULT_KEY=1: the key hashes the whole user data and the tables with FNV-1a, as
@@ -1338,7 +1387,10 @@ void reportResultMemo() {
     const auto tableHits = counters.tableHits.exchange(0, std::memory_order_relaxed);
     const auto tableMisses = counters.tableMisses.exchange(0, std::memory_order_relaxed);
     const auto verified = counters.verified.exchange(0, std::memory_order_relaxed);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions (%zu entries per shader, %s key); tables of the misses: %llu from the table memo, %llu resolved; %llu verified\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions), ResultMemoEntries(), CanonicalResultKey() ? "canonical" : "full", static_cast<unsigned long long>(tableHits), static_cast<unsigned long long>(tableMisses), static_cast<unsigned long long>(verified));
+    auto& held = resultMemoHeld();
+    const auto largest = held.largest.exchange(0, std::memory_order_relaxed);
+    const auto budgetEvictions = held.budgetEvictions.exchange(0, std::memory_order_relaxed);
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions (%llu by the byte budget; %zu entries per shader, %zu MiB budget, %s key); held %.1f MiB in %llu entries, largest inserted %.1f KiB; tables of the misses: %llu from the table memo, %llu resolved; %llu verified\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(budgetEvictions), ResultMemoEntries(), ResultMemoBudget() >> 20u, CanonicalResultKey() ? "canonical" : "full", static_cast<double>(held.bytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<unsigned long long>(held.entries.load(std::memory_order_relaxed)), static_cast<double>(largest) / 1024.0, static_cast<unsigned long long>(tableHits), static_cast<unsigned long long>(tableMisses), static_cast<unsigned long long>(verified));
     if (ResultMemoDiag()) reportResultMemoDiag();
 }
 
@@ -1614,14 +1666,21 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     counters.totalMisses.fetch_add(1, std::memory_order_relaxed);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
     const auto parts = ResultMemoDiag() ? std::make_shared<const ResultKeyParts>(resultKeyParts(request, snapshot)) : nullptr;
+    const auto bytes = resultBytes(*shared);
+    auto& held = resultMemoHeld();
     {
         std::lock_guard lock(source.mutex);
+        const auto release = [&](const ResultMemoEntry& entry) {
+            held.bytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
+            held.entries.fetch_sub(1, std::memory_order_relaxed);
+        };
         const auto found = source.memoIndex.find(index);
         if (found != source.memoIndex.end()) {
             if (found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
                 source.memo.splice(source.memo.begin(), source.memo, found->second);
                 shared = found->second->result;
             } else {
+                release(*found->second);
                 source.memo.erase(found->second);
                 source.memoIndex.erase(found);
                 if (parts != nullptr) source.diagParts.erase(index);
@@ -1633,9 +1692,15 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
                 source.diagParts[index] = parts;
                 source.diagEvicted.erase(index);
             }
-            source.memo.push_front({variant->artifact.variantId, hash, shared});
+            source.memo.push_front({variant->artifact.variantId, hash, shared, bytes});
             source.memoIndex.emplace(index, source.memo.begin());
-            while (source.memo.size() > ResultMemoEntries()) {
+            held.bytes.fetch_add(bytes, std::memory_order_relaxed);
+            held.entries.fetch_add(1, std::memory_order_relaxed);
+            for (auto largest = held.largest.load(std::memory_order_relaxed); bytes > largest && !held.largest.compare_exchange_weak(largest, bytes, std::memory_order_relaxed);) {}
+            for (;;) {
+                const bool overCount = source.memo.size() > ResultMemoEntries();
+                const bool overBudget = held.bytes.load(std::memory_order_relaxed) > ResultMemoBudget() && source.memo.size() > ResultMemoKeep;
+                if (!overCount && !overBudget) break;
                 const auto& last = source.memo.back();
                 const auto evicted = (last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash;
                 source.memoIndex.erase(evicted);
@@ -1644,8 +1709,10 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
                     if (source.diagEvicted.size() >= 16384u) source.diagEvicted.clear();
                     source.diagEvicted.insert(evicted);
                 }
+                release(last);
                 source.memo.pop_back();
                 counters.evictions.fetch_add(1, std::memory_order_relaxed);
+                if (!overCount) held.budgetEvictions.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
@@ -1872,7 +1939,12 @@ std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request
 
 ResultMemoTotals ResultMemoTotalCounts() {
     const auto& counters = resultMemoCounters();
-    return {counters.totalHits.load(std::memory_order_relaxed), counters.totalMisses.load(std::memory_order_relaxed), counters.totalTableHits.load(std::memory_order_relaxed), counters.totalTableMisses.load(std::memory_order_relaxed), counters.totalVerified.load(std::memory_order_relaxed)};
+    const auto& held = resultMemoHeld();
+    return {counters.totalHits.load(std::memory_order_relaxed), counters.totalMisses.load(std::memory_order_relaxed), counters.totalTableHits.load(std::memory_order_relaxed), counters.totalTableMisses.load(std::memory_order_relaxed), counters.totalVerified.load(std::memory_order_relaxed), held.bytes.load(std::memory_order_relaxed), held.entries.load(std::memory_order_relaxed)};
+}
+
+std::size_t ResultMemoEntryBytes(const RecompileResult& result) {
+    return resultBytes(result);
 }
 
 }

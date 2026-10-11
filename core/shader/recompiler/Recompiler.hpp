@@ -556,8 +556,13 @@ struct ResultMemoTotals {
     std::uint64_t tableHits = 0;
     std::uint64_t tableMisses = 0;
     std::uint64_t verified = 0;
+    // What the memos keep now (bytes as ResultMemoEntryBytes counts them) and in how many entries.
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldEntries = 0;
 };
 [[nodiscard]] ResultMemoTotals ResultMemoTotalCounts();
+// The bytes a memoized result is charged against the memo's byte budget (APS5_RESULT_MEMO_MB).
+[[nodiscard]] std::size_t ResultMemoEntryBytes(const RecompileResult& result);
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

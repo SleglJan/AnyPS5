@@ -1215,6 +1215,24 @@ void verifyResultMemoKey() {
     const auto cWords = words(*c.result);
     require(std::find(cWords.begin(), cWords.end(), 0x7654321u) != cWords.end() && cWords != aWords, "result memo: the new user SGPR value is not in the push constants");
 
+    // Capacity: 600 distinct keys of one shader stay memoized (more than the old 256 entries) unless
+    // the switches shrink the memo; the memo's held bytes count every entry.
+    if (memo && std::getenv("APS5_RESULT_MEMO_ENTRIES") == nullptr && std::getenv("APS5_RESULT_MEMO_MB") == nullptr) {
+        std::vector<std::array<std::uint32_t, 6>> keys(600, first);
+        for (std::uint32_t key = 0; key < keys.size(); ++key) keys[key][4] = 0x40000000u + key;
+        const auto heldBefore = ResultMemoTotalCounts();
+        std::size_t charged = 0;
+        for (const auto& key : keys) {
+            const auto compiled = compile(userRequest(key));
+            if (!compiled.hit) charged += ResultMemoEntryBytes(*compiled.result);
+        }
+        const auto heldAfter = ResultMemoTotalCounts();
+        require(heldAfter.heldBytes - heldBefore.heldBytes == charged && heldAfter.heldEntries - heldBefore.heldEntries == 600u, "result memo: the held bytes or entries do not count the inserted results");
+        std::size_t hits = 0;
+        for (std::size_t key = 0; key < 100u; ++key) hits += compile(userRequest(keys[key])).hit ? 1u : 0u;
+        require(hits == 100u, "result memo: keys past the 256th evicted the first ones");
+    }
+
     // One table read through two SRT copies: the user data (the SRT pointer, pushed as data) differs,
     // so the results differ, but the tables are the same snapshot and resolve once.
     static TableTexture textures[3];
