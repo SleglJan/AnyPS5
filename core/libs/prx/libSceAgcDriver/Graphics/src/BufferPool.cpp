@@ -195,7 +195,11 @@ std::size_t BufferPool::Capacity(std::size_t bytes, VkMemoryPropertyFlags proper
     constexpr std::size_t smallest = 256;
     if (exactSizes()) return bytes;
     if (bytes < classLimit) return std::max(smallest, std::bit_ceil(bytes));
-    if (!DeviceTiered(properties)) return bytes;
+    // Local experiment (APS5_LOCAL_LARGE_CLASSES=1): host-visible requests of a MiB and more take
+    // the device tier's eighth-of-a-power-of-two classes too, so varying multi-MiB staging sizes
+    // hit retained slots (at most 12.5% more pinned memory per buffer).
+    static const bool largeClasses = std::getenv("APS5_LOCAL_LARGE_CLASSES") != nullptr;
+    if (!DeviceTiered(properties) && !largeClasses) return bytes;
     const auto step = std::bit_floor(bytes) >> deviceClassBits;
     return (bytes + step - 1) / step * step;
 }

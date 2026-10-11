@@ -93,6 +93,11 @@ private:
     // the caller keeps them alive for as long as the capture is used.
     std::map<std::uint64_t, std::span<const std::byte>> initial;
     std::map<std::uint64_t, Page> pages;
+    // The last page `read` looked up when no initial region overlaps it (NoPage otherwise): its
+    // fetched words are served without the map lookups.
+    static constexpr std::uint64_t NoPage = ~std::uint64_t{0};
+    std::uint64_t lastBase = NoPage;
+    Page* lastPage = nullptr;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

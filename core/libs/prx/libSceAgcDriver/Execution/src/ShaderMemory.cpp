@@ -120,7 +120,22 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     if (address % sizeof(*value) != 0 || address > std::numeric_limits<std::uint64_t>::max() - sizeof(*value)) {
         throw std::runtime_error("AGC driver: invalid shader memory read address");
     }
-    ++CaptureTotals().reads;
+    // One shared atomic per dword read is measurable on image-table snapshots (~127k reads per
+    // capture); only the profile prints it.
+    if (CaptureProfiled()) ++CaptureTotals().reads;
+    const auto base = address & ~static_cast<std::uint64_t>(PageBytes - 1);
+    // Consecutive reads of one page with no initial region over it (an image table's records):
+    // the page found last time serves an already fetched word without the two map lookups.
+    if (base == self.lastBase) {
+        auto& page = *self.lastPage;
+        const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
+        if (page.valid.test(index)) {
+            page.read.set(index);
+            page.recent.set(index);
+            *value = page.words[index];
+            return true;
+        }
+    }
     if (!self.initial.empty()) {
         const auto next = self.initial.upper_bound(address);
         if (next != self.initial.begin()) {
@@ -134,7 +149,22 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         }
         if (next != self.initial.end() && next->first - address < sizeof(*value)) throw std::runtime_error("AGC driver: shader memory read overlaps a snapshot boundary");
     }
-    auto& page = self.page(address & ~static_cast<std::uint64_t>(PageBytes - 1));
+    auto& page = self.page(base);
+    if (base != self.lastBase) {
+        // Pages are never erased, so the pointer stays valid; a page an initial region overlaps
+        // keeps taking the lookup above.
+        bool clear = true;
+        if (!self.initial.empty()) {
+            const auto after = self.initial.lower_bound(base);
+            if (after != self.initial.end() && after->first < base + PageBytes) clear = false;
+            if (clear && after != self.initial.begin()) {
+                const auto before = std::prev(after);
+                if (before->first + before->second.size() > base) clear = false;
+            }
+        }
+        self.lastBase = clear ? base : NoPage;
+        self.lastPage = clear ? &page : nullptr;
+    }
     const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
     if (!page.valid.test(index)) {
         std::uint32_t word = 0;
