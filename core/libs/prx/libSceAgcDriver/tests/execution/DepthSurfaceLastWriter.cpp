@@ -30,6 +30,7 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint64_t DepthAddress = 0x7f0000000000ull;
 constexpr VkExtent2D Extent{64, 64};
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format8Uint = 5;
 
 class Device {
 public:
@@ -150,6 +151,11 @@ GuestTextureResource View(std::uint32_t width, std::uint32_t height, std::uint64
     return resource;
 }
 
+GuestTextureResource OtherFormat(GuestTextureResource resource) {
+    resource.format = Format8Uint;
+    return resource;
+}
+
 constexpr VkComponentMapping Identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
 
 std::shared_ptr<Texture> Sample(const Context& context, const GuestTextureResource& resource) {
@@ -187,6 +193,19 @@ void Run(const Context& context) {
     DepthSurfaceView(context, Depth());
     Require(DepthSurfaceAt(DepthAddress), "binding the depth target again did not bring the depth surface back");
     Require(Refused(context, mips), "depth, color target, depth again, then a view with two levels: the live depth surface did not refuse it");
+
+    const VkExtent2D otherExtent{Extent.width + 16, Extent.height};
+    Require(!RetireDepthSurfacesForStorage(context, {}, exact, depthBytes), "a written storage image the depth plane's storage serves retired the depth surface");
+    Require(DepthSurfaceAt(DepthAddress), "a written storage image the depth plane's storage serves left no live depth surface");
+    Require(!RetireDepthSurfacesForStorage(context, {}, OtherFormat(View(Extent.width, Extent.height, DepthAddress + 0x100)), 0x1000), "a written storage image inside the depth plane but not at its address went through the storage rule");
+    Require(RetireDepthSurfacesForStorage(context, {}, OtherFormat(exact), depthBytes), "depth, then a written storage image of another format at its address: the depth surface was not retired");
+    Require(!DepthSurfaceAt(DepthAddress), "depth, then a written storage image of another format at its address: the depth surface stayed live");
+    Require(Sample(context, exact) == nullptr, "depth, then a written storage image of another format, then its own view: the retired depth surface served it");
+    DepthSurfaceView(context, Depth());
+    Require(RetireDepthSurfacesForStorage(context, {}, View(otherExtent.width, otherExtent.height), DepthSliceBytes(otherExtent, 4)), "depth, then a written storage image of another extent at its address: the depth surface was not retired");
+    Require(!DepthSurfaceAt(DepthAddress), "depth, then a written storage image of another extent at its address: the depth surface stayed live");
+    DepthSurfaceView(context, Depth());
+    Require(DepthSurfaceAt(DepthAddress), "binding the depth target after a storage writer did not bring the depth surface back");
 
     const auto shared = DepthAddress + 0x1000000;
     const VkExtent2D wideExtent{2 * Extent.width, Extent.height};

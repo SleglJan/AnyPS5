@@ -732,6 +732,19 @@ void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t b
     }
 }
 
+bool RetireDepthSurfacesForStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& descriptor, std::uint64_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    const auto& list = surfaces();
+    const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) {
+        return surface->context.device == context.device && !surface->retired && (surface->target.address == descriptor.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == descriptor.baseAddress));
+    });
+    if (found == list.rend() || (*found)->StorageViewMatches(words, descriptor)) return false;
+    for (const auto& surface : list) {
+        if (surface->context.device == context.device && surface->Overlaps(descriptor.baseAddress, bytes)) surface->retired = true;
+    }
+    return true;
+}
+
 void ClearDepthSurfaces(VkDevice device) {
     std::lock_guard lock(surfacesMutex());
     drawnDepth = nullptr;
