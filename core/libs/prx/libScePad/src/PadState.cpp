@@ -4,6 +4,8 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cstdlib>
 #include <deque>
@@ -114,13 +116,23 @@ namespace {
 PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected) {
     PadData data{};
     data.buttons = state.buttons | injected.buttons;
+    static const std::pair<std::uint64_t, std::uint64_t> autoCross = [] {
+        const char* value = std::getenv("APS5_LOCAL_AUTO_CROSS");
+        if (value == nullptr) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+        unsigned long long period = 30, hold = 10;
+        std::sscanf(value, "%llu,%llu", &period, &hold);
+        return std::pair<std::uint64_t, std::uint64_t>{period * 1000000ull, hold * 1000000ull};
+    }();
+    std::uint32_t local = 0;
+    if (autoCross.first != 0 && now % autoCross.first < autoCross.second) local |= 0x4000u;
+    data.buttons |= local;
     const auto& sticks = injected.hasSticks ? injected.sticks : state.sticks;
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
     data.right_stick_y = sticks[3];
     const auto trigger = [&](std::uint8_t analog, std::uint32_t bit) -> std::uint8_t {
-        return (injected.buttons & bit) != 0 || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
+        return ((injected.buttons | local) & bit) != 0 || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
     };
     data.analog_buttons_l2 = trigger(state.analogButtonsL2, 0x100);
     data.analog_buttons_r2 = trigger(state.analogButtonsR2, 0x200);
