@@ -134,6 +134,25 @@ PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uin
         return masks;
     }();
     if (autoCross.first != 0 && now % autoCross.first < autoCross.second) data.buttons |= autoMasks.empty() ? 0x4000u : autoMasks[(now / autoCross.first) % autoMasks.size()];
+    static const char* padFile = std::getenv("APS5_LOCAL_PAD_FILE");
+    if (padFile != nullptr) {
+        static std::uint64_t nextCheck = 0, lastSeq = 0, pressUntil = 0;
+        static std::uint32_t pressMask = 0;
+        if (now >= nextCheck) {
+            nextCheck = now + 100000ull;
+            if (std::FILE* file = std::fopen(padFile, "r")) {
+                unsigned long long seq = 0, ms = 0;
+                unsigned int mask = 0;
+                if (std::fscanf(file, "%llu %i %llu", &seq, reinterpret_cast<int*>(&mask), &ms) == 3 && seq != lastSeq) {
+                    lastSeq = seq;
+                    pressMask = mask;
+                    pressUntil = now + ms * 1000ull;
+                }
+                std::fclose(file);
+            }
+        }
+        if (now < pressUntil) data.buttons |= pressMask;
+    }
     data.left_stick_x = state.sticks[0];
     data.left_stick_y = state.sticks[1];
     data.right_stick_x = state.sticks[2];
