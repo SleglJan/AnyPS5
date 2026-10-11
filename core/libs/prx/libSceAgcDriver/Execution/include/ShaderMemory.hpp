@@ -2,8 +2,9 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_SHADERMEMORY_HPP
 
 #include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
-#include <bitset>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -18,6 +19,83 @@ class PreparedShaderInvocation;
 }
 
 namespace AgcDriver {
+
+// A capture page's 1024 dword flags as 16 words: whole masks are ORed a word at a time and the
+// regions are emitted run by run (countr_zero/countr_one), where std::bitset offered only shifts
+// of the whole set and per-bit tests (~1,000 tests per page and region pass on an image table).
+class PageBits {
+public:
+    static constexpr std::size_t Bits = 1024;
+    static constexpr std::size_t Words = Bits / 64;
+
+    bool test(std::size_t index) const { return ((words[index >> 6u] >> (index & 63u)) & 1u) != 0u; }
+    void set(std::size_t index) { words[index >> 6u] |= std::uint64_t{1} << (index & 63u); }
+    void set() { words.fill(~std::uint64_t{0}); }
+    void reset() { words.fill(0); }
+    bool all() const {
+        for (const auto word : words) {
+            if (word != ~std::uint64_t{0}) return false;
+        }
+        return true;
+    }
+    bool none() const {
+        for (const auto word : words) {
+            if (word != 0) return false;
+        }
+        return true;
+    }
+    std::size_t count() const {
+        std::size_t bits = 0;
+        for (const auto word : words) bits += static_cast<std::size_t>(std::popcount(word));
+        return bits;
+    }
+    // Bits [first, first + count), within the page.
+    void setRange(std::size_t first, std::size_t count) {
+        while (count != 0) {
+            const auto bit = first & 63u;
+            const auto take = std::min<std::size_t>(count, 64u - bit);
+            const auto mask = take == 64u ? ~std::uint64_t{0} : ((std::uint64_t{1} << take) - 1u) << bit;
+            words[first >> 6u] |= mask;
+            first += take;
+            count -= take;
+        }
+    }
+    // ORs 16 mask words in (bit i of word k is dword 64 k + i).
+    void orWords(const std::uint64_t* mask) {
+        for (std::size_t word = 0; word < Words; ++word) words[word] |= mask[word];
+    }
+    PageBits& operator|=(const PageBits& other) {
+        orWords(other.words.data());
+        return *this;
+    }
+    bool operator==(const PageBits& other) const = default;
+    // The first set (clear) bit at or after `from`; Bits when there is none.
+    std::size_t nextSet(std::size_t from) const { return next(from, 0u); }
+    std::size_t nextClear(std::size_t from) const { return next(from, ~std::uint64_t{0}); }
+    // emit(first, count) for every run of set bits, in order.
+    template <class Emit>
+    void forEachRun(Emit&& emit) const {
+        for (auto first = nextSet(0); first < Bits;) {
+            const auto end = nextClear(first);
+            emit(first, end - first);
+            first = nextSet(end);
+        }
+    }
+
+private:
+    std::size_t next(std::size_t from, std::uint64_t flip) const {
+        if (from >= Bits) return Bits;
+        auto index = from >> 6u;
+        auto word = (words[index] ^ flip) & (~std::uint64_t{0} << (from & 63u));
+        for (;;) {
+            if (word != 0) return index * 64u + static_cast<std::size_t>(std::countr_zero(word));
+            if (++index == Words) return Bits;
+            word = words[index] ^ flip;
+        }
+    }
+
+    std::array<std::uint64_t, Words> words{};
+};
 
 // Records the guest words a shader's resource analysis reads, as the memory regions its recompile
 // request carries. Guest memory is fetched a 4 KiB page at a time; the regions report exactly the
@@ -80,9 +158,9 @@ private:
         // Not zero-filled: only valid dwords are ever read (a fetch fills the whole page).
         Page() {}
         std::array<std::uint32_t, PageWords> words;
-        std::bitset<PageWords> valid;
-        std::bitset<PageWords> read;
-        std::bitset<PageWords> recent;
+        PageBits valid;
+        PageBits read;
+        PageBits recent;
         bool wordwise = false;
         // A page an image-table snapshot replayed (tableReplayPage): the dwords are the snapshot
         // memo's image, shared and never written (the page is valid whole), not `words`.

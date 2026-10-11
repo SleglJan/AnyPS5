@@ -3862,6 +3862,74 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+// PageBits against a per-bit reference: setRange, orWords, the run walk and its scans.
+void verifyPageBits() {
+    using AgcDriver::PageBits;
+    std::uint64_t state = 0x9e3779b97f4a7c15ull;
+    const auto random = [&] {
+        state ^= state << 13u;
+        state ^= state >> 7u;
+        state ^= state << 17u;
+        return state;
+    };
+    for (int round = 0; round < 2000; ++round) {
+        PageBits bits;
+        std::vector<bool> reference(PageBits::Bits, false);
+        const auto ranges = random() % 6u;
+        for (std::uint64_t range = 0; range < ranges; ++range) {
+            const auto first = static_cast<std::size_t>(random() % PageBits::Bits);
+            const auto count = static_cast<std::size_t>(random() % (PageBits::Bits - first + 1u));
+            bits.setRange(first, count);
+            for (std::size_t bit = first; bit < first + count; ++bit) reference[bit] = true;
+        }
+        std::array<std::uint64_t, PageBits::Words> mask{};
+        if (round % 3 == 0) {
+            for (auto& word : mask) word = random() & random();
+            bits.orWords(mask.data());
+            for (std::size_t bit = 0; bit < PageBits::Bits; ++bit) {
+                if (((mask[bit / 64u] >> (bit % 64u)) & 1u) != 0u) reference[bit] = true;
+            }
+        }
+        if (round % 7 == 0) {
+            const auto bit = static_cast<std::size_t>(random() % PageBits::Bits);
+            bits.set(bit);
+            reference[bit] = true;
+        }
+        std::size_t count = 0;
+        for (std::size_t bit = 0; bit < PageBits::Bits; ++bit) {
+            require(bits.test(bit) == reference[bit], "page bits: a bit differs from the reference");
+            count += reference[bit] ? 1u : 0u;
+        }
+        require(bits.count() == count && bits.none() == (count == 0u) && bits.all() == (count == PageBits::Bits), "page bits: the counts differ from the reference");
+        std::vector<std::pair<std::size_t, std::size_t>> runs;
+        bits.forEachRun([&](std::size_t first, std::size_t length) { runs.emplace_back(first, length); });
+        std::vector<std::pair<std::size_t, std::size_t>> expected;
+        for (std::size_t bit = 0; bit < PageBits::Bits;) {
+            if (!reference[bit]) {
+                ++bit;
+                continue;
+            }
+            const auto first = bit;
+            while (bit < PageBits::Bits && reference[bit]) ++bit;
+            expected.emplace_back(first, bit - first);
+        }
+        require(runs == expected, "page bits: the runs differ from the per-bit walk");
+        const auto from = static_cast<std::size_t>(random() % (PageBits::Bits + 1u));
+        auto set = from;
+        while (set < PageBits::Bits && !reference[set]) ++set;
+        auto clear = from;
+        while (clear < PageBits::Bits && reference[clear]) ++clear;
+        require(bits.nextSet(from) == set && bits.nextClear(from) == clear, "page bits: a scan differs from the reference");
+    }
+    PageBits full;
+    full.set();
+    std::vector<std::pair<std::size_t, std::size_t>> runs;
+    full.forEachRun([&](std::size_t first, std::size_t length) { runs.emplace_back(first, length); });
+    require(full.all() && runs == std::vector<std::pair<std::size_t, std::size_t>>{{0u, PageBits::Bits}}, "page bits: a full page is not one run");
+    full.reset();
+    require(full.none() && full.nextSet(0) == PageBits::Bits, "page bits: a reset page has bits");
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
@@ -3885,6 +3953,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         require(argc == 1, "unknown shader memory test arguments");
+        verifyPageBits();
         verifyRegisterSources();
         verifyEvaluatedValues();
         verifyFrontendPair();

@@ -6,6 +6,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -58,6 +59,17 @@ constexpr std::uint64_t WordWaitNanoseconds = 50000;
 bool WordwisePages() {
     static const bool wordwise = std::getenv("APS5_NO_WORDWISE_CAPTURE") == nullptr;
     return wordwise;
+}
+
+// APS5_NO_PAGE_RUNS=1: page flags are set and the regions emitted bit by bit, as before PageBits.
+bool PageRuns() {
+    static const bool runs = std::getenv("APS5_NO_PAGE_RUNS") == nullptr;
+    return runs;
+}
+
+bool VerifyPageRuns() {
+    static const bool verify = std::getenv("APS5_VERIFY_PAGE_RUNS") != nullptr;
+    return verify;
 }
 
 bool CaptureProfiled() {
@@ -262,19 +274,8 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
         }
         if (page != nullptr && !page->wordwise && page->valid.all()) {
             std::memcpy(values, page->data() + index, bytes);
-            if (words < 64) {
-                for (std::size_t word = index; word < index + words; ++word) {
-                    page->read.set(word);
-                    page->recent.set(word);
-                }
-            } else {
-                std::bitset<PageWords> mask;
-                mask.set();
-                mask >>= PageWords - words;
-                mask <<= index;
-                page->read |= mask;
-                page->recent |= mask;
-            }
+            page->read.setRange(index, words);
+            page->recent.setRange(index, words);
             if (CaptureProfiled()) CaptureTotals().reads += words;
         } else {
             for (std::size_t word = 0; word < words; ++word) {
@@ -365,13 +366,21 @@ bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std:
         page->valid.set();
         ++CaptureTotals().pages;
     }
-    std::bitset<PageWords> bits;
-    for (std::size_t word = 0; word < PageWords / 64; ++word) {
-        if (mask[word] != 0) bits |= std::bitset<PageWords>(mask[word]) << (word * 64);
+    if (PageRuns()) {
+        page->read.orWords(mask);
+        page->recent.orWords(mask);
+    } else {
+        for (std::size_t word = 0; word < PageWords; ++word) {
+            if (((mask[word / 64u] >> (word % 64u)) & 1u) == 0u) continue;
+            page->read.set(word);
+            page->recent.set(word);
+        }
     }
-    page->read |= bits;
-    page->recent |= bits;
-    if (CaptureProfiled()) CaptureTotals().reads += bits.count();
+    if (CaptureProfiled()) {
+        std::uint64_t bits = 0;
+        for (std::size_t word = 0; word < PageBits::Words; ++word) bits += static_cast<std::uint64_t>(std::popcount(mask[word]));
+        CaptureTotals().reads += bits;
+    }
     return true;
 }
 
@@ -443,6 +452,40 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     return capture;
 }
 
+namespace {
+
+// The regions of one page's flagged dwords, run by run (APS5_NO_PAGE_RUNS=1: bit by bit, as
+// before; APS5_VERIFY_PAGE_RUNS=1 takes both and aborts when they differ).
+void appendPageRuns(std::vector<ShaderRecompiler::MemoryRegion>& result, std::uint64_t base, const std::uint32_t* data, const PageBits& bits) {
+    constexpr std::size_t Words = PageBits::Bits;
+    const auto bitwise = [&](std::vector<ShaderRecompiler::MemoryRegion>& out) {
+        for (std::size_t index = 0; index < Words;) {
+            if (!bits.test(index)) {
+                ++index;
+                continue;
+            }
+            const auto first = index;
+            while (index < Words && bits.test(index)) ++index;
+            out.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(data, Words).subspan(first, index - first))});
+        }
+    };
+    if (!PageRuns()) return bitwise(result);
+    const auto start = result.size();
+    bits.forEachRun([&](std::size_t first, std::size_t count) { result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(data, Words).subspan(first, count))}); });
+    if (VerifyPageRuns()) {
+        std::vector<ShaderRecompiler::MemoryRegion> slow;
+        bitwise(slow);
+        const bool same = slow.size() == result.size() - start && std::equal(slow.begin(), slow.end(), result.begin() + static_cast<std::ptrdiff_t>(start), [](const ShaderRecompiler::MemoryRegion& a, const ShaderRecompiler::MemoryRegion& b) { return a.guestAddress == b.guestAddress && a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size(); });
+        if (!same) {
+            std::fprintf(stderr, "[capture] APS5_VERIFY_PAGE_RUNS: the runs of page 0x%llx differ from the bit-by-bit regions (%zu against %zu)\n", static_cast<unsigned long long>(base), result.size() - start, slow.size());
+            std::fflush(stderr);
+            std::abort();
+        }
+    }
+}
+
+}
+
 std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
     std::vector<ShaderRecompiler::MemoryRegion> result;
     result.reserve(initial.size() + pages.size());
@@ -453,15 +496,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
             result.push_back({next->first, next->second});
             ++next;
         }
-        for (std::size_t index = 0; index < PageWords;) {
-            if (!page.read.test(index)) {
-                ++index;
-                continue;
-            }
-            const auto first = index;
-            while (index < PageWords && page.read.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.data(), PageWords).subspan(first, index - first))});
-        }
+        appendPageRuns(result, base, page.data(), page.read);
     }
     for (; next != initial.end(); ++next) result.push_back({next->first, next->second});
     return result;
@@ -471,15 +506,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
     std::vector<ShaderRecompiler::MemoryRegion> result;
     for (auto& [base, page] : pages) {
         if (page.recent.none()) continue;
-        for (std::size_t index = 0; index < PageWords;) {
-            if (!page.recent.test(index)) {
-                ++index;
-                continue;
-            }
-            const auto first = index;
-            while (index < PageWords && page.recent.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.data(), PageWords).subspan(first, index - first))});
-        }
+        appendPageRuns(result, base, page.data(), page.recent);
         page.recent.reset();
     }
     return result;
