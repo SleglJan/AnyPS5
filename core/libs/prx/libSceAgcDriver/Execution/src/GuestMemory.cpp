@@ -1014,11 +1014,22 @@ bool collectMemoEnabled() {
 // collects each of its few dozen image surfaces in stage A and again in stage B). Entries of a
 // thread that never bumps its epoch never match (each collect gets a fresh epoch), as intended.
 // APS5_SHARED_COLLECT_MEMO=1 uses the tracker's shared ring under its mutex instead.
+// 512 entries (gjonn's dc1e3cce5: an image-table draw proves hundreds of textures per packet, far
+// past 64); APS5_COLLECT_MEMO_RING=<n> uses the first n (64 restores the ring as it was).
 struct ThreadCollectMemo {
-    std::array<WriteTracker::Memo, 64> entries{};
+    std::array<WriteTracker::Memo, 512> entries{};
     std::size_t next = 0;
 };
 thread_local ThreadCollectMemo threadCollectMemo;
+
+std::size_t collectMemoRing() {
+    static const std::size_t ring = [] {
+        const char* text = std::getenv("APS5_COLLECT_MEMO_RING");
+        const auto value = text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull;
+        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 512ull)) : std::size_t{512};
+    }();
+    return ring;
+}
 
 bool sharedCollectMemo() {
     static const bool shared = std::getenv("APS5_SHARED_COLLECT_MEMO") != nullptr;
@@ -1105,7 +1116,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
-        for (const auto& entry : threadCollectMemo.entries) {
+        for (std::size_t slot = 0, ring = collectMemoRing(); slot < ring; ++slot) {
+            const auto& entry = threadCollectMemo.entries[slot];
             if (entry.epoch == epoch && entry.unwatched == unwatched && entry.begin <= first && stop <= entry.end) {
                 // The current generation, not the memoized one: blocks stamped since (MarkWritten, an
                 // overlapping collect) were written before this caller reads, and an older value would
@@ -1143,7 +1155,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
         if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
-        else threadCollectMemo.entries[threadCollectMemo.next++ % threadCollectMemo.entries.size()] = {first, stop, epoch, serial};
+        else threadCollectMemo.entries[threadCollectMemo.next++ % collectMemoRing()] = {first, stop, epoch, serial};
     }
     return tracker.generation;
 }

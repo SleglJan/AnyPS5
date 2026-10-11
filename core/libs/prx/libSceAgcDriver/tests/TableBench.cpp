@@ -66,8 +66,37 @@ double Since(std::chrono::steady_clock::time_point start) {
 
 }
 
+// collect <textures> <KiB each> <revalidations per epoch> <rounds>: the collects of a Revalidate
+// that proves `textures` surfaces, epochs bumped as a queue's ordering points do.
+int collectBench(int argc, char** argv) {
+    const auto textures = argc > 2 ? std::strtoul(argv[2], nullptr, 0) : 460ul;
+    const auto kib = argc > 3 ? std::strtoul(argv[3], nullptr, 0) : 256ul;
+    const auto perEpoch = argc > 4 ? std::max(1ul, std::strtoul(argv[4], nullptr, 0)) : 3ul;
+    const auto rounds = argc > 5 ? std::strtoul(argv[5], nullptr, 0) : 3000ul;
+    require(AgcDriver::GuestMemory::WriteWatched(), "write tracking unavailable");
+    const std::size_t bytes = textures * kib * 1024u;
+    std::int64_t physical = -1;
+    void* data = nullptr;
+    require(sceKernelAllocateDirectMemory(0, 0x10000000000ll, bytes, 65536, 3, &physical) == 0, "allocate direct memory failed");
+    require(sceKernelMapDirectMemory(&data, bytes, 3, 0, physical, 65536) == 0, "map direct memory failed");
+    std::memset(data, 1, bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(data);
+    std::uint64_t failed = 0;
+    const auto started = std::chrono::steady_clock::now();
+    for (unsigned long round = 0; round < rounds; ++round) {
+        if (round % perEpoch == 0) AgcDriver::GuestMemory::BumpCollectEpoch();
+        for (unsigned long texture = 0; texture < textures; ++texture) {
+            if (AgcDriver::GuestMemory::CollectWrites(base + texture * kib * 1024u, kib * 1024u) == 0) ++failed;
+        }
+    }
+    const auto us = Since(started);
+    std::printf("collect: %lu textures of %lu KiB, %lu revalidations per epoch: %.1f us per revalidation, %.3f us per collect (%llu failed)\n", textures, kib, perEpoch, us / static_cast<double>(rounds), us / static_cast<double>(rounds * textures), static_cast<unsigned long long>(failed));
+    return 0;
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string_view(argv[1]) == "collect") return collectBench(argc, argv);
         const auto captures = argc > 1 ? std::strtoul(argv[1], nullptr, 0) : 2000ul;
         const auto entries = argc > 2 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0)) : 18960u;
         // SRT copies the per-capture user data cycles through: equal contents ("same"), or each
