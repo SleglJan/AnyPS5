@@ -208,6 +208,8 @@ private:
     std::map<std::uint64_t, Page>::iterator replayLast{};
     bool replayHint = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> provenSpans;
+    // The proven span that covered the last replayed page (pages come in span order).
+    std::size_t provenHint = 0;
     PendingWriteQuery pendingWrite = nullptr;
     PendingWriteObserver observe = nullptr;
     HookWaitCounter hookWaits = nullptr;

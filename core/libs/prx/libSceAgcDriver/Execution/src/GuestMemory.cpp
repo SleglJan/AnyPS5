@@ -1207,7 +1207,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
         else {
             threadCollectMemo.entries[threadCollectMemo.next++ % collectMemoRing()] = {first, stop, epoch, serial};
-            if (collectIndexEnabled() && threadCollectEpoch != 0) indexCollect(first, stop, epoch, serial);
+            // The serial read before the walk: an unwatch racing the walk leaves the entry stale-keyed.
+            if (collectIndexEnabled() && threadCollectEpoch != 0) indexCollect(first, stop, epoch, unwatched);
         }
     }
     return tracker.generation;

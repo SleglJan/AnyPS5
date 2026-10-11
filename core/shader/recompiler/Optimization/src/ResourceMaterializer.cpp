@@ -531,6 +531,9 @@ struct SnapshotMemoColumn {
 struct SnapshotMemo {
     const IrResourcePlan* plan = nullptr;
     std::uint64_t shaderHash = 0;
+    // The plan's tables as (sampler, resource, source, table): a plan at a reused address (an
+    // uncached plan freed, one on the stack) must name the very same tables to match.
+    std::vector<std::array<std::uint32_t, 4>> layout;
     std::vector<SnapshotMemoColumn> columns;
     ImageTableSnapshot output;
     std::uint64_t used = 0;
@@ -628,6 +631,20 @@ private:
         }
     }
 
+    // Every table image and sampler as (sampler, resource, source, table), in RunColumns' order.
+    std::vector<std::array<std::uint32_t, 4>> TableLayout() const {
+        std::vector<std::array<std::uint32_t, 4>> layout;
+        for (std::uint32_t resource = 0; resource < plan.info.images.size(); ++resource) {
+            const auto& image = plan.info.images[resource];
+            if (image.table != NoTable) layout.push_back({0u, resource, image.source, image.table});
+        }
+        for (std::uint32_t resource = 0; resource < plan.info.samplers.size(); ++resource) {
+            const auto& sampler = plan.info.samplers[resource];
+            if (sampler.table != NoTable) layout.push_back({1u, resource, sampler.source, sampler.table});
+        }
+        return layout;
+    }
+
     // The table sources in the order RunColumns takes them, each once.
     std::vector<std::uint32_t> TableSources() const {
         std::vector<std::uint32_t> sources;
@@ -677,9 +694,11 @@ private:
         const auto found = std::find_if(memos.entries.begin(), memos.entries.end(), [&](const SnapshotMemo& entry) { return entry.plan == &plan && entry.shaderHash == plan.shaderHash && entry.output.tables.size() == count; });
         if (found == memos.entries.end()) return false;
         auto& memo = *found;
+        if (memo.layout != TableLayout()) return false;
         for (const auto& entry : memo.columns) {
             if (entry.memo->version != entry.version || entry.memo->generation == 0) return false;
-            const auto& column = *plan.descriptorSources.at(entry.source).tableColumn;
+            if (entry.source >= plan.descriptorSources.size() || !plan.descriptorSources[entry.source].tableColumn.has_value()) return false;
+            const auto& column = *plan.descriptorSources[entry.source].tableColumn;
             if (column.keyDomain.has_value() || !entry.memo->SameColumn(column)) return false;
             if (entry.source < activeSources.size() && activeSources[entry.source] == 0u) return false;
             ColumnRecords inputs;
@@ -740,6 +759,7 @@ private:
         tables.hash = ResultKey::TablesHash(tables);
         memo.plan = &plan;
         memo.shaderHash = plan.shaderHash;
+        memo.layout = TableLayout();
         memo.output = tables;
         auto& memos = snapshotMemos();
         memo.used = ++memos.clock;

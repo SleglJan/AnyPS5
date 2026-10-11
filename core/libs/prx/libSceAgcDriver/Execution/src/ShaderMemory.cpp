@@ -372,7 +372,19 @@ bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std:
     } else {
         // What `page` would fetch: the caller proved the page unchanged since `words` were read,
         // and accessible whole when a span tableUnchanged proved covers it.
-        const auto proven = ReplayShortcuts() && std::any_of(self.provenSpans.begin(), self.provenSpans.end(), [&](const std::pair<std::uint64_t, std::uint64_t>& span) { return span.first <= base && base + PageBytes <= span.second; });
+        const auto covers = [&](std::size_t index) { return index < self.provenSpans.size() && self.provenSpans[index].first <= base && base + PageBytes <= self.provenSpans[index].second; };
+        bool proven = false;
+        if (ReplayShortcuts()) {
+            if (covers(self.provenHint)) proven = true;
+            else if (covers(self.provenHint + 1u)) proven = true, ++self.provenHint;
+            else {
+                for (std::size_t index = 0; index < self.provenSpans.size() && !proven; ++index) {
+                    if (!covers(index)) continue;
+                    proven = true;
+                    self.provenHint = index;
+                }
+            }
+        }
         if (!proven && !GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
         at = self.pages.emplace_hint(at, std::piecewise_construct, std::forward_as_tuple(base), std::forward_as_tuple());
         page = &at->second;
