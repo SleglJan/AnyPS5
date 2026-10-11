@@ -4,6 +4,8 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cstdlib>
 #include <deque>
@@ -112,6 +114,14 @@ namespace {
 PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, std::uint32_t injected) {
     PadData data{};
     data.buttons = state.buttons | injected;
+    static const std::pair<std::uint64_t, std::uint64_t> autoCross = [] {
+        const char* value = std::getenv("APS5_LOCAL_AUTO_CROSS");
+        if (value == nullptr) return std::pair<std::uint64_t, std::uint64_t>{0, 0};
+        unsigned long long period = 30, hold = 10;
+        std::sscanf(value, "%llu,%llu", &period, &hold);
+        return std::pair<std::uint64_t, std::uint64_t>{period * 1000000ull, hold * 1000000ull};
+    }();
+    if (autoCross.first != 0 && now % autoCross.first < autoCross.second) data.buttons |= 0x4000u;
     data.left_stick_x = state.sticks[0];
     data.left_stick_y = state.sticks[1];
     data.right_stick_x = state.sticks[2];
