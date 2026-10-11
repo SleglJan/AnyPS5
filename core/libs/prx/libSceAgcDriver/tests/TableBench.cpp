@@ -99,7 +99,10 @@ int collectBench(int argc, char** argv) {
 // some of them; every snapshot must hold the table's current descriptors (a skipped column, a
 // whole reused snapshot or a full walk alike), and a carried hash must be the snapshot's.
 int checkReuse() {
-    require(AgcDriver::GuestMemory::WriteWatched(), "write tracking unavailable");
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::printf("no write watching: skipped\n");
+        return 77;
+    }
     constexpr std::uint32_t Entries = 4096;
     const std::size_t bytes = 1u << 20u;
     std::int64_t physical = -1;

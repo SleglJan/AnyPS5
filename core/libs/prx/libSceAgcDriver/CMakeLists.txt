@@ -410,6 +410,7 @@ set_target_properties(agc_table_bench PROPERTIES CXX_EXTENSIONS OFF)
 if(BUILD_TESTING AND NOT WIN32)
     set_target_properties(agc_table_bench PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_table_reuse COMMAND agc_table_bench check)
+    set_tests_properties(agc_table_reuse PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_test_executable(agc_write_tracking_tests EXCLUDE_FROM_ALL
