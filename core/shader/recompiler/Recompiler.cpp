@@ -1076,7 +1076,10 @@ ResultKeyParts resultKeyParts(const RecompileRequest& request, const ResourceSna
     part(KeyBuffers, [&] { mixDescriptors(snapshot.buffers); });
     part(KeyImages, [&] { mixDescriptors(snapshot.images); });
     part(KeySamplers, [&] { mixDescriptors(snapshot.samplers); });
-    part(KeyFlatSrt, [&] { mixWords(snapshot.flattenedSrt); });
+    part(KeyFlatSrt, [&] {
+        mixWords(snapshot.flattenedSrt);
+        mix(snapshot.nullRootReads);
+    });
     part(KeyUserData, [&] { mixWords(snapshot.userData); });
     part(KeyUniformFill, [&] {
         mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
@@ -1133,6 +1136,11 @@ ResultKeyParts resultKeyParts(const RecompileRequest& request, const ResourceSna
         const auto& vertex = *request.context.vertex;
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
         mix(count);
+        mix(vertex.paClVsOutCntl);
+        if (request.graphics && request.graphics->tessellation) {
+            const auto& tessellation = *request.graphics->tessellation;
+            for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+        }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);
             mix(vertex.resourcesDst[i].fetchIndex);
@@ -1416,6 +1424,7 @@ std::uint64_t fullSnapshotHash(const RecompileRequest& request, const ResourceSn
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
     mixWords(snapshot.flattenedSrt);
+    mix(snapshot.nullRootReads);
     mixWords(snapshot.userData);
     mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
     mix(snapshot.uniformFill.resource);
@@ -1458,6 +1467,11 @@ std::uint64_t fullSnapshotHash(const RecompileRequest& request, const ResourceSn
         const auto& vertex = *request.context.vertex;
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
         mix(count);
+        mix(vertex.paClVsOutCntl);
+        if (request.graphics && request.graphics->tessellation) {
+            const auto& tessellation = *request.graphics->tessellation;
+            for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+        }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);
             mix(vertex.resourcesDst[i].fetchIndex);
@@ -1494,6 +1508,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
     mix(ResultKey::HashWords(snapshot.flattenedSrt, snapshot.flattenedSrt.size()));
+    mix(snapshot.nullRootReads);
     mix(ResultKey::ConsumedUserDataHash(snapshot.userData, variant.bindings.layout.userDataRegisters, variant.info.userDataBase));
     mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
     mix(snapshot.uniformFill.resource);
@@ -1512,6 +1527,11 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         const auto& vertex = *request.context.vertex;
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
         mix(count);
+        mix(vertex.paClVsOutCntl);
+        if (request.graphics && request.graphics->tessellation) {
+            const auto& tessellation = *request.graphics->tessellation;
+            for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+        }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);
             mix(vertex.resourcesDst[i].fetchIndex);
