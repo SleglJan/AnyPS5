@@ -434,11 +434,18 @@ private:
 
     bool PageAccessible(std::uint64_t address, std::uint64_t begin, std::uint64_t end) {
         const auto page = address & ~(PageBytes - 1u);
-        if (const auto found = pages.find(page); found != pages.end()) return found->second;
+        if (page == lastAccessPage) return lastAccessible;
+        if (const auto found = pages.find(page); found != pages.end()) {
+            lastAccessPage = page;
+            lastAccessible = found->second;
+            return found->second;
+        }
         const auto first = std::max(page, begin);
         const auto last = std::min(page + PageBytes, end);
         const bool accessible = first < last && Accessible(first, last - first);
         pages.emplace(page, accessible);
+        lastAccessPage = page;
+        lastAccessible = accessible;
         return accessible;
     }
 
@@ -642,7 +649,16 @@ private:
     const std::vector<std::uint8_t>& activeSources;
     ImageTableSnapshot& tables;
     std::map<std::uint32_t, ColumnRecords> columns;
-    std::map<std::pair<std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t> wordsIndex;
+    struct WordsKeyHash {
+        std::size_t operator()(const std::pair<std::array<std::uint32_t, 8>, std::uint32_t>& key) const noexcept {
+            std::uint64_t hash = 14695981039346656037ull ^ key.second;
+            for (const auto word : key.first) hash = (hash ^ word) * 1099511628211ull;
+            return static_cast<std::size_t>(hash);
+        }
+    };
+    std::unordered_map<std::pair<std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t, WordsKeyHash> wordsIndex;
+    std::uint64_t lastAccessPage = std::numeric_limits<std::uint64_t>::max();
+    bool lastAccessible = false;
     std::unordered_map<std::uint64_t, bool> pages;
     std::unordered_map<std::uint64_t, bool> wholePages;
 };
