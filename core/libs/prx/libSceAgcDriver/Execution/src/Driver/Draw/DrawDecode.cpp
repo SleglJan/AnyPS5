@@ -2,6 +2,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include <cstdio>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace AgcDriver::DriverDetail {
 
@@ -53,7 +57,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         }
         return result;
     };
-    {
+    try {
         auto* product = &decoded;
         auto& programs = product->programs;
         auto& roles = product->roles;
@@ -104,6 +108,19 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0x008, 1, Stage::Fragment, 0x00b, 0x00c, Role::Fragment);
             programs.back().firstUserSgpr = 0;
         }
+    } catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("incompatible shader binary type") == std::string_view::npos) throw;
+        std::string message = std::string(error.what()) + (staticAbi ? " [static ABI" : " [draw");
+        char text[48];
+        std::snprintf(text, sizeof(text), " path %u", static_cast<unsigned>(decoded.state.stages.path));
+        message += text;
+        for (const std::uint32_t offset : {0x148u, 0x149u, 0x108u, 0x109u, 0x0c8u, 0x0c9u, 0x088u, 0x089u, 0x008u, 0x009u}) {
+            std::snprintf(text, sizeof(text), " sh0x%x=0x%x", offset, ReadGraphicsRegister(queue.shader, offset));
+            message += text;
+        }
+        std::snprintf(text, sizeof(text), " VGT_SHADER_STAGES_EN=0x%x]", ReadGraphicsRegister(queue.context, 0x2d5));
+        message += text;
+        throw std::runtime_error(message);
     }
 }
 

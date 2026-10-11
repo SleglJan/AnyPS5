@@ -361,7 +361,49 @@ std::shared_ptr<const ShaderSnapshot> RegisteredProgram(const ShaderRegistry& re
         require(result == nullptr || result->type == snapshot->type, "registered program has ambiguous shader binary types");
         result = snapshot;
     }
-    require(!registered || result != nullptr, "registered program refers to an incompatible shader binary type");
+    if (registered && result == nullptr) {
+        const auto hex = [](std::uint64_t value) {
+            char text[24];
+            std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
+            return std::string(text);
+        };
+        std::string message = "AGC driver: registered program refers to an incompatible shader binary type (program " + hex(address) + ", wanted type";
+        for (const auto type : types) message += " " + std::to_string(type);
+        message += "; registered at code " + hex(found->first) + ":";
+        static const bool dump = std::getenv("APS5_DUMP_SHADERS") != nullptr;
+        for (const auto& snapshot : found->second) {
+            message += " [header " + hex(snapshot->headerAddress) + " type " + std::to_string(snapshot->type) + " code " + hex(snapshot->codeAddress) + "+" + hex(snapshot->code.size() * sizeof(std::uint32_t));
+            if (snapshot->registeredState != nullptr) {
+                for (const std::uint32_t offset : {0x108u, 0x109u, 0x10au, 0x10bu, 0x148u, 0x149u, 0xc8u, 0xc9u}) {
+                    const auto value = snapshot->registeredState->shader.find(offset);
+                    if (value != snapshot->registeredState->shader.end()) message += " sh" + hex(offset) + "=" + hex(value->second);
+                }
+                const auto stages = snapshot->registeredState->context.find(0x2d5u);
+                if (stages != snapshot->registeredState->context.end()) message += " VGT_SHADER_STAGES_EN=" + hex(stages->second);
+            }
+            message += "]";
+            if (!dump) continue;
+            const auto base = "registered_" + hex(snapshot->codeAddress) + "_" + hex(snapshot->headerAddress) + "_type" + std::to_string(snapshot->type);
+            if (std::FILE* file = std::fopen((base + ".code").c_str(), "wb")) {
+                std::fwrite(snapshot->code.data(), sizeof(std::uint32_t), snapshot->code.size(), file);
+                std::fclose(file);
+            }
+            if (std::FILE* file = std::fopen((base + ".header").c_str(), "wb")) {
+                std::fwrite(snapshot->header.data(), 1, snapshot->header.size(), file);
+                std::fclose(file);
+            }
+            if (snapshot->registeredState != nullptr) {
+                if (std::FILE* file = std::fopen((base + ".regs").c_str(), "w")) {
+                    snapshot->registeredState->shader.ForEach([&](std::uint32_t offset, std::uint32_t value) { std::fprintf(file, "shader %x %08x\n", offset, value); });
+                    snapshot->registeredState->context.ForEach([&](std::uint32_t offset, std::uint32_t value) { std::fprintf(file, "context %x %08x\n", offset, value); });
+                    snapshot->registeredState->userConfig.ForEach([&](std::uint32_t offset, std::uint32_t value) { std::fprintf(file, "uconfig %x %08x\n", offset, value); });
+                    std::fclose(file);
+                }
+            }
+        }
+        message += ")";
+        throw std::runtime_error(message);
+    }
     return result;
 }
 
