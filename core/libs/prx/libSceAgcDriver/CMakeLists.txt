@@ -403,6 +403,11 @@ target_link_libraries(agc_shared_write_tests PRIVATE libSceAgcDriver libkernel l
 set_target_properties(agc_shared_write_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shared_write_tests)
 
+add_test_executable(agc_table_bench EXCLUDE_FROM_ALL tests/TableBench.cpp)
+target_include_directories(agc_table_bench PRIVATE ${LIBS_INCLUDE_DIR} $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(agc_table_bench PRIVATE libSceAgcDriver libkernel libc)
+set_target_properties(agc_table_bench PROPERTIES CXX_EXTENSIONS OFF)
+
 add_test_executable(agc_write_tracking_tests EXCLUDE_FROM_ALL
         tests/WriteTracking.cpp
         Execution/src/GuestMemory.cpp
