@@ -732,7 +732,8 @@ private:
             const auto found = columns.find(source);
             if (found == columns.end()) return;
             const auto& records = found->second;
-            if (records.pure == nullptr || records.fault != 0u || records.narrowed) return;
+            // A key-domain column (narrowed or not) is never reused whole (ReuseWhole).
+            if (records.pure == nullptr || records.fault != 0u || records.narrowed || plan.descriptorSources.at(source).tableColumn->keyDomain.has_value()) return;
             memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.outside});
         }
         if (memo.columns.empty()) return;
