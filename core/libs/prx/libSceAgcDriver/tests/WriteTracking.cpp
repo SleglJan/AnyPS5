@@ -12,6 +12,7 @@
 #endif
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -562,6 +563,38 @@ void CheckUnwatchedImport() {
 #endif
 }
 
+// The per-thread range index (APS5_NO_COLLECT_INDEX=1 disables it): a range collected whole in the
+// epoch is not walked again by any number of later collects of it, a longer range from the same
+// start is, and an epoch bump or an unwatch ends what it answers.
+void CheckCollectIndex() {
+    constexpr std::size_t Ranges = 200;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(Ranges * Block));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 5, Ranges * Block);
+    const bool indexed = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr && std::getenv("APS5_NO_COLLECT_MEMO") == nullptr;
+    BumpCollectEpoch();
+    for (std::size_t range = 0; range < Ranges; ++range) Require(CollectWrites(base + range * Block, Block) != 0, "an indexed range was not collected");
+    for (std::size_t range = 0; range < Ranges; ++range) Require(CollectWrites(base + range * Block + 100u, 16u) != 0, "a small range inside an indexed block was not collected");
+    const auto collected = TrackerGeneration();
+    for (std::size_t range = 0; range < Ranges; ++range) {
+        const auto again = CollectWrites(base + range * Block, Block);
+        const auto small = CollectWrites(base + range * Block + 100u, 16u);
+        if (indexed) Require(again == collected && small == collected, "a range collected in this epoch was walked again");
+        else Require(again != 0 && small != 0, "a repeated collect failed");
+    }
+    if (indexed) Require(TrackerGeneration() == collected, "the repeated collects walked");
+    const auto beforeLonger = TrackerGeneration();
+    Require(CollectWrites(base, 2 * Block) > beforeLonger, "a longer range from an indexed start was not walked");
+    const auto observed = TrackerGeneration();
+    memory[5 * Block + 3] ^= 1;
+    BumpCollectEpoch();
+    Require(CollectWrites(base + 5 * Block, Block) > observed && !UnchangedSince(base + 5 * Block, Block, observed), "the next epoch missed a CPU write to an indexed range");
+    Require(CollectWrites(base + 6 * Block, Block) != 0, "the next epoch did not collect");
+    Unwatch(base + 6 * Block, Block);
+    Require(CollectWrites(base + 6 * Block, Block) == 0, "an unwatched range kept its index entry");
+    Require(CollectWrites(base + 8 * Block, Block) != 0, "an unwatch elsewhere broke a watched range");
+}
+
 int main() {
     try {
         if (!WriteWatched()) {
@@ -587,6 +620,7 @@ int main() {
         CheckCollectBoundaries();
         CheckImportWindow();
         CheckUnwatchedImport();
+        CheckCollectIndex();
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;

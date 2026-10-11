@@ -76,6 +76,8 @@ std::atomic<std::uint64_t> forgetCalls{0};
 std::atomic<std::uint64_t> forgetSerial{0};
 std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
+// Of them, hits of the per-thread range index (ThreadCollectIndex).
+std::atomic<std::uint64_t> collectIndexHits{0};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
@@ -307,7 +309,7 @@ public:
         for (std::size_t i = 0; i < MemoryCounterCount; ++i) {
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu calls %.0f MiB %.1f s", MemoryCounterNames[i], static_cast<unsigned long long>(totals[i][0]), totals[i][1] / 1048576.0, totals[i][2] / 1e9);
         }
-        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
+        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu (%llu from the range index), collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectIndexHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -1015,18 +1017,56 @@ bool collectMemoEnabled() {
 // thread that never bumps its epoch never match (each collect gets a fresh epoch), as intended.
 // APS5_SHARED_COLLECT_MEMO=1 uses the tracker's shared ring under its mutex instead.
 // 512 entries (gjonn's dc1e3cce5: an image-table draw proves hundreds of textures per packet, far
-// past 64); APS5_COLLECT_MEMO_RING=<n> uses the first n (64 restores the ring as it was).
+// past 64), of which the first APS5_COLLECT_MEMO_RING=<n> are used: 64 by default since the range
+// index (ThreadCollectIndex) answers repeated collects; a 512-entry scan before every walk cost
+// more than its containment hits gained (agc_table_bench collect: +23% per epoch's first
+// Revalidate). APS5_COLLECT_MEMO_RING=512 with APS5_NO_COLLECT_INDEX=1 is gjonn's configuration.
 struct ThreadCollectMemo {
     std::array<WriteTracker::Memo, 512> entries{};
     std::size_t next = 0;
 };
 thread_local ThreadCollectMemo threadCollectMemo;
 
+// The ranges this thread walked whole in its current epoch, by their first page: one hash lookup
+// answers a repeated collect (the textures a Revalidate proves again in the same epoch) whatever
+// the ring holds. Each entry keeps the furthest end walked from that page, so a range it contains
+// with the same start hits too; the ring still answers other contained ranges. Cleared when the
+// epoch or the unwatch serial moves (APS5_NO_COLLECT_INDEX=1: the ring only).
+struct ThreadCollectIndex {
+    std::uint64_t epoch = 0;
+    std::uint64_t unwatched = 0;
+    std::unordered_map<std::uintptr_t, std::uintptr_t> ends;
+};
+thread_local ThreadCollectIndex threadCollectIndex;
+
+bool collectIndexEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr;
+    return enabled;
+}
+
+bool collectIndexed(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch, std::uint64_t unwatched) {
+    const auto& index = threadCollectIndex;
+    if (index.epoch != epoch || index.unwatched != unwatched) return false;
+    const auto found = index.ends.find(first);
+    return found != index.ends.end() && stop <= found->second;
+}
+
+void indexCollect(std::uintptr_t first, std::uintptr_t stop, std::uint64_t epoch, std::uint64_t unwatched) {
+    auto& index = threadCollectIndex;
+    if (index.epoch != epoch || index.unwatched != unwatched || index.ends.size() >= 65536u) {
+        index.ends.clear();
+        index.epoch = epoch;
+        index.unwatched = unwatched;
+    }
+    auto& end = index.ends[first];
+    end = std::max<std::uintptr_t>(end, stop);
+}
+
 std::size_t collectMemoRing() {
     static const std::size_t ring = [] {
         const char* text = std::getenv("APS5_COLLECT_MEMO_RING");
         const auto value = text != nullptr ? std::strtoull(text, nullptr, 0) : 0ull;
-        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 512ull)) : std::size_t{512};
+        return value != 0ull ? static_cast<std::size_t>(std::min<unsigned long long>(value, 512ull)) : std::size_t{64};
     }();
     return ring;
 }
@@ -1116,6 +1156,16 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
+        if (collectIndexEnabled() && threadCollectEpoch != 0) {
+            // A small range is walked as its whole 64 KiB blocks (below), and indexed so.
+            const auto blockFirst = first & ~(static_cast<std::uint64_t>(WriteBlockBytes) - 1);
+            const auto blockStop = (stop + WriteBlockBytes - 1) & ~(static_cast<std::uint64_t>(WriteBlockBytes) - 1);
+            if (collectIndexed(first, stop, epoch, unwatched) || (bytes <= WriteBlockBytes && collectIndexed(blockFirst, blockStop, epoch, unwatched))) {
+                collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+                collectIndexHits.fetch_add(1, std::memory_order_relaxed);
+                return tracker.generation.load(std::memory_order_relaxed);
+            }
+        }
         for (std::size_t slot = 0, ring = collectMemoRing(); slot < ring; ++slot) {
             const auto& entry = threadCollectMemo.entries[slot];
             if (entry.epoch == epoch && entry.unwatched == unwatched && entry.begin <= first && stop <= entry.end) {
@@ -1155,7 +1205,10 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
         if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
-        else threadCollectMemo.entries[threadCollectMemo.next++ % collectMemoRing()] = {first, stop, epoch, serial};
+        else {
+            threadCollectMemo.entries[threadCollectMemo.next++ % collectMemoRing()] = {first, stop, epoch, serial};
+            if (collectIndexEnabled() && threadCollectEpoch != 0) indexCollect(first, stop, epoch, serial);
+        }
     }
     return tracker.generation;
 }
