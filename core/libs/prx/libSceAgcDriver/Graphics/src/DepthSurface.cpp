@@ -144,6 +144,12 @@ public:
         const auto& descriptor = storage.Descriptor();
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
         const auto storageFormat = storage.StorageFormat();
+        const bool sized = d16 ? (storageFormat == VK_FORMAT_R16_UINT || storageFormat == VK_FORMAT_R16_UNORM || storageFormat == VK_FORMAT_R16_SINT || storageFormat == VK_FORMAT_R16_SNORM || storageFormat == VK_FORMAT_R16_SFLOAT) : (storageFormat == VK_FORMAT_R32_SFLOAT || storageFormat == VK_FORMAT_R32_UINT || storageFormat == VK_FORMAT_R32_SINT);
+        if (!sized && descriptor.width == target.extent.width && descriptor.height == target.extent.height && descriptor.mipCount == 1 && std::getenv("APS5_LOCAL_DEPTH_REUSE") != nullptr) {
+            static bool noted = false;
+            if (!noted) { noted = true; std::fprintf(stderr, "[local] depth surface 0x%llx treated as reused memory for a vk format %d storage image\n", static_cast<unsigned long long>(target.address), static_cast<int>(storageFormat)); }
+            return;
+        }
         if (!storageFits(target, descriptor, storageFormat) || (layer != 0 && layer > descriptor.depthOrLastArray)) {
             char text[256];
             std::snprintf(text, sizeof(text), "AGC graphics: storage image access to depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u image of vk format %d, dimension %d, %u mips is not implemented", static_cast<unsigned long long>(target.address), target.extent.width, target.extent.height, static_cast<int>(target.format), descriptor.width, descriptor.height, static_cast<int>(storageFormat), static_cast<int>(descriptor.dimension), descriptor.mipCount);
