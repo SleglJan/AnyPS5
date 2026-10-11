@@ -340,6 +340,8 @@ private:
     IrBlock& block;
     IrU1 instructionBranchCondition;
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
+    // f32 denormal flushing of the current instruction: 1 operands, 2 result (with 1), 4 only the
+    // tiny-product rule of a fused multiply-add (see f32DenormalFlushFor).
     std::uint32_t f32DenormalFlush = 0u;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;

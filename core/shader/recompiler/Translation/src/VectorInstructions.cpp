@@ -1,5 +1,7 @@
 #include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -21,15 +23,41 @@ bool roundsProductSeparately(const RdnaInstruction& inst) {
     return vop2 == 0x1fu || vop2 == 0x20u || vop2 == 0x21u;
 }
 
+// APS5_HOST_F32_FTZ=1 declares that the host's f32 arithmetic already flushes denormal operands and
+// results to signed zero under the SignedZeroInfNanPreserve 32 mode every module declares. Probed on
+// NVIDIA 615.71 (RTX 3080), which reports neither shaderDenormFlushToZeroFloat32 nor
+// shaderDenormPreserveFloat32: OpFMul/OpFAdd/OpFSub/Fma, ordered compares and f32->int conversions
+// flush denormal operands and results (unordered compares and f16/packed conversions not probed). A
+// product that rounds up to the smallest normal stays 2^-126 on NVIDIA for both OpFMul and Fma
+// (tininess after rounding, the model upstream #3278 uses), so with this switch v_mul_f32 follows that
+// model while this stack's flushTinyProduct checks tininess before rounding. The emulated flush stays
+// where the host keeps a denormal:
+// min/max/med3 select operand bits, floor/ceil/fract and v_cvt_flr/rpi round a denormal operand
+// (floor(-denormal) is -1.0 on NVIDIA), frexp, v_cvt_f64_f32, v_div_fixup, v_mullit, the legacy and
+// mix forms and sin/cos. A fused multiply-add keeps this stack's tiny-product rule (bit 4) unchanged.
+// Approximated on 007's largest compute shader by stripping the same checks from its SPIR-V: ~42%
+// fewer words and ~45% less driver compile time. Without the probe holding on the host this switch
+// changes denormal results.
+bool hostFlushesF32Denormals() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_HOST_F32_FTZ");
+        return value != nullptr && *value != '\0' && std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
 }
 
 std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& inst) const {
     std::uint32_t flush = 0u;
+    const bool host = hostFlushesF32Denormals();
     switch (inst.op) {
     case RdnaOpcode::VAddF32:
     case RdnaOpcode::VSubF32:
     case RdnaOpcode::VSubrevF32:
     case RdnaOpcode::VMulF32:
+        flush = host ? 0u : 3u;
+        break;
     case RdnaOpcode::VMulLegacyF32:
     case RdnaOpcode::VMullitF32:
     case RdnaOpcode::VMinF32:
@@ -49,7 +77,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VMadmkF32:
     case RdnaOpcode::VMadakF32:
     case RdnaOpcode::VFmaF32:
-        flush = roundsProductSeparately(inst) ? 0u : 3u;
+        flush = roundsProductSeparately(inst) ? 0u : host ? 4u : 3u;
         break;
     case RdnaOpcode::VCmpEqF32:
     case RdnaOpcode::VCmpGeF32:
@@ -77,15 +105,17 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VCmpxNltF32:
     case RdnaOpcode::VCvtI32F32:
     case RdnaOpcode::VCvtU32F32:
-    case RdnaOpcode::VCvtRpiI32F32:
-    case RdnaOpcode::VCvtFlrI32F32:
-    case RdnaOpcode::VFrexpExpI32F32:
-    case RdnaOpcode::VCvtF64F32:
     case RdnaOpcode::VCvtPknormI16F32:
     case RdnaOpcode::VCvtPknormU16F32:
     case RdnaOpcode::VCvtPkU8F32:
     case RdnaOpcode::VCvtPkrtzF16F32:
     case RdnaOpcode::VCvtF16F32:
+        flush = host ? 0u : 1u;
+        break;
+    case RdnaOpcode::VCvtRpiI32F32:
+    case RdnaOpcode::VCvtFlrI32F32:
+    case RdnaOpcode::VFrexpExpI32F32:
+    case RdnaOpcode::VCvtF64F32:
     case RdnaOpcode::VDivFixupF32:
     case RdnaOpcode::VMadMixloF16:
     case RdnaOpcode::VMadMixhiF16:

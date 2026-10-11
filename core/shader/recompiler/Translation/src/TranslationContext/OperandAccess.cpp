@@ -154,7 +154,7 @@ IrU32 TranslationContext::flushF32Denormal(IrU32 bits) {
 }
 
 IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend) {
-    if ((f32DenormalFlush & 2u) == 0u || keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)) return IrF32(*product);
+    if ((f32DenormalFlush & 6u) == 0u || keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)) return IrF32(*product);
     IrValue& lhsBits = ir.BitCastU32(*lhs);
     IrValue& rhsBits = ir.BitCastU32(*rhs);
     const auto exponent = [&](IrValue& bits) -> IrValue& { return ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&bits, &ir.Constant(23u), &ir.Constant(8u)}); };
