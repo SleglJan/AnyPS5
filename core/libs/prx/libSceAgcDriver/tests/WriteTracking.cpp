@@ -571,7 +571,7 @@ void CheckCollectIndex() {
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(Ranges * Block));
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     std::memset(memory, 5, Ranges * Block);
-    const bool indexed = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr && std::getenv("APS5_NO_COLLECT_MEMO") == nullptr;
+    const bool indexed = std::getenv("APS5_NO_COLLECT_INDEX") == nullptr && std::getenv("APS5_NO_EPOCH_COLLECT_MAP") == nullptr && std::getenv("APS5_NO_COLLECT_MEMO") == nullptr;
     BumpCollectEpoch();
     for (std::size_t range = 0; range < Ranges; ++range) Require(CollectWrites(base + range * Block, Block) != 0, "an indexed range was not collected");
     for (std::size_t range = 0; range < Ranges; ++range) Require(CollectWrites(base + range * Block + 100u, 16u) != 0, "a small range inside an indexed block was not collected");
@@ -593,6 +593,22 @@ void CheckCollectIndex() {
     Unwatch(base + 6 * Block, Block);
     Require(CollectWrites(base + 6 * Block, Block) == 0, "an unwatched range kept its index entry");
     Require(CollectWrites(base + 8 * Block, Block) != 0, "an unwatch elsewhere broke a watched range");
+    // Another thread (a pipelined draw committer under its own epochs) answers nothing from this
+    // thread's index: its first collect of a range this thread indexed walks, and sees a CPU write
+    // this thread's epoch would still hide.
+    BumpCollectEpoch();
+    Require(CollectWrites(base + 9 * Block, Block) != 0, "the range was not collected");
+    const auto beforeWrite = TrackerGeneration();
+    memory[9 * Block + 1] ^= 1;
+    if (indexed) Require(CollectWrites(base + 9 * Block, Block) == beforeWrite, "the indexed range was walked again in its epoch");
+    bool walked = false;
+    std::thread committer([&] {
+        BumpCollectEpoch();
+        const auto generation = CollectWrites(base + 9 * Block, Block);
+        walked = generation > beforeWrite && !UnchangedSince(base + 9 * Block, Block, beforeWrite);
+    });
+    committer.join();
+    Require(walked, "another thread answered from this thread's index (or missed the CPU write)");
 }
 
 int main() {
