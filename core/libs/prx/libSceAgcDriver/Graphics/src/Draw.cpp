@@ -463,6 +463,13 @@ DrawProfile& Profile() {
     return profile;
 }
 
+// DIAG: keep outcomes of cacheable builds: [0..9] ShaderResources::KeepRefusal, 10 inserted, 12 not
+// recorded, 13 copied reads it can neither prove nor copy.
+std::array<std::atomic<std::uint64_t>, 14>& DiagKeeps() {
+    static std::array<std::atomic<std::uint64_t>, 14> keeps{};
+    return keeps;
+}
+
 // Adds one draw's phases to the totals and prints the [draws] and [rescache] lines every 10 s.
 void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources::BuildTiming* built, const DrawOutcome& outcome) {
     auto& profile = Profile();
@@ -555,6 +562,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", DrawRecipeMissName(static_cast<DrawRecipeMiss>(i)), static_cast<unsigned long long>(profile.recipeMisses[i]));
     }
     std::fprintf(stderr, "%s\n", line);
+    {
+        // DIAG: builds of cacheable draws by keep outcome (cumulative), and purge drops.
+        auto& keeps = DiagKeeps();
+        std::fprintf(stderr, "[rescache-diag] cacheable recorded builds: inserted %llu; refused: completion %llu lease %llu refreshed %llu bigdata %llu nodirect %llu noserial %llu copied %llu copiedread %llu; not recorded %llu; purged draw %llu dispatch %llu\n", static_cast<unsigned long long>(keeps[10].load()), static_cast<unsigned long long>(keeps[1].load()), static_cast<unsigned long long>(keeps[2].load()), static_cast<unsigned long long>(keeps[3].load()), static_cast<unsigned long long>(keeps[4].load()), static_cast<unsigned long long>(keeps[5].load()), static_cast<unsigned long long>(keeps[6].load()), static_cast<unsigned long long>(keeps[9].load()), static_cast<unsigned long long>(keeps[13].load()), static_cast<unsigned long long>(keeps[12].load()), static_cast<unsigned long long>(ResourceCachePurged(true)), static_cast<unsigned long long>(ResourceCachePurged(false)));
+        std::fprintf(stderr, "[rescache-diag] non-direct (all builds):%s\n", DiagNonDirectText().c_str());
+    }
     std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
@@ -2082,6 +2095,12 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     // hit is reusable by construction, so `recorded` holds for it; one with completion work is
     // never reusable).
     if (cacheable && built != nullptr && recorded && resources->Reusable()) SharedResourceCache().Insert(contentKey, resources);
+    if (cacheable && built != nullptr) {
+        auto& keeps = DiagKeeps();
+        if (!recorded) ++keeps[12];
+        else if (resources->Reusable()) ++keeps[10];
+        else ++keeps[resources->KeepRefusal() == 10 ? 13 : static_cast<std::size_t>(resources->KeepRefusal())];
+    }
     // A recorded draw renders into its resident targets in the general layout (recordDraw). Debug
     // aid: APS5_DRAW_TRANSITIONS=1 keeps the per-draw upload and download barriers, the layout
     // transitions of every target and one pass per draw, as before.
@@ -2145,7 +2164,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->RefreshesReads() && resolved.moved.empty() && !multisampled) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;

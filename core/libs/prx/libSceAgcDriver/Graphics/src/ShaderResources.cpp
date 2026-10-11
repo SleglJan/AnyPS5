@@ -1936,16 +1936,107 @@ bool LoopGuardEnabled() {
 
 }
 
+void DiagCopiedRead(int reason, std::uint64_t address, std::uint64_t bytes);
+// DIAG: refused builds by the first non-direct region's kind (and whether it is written), with
+// the most recent example of each kind.
+std::array<std::array<std::atomic<std::uint64_t>, 2>, 10> diagNonDirect{};
+std::array<std::atomic<std::uint64_t>, 10> diagNonDirectAddress{};
+std::array<std::atomic<std::uint64_t>, 10> diagNonDirectBytes{};
+void DiagNonDirectCount(int kind, bool written, std::uint64_t address, std::uint64_t bytes) {
+    const auto at = static_cast<std::size_t>(std::clamp(kind, 0, 9));
+    diagNonDirect[at][written ? 1 : 0].fetch_add(1, std::memory_order_relaxed);
+    diagNonDirectAddress[at].store(address, std::memory_order_relaxed);
+    diagNonDirectBytes[at].store(bytes, std::memory_order_relaxed);
+}
+std::array<std::atomic<std::uint64_t>, 3> diagCopiedRead{};
+std::array<std::atomic<std::uint64_t>, 3> diagCopiedReadAddress{};
+std::array<std::atomic<std::uint64_t>, 3> diagCopiedReadBytes{};
+// DIAG: copied-read refusals: 0 written element, 1 no generation though watched, 2 not watched.
+void DiagCopiedRead(int reason, std::uint64_t address, std::uint64_t bytes) {
+    diagCopiedRead[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    diagCopiedReadAddress[static_cast<std::size_t>(reason)].store(address, std::memory_order_relaxed);
+    diagCopiedReadBytes[static_cast<std::size_t>(reason)].store(bytes, std::memory_order_relaxed);
+}
+
+std::string DiagNonDirectText() {
+    std::string text;
+    char item[160];
+    for (std::size_t kind = 0; kind < diagNonDirect.size(); ++kind) {
+        const auto ro = diagNonDirect[kind][0].load();
+        const auto rw = diagNonDirect[kind][1].load();
+        if (ro + rw == 0) continue;
+        std::snprintf(item, sizeof(item), " kind%zu unwritten %llu written %llu (e.g. 0x%llx+0x%llx)", kind, static_cast<unsigned long long>(ro), static_cast<unsigned long long>(rw), static_cast<unsigned long long>(diagNonDirectAddress[kind].load()), static_cast<unsigned long long>(diagNonDirectBytes[kind].load()));
+        text += item;
+    }
+    for (std::size_t reason = 0; reason < diagCopiedRead.size(); ++reason) {
+        std::snprintf(item, sizeof(item), "; copiedread reason %zu: %llu (e.g. 0x%llx+0x%llx)", reason, static_cast<unsigned long long>(diagCopiedRead[reason].load()), static_cast<unsigned long long>(diagCopiedReadAddress[reason].load()), static_cast<unsigned long long>(diagCopiedReadBytes[reason].load()));
+        text += item;
+    }
+    return text;
+}
+
 void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
     directRegions.clear();
+    // DIAG: why the object is not kept (KeepRefusal).
+    keepRefusal = HoldsLease() ? 2 : guestMemory.HasCopiedWrites() ? 9 : 1;
     if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || (bda != nullptr && LoopGuardEnabled())) return;
+    keepRefusal = 3;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
+    keepRefusal = 4;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
-    const auto regions = guestMemory.DirectRegions();
-    if (!regions.has_value()) return;
+    keepRefusal = 5;
+    // A draw's guest buffers in regions that are copied rather than bound in place (outside the
+    // host imports, or misaligned inside one) and never written: each later use copies those
+    // elements anew from guest memory, as for a moved read-only buffer (MovedReadOnlyBuffers), so
+    // they need no import identity. Elements over APS5_COPIED_READ_MAX_KIB (default 256) are not
+    // copied per use; APS5_NO_COPIED_READ_REUSE=1 refuses such objects as before.
+    static const bool copiedReadReuse = std::getenv("APS5_NO_COPIED_READ_REUSE") == nullptr;
+    static const std::uint64_t copiedReadMax = [] {
+        const char* value = std::getenv("APS5_COPIED_READ_MAX_KIB");
+        return (value != nullptr ? std::strtoull(value, nullptr, 10) : 256ull) << 10u;
+    }();
+    std::vector<GuestBufferMemory::CopiedRead> copiedReads;
+    refreshedReads.assign(allocations.size(), false);
+    copiedRegions.clear();
+    const auto regions = guestMemory.DirectRegions(drawBuild && copiedReadReuse ? &copiedReads : nullptr);
+    if (regions.has_value() && !copiedReads.empty()) {
+        for (const auto& read : copiedReads) copiedRegions.push_back({read.begin, read.end, read.generation, true, read.sparse, read.backed});
+        for (std::size_t index = 0; index < allocations.size(); ++index) {
+            const auto& item = allocations[index];
+            if (!item.guest || item.size == 0) continue;
+            const auto begin = item.address - item.adjustment;
+            const auto end = begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment);
+            for (auto& region : copiedRegions) {
+                if (!(begin < region.end && region.begin < end)) continue;
+                keepRefusal = 10;
+                if (item.written) {
+                    DiagCopiedRead(0, region.begin, region.end - region.begin);
+                    return;
+                }
+                refreshedReads[index] = true;
+                if (end - begin > copiedReadMax) region.copyable = false;
+            }
+        }
+        // A region that can be neither proved unchanged nor copied per use never serves a use.
+        keepRefusal = 10;
+        for (const auto& region : copiedRegions) {
+            if (region.generation != 0 || region.copyable) continue;
+            DiagCopiedRead(GuestMemory::Watched(region.begin, static_cast<std::size_t>(region.end - region.begin)) ? 1 : 2, region.begin, region.end - region.begin);
+            return;
+        }
+    }
+    if (!regions.has_value()) {
+        std::uint64_t address = 0;
+        std::uint64_t bytes = 0;
+        bool written = false;
+        const auto kind = guestMemory.DiagNonDirect(address, bytes, written);
+        DiagNonDirectCount(kind, written, address, bytes);
+        return;
+    }
+    keepRefusal = 6;
     for (const auto& [begin, end] : *regions) {
         // No reconcile here: the upload just took these imports, and the set is about to be recorded
         // against them.
@@ -1956,6 +2047,7 @@ void ShaderResources::noteReusable() {
         if (serial == 0) return;
         directRegions.push_back({begin, end, serial});
     }
+    keepRefusal = 0;
     reusable = true;
 }
 
@@ -2939,6 +3031,9 @@ void ResourceCache::noteMiss(const Key& key) {
     report("draws", churn.draws);
 }
 
+std::atomic<std::uint64_t> resourceCachePurged[2]{};
+std::uint64_t ResourceCachePurged(bool draw) { return resourceCachePurged[draw ? 1 : 0].load(std::memory_order_relaxed); }
+
 void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> resources, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
     std::lock_guard lock(mutex);
     if (!resources->HasCachedStorageImages()) return;
@@ -2977,6 +3072,7 @@ void ResourceCache::RemoveImage(const StorageTexture* image, std::vector<std::sh
             ++it;
             continue;
         }
+        ++resourceCachePurged[!it->first.empty() && it->first[0] == 0xffffffffu ? 1 : 0];
         if (evicted != nullptr) evicted->push_back(std::move(it->second));
         index.erase(it->first);
         it = entries.erase(it);
@@ -4054,6 +4150,42 @@ ShaderResources::DrawBindings::~DrawBindings() {
 std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
     std::vector<MovedBuffer> moved;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
+    // Copied read-only regions (see noteReusable): the build's copy serves while the region is
+    // unchanged since it was taken and no recorded work still writes it (a CPU read would wait for
+    // that work, as the build's copy did); otherwise its elements are copied anew below, or the
+    // object misses when they are too large.
+    thread_local std::vector<bool> stale;
+    stale.assign(copiedRegions.size(), false);
+    for (std::size_t at = 0; at < copiedRegions.size(); ++at) {
+        const auto& region = copiedRegions[at];
+        const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+        const bool pending = recorder.PendingWriteOverlaps(region.begin, bytes) || PendingStorageOverlaps(region.begin, bytes, nullptr) || AnyShadowedOverlaps(region.begin, bytes);
+        if (pending) return std::nullopt;
+        if (region.generation != 0) {
+            const auto unchanged = [&](std::uint64_t first, std::uint64_t last) {
+                const auto length = static_cast<std::size_t>(last - first);
+                static_cast<void>(GuestMemory::CollectWrites(first, length));
+                return GuestMemory::UnchangedSince(first, length, region.generation);
+            };
+            if (!region.sparse) {
+                if (unchanged(region.begin, region.end)) continue;
+            } else if (GuestMemory::DescribeCommitted(region.begin, bytes).ranges == region.backed && std::all_of(region.backed.begin(), region.backed.end(), [&](const auto& range) { return unchanged(range.first, range.second); })) {
+                continue;
+            }
+        }
+        if (!region.copyable) return std::nullopt;
+        stale[at] = true;
+    }
+    const auto staleElement = [&](std::size_t index) {
+        if (index >= refreshedReads.size() || !refreshedReads[index]) return false;
+        const auto& item = allocations[index];
+        const auto begin = item.address - item.adjustment;
+        const auto end = begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment);
+        for (std::size_t at = 0; at < copiedRegions.size(); ++at) {
+            if (stale[at] && begin < copiedRegions[at].end && copiedRegions[at].begin < end) return true;
+        }
+        return false;
+    };
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return std::nullopt;
         for (const auto& binding : shader.program->bindings) {
@@ -4085,7 +4217,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                     if (empty) continue;
                     return std::nullopt;
                 }
-                if (item.address == address && item.size == size) continue;
+                // An element of a copied region (refreshedReads) is copied anew even where it stayed.
+                if (item.address == address && item.size == size && !staleElement(index)) continue;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
                 const auto begin = address - item.adjustment;

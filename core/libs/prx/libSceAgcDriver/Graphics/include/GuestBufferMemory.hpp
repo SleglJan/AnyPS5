@@ -259,7 +259,24 @@ public:
     // Every uploaded region as [begin, end) when all of them are served by host imports, in place or
     // through a device-local staging copy of the import (nothing was copied through the CPU, so the
     // upload can serve a later identical build), else nothing.
-    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> DirectRegions() const;
+    // A region copied out of live guest memory that no element writes, with the write generation
+    // collected just before the CPU copied it (0: copied by the GPU, or no write watching).
+    struct CopiedRead {
+        std::uint64_t begin;
+        std::uint64_t end;
+        std::uint64_t generation;
+        // A sparse region: its committed parts when copied (the generation covers these alone).
+        bool sparse = false;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> backed {};
+    };
+    // With `copiedReads`, such regions are no refusal: they are listed there instead (a reused
+    // draw proves them unchanged or copies their elements anew, see
+    // ShaderResources::MovedReadOnlyBuffers).
+    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> DirectRegions(std::vector<CopiedRead>* copiedReads = nullptr) const;
+    // DIAG: the first region DirectRegions(copiedReads) refuses: 1 address-space base, 2 GPU copy
+    // out of an import (misaligned), 3 writable mirror, 4 heap mirror, 5 CPU copy, 6 staged, 7
+    // committed, 8 sparse, 9 snapshot; 0 none. `written`: an element writes it.
+    int DiagNonDirect(std::uint64_t& address, std::uint64_t& bytes, bool& written) const;
     // Every region the recorded work reads in place through a host import, as [begin, end): the
     // regions bound in place (`direct`), an address-based build's leased heaps included. A region
     // the GPU copies out of an import (gpuCopy) notes its read itself when the copy is recorded.
@@ -306,6 +323,8 @@ private:
         // completed, with the guest address of its first byte). `copiedBack` once RecordCopyBacks
         // recorded the written sub-ranges' copies back into the import.
         bool gpuCopy = false;
+        // The write generation collected right before copyRegion read the region (see CopiedRead).
+        std::uint64_t copyGeneration = 0;
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
         bool copiedBack = false;

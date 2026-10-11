@@ -3205,6 +3205,17 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
         // Only ranges a descriptor may write need the copy the write-back diffs against; the
         // registered ranges of an address-based shader are read-only to it (AddressRanges).
         const bool written = region.writable && WritesOverlap(region.begin, static_cast<std::size_t>(bytes));
+        // Before the reads: the copy is current while UnchangedSince(region, this) holds (for a sparse
+        // region over its committed parts, the only ones write watching covers; 0 when any is not).
+        if (!region.sparse) {
+            region.copyGeneration = GuestMemory::CollectWrites(region.begin, static_cast<std::size_t>(bytes));
+        } else {
+            region.copyGeneration = region.backed.empty() ? 0 : ~std::uint64_t{0};
+            for (const auto& [first, last] : region.backed) {
+                const auto generation = GuestMemory::CollectWrites(first, static_cast<std::size_t>(last - first));
+                region.copyGeneration = generation == 0 ? 0 : region.copyGeneration == 0 ? 0 : region.copyGeneration == ~std::uint64_t{0} ? generation : std::max(region.copyGeneration, generation);
+            }
+        }
         if (!region.sparse) {
             GuestMemory::Read(region.begin, region.buffer->Bytes());
             readBytes += region.buffer->Bytes().size();
@@ -3739,7 +3750,37 @@ void GuestBufferMemory::WriteBack() {
     heapReferences.clear();
 }
 
-std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions() const {
+int GuestBufferMemory::DiagNonDirect(std::uint64_t& address, std::uint64_t& bytes, bool& written) const {
+    if (!uploaded || committed) return 7;
+    if (space != nullptr) {
+        for (const auto& region : space->base) {
+            if (region.direct == nullptr && (region.mirror == nullptr || region.mirror->writable || region.mirror->heap)) {
+                address = region.begin;
+                bytes = region.end - region.begin;
+                written = region.writable;
+                return 1;
+            }
+        }
+    }
+    for (const auto& region : regions) {
+        const bool fixedMirror = region.mirror != nullptr && !region.mirror->writable && !region.mirror->heap;
+        const bool staged = region.gpuCopy && region.deviceLocal;
+        if (region.direct != nullptr || fixedMirror) continue;
+        address = region.begin;
+        bytes = region.end - region.begin;
+        written = WritesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin));
+        if (!staged && !written && region.writable && region.mirror == nullptr && (region.gpuCopy || region.buffer != nullptr)) continue;
+        if (region.sparse) return 8;
+        if (!region.writable) return 9;
+        if (staged) return 6;
+        if (region.gpuCopy) return 2;
+        if (region.mirror != nullptr) return region.mirror->heap ? 4 : 3;
+        return 5;
+    }
+    return 0;
+}
+
+std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions(std::vector<CopiedRead>* copiedReads) const {
     if (!uploaded || committed) return std::nullopt;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
     if (space != nullptr) {
@@ -3754,7 +3795,16 @@ std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferM
         // of its copy-in and the destination of its copy-back, both recorded per use.
         const bool fixedMirror = region.mirror != nullptr && !region.mirror->writable && !region.mirror->heap;
         const bool staged = region.gpuCopy && region.deviceLocal;
-        if (region.direct == nullptr && !fixedMirror && !staged) return std::nullopt;
+        if (region.direct == nullptr && !fixedMirror && !staged) {
+            // A copy of live guest memory (`writable`: not a capture snapshot) that no element
+            // writes, made by the CPU or by the GPU out of a misaligned import sub-range: the
+            // caller can copy its elements anew for each use (a sparse region too: each use checks
+            // that its elements' pages are accessible).
+            const bool copied = region.writable && region.mirror == nullptr && (region.gpuCopy || region.buffer != nullptr);
+            if (copiedReads == nullptr || !copied || WritesOverlap(region.begin, static_cast<std::size_t>(region.end - region.begin))) return std::nullopt;
+            copiedReads->push_back({region.begin, region.end, region.gpuCopy ? 0u : region.copyGeneration, region.sparse, region.sparse ? region.backed : std::vector<std::pair<std::uint64_t, std::uint64_t>>{}});
+            continue;
+        }
         if (staged) {
             // A later use copies from `copySource` again, so it must still be the import serving
             // the range (the flush before the copy-in can retire and remake imports): the serial
