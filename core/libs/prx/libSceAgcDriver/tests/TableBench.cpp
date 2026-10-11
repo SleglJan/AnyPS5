@@ -122,7 +122,15 @@ int main(int argc, char** argv) {
             materializeUs += Since(started);
             memoHits += hit ? 1u : 0u;
             require(result != nullptr && !recent.empty(), "nothing compiled");
-            if (i == 0) std::printf("first: %zu regions, %zu table keys\n", regions.size(), capture->snapshot.tables.tables.empty() ? 0u : capture->snapshot.tables.tables[0].codes.size());
+            if (i < 2) {
+                std::printf("capture %lu: %zu regions, %zu table keys, %zu push constant bytes:", i, regions.size(), capture->snapshot.tables.tables.empty() ? 0u : capture->snapshot.tables.tables[0].codes.size(), result->pushConstants.size());
+                for (std::size_t word = 0; word * 4u < result->pushConstants.size() && word < 8u; ++word) {
+                    std::uint32_t value = 0;
+                    std::memcpy(&value, result->pushConstants.data() + word * 4u, 4u);
+                    std::printf(" %08x", value);
+                }
+                std::printf("\n");
+            }
         }
         const auto n = static_cast<double>(captures);
         std::printf("%lu captures of %u entries, %u SRT copies%s: capture %.1f us, regions %.1f us, materialize %.1f us (%llu memo hits)\n", captures, entries, copies, buffers ? " (own buffers)" : "", captureUs / n, regionsUs / n, materializeUs / n, static_cast<unsigned long long>(memoHits));

@@ -18,8 +18,10 @@
 #include <set>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
@@ -299,6 +301,18 @@ struct EmissionFailure {
     std::exception_ptr failure;
 };
 
+// The result memo key split by input, for APS5_RESULT_MEMO_DIAG (see resultKeyParts).
+enum ResultKeyPart : std::size_t { KeyBuffers, KeyImages, KeySamplers, KeyFlatSrt, KeyUserData, KeyUniformFill, KeyTableColumns, KeyTableCodes, KeyTableReadRanges, KeyTableWords, KeyTableRanges, KeyPartialThreads, KeyPushOffset, KeyPixel, KeyVertex, KeyPartCount };
+constexpr std::array<const char*, KeyPartCount> KeyPartNames{"buffers", "images", "samplers", "flat SRT", "user data", "uniform fill", "table columns", "table codes", "table read ranges", "table words", "table ranges", "partial threads", "push offset", "pixel exports", "vertex V#s"};
+
+struct ResultKeyParts {
+    std::array<std::uint64_t, KeyPartCount> hashes{};
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flatSrt;
+    // Every buffer descriptor as 8 dwords (unused ones zero).
+    std::vector<std::uint32_t> bufferWords;
+};
+
 struct SourceEntry {
     std::mutex mutex;
     // The code the entry was built for: the key carries only a hash of it, so a candidate entry is
@@ -316,6 +330,10 @@ struct SourceEntry {
     // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
     std::list<ResultMemoEntry> memo;
     std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    // APS5_RESULT_MEMO_DIAG=1: each memo entry's key split by input (by memo index), and the
+    // indices evicted since (a miss on one of them is a capacity miss, not a new snapshot).
+    std::unordered_map<std::uint64_t, std::shared_ptr<const ResultKeyParts>> diagParts;
+    std::unordered_set<std::uint64_t> diagEvicted;
 };
 
 namespace {
@@ -1007,6 +1025,237 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     return materializeVariant(*source, request, snapshot);
 }
 
+// APS5_RESULT_MEMO_DIAG=1: every result memo miss is compared with the memo's nearest entry of the
+// same variant (the fewest differing inputs), input by input, and the [recompile] line is followed
+// by which inputs differed: the key inputs that change from draw to draw for one shader.
+bool ResultMemoDiag() {
+    static const bool diag = std::getenv("APS5_RESULT_MEMO_DIAG") != nullptr;
+    return diag;
+}
+
+ResultKeyParts resultKeyParts(const RecompileRequest& request, const ResourceSnapshot& snapshot) {
+    ResultKeyParts parts;
+    std::uint64_t hash = 0;
+    const auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 0x100000001b3ull;
+    };
+    const auto mixWords = [&](std::span<const std::uint32_t> words) {
+        mix(words.size());
+        for (const auto word : words) mix(word);
+    };
+    const auto mixDescriptors = [&](const std::vector<DescriptorValue>& values) {
+        mix(values.size());
+        for (const auto& value : values) {
+            mix(value.dwordCount);
+            for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
+        }
+    };
+    const auto part = [&](ResultKeyPart index, auto&& body) {
+        hash = 0xcbf29ce484222325ull;
+        body();
+        parts.hashes[index] = hash;
+    };
+    part(KeyBuffers, [&] { mixDescriptors(snapshot.buffers); });
+    part(KeyImages, [&] { mixDescriptors(snapshot.images); });
+    part(KeySamplers, [&] { mixDescriptors(snapshot.samplers); });
+    part(KeyFlatSrt, [&] { mixWords(snapshot.flattenedSrt); });
+    part(KeyUserData, [&] { mixWords(snapshot.userData); });
+    part(KeyUniformFill, [&] {
+        mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
+        mix(snapshot.uniformFill.resource);
+        for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
+        mix(snapshot.uniformFill.words);
+        mix(snapshot.uniformFill.value);
+    });
+    const auto& tables = snapshot.tables;
+    part(KeyTableColumns, [&] {
+        mix(tables.shader);
+        mix(tables.tables.size());
+        for (const auto& table : tables.tables) {
+            mix(table.base);
+            mix(table.size);
+            mix(table.records);
+            mix(table.keys);
+            mix(table.fault);
+            mix(table.outside ? 1u : 0u);
+        }
+    });
+    part(KeyTableCodes, [&] {
+        for (const auto& table : tables.tables) mixWords(table.codes);
+    });
+    part(KeyTableReadRanges, [&] {
+        for (const auto& table : tables.tables) {
+            mix(table.readRanges.size());
+            for (const auto& [base, size] : table.readRanges) {
+                mix(base);
+                mix(size);
+            }
+        }
+    });
+    part(KeyTableWords, [&] { mixDescriptors(tables.words); });
+    part(KeyTableRanges, [&] {
+        mix(tables.ranges.size());
+        for (const auto& [base, size] : tables.ranges) {
+            mix(base);
+            mix(size);
+        }
+    });
+    part(KeyPartialThreads, [&] {
+        for (const auto threads : partialThreads(request)) mix(threads);
+    });
+    part(KeyPushOffset, [&] { mix(request.layout.pushConstantOffsetBytes); });
+    part(KeyPixel, [&] {
+        if (!request.context.pixel) return;
+        for (const auto mapping : request.context.pixel->targetExportMapping) mix(mapping);
+        for (const auto packing : request.context.pixel->targetExportPacking) mix(static_cast<std::uint64_t>(packing));
+        mix(request.context.pixel->dualSourceBlend);
+    });
+    part(KeyVertex, [&] {
+        if (!request.context.vertex) return;
+        const auto& vertex = *request.context.vertex;
+        const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
+        mix(count);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            for (const auto field : vertex.resources[i].fields) mix(field);
+            mix(vertex.resourcesDst[i].fetchIndex);
+        }
+    });
+    parts.userData = snapshot.userData;
+    parts.flatSrt = snapshot.flattenedSrt;
+    parts.bufferWords.reserve(snapshot.buffers.size() * 8u);
+    for (const auto& value : snapshot.buffers) {
+        for (std::uint32_t i = 0; i < 8u; ++i) parts.bufferWords.push_back(i < value.dwordCount ? value.dwords[i] : 0u);
+    }
+    return parts;
+}
+
+struct ResultMemoDiagCounters {
+    std::mutex mutex;
+    std::uint64_t misses = 0;
+    std::uint64_t firstOfVariant = 0;
+    std::uint64_t evictedBefore = 0;
+    std::uint64_t identical = 0;
+    std::array<std::uint64_t, KeyPartCount> differing{};
+    std::array<std::uint64_t, KeyPartCount> alone{};
+    // Misses whose only differing input is user data the variant's result never reads (no word of
+    // it at a register of the layout's userDataRegisters).
+    std::uint64_t unconsumedUserData = 0;
+    std::map<std::uint32_t, std::uint64_t> userDataWords;
+    std::map<std::uint32_t, std::uint64_t> flatSlots;
+    std::map<std::uint32_t, std::uint64_t> bufferWords;
+    std::map<std::uint64_t, std::uint64_t> shaders;
+};
+
+ResultMemoDiagCounters& resultMemoDiag() {
+    static ResultMemoDiagCounters counters;
+    return counters;
+}
+
+std::optional<std::uint32_t> firstDifference(const std::vector<std::uint32_t>& left, const std::vector<std::uint32_t>& right) {
+    const auto count = std::min(left.size(), right.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        if (left[i] != right[i]) return static_cast<std::uint32_t>(i);
+    }
+    if (left.size() != right.size()) return static_cast<std::uint32_t>(count);
+    return std::nullopt;
+}
+
+// Under source.mutex, before the miss's entry goes in: the nearest entry of the variant.
+void diagnoseMiss(const SourceEntry& source, const CompiledVariant& variant, const RecompileRequest& request, std::uint64_t index, const ResultKeyParts& parts) {
+    auto& counters = resultMemoDiag();
+    const ResultKeyParts* nearest = nullptr;
+    std::size_t nearestCount = KeyPartCount + 1u;
+    for (const auto& entry : source.memo) {
+        if (entry.variantId != variant.artifact.variantId) continue;
+        const auto found = source.diagParts.find((entry.variantId * 0x9e3779b97f4a7c15ull) ^ entry.hash);
+        if (found == source.diagParts.end()) continue;
+        std::size_t count = 0;
+        for (std::size_t part = 0; part < KeyPartCount; ++part) count += found->second->hashes[part] != parts.hashes[part] ? 1u : 0u;
+        if (count < nearestCount) {
+            nearestCount = count;
+            nearest = found->second.get();
+        }
+    }
+    std::lock_guard lock(counters.mutex);
+    ++counters.misses;
+    ++counters.shaders[request.shader.codeAddress];
+    if (source.diagEvicted.contains(index)) ++counters.evictedBefore;
+    if (nearest == nullptr) {
+        ++counters.firstOfVariant;
+        return;
+    }
+    if (nearestCount == 0u) {
+        ++counters.identical;
+        return;
+    }
+    for (std::size_t part = 0; part < KeyPartCount; ++part) {
+        if (nearest->hashes[part] == parts.hashes[part]) continue;
+        ++counters.differing[part];
+        if (nearestCount == 1u) ++counters.alone[part];
+    }
+    if (nearest->hashes[KeyUserData] != parts.hashes[KeyUserData]) {
+        if (const auto word = firstDifference(nearest->userData, parts.userData)) ++counters.userDataWords[*word];
+        if (nearestCount == 1u && nearest->userData.size() == parts.userData.size()) {
+            const auto& registers = variant.bindings.layout.userDataRegisters;
+            bool consumed = false;
+            for (std::size_t word = 0; word < parts.userData.size() && !consumed; ++word) {
+                if (nearest->userData[word] == parts.userData[word]) continue;
+                consumed = std::find(registers.begin(), registers.end(), variant.info.userDataBase + static_cast<std::uint32_t>(word)) != registers.end();
+            }
+            if (!consumed) ++counters.unconsumedUserData;
+        }
+    }
+    if (nearest->hashes[KeyFlatSrt] != parts.hashes[KeyFlatSrt]) {
+        if (const auto slot = firstDifference(nearest->flatSrt, parts.flatSrt)) ++counters.flatSlots[*slot];
+    }
+    if (nearest->hashes[KeyBuffers] != parts.hashes[KeyBuffers]) {
+        if (const auto word = firstDifference(nearest->bufferWords, parts.bufferWords)) ++counters.bufferWords[*word];
+    }
+}
+
+void reportResultMemoDiag() {
+    auto& counters = resultMemoDiag();
+    std::lock_guard lock(counters.mutex);
+    std::string text;
+    char buffer[512];
+    const auto append = [&](const char* format, auto... values) {
+        std::snprintf(buffer, sizeof(buffer), format, values...);
+        text += buffer;
+    };
+    append("[recompile] result memo misses against the nearest entry of their variant (10 s): %llu misses, %llu first of their variant, %llu identical inputs (a hash-only difference), %llu of a key evicted before; differing inputs (alone):", static_cast<unsigned long long>(counters.misses), static_cast<unsigned long long>(counters.firstOfVariant), static_cast<unsigned long long>(counters.identical), static_cast<unsigned long long>(counters.evictedBefore));
+    for (std::size_t part = 0; part < KeyPartCount; ++part) {
+        if (counters.differing[part] != 0u) append(" %s %llu (%llu)", KeyPartNames[part], static_cast<unsigned long long>(counters.differing[part]), static_cast<unsigned long long>(counters.alone[part]));
+    }
+    append("; user data alone and never read by the result %llu", static_cast<unsigned long long>(counters.unconsumedUserData));
+    const auto top = [&](const char* name, const std::map<std::uint32_t, std::uint64_t>& counts, bool buffers) {
+        std::vector<std::pair<std::uint64_t, std::uint32_t>> sorted;
+        for (const auto& [key, count] : counts) sorted.emplace_back(count, key);
+        std::sort(sorted.rbegin(), sorted.rend());
+        append("; first differing %s:", name);
+        for (std::size_t i = 0; i < sorted.size() && i < 8u; ++i) {
+            if (buffers) append(" %u.%u=%llu", sorted[i].second / 8u, sorted[i].second % 8u, static_cast<unsigned long long>(sorted[i].first));
+            else append(" %u=%llu", sorted[i].second, static_cast<unsigned long long>(sorted[i].first));
+        }
+    };
+    top("user-data words", counters.userDataWords, false);
+    top("flat SRT slots", counters.flatSlots, false);
+    top("buffer words (buffer.dword)", counters.bufferWords, true);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> shaders;
+    for (const auto& [address, count] : counters.shaders) shaders.emplace_back(count, address);
+    std::sort(shaders.rbegin(), shaders.rend());
+    append("; misses by shader:");
+    for (std::size_t i = 0; i < shaders.size() && i < 6u; ++i) append(" 0x%llx=%llu", static_cast<unsigned long long>(shaders[i].second), static_cast<unsigned long long>(shaders[i].first));
+    std::fprintf(stderr, "%s\n", text.c_str());
+    counters.misses = counters.firstOfVariant = counters.evictedBefore = counters.identical = counters.unconsumedUserData = 0;
+    counters.differing.fill(0);
+    counters.alone.fill(0);
+    counters.userDataWords.clear();
+    counters.flatSlots.clear();
+    counters.bufferWords.clear();
+    counters.shaders.clear();
+}
+
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
 bool ResultMemo() {
     static const bool resultMemo = std::getenv("APS5_NO_RESULT_MEMO") == nullptr;
@@ -1041,6 +1290,7 @@ void reportResultMemo() {
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
+    if (ResultMemoDiag()) reportResultMemoDiag();
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
@@ -1145,6 +1395,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    const auto parts = ResultMemoDiag() ? std::make_shared<const ResultKeyParts>(resultKeyParts(request, snapshot)) : nullptr;
     {
         std::lock_guard lock(source.mutex);
         const auto found = source.memoIndex.find(index);
@@ -1155,14 +1406,26 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             } else {
                 source.memo.erase(found->second);
                 source.memoIndex.erase(found);
+                if (parts != nullptr) source.diagParts.erase(index);
             }
         }
         if (source.memoIndex.find(index) == source.memoIndex.end()) {
+            if (parts != nullptr) {
+                diagnoseMiss(source, *variant, request, index, *parts);
+                source.diagParts[index] = parts;
+                source.diagEvicted.erase(index);
+            }
             source.memo.push_front({variant->artifact.variantId, hash, shared});
             source.memoIndex.emplace(index, source.memo.begin());
             while (source.memo.size() > ResultMemoEntries) {
                 const auto& last = source.memo.back();
-                source.memoIndex.erase((last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash);
+                const auto evicted = (last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash;
+                source.memoIndex.erase(evicted);
+                if (parts != nullptr) {
+                    source.diagParts.erase(evicted);
+                    if (source.diagEvicted.size() >= 16384u) source.diagEvicted.clear();
+                    source.diagEvicted.insert(evicted);
+                }
                 source.memo.pop_back();
                 counters.evictions.fetch_add(1, std::memory_order_relaxed);
             }
