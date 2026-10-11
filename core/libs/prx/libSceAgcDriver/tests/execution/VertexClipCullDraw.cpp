@@ -100,6 +100,8 @@ const std::array<Step, 4> Steps{{
 struct RegisteredShader {
     Shader shader;
     ShaderUserData userData;
+    std::array<ShaderRegister, 3> shRegisters;
+    std::array<ShaderRegister, 1> cxRegisters;
 };
 RegisteredShader VertexShader{};
 RegisteredShader PixelShader{};
@@ -119,7 +121,14 @@ const std::vector<std::pair<std::uint32_t, std::uint32_t>> ContextBaseline{
     {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0x113, std::bit_cast<std::uint32_t>(1.0f)},
 };
 
-void Register(RegisteredShader& registered, const void* code, std::uint32_t bytes, std::uint8_t type) {
+void Register(RegisteredShader& registered, const void* code, std::uint32_t bytes, std::uint8_t type, std::uint32_t programRegister, std::uint32_t resourceRegister, std::uint32_t resources, ShaderRegister context) {
+    const auto address = reinterpret_cast<std::uintptr_t>(code);
+    registered.shRegisters = {{{programRegister, static_cast<std::uint32_t>(address >> 8u)}, {programRegister + 1u, static_cast<std::uint32_t>(address >> 40u)}, {resourceRegister, resources}}};
+    registered.cxRegisters = {context};
+    registered.shader.sh_registers = registered.shRegisters.data();
+    registered.shader.num_sh_registers = registered.shRegisters.size();
+    registered.shader.cx_registers = registered.cxRegisters.data();
+    registered.shader.num_cx_registers = registered.cxRegisters.size();
     registered.shader.file_header = 0x34333231u;
     registered.shader.version = 0x18u;
     registered.shader.user_data = &registered.userData;
@@ -215,8 +224,8 @@ int main(int argc, char** argv) {
             if (!device) return VulkanTestSkipped;
         }
         ColorMemory = AllocateWatched(2 * Block);
-        Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
-        Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1);
+        Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2, 0x0c8, 0x08b, 4u << 1u, {0x2d5, 0x2000});
+        Register(PixelShader, PixelCode.data(), sizeof(PixelCode), 1, 0x008, 0x00b, 0u, {0x1b6, 0});
         for (const auto& step : Steps) {
             std::array<Vertex, 3> vertices{};
             for (std::size_t i = 0; i < vertices.size(); ++i) {
