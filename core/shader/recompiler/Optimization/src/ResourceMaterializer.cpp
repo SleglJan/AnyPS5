@@ -324,6 +324,16 @@ struct TableCounters {
     // memos armed for that (page images taken after a hit).
     std::atomic<std::uint64_t> memoSkipped{0};
     std::atomic<std::uint64_t> memoArmed{0};
+    // Phase times (APS5_PROFILE_DRAW): a column's setup (its table descriptor, key count, narrowing),
+    // the skip's proof and page replay, the skipped column's output (lookups or the cached codes),
+    // the full walks, and the per-key codes of the snapshot; skipped columns that took the cached
+    // codes whole.
+    std::atomic<std::uint64_t> setupNanoseconds{0};
+    std::atomic<std::uint64_t> proofNanoseconds{0};
+    std::atomic<std::uint64_t> outputNanoseconds{0};
+    std::atomic<std::uint64_t> walkNanoseconds{0};
+    std::atomic<std::uint64_t> codesNanoseconds{0};
+    std::atomic<std::uint64_t> outputsReused{0};
     std::atomic<std::uint64_t> verified{0};
     std::atomic<std::uint64_t> verifyMismatches{0};
     std::atomic<long long> lastReport{0};
@@ -352,11 +362,12 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed), %llu changed words, %llu planned; verified %llu columns, %llu mismatches\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
-        static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
-        static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)));
+        static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.outputsReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
+        static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)),
+        static_cast<double>(counters.setupNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.proofNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.outputNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.walkNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.codesNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
 }
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped };
@@ -372,6 +383,8 @@ struct ColumnRecords {
     std::vector<RecordState> states;
     std::vector<std::uint32_t> words;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    // Every record was read (no poison code): the snapshot's codes are `words` as they are.
+    bool allRead = false;
 };
 
 bool TableMemo() {
@@ -441,12 +454,21 @@ struct ColumnMemo {
     // reading (WalkRecords); anything else disarms the memo until a later hit arms it again.
     std::uint64_t generation = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
-    std::vector<TablePageImage> images;
+    // Shared with the captures that replayed them (their pages refer to the dwords).
+    std::vector<std::shared_ptr<const TablePageImage>> images;
+    // The column's codes as a hit's Reuse produced them by appending its descriptors at
+    // `codeBase` (the snapshot's words before it, with none of their width yet): a later hit at the
+    // same position takes them whole. npos: none kept.
+    std::vector<std::uint32_t> codes;
+    std::size_t codeBase = std::numeric_limits<std::size_t>::max();
+    bool allRead = false;
 
     void Disarm() {
         generation = 0;
         spans.clear();
         images.clear();
+        codes.clear();
+        codeBase = std::numeric_limits<std::size_t>::max();
     }
 
     bool Matches(const TableColumn& column, const ColumnRecords& records) const {
@@ -831,12 +853,12 @@ private:
     void Arm(ColumnMemo& memo, const std::vector<std::uint32_t>& words, std::vector<std::pair<std::uint64_t, std::uint64_t>> spans, std::uint64_t generation) const {
         memo.Disarm();
         if (generation == 0 || spans.empty()) return;
-        std::vector<TablePageImage> images;
+        std::vector<std::shared_ptr<TablePageImage>> images;
         for (const auto& [begin, end] : spans) {
             for (auto base = begin; base < end; base += PageBytes) {
-                auto& image = images.emplace_back();
-                image.base = base;
-                if (!runtime.tableMemory->readPage(runtime.userContext, base, image.words.data())) return;
+                auto& image = images.emplace_back(std::make_shared<TablePageImage>());
+                image->base = base;
+                if (!runtime.tableMemory->readPage(runtime.userContext, base, image->words.data())) return;
             }
         }
         std::size_t at = 0;
@@ -845,18 +867,19 @@ private:
             for (std::uint64_t index = 0; index < count; ++index, ++at) {
                 const auto dword = address + index * sizeof(std::uint32_t);
                 const auto base = dword & ~(PageBytes - 1u);
-                if (images[page].base != base) {
-                    const auto found = std::lower_bound(images.begin(), images.end(), base, [](const TablePageImage& image, std::uint64_t value) { return image.base < value; });
-                    if (found == images.end() || found->base != base) return;
+                if (images[page]->base != base) {
+                    const auto found = std::lower_bound(images.begin(), images.end(), base, [](const std::shared_ptr<TablePageImage>& image, std::uint64_t value) { return image->base < value; });
+                    if (found == images.end() || (*found)->base != base) return;
                     page = static_cast<std::size_t>(found - images.begin());
                 }
                 const auto slot = static_cast<std::size_t>((dword - base) / sizeof(std::uint32_t));
-                if (at >= words.size() || images[page].words[slot] != words[at]) return;
-                images[page].mask[slot / 64u] |= std::uint64_t{1} << (slot % 64u);
+                if (at >= words.size() || images[page]->words[slot] != words[at]) return;
+                images[page]->mask[slot / 64u] |= std::uint64_t{1} << (slot % 64u);
             }
         }
         memo.spans = std::move(spans);
-        memo.images = std::move(images);
+        memo.images.assign(images.begin(), images.end());
+        memo.allRead = std::all_of(memo.plan.states.begin(), memo.plan.states.end(), [](RecordState state) { return state == RecordState::Read; });
         memo.generation = generation;
         tableCounters().memoArmed.fetch_add(1, std::memory_order_relaxed);
     }
@@ -873,7 +896,7 @@ private:
             }
         }
         for (const auto& image : memo.images) {
-            if (!memory.replayPage(runtime.userContext, image.base, image.words.data(), image.mask.data())) {
+            if (!memory.replayPage(runtime.userContext, image->base, image->words.data(), image->mask.data(), image)) {
                 memo.Disarm();
                 return false;
             }
@@ -972,12 +995,41 @@ private:
         }
         // APS5_NO_TABLE_SKIP=1 (ShaderMemory gives no SrtTableMemory): every column reads.
         const bool skips = TableMemo() && runtime.tableMemory != nullptr;
-        if (skips && memo != nullptr && memo->generation != 0 && SkipReads(*memo)) {
+        const bool profiled = MaterializeProfiled();
+        const auto since = [](std::chrono::steady_clock::time_point started) { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()); };
+        auto started = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const bool skipped = skips && memo != nullptr && memo->generation != 0 && SkipReads(*memo);
+        if (profiled && skips && memo != nullptr && memo->generation != 0) {
+            counters.proofNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
+            started = std::chrono::steady_clock::now();
+        }
+        const auto width = column.sampler ? 4u : 8u;
+        if (skipped) {
             auto statesIn = std::move(records.states);
             records.states = memo->plan.states;
             records.readRanges = memo->plan.readRanges;
             if (column.address && memo->plan.low < memo->plan.high) tables.ranges.emplace_back(memo->plan.low, memo->plan.high - memo->plan.low);
-            Reuse(*memo, records);
+            // APS5_NO_TABLE_OUTPUT_REUSE=1: the lookups of every skipped column (Reuse).
+            static const bool outputReuse = std::getenv("APS5_NO_TABLE_OUTPUT_REUSE") == nullptr;
+            if (outputReuse && widths.at(width) == 0u && memo->codeBase == tables.words.size() && memo->codes.size() == records.keys) {
+                // What Reuse's bulk append gives at the same position: the descriptors appended in
+                // first-occurrence order, each record's code its local index past codeBase.
+                tables.words.insert(tables.words.end(), memo->distinct.begin(), memo->distinct.end());
+                widths.at(width) += static_cast<std::uint32_t>(memo->distinct.size());
+                records.words = memo->codes;
+                records.allRead = memo->allRead;
+                counters.outputsReused.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                const bool bulk = widths.at(width) == 0u;
+                const auto first = tables.words.size();
+                Reuse(*memo, records);
+                records.allRead = memo->allRead;
+                if (bulk) {
+                    memo->codes = records.words;
+                    memo->codeBase = first;
+                }
+            }
+            if (profiled) counters.outputNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
             counters.memoHits.fetch_add(1, std::memory_order_relaxed);
             counters.memoSkipped.fetch_add(1, std::memory_order_relaxed);
             memo->used = ++memos.clock;
@@ -1006,9 +1058,16 @@ private:
         records.readRanges = plan.readRanges;
         if (column.address && plan.low < plan.high) tables.ranges.emplace_back(plan.low, plan.high - plan.low);
         if (replayed && memo->valued && memo->words == words) {
+            const bool bulk = widths.at(width) == 0u;
+            const auto first = tables.words.size();
             Reuse(*memo, records);
             counters.memoHits.fetch_add(1, std::memory_order_relaxed);
             if (armGeneration != 0) Arm(*memo, words, std::move(armSpans), armGeneration);
+            // After Arm (which starts from a disarmed memo): the codes a later skip takes whole.
+            if (bulk) {
+                memo->codes = records.words;
+                memo->codeBase = first;
+            }
         } else {
             if (memo != nullptr) memo->Disarm();
             if (replayed) counters.memoChanged.fetch_add(1, std::memory_order_relaxed);
@@ -1042,6 +1101,7 @@ private:
             }
         }
         if (memo != nullptr) memo->used = ++memos.clock;
+        if (profiled) counters.walkNanoseconds.fetch_add(since(started), std::memory_order_relaxed);
         if (TableMemoVerified()) Verify(column, records, memo != nullptr ? memo->plan : fresh, statesIn);
     }
 
@@ -1051,6 +1111,7 @@ private:
         }
         auto& records = columns[source];
         const auto& column = *plan.descriptorSources.at(source).tableColumn;
+        const auto setupStarted = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const bool active = source >= activeSources.size() || activeSources[source] != 0u;
         if (!active) {
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
@@ -1080,6 +1141,7 @@ private:
             Narrow(column, records);
         }
         records.words.assign(records.keys, 0u);
+        if (MaterializeProfiled()) tableCounters().setupNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - setupStarted).count()), std::memory_order_relaxed);
         if (records.keys != 0u) WalkRecords(column, records);
         return records;
     }
@@ -1094,12 +1156,16 @@ private:
         out.keys = records.keys;
         out.fault = records.fault;
         out.outside = records.outside;
-        out.codes.assign(records.keys, 0u);
+        const auto codesStarted = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         out.readRanges = records.readRanges;
         TableTrace trace{records.base, records.size, records.records, records.keys, 0u, records.narrowed};
         auto& counters = tableCounters();
         if (records.fault != 0u) counters.poison[records.fault & ~ImageTableAbi::PoisonFlag].fetch_add(1, std::memory_order_relaxed);
-        for (std::uint32_t key = 0; key < records.keys; key++) {
+        // Every record read (a skipped column whose plan has no other state): the codes are the words.
+        const bool whole = records.allRead && records.words.size() == records.keys;
+        if (whole) out.codes = records.words;
+        else out.codes.assign(records.keys, 0u);
+        for (std::uint32_t key = whole ? records.keys : 0u; key < records.keys; key++) {
             switch (records.states[key]) {
                 case RecordState::Read:
                     out.codes[key] = records.words[key];
@@ -1115,6 +1181,7 @@ private:
             trace.poison++;
         }
         counters.keys.fetch_add(records.keys, std::memory_order_relaxed);
+        if (MaterializeProfiled()) counters.codesNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - codesStarted).count()), std::memory_order_relaxed);
         if (TableTraced()) traceTable(plan, table, column, trace);
     }
 

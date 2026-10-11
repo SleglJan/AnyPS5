@@ -132,7 +132,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
         if (page.valid.test(index)) {
             page.read.set(index);
             page.recent.set(index);
-            *value = page.words[index];
+            *value = page.data()[index];
             return true;
         }
     }
@@ -227,7 +227,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     }
     page.read.set(index);
     page.recent.set(index);
-    *value = page.words[index];
+    *value = page.data()[index];
     return true;
 }
 
@@ -261,7 +261,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
             }
         }
         if (page != nullptr && !page->wordwise && page->valid.all()) {
-            std::memcpy(values, page->words.data() + index, bytes);
+            std::memcpy(values, page->data() + index, bytes);
             if (words < 64) {
                 for (std::size_t word = index; word < index + words; ++word) {
                     page->read.set(word);
@@ -341,7 +341,7 @@ bool ShaderMemory::tableReadPage(void*, std::uint64_t base, std::uint32_t* words
     return true;
 }
 
-bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask) {
+bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask, const std::shared_ptr<const void>& owner) {
     auto& self = *static_cast<ShaderMemory*>(context);
     // A page under an initial region is served from it, not cached: read normally.
     if (base % PageBytes != 0 || self.overlapsInitial(base, base + PageBytes)) return false;
@@ -354,7 +354,14 @@ bool ShaderMemory::tableReplayPage(void* context, std::uint64_t base, const std:
         // What `page` would fetch: the caller proved the page unchanged since `words` were read.
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) return false;
         page = &self.pages[base];
-        std::memcpy(page->words.data(), words, PageBytes);
+        // APS5_NO_SHARED_TABLE_PAGES=1 copies the image into the page instead of sharing it.
+        static const bool shared = std::getenv("APS5_NO_SHARED_TABLE_PAGES") == nullptr;
+        if (shared && owner != nullptr) {
+            page->imageOwner = owner;
+            page->image = words;
+        } else {
+            std::memcpy(page->words.data(), words, PageBytes);
+        }
         page->valid.set();
         ++CaptureTotals().pages;
     }
@@ -453,7 +460,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::Regions() const {
             }
             const auto first = index;
             while (index < PageWords && page.read.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
+            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.data(), PageWords).subspan(first, index - first))});
         }
     }
     for (; next != initial.end(); ++next) result.push_back({next->first, next->second});
@@ -471,7 +478,7 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::TakeRecentRegions() {
             }
             const auto first = index;
             while (index < PageWords && page.recent.test(index)) ++index;
-            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.words).subspan(first, index - first))});
+            result.push_back({base + first * sizeof(std::uint32_t), std::as_bytes(std::span(page.data(), PageWords).subspan(first, index - first))});
         }
         page.recent.reset();
     }

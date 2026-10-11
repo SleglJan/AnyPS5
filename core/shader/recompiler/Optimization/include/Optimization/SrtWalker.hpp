@@ -4,6 +4,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -43,7 +44,8 @@ struct SrtTableMemory {
     // Records the dwords set in `mask` (1024 bits as 16 words) of the page at `base` as read, with
     // `words` (the page's 1024 dwords) as the capture's copy of the page, exactly as reading them
     // would; false, recording nothing of the page, when the capture cannot take the page that way.
-    bool (*replayPage)(void* userData, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask) = nullptr;
+    // `owner` keeps `words` alive (and unchanged) for as long as the capture may refer to them.
+    bool (*replayPage)(void* userData, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask, const std::shared_ptr<const void>& owner) = nullptr;
 };
 
 struct SrtRuntime {

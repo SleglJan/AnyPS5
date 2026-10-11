@@ -77,11 +77,18 @@ private:
     static constexpr std::size_t PageWords = PageBytes / sizeof(std::uint32_t);
 
     struct Page {
-        std::array<std::uint32_t, PageWords> words{};
+        // Not zero-filled: only valid dwords are ever read (a fetch fills the whole page).
+        Page() {}
+        std::array<std::uint32_t, PageWords> words;
         std::bitset<PageWords> valid;
         std::bitset<PageWords> read;
         std::bitset<PageWords> recent;
         bool wordwise = false;
+        // A page an image-table snapshot replayed (tableReplayPage): the dwords are the snapshot
+        // memo's image, shared and never written (the page is valid whole), not `words`.
+        std::shared_ptr<const void> imageOwner;
+        const std::uint32_t* image = nullptr;
+        const std::uint32_t* data() const { return image != nullptr ? image : words.data(); }
     };
 
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
@@ -94,7 +101,7 @@ private:
     static std::uint64_t tableCollect(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool tableUnchanged(void* context, std::uint64_t address, std::uint64_t bytes, std::uint64_t generation);
     static bool tableReadPage(void* context, std::uint64_t base, std::uint32_t* words);
-    static bool tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask);
+    static bool tableReplayPage(void* context, std::uint64_t base, const std::uint32_t* words, const std::uint64_t* mask, const std::shared_ptr<const void>& owner);
     // Whether an initial region overlaps [begin, end).
     bool overlapsInitial(std::uint64_t begin, std::uint64_t end) const;
     Page& page(std::uint64_t base);
