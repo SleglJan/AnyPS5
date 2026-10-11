@@ -85,6 +85,9 @@ private:
     };
 
     static bool read(void* context, std::uint64_t address, std::uint32_t* value);
+    // `count` reads in address order: a page segment already fetched whole, with no initial region
+    // over it, is copied and its read/recent bits set as a range; anything else takes `read`.
+    static bool readWords(void* context, std::uint64_t address, std::uint32_t* values, std::uint64_t count);
     static bool accessible(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool pending(void* context, std::uint64_t address, std::uint64_t bytes);
     Page& page(std::uint64_t base);

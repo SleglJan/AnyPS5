@@ -314,6 +314,14 @@ struct TableCounters {
     std::atomic<std::uint64_t> narrowed{0};
     std::atomic<std::uint64_t> narrowSkipped{0};
     std::atomic<std::uint64_t> nanoseconds{0};
+    // Column memo outcomes: the previous walk reused whole, its read plan reused with changed
+    // words, a fresh read plan; and the columns checked against the word-by-word walk with their
+    // differences (APS5_VERIFY_TABLE_MEMO=1).
+    std::atomic<std::uint64_t> memoHits{0};
+    std::atomic<std::uint64_t> memoChanged{0};
+    std::atomic<std::uint64_t> memoPlanned{0};
+    std::atomic<std::uint64_t> verified{0};
+    std::atomic<std::uint64_t> verifyMismatches{0};
     std::atomic<long long> lastReport{0};
 };
 
@@ -340,9 +348,11 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits, %llu changed words, %llu planned; verified %llu columns, %llu mismatches\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
-        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
+        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
+        static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
+        static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)));
 }
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped };
@@ -359,6 +369,74 @@ struct ColumnRecords {
     std::vector<std::uint32_t> words;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
 };
+
+bool TableMemo() {
+    static const bool memo = std::getenv("APS5_NO_TABLE_MEMO") == nullptr;
+    return memo;
+}
+
+bool TableMemoVerified() {
+    static const bool verify = std::getenv("APS5_VERIFY_TABLE_MEMO") != nullptr;
+    return verify;
+}
+
+// What a column's record walk reads, without the words: the accessibility answers it depended on
+// (one per change of page, in walk order: PageAccessible for a buffer column, the whole-page answer
+// for a pointer column), the dwords it reads as contiguous runs in read order, and the outcome that
+// follows from those answers alone (record states, which dwords of each record were read, the
+// pointer column's read ranges and bounds). Equal inputs and equal answers give an equal walk.
+struct ColumnPlan {
+    std::vector<std::pair<std::uint64_t, bool>> checks;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+    std::vector<RecordState> states;
+    std::vector<std::uint32_t> first;
+    std::vector<std::uint8_t> mask;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+    std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t high = 0;
+    std::uint64_t words = 0;
+    // A pointer column that met a page not accessible whole asked per dword: not replayed.
+    bool replayable = true;
+};
+
+// A column's previous walk on this thread: its inputs, plan, the words it read, and the distinct
+// descriptors in first-occurrence order with each record's index among them. Reused when the
+// inputs match, every recorded accessibility answer is the same and the plan's runs read the same
+// words again; the reads themselves always happen, so the capture records the same dwords.
+struct ColumnMemo {
+    bool address = false;
+    bool sampler = false;
+    std::uint32_t dwordCount = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t addend = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t keys = 0;
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
+    std::vector<RecordState> statesIn;
+    ColumnPlan plan;
+    bool valued = false;
+    std::vector<std::uint32_t> words;
+    std::vector<DescriptorValue> distinct;
+    std::vector<std::uint32_t> local;
+    std::uint64_t used = 0;
+
+    bool Matches(const TableColumn& column, const ColumnRecords& records) const {
+        return address == column.address && sampler == column.sampler && dwordCount == column.dwordCount && stride == column.stride && addend == column.addend && offset == column.offset && keys == records.keys && base == records.base && size == records.size && statesIn == records.states;
+    }
+};
+
+constexpr std::size_t ColumnMemoEntries = 8;
+
+struct ColumnMemos {
+    std::vector<ColumnMemo> entries;
+    std::uint64_t clock = 0;
+};
+
+ColumnMemos& columnMemos() {
+    thread_local ColumnMemos memos;
+    return memos;
+}
 
 struct TableTrace {
     std::uint64_t base = 0;
@@ -449,11 +527,15 @@ private:
         return accessible;
     }
 
-    bool AddressAccessible(std::uint64_t address) {
+    bool WholePage(std::uint64_t address) {
         const auto page = address & ~(PageBytes - 1u);
         const auto [found, inserted] = wholePages.try_emplace(page, false);
         if (inserted) found->second = Accessible(page, PageBytes);
-        return found->second || Accessible(address, sizeof(std::uint32_t));
+        return found->second;
+    }
+
+    bool AddressAccessible(std::uint64_t address) {
+        return WholePage(address) || Accessible(address, sizeof(std::uint32_t));
     }
 
     std::uint32_t Read(std::uint64_t address) const {
@@ -518,10 +600,300 @@ private:
         tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Words appended in bulk by a reused column (Reuse) enter the index on the next lookup, in
+    // order and keeping the first index of a value, as one lookup each would have.
     std::uint32_t WordsIndex(const DescriptorValue& value) {
+        for (; indexed < tables.words.size(); ++indexed) wordsIndex.try_emplace({tables.words[indexed].dwords, tables.words[indexed].dwordCount}, static_cast<std::uint32_t>(indexed));
         const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount}, static_cast<std::uint32_t>(tables.words.size()));
-        if (inserted) tables.words.push_back(value);
+        if (inserted) {
+            tables.words.push_back(value);
+            ++indexed;
+            ++widths.at(value.dwordCount);
+        }
         return found->second;
+    }
+
+    ColumnPlan PlanColumn(const TableColumn& column, const ColumnRecords& records) {
+        ColumnPlan plan;
+        plan.states = records.states;
+        plan.first.assign(records.keys, 0u);
+        plan.mask.assign(records.keys, 0u);
+        const auto end = records.base + records.size;
+        std::uint64_t checked = std::numeric_limits<std::uint64_t>::max();
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            if (plan.states[record] != RecordState::Read) continue;
+            plan.first[record] = static_cast<std::uint32_t>(plan.words);
+            const auto offset = column.addend + record * column.stride;
+            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                std::optional<std::uint64_t> address;
+                if (column.address) {
+                    address = ImageTableAbi::ScalarAddressDword(records.base, offset, column.offset + dword * 4u);
+                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
+                } else if (const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, records.size); position.has_value()) {
+                    address = records.base + *position;
+                } else {
+                    continue;
+                }
+                bool accessible = false;
+                if (address.has_value()) {
+                    const auto page = *address & ~(PageBytes - 1u);
+                    if (column.address) {
+                        const bool whole = WholePage(*address);
+                        accessible = whole || Accessible(*address, sizeof(std::uint32_t));
+                        if (!whole) plan.replayable = false;
+                        if (page != checked) plan.checks.emplace_back(*address, whole);
+                    } else {
+                        accessible = PageAccessible(*address, records.base, end);
+                        if (page != checked) plan.checks.emplace_back(*address, accessible);
+                    }
+                    checked = page;
+                }
+                if (!accessible) {
+                    plan.states[record] = RecordState::Unmapped;
+                    break;
+                }
+                plan.mask[record] |= static_cast<std::uint8_t>(1u << dword);
+                if (!plan.runs.empty() && *address > plan.runs.back().first && *address - plan.runs.back().first == plan.runs.back().second * sizeof(std::uint32_t)) {
+                    ++plan.runs.back().second;
+                } else {
+                    plan.runs.emplace_back(*address, 1u);
+                }
+                ++plan.words;
+                if (column.address) {
+                    if (!plan.readRanges.empty() && *address - plan.readRanges.back().first == plan.readRanges.back().second) {
+                        plan.readRanges.back().second += sizeof(std::uint32_t);
+                    } else {
+                        plan.readRanges.emplace_back(*address, sizeof(std::uint32_t));
+                    }
+                }
+                plan.low = std::min(plan.low, *address);
+                plan.high = std::max(plan.high, *address + sizeof(std::uint32_t));
+            }
+        }
+        std::sort(plan.readRanges.begin(), plan.readRanges.end());
+        std::size_t ranges = 0;
+        for (const auto& range : plan.readRanges) {
+            if (ranges != 0u && range.first - plan.readRanges[ranges - 1u].first <= plan.readRanges[ranges - 1u].second) {
+                auto& previous = plan.readRanges[ranges - 1u];
+                previous.second = std::max(previous.second, range.first - previous.first + range.second);
+            } else {
+                plan.readRanges[ranges++] = range;
+            }
+        }
+        plan.readRanges.resize(ranges);
+        return plan;
+    }
+
+    // Asks the plan's accessibility questions again, in its order: equal answers mean the walk
+    // would take the same path.
+    bool Replay(const ColumnPlan& plan, const TableColumn& column, const ColumnRecords& records) {
+        if (!plan.replayable) return false;
+        const auto end = records.base + records.size;
+        for (const auto& [address, answer] : plan.checks) {
+            if ((column.address ? WholePage(address) : PageAccessible(address, records.base, end)) != answer) return false;
+        }
+        return true;
+    }
+
+    void ReadRuns(const ColumnPlan& plan, std::vector<std::uint32_t>& words) const {
+        words.resize(static_cast<std::size_t>(plan.words));
+        std::size_t at = 0;
+        for (const auto& [address, count] : plan.runs) {
+            if (runtime.readWords != nullptr) {
+                if (!runtime.readWords(runtime.userContext, address, words.data() + at, count)) {
+                    throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
+                }
+            } else {
+                for (std::uint64_t word = 0; word < count; word++) words[at + word] = Read(address + word * sizeof(std::uint32_t));
+            }
+            at += static_cast<std::size_t>(count);
+        }
+    }
+
+    DescriptorValue RecordValue(const TableColumn& column, const ColumnPlan& plan, const std::vector<std::uint32_t>& words, std::uint32_t record) const {
+        DescriptorValue value;
+        value.dwordCount = column.sampler ? 4u : 8u;
+        auto at = plan.first[record];
+        for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+            if ((plan.mask[record] & (1u << dword)) != 0u) value.dwords[dword] = words[at++];
+        }
+        return value;
+    }
+
+    // The per-record lookups of the walk, with the column's distinct descriptors recorded for a memo.
+    void Assemble(const TableColumn& column, const ColumnPlan& plan, const std::vector<std::uint32_t>& words, ColumnRecords& records, std::vector<DescriptorValue>& distinct, std::vector<std::uint32_t>& local) {
+        local.assign(records.keys, 0u);
+        std::vector<std::uint32_t> seen;
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            if (plan.states[record] != RecordState::Read) continue;
+            const auto value = RecordValue(column, plan, words, record);
+            const auto code = WordsIndex(value);
+            records.words[record] = code;
+            if (code >= seen.size()) seen.resize(tables.words.size(), 0u);
+            if (seen[code] == 0u) {
+                distinct.push_back(value);
+                seen[code] = static_cast<std::uint32_t>(distinct.size());
+            }
+            local[record] = seen[code] - 1u;
+        }
+    }
+
+    // The lookups of an unchanged column: one per distinct descriptor in first-occurrence order
+    // gives the codes and the words order the per-record lookups would. When no word of this width
+    // is in the snapshot yet none of them can be found, so they are appended in that order.
+    void Reuse(const ColumnMemo& memo, ColumnRecords& records) {
+        const auto width = memo.sampler ? 4u : 8u;
+        std::vector<std::uint32_t> codes(memo.distinct.size());
+        if (widths.at(width) == 0u) {
+            const auto first = static_cast<std::uint32_t>(tables.words.size());
+            tables.words.insert(tables.words.end(), memo.distinct.begin(), memo.distinct.end());
+            widths.at(width) += static_cast<std::uint32_t>(memo.distinct.size());
+            for (std::uint32_t index = 0; index < codes.size(); index++) codes[index] = first + index;
+        } else {
+            for (std::uint32_t index = 0; index < codes.size(); index++) codes[index] = WordsIndex(memo.distinct[index]);
+        }
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            if (memo.plan.states[record] == RecordState::Read) records.words[record] = codes[memo.local[record]];
+        }
+    }
+
+    // APS5_VERIFY_TABLE_MEMO=1: the word-by-word walk again (its reads hit the dwords already
+    // fetched), compared with what the planned walk produced.
+    void Verify(const TableColumn& column, const ColumnRecords& records, const ColumnPlan& plan, const std::vector<RecordState>& statesIn) {
+        auto& counters = tableCounters();
+        counters.verified.fetch_add(1, std::memory_order_relaxed);
+        std::vector<RecordState> states = statesIn;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
+        std::vector<std::uint64_t> reads;
+        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t high = 0;
+        const auto end = records.base + records.size;
+        std::uint64_t mismatches = 0;
+        std::string first;
+        const auto mismatch = [&](const std::string& what) {
+            if (mismatches++ == 0u) first = what;
+        };
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            if (states[record] != RecordState::Read) continue;
+            DescriptorValue value;
+            value.dwordCount = column.sampler ? 4u : 8u;
+            const auto offset = column.addend + record * column.stride;
+            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                std::optional<std::uint64_t> address;
+                if (column.address) {
+                    address = ImageTableAbi::ScalarAddressDword(records.base, offset, column.offset + dword * 4u);
+                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
+                } else if (const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, records.size); position.has_value()) {
+                    address = records.base + *position;
+                } else {
+                    continue;
+                }
+                if (!address.has_value() || !(column.address ? AddressAccessible(*address) : PageAccessible(*address, records.base, end))) {
+                    states[record] = RecordState::Unmapped;
+                    break;
+                }
+                value.dwords[dword] = Read(*address);
+                reads.push_back(*address);
+                if (column.address) {
+                    if (!readRanges.empty() && *address - readRanges.back().first == readRanges.back().second) {
+                        readRanges.back().second += sizeof(std::uint32_t);
+                    } else {
+                        readRanges.emplace_back(*address, sizeof(std::uint32_t));
+                    }
+                }
+                low = std::min(low, *address);
+                high = std::max(high, *address + sizeof(std::uint32_t));
+            }
+            if (states[record] == RecordState::Read && records.states[record] == RecordState::Read && !(tables.words.at(records.words[record]) == value)) mismatch("record " + std::to_string(record) + " descriptor");
+        }
+        if (states != records.states) mismatch("record states");
+        std::sort(readRanges.begin(), readRanges.end());
+        std::size_t ranges = 0;
+        for (const auto& range : readRanges) {
+            if (ranges != 0u && range.first - readRanges[ranges - 1u].first <= readRanges[ranges - 1u].second) {
+                auto& previous = readRanges[ranges - 1u];
+                previous.second = std::max(previous.second, range.first - previous.first + range.second);
+            } else {
+                readRanges[ranges++] = range;
+            }
+        }
+        readRanges.resize(ranges);
+        if (readRanges != records.readRanges) mismatch("read ranges");
+        if (low != plan.low || high != plan.high) mismatch("bounds");
+        std::size_t at = 0;
+        bool sameReads = true;
+        for (const auto& [address, count] : plan.runs) {
+            for (std::uint64_t word = 0; word < count && sameReads; word++, at++) sameReads = at < reads.size() && reads[at] == address + word * sizeof(std::uint32_t);
+        }
+        if (!sameReads || at != reads.size()) mismatch("read order");
+        if (mismatches != 0u) {
+            counters.verifyMismatches.fetch_add(1, std::memory_order_relaxed);
+            static std::atomic<std::uint32_t> reports{0};
+            if (reports.fetch_add(1, std::memory_order_relaxed) < 20u) std::fprintf(stderr, "[image-table] verify: table at 0x%llx (%s, %u keys) differs from the word-by-word walk in %llu places, first: %s\n", static_cast<unsigned long long>(records.base), column.sampler ? "sampler" : "image", records.keys, static_cast<unsigned long long>(mismatches), first.c_str());
+        }
+    }
+
+    void WalkRecords(const TableColumn& column, ColumnRecords& records) {
+        if (column.dwordCount > 8u) throw std::runtime_error("image table column reads more than 8 dwords per record");
+        auto& counters = tableCounters();
+        auto& memos = columnMemos();
+        ColumnMemo* memo = nullptr;
+        if (TableMemo()) {
+            for (auto& entry : memos.entries) {
+                if (entry.Matches(column, records)) {
+                    memo = &entry;
+                    break;
+                }
+            }
+        }
+        ColumnPlan fresh;
+        const bool replayed = memo != nullptr && Replay(memo->plan, column, records);
+        if (!replayed) {
+            fresh = PlanColumn(column, records);
+            counters.memoPlanned.fetch_add(1, std::memory_order_relaxed);
+        }
+        const auto& plan = replayed ? memo->plan : fresh;
+        std::vector<std::uint32_t> words;
+        ReadRuns(plan, words);
+        auto statesIn = std::move(records.states);
+        records.states = plan.states;
+        records.readRanges = plan.readRanges;
+        if (column.address && plan.low < plan.high) tables.ranges.emplace_back(plan.low, plan.high - plan.low);
+        if (replayed && memo->valued && memo->words == words) {
+            Reuse(*memo, records);
+            counters.memoHits.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            if (replayed) counters.memoChanged.fetch_add(1, std::memory_order_relaxed);
+            std::vector<DescriptorValue> distinct;
+            std::vector<std::uint32_t> local;
+            Assemble(column, plan, words, records, distinct, local);
+            if (TableMemo()) {
+                if (memo == nullptr) {
+                    if (memos.entries.size() < ColumnMemoEntries) {
+                        memo = &memos.entries.emplace_back();
+                    } else {
+                        memo = &*std::min_element(memos.entries.begin(), memos.entries.end(), [](const ColumnMemo& a, const ColumnMemo& b) { return a.used < b.used; });
+                    }
+                    memo->address = column.address;
+                    memo->sampler = column.sampler;
+                    memo->dwordCount = column.dwordCount;
+                    memo->stride = column.stride;
+                    memo->addend = column.addend;
+                    memo->offset = column.offset;
+                    memo->keys = records.keys;
+                    memo->base = records.base;
+                    memo->size = records.size;
+                    memo->statesIn = statesIn;
+                }
+                if (!replayed) memo->plan = std::move(fresh);
+                memo->valued = memo->plan.replayable;
+                memo->words = std::move(words);
+                memo->distinct = std::move(distinct);
+                memo->local = std::move(local);
+            }
+        }
+        if (memo != nullptr) memo->used = ++memos.clock;
+        if (TableMemoVerified()) Verify(column, records, memo != nullptr ? memo->plan : fresh, statesIn);
     }
 
     ColumnRecords& Column(std::uint32_t source) {
@@ -559,53 +931,7 @@ private:
             Narrow(column, records);
         }
         records.words.assign(records.keys, 0u);
-        const auto end = records.base + records.size;
-        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
-        std::uint64_t high = 0;
-        for (std::uint32_t record = 0; record < records.keys; record++) {
-            if (records.states[record] != RecordState::Read) continue;
-            DescriptorValue value;
-            value.dwordCount = column.sampler ? 4u : 8u;
-            const auto offset = column.addend + record * column.stride;
-            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-                std::optional<std::uint64_t> address;
-                if (column.address) {
-                    address = ImageTableAbi::ScalarAddressDword(records.base, offset, column.offset + dword * 4u);
-                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
-                } else if (const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, records.size); position.has_value()) {
-                    address = records.base + *position;
-                } else {
-                    continue;
-                }
-                if (!address.has_value() || !(column.address ? AddressAccessible(*address) : PageAccessible(*address, records.base, end))) {
-                    records.states[record] = RecordState::Unmapped;
-                    break;
-                }
-                value.dwords[dword] = Read(*address);
-                if (column.address) {
-                    if (!records.readRanges.empty() && *address - records.readRanges.back().first == records.readRanges.back().second) {
-                        records.readRanges.back().second += sizeof(std::uint32_t);
-                    } else {
-                        records.readRanges.emplace_back(*address, sizeof(std::uint32_t));
-                    }
-                }
-                low = std::min(low, *address);
-                high = std::max(high, *address + sizeof(std::uint32_t));
-            }
-            if (records.states[record] == RecordState::Read) records.words[record] = WordsIndex(value);
-        }
-        if (column.address && low < high) tables.ranges.emplace_back(low, high - low);
-        std::sort(records.readRanges.begin(), records.readRanges.end());
-        std::size_t ranges = 0;
-        for (const auto& range : records.readRanges) {
-            if (ranges != 0u && range.first - records.readRanges[ranges - 1u].first <= records.readRanges[ranges - 1u].second) {
-                auto& previous = records.readRanges[ranges - 1u];
-                previous.second = std::max(previous.second, range.first - previous.first + range.second);
-            } else {
-                records.readRanges[ranges++] = range;
-            }
-        }
-        records.readRanges.resize(ranges);
+        if (records.keys != 0u) WalkRecords(column, records);
         return records;
     }
 
@@ -657,6 +983,8 @@ private:
         }
     };
     std::unordered_map<std::pair<std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t, WordsKeyHash> wordsIndex;
+    std::size_t indexed = 0;
+    std::array<std::uint32_t, 9> widths{};
     std::uint64_t lastAccessPage = std::numeric_limits<std::uint64_t>::max();
     bool lastAccessible = false;
     std::unordered_map<std::uint64_t, bool> pages;
