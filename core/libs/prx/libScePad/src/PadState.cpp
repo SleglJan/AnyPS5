@@ -2,6 +2,7 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include <vector>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -123,8 +124,19 @@ PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uin
         std::sscanf(value, "%llu,%llu", &period, &hold);
         return std::pair<std::uint64_t, std::uint64_t>{period * 1000000ull, hold * 1000000ull};
     }();
+    static const std::vector<std::uint32_t> autoMasks = [] {
+        std::vector<std::uint32_t> masks;
+        const char* value = std::getenv("APS5_LOCAL_AUTO_MASKS");
+        while (value != nullptr && *value != 0) {
+            char* end = nullptr;
+            masks.push_back(static_cast<std::uint32_t>(std::strtoul(value, &end, 0)));
+            if (end == value) break;
+            value = *end == ',' ? end + 1 : end;
+        }
+        return masks;
+    }();
     std::uint32_t local = 0;
-    if (autoCross.first != 0 && now % autoCross.first < autoCross.second) local |= 0x4000u;
+    if (autoCross.first != 0 && now % autoCross.first < autoCross.second) local |= autoMasks.empty() ? 0x4000u : autoMasks[(now / autoCross.first) % autoMasks.size()];
     data.buttons |= local;
     const auto& sticks = injected.hasSticks ? injected.sticks : state.sticks;
     data.left_stick_x = sticks[0];
