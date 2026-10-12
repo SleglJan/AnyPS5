@@ -163,6 +163,21 @@ alignas(256) constexpr std::array<std::uint32_t, 88> MergedHullDivergentBarrier{
     0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 92> MergedHullSelectedMask{
+    0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf880021,
+    0xbe94047e, 0xbf068005, 0x85928014, 0xd5010002, 0x004a0505, 0xd5480004, 0x02090502, 0xd5480005,
+    0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102, 0x7e080d04, 0x7e0a0d05, 0x7e0c0d06,
+    0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666, 0x3e1008ff, 0x3e800000, 0xd54b0009,
+    0x03c5e105, 0x161406a0, 0xd9340000, 0x0000080a, 0xd8340008, 0x0000070a, 0xd8340010, 0x0000070a,
+    0xbf8cc07f, 0xbefe04c1, 0xbf8cc07f, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000,
+    0x7da206f9, 0x81060000, 0xd5480014, 0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015,
+    0x040224ff, 0x00000060, 0xdbfc0000, 0x02000015, 0x162c2890, 0xd5430016, 0x045a24ff, 0x00000030,
+    0xbf8cc07f, 0xe0781000, 0x02020216, 0x7da82881, 0xbe94047e, 0xb06a0060, 0x162602f9, 0x0086066a,
+    0xd8d80048, 0x06000013, 0xd8dc1008, 0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306,
+    0x7e360306, 0x34142484, 0xbefe0414, 0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff,
+    0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0xc8020002, 0xc8060102, 0xc80a0202, 0xc80e0302, 0xf800180f, 0x03020100, 0xbf810000,
 };
@@ -406,6 +421,7 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullDivergentBarrier, "s_barrier that some invocations do not reach", MergedPatches);
         RequirePatches(*device, target, MergedHullCode, MergedHullCode, MergedPatches, "merged hull program");
         RequirePatches(*device, target, MergedHullRegisters, MergedHullRegisters, MergedPatches, "merged hull program storing its local part's registers");
+        RequirePatches(*device, target, MergedHullSelectedMask, MergedHullSelectedMask, MergedPatches, "merged hull program selecting with a uniformly chosen saved exec mask");
         device.reset();
         RequireRegisteredMergedStages();
         RequireRegisteredStages();
