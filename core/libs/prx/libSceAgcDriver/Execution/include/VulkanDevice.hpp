@@ -243,6 +243,7 @@ public:
     // that creation (computePipeline). The pool takes the result and its stage A build; the build
     // is released on the pool thread once the pipeline exists.
     static unsigned AheadPipelineThreads();
+    static std::uint64_t AheadPipelinesQueued();
     bool NeedsComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
     bool HasPipelineForProgram(std::uint64_t programAddress) const;
     bool CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive);

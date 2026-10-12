@@ -293,7 +293,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (prewarming) {
         std::vector<Graphics::GuestMemorySnapshot> snapshots;
         for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes});
+        const auto stageA = std::chrono::steady_clock::now();
         if (localDevice->CreatePipelineAhead(compiledResult, snapshots, address, shaderMemory)) ++pipelinesQueuedAhead();
+        if (profile) {
+            auto& ahead = aheadTiming();
+            ahead.captureMs += phaseMs[PhaseCapture];
+            ahead.materializeMs += phaseMs[PhaseRecompile];
+            ahead.stageAMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stageA).count();
+        }
         return;
     }
     if (resolving) {

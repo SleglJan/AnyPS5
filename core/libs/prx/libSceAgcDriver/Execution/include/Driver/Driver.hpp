@@ -255,6 +255,10 @@ private:
     void createPipelinesAhead(const Submission& submission, const QueueState& live, VulkanDevice& localDevice);
     static bool& prewarmingAhead();
     static std::size_t& pipelinesQueuedAhead();
+    struct AheadTiming {
+        double captureMs = 0, materializeMs = 0, stageAMs = 0;
+    };
+    static AheadTiming& aheadTiming();
     static void clearResolvedAhead();
     static void reportGroupCapture(std::uint32_t queue);
     static PollStats& pollStats();

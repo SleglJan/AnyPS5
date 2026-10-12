@@ -45,6 +45,11 @@ std::size_t& Driver::pipelinesQueuedAhead() {
     return queued;
 }
 
+Driver::AheadTiming& Driver::aheadTiming() {
+    static thread_local AheadTiming timing;
+    return timing;
+}
+
 bool& Driver::gateOpened() {
     static thread_local bool opened = false;
     return opened;
@@ -242,6 +247,7 @@ void Driver::createPipelinesAhead(const Submission& submission, const QueueState
     QueueState scratch = live;
     std::size_t resolves = 0, failures = 0, scanned = 0;
     const auto queuedBefore = pipelinesQueuedAhead();
+    const auto timingBefore = aheadTiming();
     struct Prewarming {
         std::size_t offset;
         Prewarming() : offset(currentPacketOffset()) {
@@ -302,7 +308,8 @@ void Driver::createPipelinesAhead(const Submission& submission, const QueueState
     }
     if (profile) {
         const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
-        AgcDriver::ProfilePrint_nid_no_patch("[ahead] queue 0x%x: %zu dispatches resolved over the rest of the submission and %zu waiting (%zu failed), %zu pipelines queued, in %.1f ms\n", submission.queue, resolves, scanned, failures, pipelinesQueuedAhead() - queuedBefore, ms);
+        const auto& timing = aheadTiming();
+        AgcDriver::ProfilePrint_nid_no_patch("[ahead] queue 0x%x: %zu dispatches resolved over the rest of the submission and %zu waiting (%zu failed), %zu pipelines queued, in %.1f ms (capture %.1f, materialize %.1f, stage A %.1f)\n", submission.queue, resolves, scanned, failures, pipelinesQueuedAhead() - queuedBefore, ms, timing.captureMs - timingBefore.captureMs, timing.materializeMs - timingBefore.materializeMs, timing.stageAMs - timingBefore.stageAMs);
     }
 }
 
