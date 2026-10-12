@@ -4347,7 +4347,25 @@ void ShaderResources::CheckFaults() const {
 }
 
 void ShaderResources::WriteBackBuffers() {
-    if (bda) bda->CheckFault();
+    if (bda) {
+        try {
+            bda->CheckFault();
+        } catch (const std::exception&) {
+            // Diagnostic (local branch): a failed fault check drops this use's copied results.
+            // APS5_LOG_SKIPPED_WRITEBACK=1 lists the guest ranges the use may write (in place or
+            // copied); APS5_WRITEBACK_PAST_FAULT=1 still stores the copied results before the
+            // fault is reported.
+            static const bool log = std::getenv("APS5_LOG_SKIPPED_WRITEBACK") != nullptr;
+            static const bool past = std::getenv("APS5_WRITEBACK_PAST_FAULT") != nullptr;
+            if (log) {
+                const auto& writes = guestMemory.Writes();
+                std::fprintf(stderr, "[gpu] fault check failed: %zu written ranges, copied writes %s%s\n", writes.size(), guestMemory.HasCopiedWrites() ? "yes" : "no", past && !SkipWriteBack() ? " (written back anyway)" : " (dropped)");
+                for (std::size_t index = 0; index < writes.size() && index < 64; ++index) std::fprintf(stderr, "[gpu]   written range 0x%llx+0x%llx\n", static_cast<unsigned long long>(writes[index].first), static_cast<unsigned long long>(writes[index].second - writes[index].first));
+            }
+            if (past && !SkipWriteBack()) guestMemory.WriteBack();
+            throw;
+        }
+    }
     if (SkipWriteBack()) return;
     guestMemory.WriteBack();
 }

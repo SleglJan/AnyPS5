@@ -737,3 +737,156 @@ bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t
 }
 
 }
+
+#if defined(__linux__) && defined(__x86_64__)
+#include <atomic>
+#include <csignal>
+#include <dlfcn.h>
+#include <string>
+#include <sys/uio.h>
+#include <ucontext.h>
+
+namespace GuestWriteWatch {
+namespace {
+
+// Diagnostic (local branch): APS5_GUEST_FAULT_DUMP=1 prints, on a fatal SIGSEGV or SIGBUS nothing
+// else handles, the faulting instruction as module+offset, the general registers, 0x100 bytes of
+// stack and 0x40 bytes at every register that points at readable memory, then lets the default
+// action run. Any other value also prints peeks: comma-separated BASE[(+|-)HEX|*]...:LEN, BASE a
+// register name or a hex address, * replacing the address by the 64-bit word stored there, e.g.
+// "rsp+0x18*+0x490*:0x1000". Memory is read with process_vm_readv, so a bad pointer prints a note.
+class FaultDump {
+public:
+    FaultDump() {
+        const char* value = std::getenv("APS5_GUEST_FAULT_DUMP");
+        if (value == nullptr || *value == '\0') return;
+        std::snprintf(_peeks, sizeof(_peeks), "%s", std::strcmp(value, "1") == 0 ? "" : value);
+        struct sigaction action {};
+        action.sa_sigaction = &FaultDump::fault;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+        _instance = this;
+        if (sigaction(SIGSEGV, &action, &_previousSegv) != 0 || sigaction(SIGBUS, &action, &_previousBus) != 0) print("[guest-fault] cannot install the fault dump handler\n");
+    }
+
+private:
+    struct Register {
+        const char* name;
+        int index;
+    };
+    static constexpr Register Registers[] = {{"rax", REG_RAX}, {"rbx", REG_RBX}, {"rcx", REG_RCX}, {"rdx", REG_RDX}, {"rsi", REG_RSI}, {"rdi", REG_RDI}, {"rbp", REG_RBP}, {"rsp", REG_RSP}, {"r8", REG_R8}, {"r9", REG_R9}, {"r10", REG_R10}, {"r11", REG_R11}, {"r12", REG_R12}, {"r13", REG_R13}, {"r14", REG_R14}, {"r15", REG_R15}, {"rip", REG_RIP}};
+
+    template <typename... TArguments>
+    static void print(const char* format, TArguments... arguments) {
+        char line[512];
+        const int length = std::snprintf(line, sizeof(line), format, arguments...);
+        if (length <= 0) return;
+        const auto written = ::write(STDERR_FILENO, line, std::min<std::size_t>(static_cast<std::size_t>(length), sizeof(line) - 1));
+        static_cast<void>(written);
+    }
+
+    static bool read(std::uintptr_t address, void* out, std::size_t bytes) {
+        iovec local{out, bytes};
+        iovec remote{reinterpret_cast<void*>(address), bytes};
+        return ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(bytes);
+    }
+
+    static void dump(const char* label, std::uintptr_t address, std::size_t bytes) {
+        bytes = std::min<std::size_t>(bytes, 0x40000);
+        for (std::size_t offset = 0; offset < bytes; offset += 32) {
+            std::uint64_t words[4] = {};
+            if (!read(address + offset, words, 32)) {
+                print("[guest-fault] %s %#lx+%#zx: unreadable\n", label, static_cast<unsigned long>(address), offset);
+                return;
+            }
+            print("[guest-fault] %s %#lx+%#zx: %016lx %016lx %016lx %016lx\n", label, static_cast<unsigned long>(address), offset, static_cast<unsigned long>(words[0]), static_cast<unsigned long>(words[1]), static_cast<unsigned long>(words[2]), static_cast<unsigned long>(words[3]));
+        }
+    }
+
+    static bool registerValue(const greg_t* registers, const char* name, std::size_t length, std::uint64_t& value) {
+        for (const auto& candidate : Registers) {
+            if (std::strlen(candidate.name) == length && std::strncmp(candidate.name, name, length) == 0) {
+                value = static_cast<std::uint64_t>(registers[candidate.index]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void peek(const greg_t* registers, const char* spec, std::size_t length) const {
+        char label[128];
+        std::snprintf(label, sizeof(label), "peek %.*s", static_cast<int>(std::min<std::size_t>(length, 100)), spec);
+        std::size_t at = 0;
+        while (at < length && ((spec[at] >= 'a' && spec[at] <= 'z') || (spec[at] >= '0' && spec[at] <= '9') || spec[at] == 'x')) ++at;
+        std::uint64_t address = 0;
+        if (!registerValue(registers, spec, at, address)) address = std::strtoull(std::string(spec, at).c_str(), nullptr, 16);
+        std::size_t bytes = 0x40;
+        while (at < length) {
+            const char op = spec[at++];
+            if (op == '*') {
+                std::uint64_t loaded = 0;
+                if (!read(address, &loaded, sizeof(loaded))) {
+                    print("[guest-fault] %s: cannot load %#lx\n", label, static_cast<unsigned long>(address));
+                    return;
+                }
+                address = loaded;
+                continue;
+            }
+            std::size_t end = at;
+            while (end < length && spec[end] != '+' && spec[end] != '-' && spec[end] != '*' && spec[end] != ':') ++end;
+            const auto number = std::strtoull(std::string(spec + at, end - at).c_str(), nullptr, 16);
+            at = end;
+            if (op == '+') address += number;
+            else if (op == '-') address -= number;
+            else if (op == ':') bytes = number;
+        }
+        dump(label, address, bytes);
+    }
+
+    static void fault(int signal, siginfo_t* info, void* context) {
+        auto* self = _instance;
+        const auto& previous = signal == SIGBUS ? self->_previousBus : self->_previousSegv;
+        if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
+            previous.sa_sigaction(signal, info, context);
+            return;
+        }
+        if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN && previous.sa_handler != nullptr) {
+            previous.sa_handler(signal);
+            return;
+        }
+        static std::atomic<bool> dumped{false};
+        if (!dumped.exchange(true)) {
+            const auto* registers = static_cast<ucontext_t*>(context)->uc_mcontext.gregs;
+            const auto rip = static_cast<std::uintptr_t>(registers[REG_RIP]);
+            Dl_info module{};
+            const bool named = ::dladdr(reinterpret_cast<void*>(rip), &module) != 0 && module.dli_fbase != nullptr;
+            print("[guest-fault] signal %d at %#lx in %s+%#lx (module vaddr)\n", signal, reinterpret_cast<unsigned long>(info->si_addr), named && module.dli_fname != nullptr ? module.dli_fname : "?", static_cast<unsigned long>(named ? rip - reinterpret_cast<std::uintptr_t>(module.dli_fbase) : rip));
+            for (const auto& entry : Registers) print("[guest-fault] %s=%016lx\n", entry.name, static_cast<unsigned long>(registers[entry.index]));
+            dump("stack", static_cast<std::uintptr_t>(registers[REG_RSP]), 0x100);
+            for (const auto& entry : Registers) {
+                std::uint64_t probe = 0;
+                const auto value = static_cast<std::uintptr_t>(registers[entry.index]);
+                if (entry.index != REG_RSP && entry.index != REG_RIP && read(value, &probe, sizeof(probe))) dump(entry.name, value, 0x40);
+            }
+            for (const char* spec = self->_peeks; *spec != '\0';) {
+                const char* end = std::strchr(spec, ',');
+                const auto length = end != nullptr ? static_cast<std::size_t>(end - spec) : std::strlen(spec);
+                if (length != 0) self->peek(registers, spec, length);
+                spec += length + (end != nullptr ? 1 : 0);
+            }
+            print("[guest-fault] end of dump\n");
+        }
+        ::signal(signal, SIG_DFL);
+    }
+
+    static inline FaultDump* _instance = nullptr;
+    struct sigaction _previousSegv {};
+    struct sigaction _previousBus {};
+    char _peeks[1024] = {};
+};
+
+FaultDump g_faultDump;
+
+}
+}
+#endif
