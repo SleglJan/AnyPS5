@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -20,6 +21,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -47,23 +49,31 @@ alignas(256) constexpr std::array<std::uint32_t, 78> LoadsCode{
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(bool split = false) : split(split) {
+        const auto bytes = split ? BlockBytes * 2u : BlockBytes;
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        allocation = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
+        allocation = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, bytes));
 #endif
-        Require(block != nullptr, "copied writer: cannot allocate a guest block");
-        std::memset(block, Fill, BlockBytes);
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        Require(allocation != nullptr, "copied writer: cannot allocate a guest block");
+        std::memset(allocation, Fill, bytes);
+        block = allocation + (split ? BlockBytes - OutputBytes / 2u : 0u);
+        GuestAllocations::Mutation mutation;
+        mutation.Add(allocation, BlockBytes, true, true, true);
+        if (split) mutation.Add(allocation + BlockBytes, BlockBytes, true, true, true);
     }
 
     ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(allocation);
+            if (split) mutation.Remove(allocation + BlockBytes);
+        }
 #ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
+        VirtualFree(allocation, 0, MEM_RELEASE);
 #else
-        std::free(block);
+        std::free(allocation);
 #endif
     }
 
@@ -74,6 +84,8 @@ public:
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
 
 private:
+    bool split;
+    std::uint8_t* allocation = nullptr;
     std::uint8_t* block = nullptr;
 };
 
@@ -100,15 +112,29 @@ void RecordDispatch(AgcDriver::VulkanDevice& device, const GuestBlock& input, co
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool joined = argc == 2 && std::string_view(argv[1]) == "--joined-imports";
+        Require(argc == 1 || joined, "copied writer: unknown test mode");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (joined) AgcDriver::Graphics::SetHostImportWindow(BlockBytes / 8u);
         const GuestBlock input;
         std::memset(input.Data(), 0, BlockBytes);
-        const GuestBlock output;
+        const GuestBlock output(joined);
         const GuestBlock destination;
         RecordDispatch(*device, input, output);
+        if (joined) {
+            AgcDriver::Graphics::Context probe{};
+            probe.device = device->Device();
+            probe.hostImportAlignment = 1;
+            if (!AgcDriver::Graphics::HostImportCovers(probe, output.Address(), 1)) {
+                device->WaitIdle();
+                std::puts("skipped, the device imports no host memory");
+                return VulkanTestSkipped;
+            }
+            Require(AgcDriver::Graphics::HostImportCovers(probe, output.Address(), OutputBytes), "joined writer: the GPU output spanning two registered ranges is not served by one import");
+        }
         AgcDriver::VulkanDevice::CopyOutcome outcome{};
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -126,6 +152,7 @@ int main() {
         for (std::uint32_t offset = 0; offset < OutputBytes; ++offset) {
             Require(destination.Data()[offset] == output.Data()[offset], "copied writer: copied byte " + std::to_string(offset) + " is " + std::to_string(destination.Data()[offset]) + ", the dispatch stored " + std::to_string(output.Data()[offset]));
         }
+        if (joined) Require(output.Data()[-1] == Fill && output.Data()[OutputBytes] == Fill, "joined writer: the dispatch overwrote a guard outside the crossing output");
         std::puts("copied writer copy tests passed");
         return 0;
     } catch (const std::exception& error) {
