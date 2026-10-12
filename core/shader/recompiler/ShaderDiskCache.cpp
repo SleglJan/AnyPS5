@@ -141,7 +141,7 @@ static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update t
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 10, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
-static_assert(fieldCount<KeyDomain>() == 8, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
+static_assert(fieldCount<KeyDomain>() == 10, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
 static_assert(fieldCount<UniformFill>() == 5, "UniformFill changed: update the plan encoder");
@@ -877,6 +877,8 @@ void encodeKeyDomain(Writer& out, const KeyDomain& domain) {
     out.Value(domain.shift);
     out.Value(domain.mask);
     out.Value(domain.addend);
+    out.Value(domain.recordAddend);
+    out.Value(domain.lane);
 }
 
 void decodeKeyDomain(Reader& in, KeyDomain& domain) {
@@ -888,6 +890,8 @@ void decodeKeyDomain(Reader& in, KeyDomain& domain) {
     in.Value(domain.shift);
     in.Value(domain.mask);
     in.Value(domain.addend);
+    in.Value(domain.recordAddend);
+    in.Value(domain.lane);
 }
 
 void encodeTableColumn(Writer& out, const TableColumn& column) {
@@ -912,7 +916,7 @@ void decodeTableColumn(Reader& in, TableColumn& column) {
     in.Value(column.maxKey);
     in.Value(column.sampler);
     in.Value(column.address);
-    in.List(column.keyDomains, 26, decodeKeyDomain);
+    in.List(column.keyDomains, 31, decodeKeyDomain);
     in.Value(column.unkeyed);
 }
 

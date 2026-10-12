@@ -28,6 +28,8 @@ struct KeyDomain {
     std::uint32_t shift = 0;
     std::uint32_t mask = 0xffffffffu;
     std::uint32_t addend = 0;
+    std::uint32_t recordAddend = 0;
+    bool lane = false;
 
     bool operator==(const KeyDomain& other) const = default;
 };

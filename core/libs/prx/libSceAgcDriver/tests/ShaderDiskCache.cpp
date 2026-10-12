@@ -1345,6 +1345,7 @@ IrResourcePlan handBuiltPlan() {
     domain.shift = 2u;
     domain.mask = 0xffu;
     domain.addend = 1u;
+    domain.recordAddend = 3u;
     column.keyDomains = {domain};
     column.unkeyed = true;
     table.tableColumn = column;

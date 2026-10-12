@@ -785,7 +785,8 @@ const std::vector<std::uint32_t> TableMaterialCode{0xf4080100u, 0xfa000000u, 0xf
 const std::vector<std::uint32_t> TableSrtKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableTwoKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0xf4000440u, 0xfa000044u, 0x8f108510u, 0x8f118511u, 0xf42c0502u, 0x20000000u, 0xf42c0902u, 0x22000000u, 0xf09c0f08u, 0x00450000u, 0xf09c0f08u, 0x00490400u, 0x06000900u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableWaterfallKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x34020084u, 0xbf8cc07fu, 0xe0301004u, 0x80030101u, 0xbf8c3f70u, 0x7e200501u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xe0700000u, 0x80070000u, 0xbf810000u};
-const std::vector<std::uint32_t> TableMixedKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x34020084u, 0xbf8cc07fu, 0xe0301004u, 0x80030101u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbf8c3f70u, 0x7e220501u, 0x8f118511u, 0xf42c0902u, 0x22000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xf09c0f08u, 0x00490400u, 0xbf8c3f70u, 0x06000900u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+const std::vector<std::uint32_t> TableMixedKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x7e220500u, 0xbf8cc07fu, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x8f118511u, 0xf42c0902u, 0x22000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xf09c0f08u, 0x00490400u, 0xbf8c3f70u, 0x06000900u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+const std::vector<std::uint32_t> TableLaneKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x4a040081u, 0xbf8cc07fu, 0xe0382000u, 0x80030402u, 0xbf8c3f70u, 0x7e200504u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00450000u, 0xbf8c3f70u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableLoopKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xbe900380u, 0xbe940380u, 0x8f118510u, 0xf42c0902u, 0x22000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00490000u, 0x93129014u, 0xf4200406u, 0x24000004u, 0x80148114u, 0xbf0a8314u, 0xbf8cc07fu, 0xbf85fff3u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableWholeCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
@@ -1427,20 +1428,20 @@ void verifyImageTableWaterfallKey() {
     FillTableSrt(guest, heap.data(), 32u, 4u);
     guest.materials = {};
     guest.materials[0][1] = 2u;
-    guest.materials[1][1] = 3u;
-    guest.materials[2][1] = 1u;
+    guest.materials[1][1] = 2u;
+    guest.materials[2][1] = 3u;
     const auto userData = TableUserData(guest);
     const auto request = TableRequest(TableWaterfallKeyCode, userData);
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table waterfall key: the T# was not planned as a table");
     const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.has_value() && column->keyDomains.empty(), "image table waterfall key: a per-lane key made uniform by v_readfirstlane got a key domain");
+    require(column.has_value() && column->keyDomains.size() == 1u && column->keyDomains[0].lane && !column->keyDomains[0].value && !column->keyDomains[0].recordStride && column->keyDomains[0].offset == 4u && column->keyDomains[0].recordAddend == 0u, "image table waterfall key: a per-lane key made uniform by v_readfirstlane has no lane dword scan from its field");
     const auto compiled = CompileTable(request);
     const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
     const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
-    require(snapshot.keys == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [&](std::uint32_t code) { return code == outside; }), "image table waterfall key: the snapshot was narrowed");
+    require(snapshot.keys == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && snapshot.codes[1] == outside && (snapshot.codes[2] & Abi::PoisonFlag) == 0u && (snapshot.codes[3] & Abi::PoisonFlag) == 0u, "image table waterfall key: the snapshot does not hold the records the lanes' material fields name");
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
-    require(images != nullptr && images->count == 4u, "image table waterfall key: the binding does not hold the whole domain");
+    require(images != nullptr && images->count == 3u, "image table waterfall key: the binding does not hold the three selected images");
 }
 
 void verifyImageTableUnkeyedAccess() {
@@ -1456,9 +1457,6 @@ void verifyImageTableUnkeyedAccess() {
     heap[3] = TableT(textures[3].bytes.data(), TableFormat32UInt, TableType2D);
     FillTableSrt(guest, heap.data(), 32u, 4u);
     guest.srt[16] = 2u;
-    guest.materials = {};
-    guest.materials[0][1] = 3u;
-    guest.materials[1][1] = 1u;
     const auto userData = TableUserData(guest);
     const auto request = TableRequest(TableMixedKeyCode, userData);
     const auto plan = GetResourcePlan(request);
@@ -1471,6 +1469,38 @@ void verifyImageTableUnkeyedAccess() {
     require(snapshot.keys == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [&](std::uint32_t code) { return code == outside; }), "image table unkeyed access: the shared column was narrowed by the keyed read");
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
     require(images != nullptr && images->count == 4u, "image table unkeyed access: the binding does not hold the whole domain");
+}
+
+void verifyImageTableLaneKey() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[4];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = TableT(textures[2].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[3] = TableT(textures[3].bytes.data(), TableFormat32UInt, TableType2D);
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.materials = {};
+    guest.materials[0][0] = 1u;
+    guest.materials[1][0] = 2u;
+    guest.materials[2][0] = 3u;
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableLaneKeyCode, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table lane key: the T# was not planned as a table");
+    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.has_value() && column->keyDomains.size() == 1u && column->keyDomains[0].lane && !column->keyDomains[0].value && column->keyDomains[0].recordStride && column->keyDomains[0].offset == 0u && column->keyDomains[0].recordAddend == 1u, "image table lane key: a per-lane record key has no lane scan domain from its first record");
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    require(snapshot.keys == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && snapshot.codes[1] == outside && (snapshot.codes[2] & Abi::PoisonFlag) == 0u && (snapshot.codes[3] & Abi::PoisonFlag) == 0u, "image table lane key: the snapshot does not hold the records the lanes' material records name");
+    const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+    require(images != nullptr && images->count == 3u, "image table lane key: the binding does not hold the three selected images");
+    const std::pair<std::uint64_t, std::uint64_t> keyRange{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.materials.data())), sizeof(guest.materials)};
+    require(std::find(compiled.capture->snapshot.tables.ranges.begin(), compiled.capture->snapshot.tables.ranges.end(), keyRange) != compiled.capture->snapshot.tables.ranges.end(), "image table lane key: the material buffer is not among the snapshot ranges");
 }
 
 void verifyImageTableRegistration() {
@@ -4402,6 +4432,7 @@ int main(int argc, char** argv) {
             verifyImageTablePendingKey();
             verifyImageTableWaterfallKey();
             verifyImageTableUnkeyedAccess();
+            verifyImageTableLaneKey();
             verifyImageTableKeyTransforms();
             verifyImageTableRegistration();
             verifyScalarAddressRule();

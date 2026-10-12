@@ -570,6 +570,11 @@ bool TableNarrowing() {
     return narrowing;
 }
 
+bool TableLaneKeys() {
+    static const bool lanes = std::getenv("APS5_NO_TABLE_LANE_KEYS") == nullptr;
+    return lanes;
+}
+
 struct TableTrace {
     std::uint64_t base = 0;
     std::uint64_t size = 0;
@@ -590,10 +595,11 @@ void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColu
     last = trace;
     std::string key = column.unkeyed ? "none (an access has no domain)" : "none";
     for (const auto& domain : column.keyDomains) {
-        std::string text = (domain.value ? "value source " : "scan source ") + std::to_string(domain.source);
+        std::string text = (domain.value ? "value source " : domain.lane ? "lane scan source " : "scan source ") + std::to_string(domain.source);
         if (!domain.value) {
             text += " offset 0x" + hexText(domain.offset) + " stride " + std::to_string(domain.stride);
             if (domain.recordStride) text += " (record stride)";
+            if (domain.recordAddend != 0u) text += " from record " + std::to_string(domain.recordAddend);
         }
         if (domain.shift != 0u) text += " shift " + std::to_string(domain.shift);
         if (domain.mask != 0xffffffffu) text += " mask 0x" + hexText(domain.mask);
@@ -889,6 +895,7 @@ private:
         std::vector<std::uint32_t> values{0u};
         NarrowMask mask;
         for (const auto& domain : column.keyDomains) {
+            if (domain.lane && !TableLaneKeys()) return skip();
             if (domain.value) {
                 DescriptorValue key;
                 SrtReadTrace reads;
@@ -920,7 +927,7 @@ private:
             const std::uint64_t base = keyBuffer.Base48();
             const std::uint64_t size = keyBuffer.GetSize();
             const std::uint64_t stride = domain.recordStride && keyBuffer.Stride() >= 4u ? keyBuffer.Stride() & ~3u : domain.stride;
-            const std::uint64_t first = domain.offset & ~3u;
+            const std::uint64_t first = (domain.offset & ~3u) + static_cast<std::uint64_t>(domain.recordAddend) * stride;
             const std::uint64_t positions = size >= first + 4u ? (size - first - 4u) / stride + 1u : 0u;
             if (positions > TableKeyScanLimit() || first > 0xffffffffull) return skip();
             if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) return skip();
