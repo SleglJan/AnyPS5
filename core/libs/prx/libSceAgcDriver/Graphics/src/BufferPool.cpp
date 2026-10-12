@@ -52,7 +52,7 @@ BufferPool::~BufferPool() {
     for (auto& [memory, block] : slabBlocks) freeBlock(*block);
 }
 
-VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation) {
+VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::uint32_t fallbackType, bool* fellBack) {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     auto result = allocateMemory(device, &allocation, nullptr, &memory);
     const auto initialResult = result;
@@ -64,6 +64,18 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
             memory = VK_NULL_HANDLE;
             result = allocateMemory(device, &allocation, nullptr, &memory);
             ++attempts;
+        }
+    }
+    if (outOfMemory(result) && fallbackType != NoFallbackType) {
+        auto alternate = allocation;
+        alternate.memoryTypeIndex = fallbackType;
+        memory = VK_NULL_HANDLE;
+        result = allocateMemory(device, &alternate, nullptr, &memory);
+        ++attempts;
+        if (result == VK_SUCCESS) {
+            std::fprintf(stderr, "[bufferpool] %s fell back to memory type %u: allocation=%llu memoryType=%u reclaimed=%llu initialResult=%d attempts=%u\n", operation, fallbackType, static_cast<unsigned long long>(allocation.allocationSize), allocation.memoryTypeIndex, static_cast<unsigned long long>(reclaimed), static_cast<int>(initialResult), attempts);
+            if (fellBack != nullptr) *fellBack = true;
+            return memory;
         }
     }
     if (result == VK_SUCCESS) {

@@ -61,7 +61,8 @@ public:
     // The size a buffer for `bytes` is created with: its size class, or `bytes` itself when large.
     static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
-    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation);
+    static constexpr std::uint32_t NoFallbackType = ~0u;
+    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::uint32_t fallbackType = NoFallbackType, bool* fellBack = nullptr);
     // Destroys every retained buffer and empty slab block (what an out-of-memory retry reclaims).
     VkDeviceSize Trim() { return trim(); }
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);

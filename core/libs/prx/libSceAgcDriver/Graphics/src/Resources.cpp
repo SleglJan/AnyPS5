@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <exception>
 
@@ -43,6 +44,19 @@ namespace {
 VkDeviceSize ClassAllocationBytes(const VkMemoryRequirements& requirements, std::size_t capacity) {
     const auto alignment = std::max<VkDeviceSize>(requirements.alignment, 1);
     return std::max<VkDeviceSize>(requirements.size, (static_cast<VkDeviceSize>(capacity) + alignment - 1) / alignment * alignment);
+}
+
+std::uint32_t HostFallbackType(const Context& context, std::uint32_t allowedTypes, std::uint32_t originalType) {
+    static const bool disabled = std::getenv("APS5_NO_DEVICE_BUFFER_HOST_FALLBACK") != nullptr;
+    if (disabled || originalType >= context.memory.memoryTypeCount) return BufferPool::NoFallbackType;
+    constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const auto heap = context.memory.memoryTypes[originalType].heapIndex;
+    for (std::uint32_t type = 0; type < context.memory.memoryTypeCount; ++type) {
+        const auto& candidate = context.memory.memoryTypes[type];
+        if ((allowedTypes & (1u << type)) == 0 || (candidate.propertyFlags & host) != host || (candidate.propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 || candidate.heapIndex == heap) continue;
+        return type;
+    }
+    return BufferPool::NoFallbackType;
 }
 
 VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize availableBytes) {
@@ -212,7 +226,9 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         allocation.allocationSize = ClassAllocationBytes(requirements, capacity);
         allocationBytes = allocation.allocationSize;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        memory = cache->AllocateMemory(allocation, "vkAllocateMemory device buffer");
+        bool fellBack = false;
+        memory = cache->AllocateMemory(allocation, "vkAllocateMemory device buffer", HostFallbackType(context, requirements.memoryTypeBits, allocation.memoryTypeIndex), &fellBack);
+        pooled = !fellBack;
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory device");
     } catch (...) {
         release();
@@ -225,7 +241,7 @@ DeviceBuffer::~DeviceBuffer() {
 }
 
 void DeviceBuffer::release() noexcept {
-    if (buffer && memory && cache) {
+    if (buffer && memory && cache && pooled) {
         cache->Put({buffer, memory, nullptr, 0, allocationBytes, capacity, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, false, size});
         return;
     }
