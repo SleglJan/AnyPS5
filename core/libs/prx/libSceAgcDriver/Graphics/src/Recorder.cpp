@@ -3093,7 +3093,17 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
         std::lock_guard ringLock(writtenBackMutex);
         return writtenBackSequence;
     }();
-    batch.completions.push_back([this, address, copy = std::move(copy), sequence, storedOnGpu] {
+    // Debug aid: APS5_TRACE_HELD_LABELS=<ms> (1 means 250) logs every completion label stored that
+    // long or longer after it was recorded.
+    static const long traceHeldMs = [] {
+        const char* value = std::getenv("APS5_TRACE_HELD_LABELS");
+        if (value == nullptr) return 0L;
+        const long ms = std::strtol(value, nullptr, 10);
+        return ms <= 1 ? 250L : ms;
+    }();
+    const auto recorded = std::chrono::steady_clock::now();
+    const bool openBatch = &batch == open.get();
+    batch.completions.push_back([this, address, copy = std::move(copy), sequence, storedOnGpu, recorded, openBatch, stamp, queue] {
         if (storedOnGpu && !always && !writtenBackSince(sequence, address, address + copy.size())) {
             completionStoresSkipped.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -3101,6 +3111,12 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
         completionStoresRun.fetch_add(1, std::memory_order_relaxed);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(address), copy.size(), 4, true);
         GuestMemory::StoreOwnBytes(address, copy);
+        if (traceHeldMs != 0) {
+            const auto waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - recorded).count();
+            if (waited >= static_cast<double>(traceHeldMs)) {
+                std::fprintf(stderr, "[held-label] 0x%llx (%zu bytes, stamp %llu, queue 0x%x, %s batch%s) stored %.1f ms after it was recorded; %llu completion labels pending\n", static_cast<unsigned long long>(address), copy.size(), static_cast<unsigned long long>(stamp), queue, openBatch ? "open" : "in-flight", storedOnGpu ? ", also on the GPU" : "", waited, static_cast<unsigned long long>(completionLabels.load(std::memory_order_relaxed)));
+            }
+        }
     });
     // Counted per batch and counted down when the batch finishes, on every exit path of finish()
     // (a label whose range became unmapped is reported there, and a lost device throws before the
