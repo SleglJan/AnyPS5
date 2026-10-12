@@ -2079,6 +2079,11 @@ template<typename TVisitor>
 void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableBuffers, const TVisitor& visit) {
     Require(shader.program != nullptr, "missing compiled shader");
     const auto& program = *shader.program;
+    // A visitor with a Words member takes a run of key words at once (the digest's bulk path).
+    const auto visitWords = [&](std::span<const std::uint32_t> words) {
+        if constexpr (requires(const TVisitor& visitor, std::span<const std::uint32_t> run) { visitor.Words(run); }) visit.Words(words);
+        else for (const auto word : words) visit(word);
+    };
     visit(dataWords ? 1u : 0u);
     visit(static_cast<std::uint32_t>(shader.stage));
     visit(static_cast<std::uint32_t>(program.PipelineVariantId()));
@@ -2106,7 +2111,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
                 else { for (const auto word : {0u, words[1] & 0xffff0000u, 0u, words[3]}) visit(word); }
             }
         } else if ((dataWords && !movableBuffers) || !DataRole(binding.role)) {
-            for (const auto word : binding.guestDescriptor) visit(word);
+            visitWords(binding.guestDescriptor);
         }
         packBits(binding.imageWritten);
         packBits(binding.samplerDepthCompare);
@@ -2120,7 +2125,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
-        for (const auto sampler : binding.imageSamplers) visit(sampler);
+        visitWords(binding.imageSamplers);
         visit(static_cast<std::uint32_t>(binding.imageShapes.size()));
         for (const auto shape : binding.imageShapes) visit(static_cast<std::uint32_t>(shape));
     }
@@ -2146,6 +2151,18 @@ public:
         stripe[filled++] = word;
         ++count;
         if (filled == stripe.size()) consume();
+    }
+
+    // The same as Add for each word in turn, taking whole stripes straight from the run.
+    void AddWords(std::span<const std::uint32_t> words) {
+        std::size_t at = 0;
+        while (filled != 0 && at < words.size()) Add(words[at++]);
+        for (; at + stripe.size() <= words.size(); at += stripe.size()) {
+            std::memcpy(stripe.data(), words.data() + at, sizeof(stripe));
+            count += stripe.size();
+            consume();
+        }
+        while (at < words.size()) Add(words[at++]);
     }
 
     std::array<std::uint64_t, 2> Finish() {
@@ -2234,11 +2251,22 @@ ShaderResources::ContentDigest ShaderResources::ContentKeyDigest(const CompiledS
     WordStreamHash hash;
     ContentDigest digest{};
     std::size_t index = 0;
-    VisitContentKey(shader, true, movableBuffers, [&](std::uint32_t word) {
-        if (index < 5) digest[index] = word;
-        ++index;
-        hash.Add(word);
-    });
+    struct Visitor {
+        WordStreamHash& hash;
+        ContentDigest& digest;
+        std::size_t& index;
+        void operator()(std::uint32_t word) const {
+            if (index < 5) digest[index] = word;
+            ++index;
+            hash.Add(word);
+        }
+        void Words(std::span<const std::uint32_t> words) const {
+            for (; !words.empty() && index < 5; words = words.subspan(1)) (*this)(words.front());
+            index += words.size();
+            hash.AddWords(words);
+        }
+    };
+    VisitContentKey(shader, true, movableBuffers, Visitor{hash, digest, index});
     Require(index >= 5 && index <= std::numeric_limits<std::uint32_t>::max(), "shader content key has an unexpected length");
     const auto hashed = hash.Finish();
     digest[0] = ContentDigestMarker;

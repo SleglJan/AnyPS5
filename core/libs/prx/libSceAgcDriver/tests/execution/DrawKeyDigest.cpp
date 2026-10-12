@@ -24,14 +24,14 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t TableElements = 64;
 
-RecompileResult Program() {
+RecompileResult Program(std::uint32_t tableElements = TableElements) {
     RecompileResult result;
     result.variantId = 0x1234'5678'9abc'def0ull;
     DescriptorBinding buffers{DescriptorKind::StorageBuffer, DescriptorRole::GuestBuffers, 0, 0, 2, {}};
     buffers.guestDescriptor = {0x1000u, 0x0002'0000u, 0x100u, 0x2002'2facu, 0x8000u, 0x0001'0000u, 0x200u, 0x2002'2facu};
     buffers.bufferWritten = {true, false};
-    DescriptorBinding table{DescriptorKind::SampledImage, DescriptorRole::ImageTable, 0, 1, TableElements, {}};
-    for (std::uint32_t element = 0; element < TableElements; ++element) {
+    DescriptorBinding table{DescriptorKind::SampledImage, DescriptorRole::ImageTable, 0, 1, tableElements, {}};
+    for (std::uint32_t element = 0; element < tableElements; ++element) {
         for (std::uint32_t word = 0; word < 8; ++word) table.guestDescriptor.push_back(element * 8u + word + 1u);
         table.imageShapes.push_back(DescriptorImageShape::Image2D);
         table.imageSamplers.push_back(element % 3u);
@@ -91,6 +91,25 @@ void DigestFollowsTheContentKey() {
     Require(Digest(base, ShaderStage::Vertex) != baseDigest, "the stage is not part of the digest");
 }
 
+// Every descriptor and sampler word of a table reaches the digest, whatever the table's length (the
+// digest takes runs of words in stripes of eight).
+void EveryTableWordCounts() {
+    for (const std::uint32_t elements : {1u, 3u, 61u}) {
+        const auto base = Program(elements);
+        const auto baseDigest = Digest(base, ShaderStage::Fragment);
+        for (std::size_t word = 0; word < base.bindings[1].guestDescriptor.size(); ++word) {
+            auto changed = base;
+            changed.bindings[1].guestDescriptor[word] ^= 0x10u;
+            Require(Digest(changed, ShaderStage::Fragment) != baseDigest, "table word " + std::to_string(word) + " of " + std::to_string(elements) + " elements did not reach the digest");
+        }
+        for (std::size_t element = 0; element < elements; ++element) {
+            auto changed = base;
+            changed.bindings[1].imageSamplers[element] ^= 0x10u;
+            Require(Digest(changed, ShaderStage::Fragment) != baseDigest, "sampler " + std::to_string(element) + " of " + std::to_string(elements) + " elements did not reach the digest");
+        }
+    }
+}
+
 // Random single-word and single-bit changes over the whole table: no two content keys share a digest.
 void NoDigestSharedByTwoKeys() {
     const auto base = Program();
@@ -142,6 +161,7 @@ void SharedDigestFollowsItsOwner() {
 int main() {
     try {
         DigestFollowsTheContentKey();
+        EveryTableWordCounts();
         NoDigestSharedByTwoKeys();
         SharedDigestFollowsItsOwner();
         std::cout << "Stage digests follow the content keys and their owners\n";
