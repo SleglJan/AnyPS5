@@ -572,8 +572,11 @@ private:
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
-        // Of those, the labels kept behind completions (HeldCompletionLabels), likewise.
+        // Of those, the labels kept behind completions (HeldCompletionLabels), likewise, and when
+        // the first of them was recorded (the held-label lander submits the open batch after the
+        // label flush deadline).
         std::uint32_t heldLabelCount = 0;
+        std::chrono::steady_clock::time_point heldSince{};
         // Write-back completions (OnComplete), likewise.
         std::uint32_t writeBackCompletionCount = 0;
         // The ranges of the completion labels also stored on the GPU, and whether each entered the
@@ -761,6 +764,20 @@ private:
     void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion = false);
     // Flags the recorded entries of `batch` over [begin, end) as stored by a completion action.
     void markBehindCompletion(const Batch& batch, std::uint64_t begin, std::uint64_t end);
+    // Counts a label kept behind the completions of `batch` (HeldCompletionLabels) and wakes the
+    // held-label lander.
+    void countHeldLabel(Batch& batch);
+    // The held-label lander (see Recorder.cpp): under the mutex, landHeld reaps the finished batches,
+    // submits the open batch when its oldest held label is older than `deadline`, and names the
+    // oldest in-flight batch still holding one (serial 0: none) and how long the open batch may stay
+    // open (`pause`, zero when it holds none).
+    struct HeldLanding {
+        std::uint64_t serial = 0;
+        std::chrono::steady_clock::duration pause{};
+    };
+    HeldLanding landHeld(std::chrono::steady_clock::duration deadline);
+    static void heldLabelLander();
+    static void wakeHeldLabelLander();
     // Flags the recorded entries of the dwords overlapping [address, end) as overwritten.
     void markOverwritten(std::uint64_t address, std::uint64_t end);
     // Whether a write-back noted after `sequence` overlapped [begin, end); true when the ring no
