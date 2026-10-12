@@ -2917,6 +2917,42 @@ bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const
     return false;
 }
 
+std::vector<std::pair<std::uint64_t, std::size_t>> Recorder::HeldLabelRanges() const {
+    std::lock_guard tableLock(labelTableMutex);
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    for (const auto& [address, entry] : labels) {
+        if (!entry.behindCompletion) continue;
+        if (!ranges.empty() && ranges.back().first + ranges.back().second == address) ranges.back().second += sizeof(std::uint32_t);
+        else ranges.emplace_back(address, sizeof(std::uint32_t));
+    }
+    return ranges;
+}
+
+// Debug aid: APS5_NO_SETTLE_HELD_LABELS=1 lets GPU readers bind memory with held labels unsettled.
+bool settleHeldLabels() {
+    static const bool settle = std::getenv("APS5_NO_SETTLE_HELD_LABELS") == nullptr;
+    return settle;
+}
+
+void SettleHeldLabels(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || !settleHeldLabels() || Recorder::PendingCompletionLabels() == 0) return;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || !recorder->CompletionLabelIn(address, bytes)) return;
+    recorder->SyncThrough(address, bytes, true);
+}
+
+void SettleAllHeldLabels() {
+    if (!settleHeldLabels() || Recorder::PendingCompletionLabels() == 0) return;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return;
+    for (const auto& [address, bytes] : recorder->HeldLabelRanges()) {
+        if (Recorder::Active() != recorder) return;
+        recorder->SyncThrough(address, bytes, true);
+    }
+}
+
 std::optional<Recorder::LabelHit> Recorder::lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const {
     if (refusal != nullptr) *refusal = LabelRefusal::None;
     if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return std::nullopt;

@@ -1969,8 +1969,9 @@ void SetHostImportWindow(std::uint64_t bytes) {
     importWindow.store(bytes, std::memory_order_relaxed);
 }
 
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
+const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, bool settleHeldLabels) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    if (settleHeldLabels) SettleHeldLabels(address, bytes);
     ensurePinWaiter();
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
@@ -2870,6 +2871,11 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
 void GuestBufferMemory::UploadFinish(bool addressable) {
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     uploaded = true;
+    // An address-based build reads any registered address in place: completion labels kept behind
+    // write-backs land first (see SettleHeldLabels); descriptor regions are settled one by one below.
+    // Debug aid: APS5_NO_SETTLE_ADDRESS_BUILDS=1 leaves address-based builds unsettled.
+    static const bool settleAddressBuilds = std::getenv("APS5_NO_SETTLE_ADDRESS_BUILDS") == nullptr;
+    if (settleAddressBuilds && (!lease.empty() || space != nullptr)) SettleAllHeldLabels();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
     // Registered ranges to import from. Address-based shaders hold their lease until write-back;
@@ -2944,6 +2950,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             if (bound) continue;
         }
         bool copyOnGpu = false;
+        if (context.hostImportAlignment != 0) SettleHeldLabels(region.begin, static_cast<std::size_t>(bytes));
         if (context.hostImportAlignment != 0) {
             auto& state = Imports();
             std::lock_guard lock(state.mutex);
