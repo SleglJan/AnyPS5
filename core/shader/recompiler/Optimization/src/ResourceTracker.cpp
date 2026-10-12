@@ -142,7 +142,7 @@ public:
             const auto& column = *m_sources[plan.source].tableColumn;
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
             if (column.keyDomain.has_value()) {
-                KeepSourceAlive(*plan.handle, m_sources[column.keyDomain->source], referenced);
+                KeepSourceAlive(plan.keyRead != nullptr ? *plan.keyRead : *plan.handle, m_sources[column.keyDomain->source], referenced);
             }
         }
         for (const auto index : m_tablePlanningMemory) {
@@ -171,6 +171,7 @@ private:
     };
 
     struct TableColumnPlan {
+        IrValue* keyRead = nullptr;
         IrValue* handle = nullptr;
         std::uint32_t source = 0;
         IrValue* offset = nullptr;
@@ -374,16 +375,81 @@ private:
         return matched && stride >= 4u && stride % 4u == 0u && key->Type() == IrType::U32;
     }
 
-    std::optional<KeyDomain> MatchKeyDomain(IrValue* key) {
+    static bool ReadsThroughDescriptor(const IrValue* value) {
+        std::vector<const IrValue*> pending{value};
+        std::vector<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (std::find(seen.begin(), seen.end(), current) != seen.end()) continue;
+            seen.push_back(current);
+            if (current->Opcode() == IrOpcode::ReadConstBuffer || current->Opcode() == IrOpcode::LoadAddressU32) return true;
+            for (std::size_t index = 0; index < current->ArgumentCount(); index++) pending.push_back(current->Argument(index));
+        }
+        return false;
+    }
+
+    std::optional<KeyDomain> MatchKeyDomain(IrValue* key, IrValue*& read) {
+        read = nullptr;
         key = key->Resolve();
         DescriptorSource direct;
         direct.dwordCount = 1u;
         direct.dwords[0] = key;
         std::uint32_t badDword = 0;
-        if (ValidateSource(direct, badDword)) {
-            KeyDomain domain{InternSource(direct), 0u, 0u};
+        if (!ReadsThroughDescriptor(key) && ValidateSource(direct, badDword)) {
+            KeyDomain domain{InternSource(direct), 0u, 4u};
             domain.value = true;
             return domain;
+        }
+        KeyDomain domain{};
+        bool transformed = false;
+        for (;;) {
+            key = key->Resolve();
+            std::uint32_t immediate = 0;
+            if (key->Opcode() == IrOpcode::IAdd32 && key->ArgumentCount() == 2u && !transformed && (immediateU32(key->Argument(1), immediate) || immediateU32(key->Argument(0), immediate))) {
+                domain.addend += immediate;
+                key = immediateU32(key->Argument(1), immediate) ? key->Argument(0) : key->Argument(1);
+                continue;
+            }
+            if (key->Opcode() == IrOpcode::ShiftRightLogical32 && key->ArgumentCount() == 2u && immediateU32(key->Argument(1), immediate) && immediate < 32u) {
+                if (domain.shift + immediate >= 32u) return std::nullopt;
+                domain.shift += immediate;
+                transformed = true;
+                key = key->Argument(0);
+                continue;
+            }
+            if (key->Opcode() == IrOpcode::BitwiseAnd32 && key->ArgumentCount() == 2u && (immediateU32(key->Argument(1), immediate) || immediateU32(key->Argument(0), immediate))) {
+                domain.mask &= immediate >> domain.shift;
+                transformed = true;
+                key = immediateU32(key->Argument(1), immediate) ? key->Argument(0) : key->Argument(1);
+                continue;
+            }
+            if (key->IsPhi()) {
+                IrValue* single = nullptr;
+                std::vector<IrValue*> pending{key};
+                std::vector<IrValue*> seen;
+                while (!pending.empty()) {
+                    IrValue* phi = pending.back();
+                    pending.pop_back();
+                    if (std::find(seen.begin(), seen.end(), phi) != seen.end()) continue;
+                    seen.push_back(phi);
+                    for (std::size_t index = 0; index < phi->ArgumentCount(); index++) {
+                        IrValue* incoming = phi->Argument(index)->Resolve();
+                        if (incoming->Opcode() == IrOpcode::Void || incoming->HasImmediate()) continue;
+                        if (incoming->IsPhi()) {
+                            pending.push_back(incoming);
+                        } else if (single == nullptr) {
+                            single = incoming;
+                        } else if (!EquivalentValue(m_program.Resources(), single, incoming)) {
+                            return std::nullopt;
+                        }
+                    }
+                }
+                if (single == nullptr) return std::nullopt;
+                key = single;
+                continue;
+            }
+            break;
         }
         std::uint32_t memoryIndex = 0;
         const MemoryInfo* memory = ScalarReadMemory(*key, memoryIndex);
@@ -395,15 +461,22 @@ private:
         if (!MakeRuntimeSource(*key->Argument(0)->Resolve(), IrOpcode::GetBufferResource, 4u, sourceIndex, source)) {
             return std::nullopt;
         }
+        domain.source = sourceIndex;
+        read = key;
         IrValue* selector = nullptr;
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
         if (MatchAffineOffset(key->Argument(1), selector, stride, addend)) {
-            return KeyDomain{sourceIndex, memory->offset + addend, stride};
+            domain.offset = memory->offset + addend;
+            domain.stride = stride;
+            return domain;
         }
         const auto bits = possibleU32Bits(key->Argument(1));
         const auto zeros = bits == 0u ? 31u : std::min<std::uint32_t>(static_cast<std::uint32_t>(std::countr_zero(bits)), 31u);
-        return KeyDomain{sourceIndex, memory->offset, std::max(4u, 1u << zeros)};
+        domain.offset = memory->offset;
+        domain.stride = std::max(4u, 1u << zeros);
+        domain.recordStride = true;
+        return domain;
     }
 
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan) {
@@ -482,7 +555,7 @@ private:
         column.maxKey = possibleU32Bits(key);
         column.sampler = sampler;
         column.address = address;
-        column.keyDomain = MatchKeyDomain(key);
+        column.keyDomain = MatchKeyDomain(key, plan.keyRead);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
         plan.handle = &handle;
