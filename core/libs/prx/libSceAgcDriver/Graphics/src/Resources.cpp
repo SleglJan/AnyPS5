@@ -4,9 +4,39 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <string>
 #include <exception>
 
 namespace AgcDriver::Graphics {
+
+std::atomic<unsigned>& ImageAllocationFailuresForTest() {
+    static std::atomic<unsigned> failures{0};
+    return failures;
+}
+
+void AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, VkDeviceMemory* memory, const char* operation) {
+    const auto real = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    const auto allocate = [&](VkDeviceMemory* out) {
+        for (auto failures = ImageAllocationFailuresForTest().load(); failures != 0;) {
+            if (ImageAllocationFailuresForTest().compare_exchange_weak(failures, failures - 1)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
+        return real(context.device, &allocation, nullptr, out);
+    };
+    auto result = allocate(memory);
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+        const auto initial = result;
+        const auto pooled = GetBufferPool(context)->Trim();
+        *memory = VK_NULL_HANDLE;
+        result = allocate(memory);
+        std::fprintf(stderr, "[gpu] %s %s after out-of-memory %d: allocation=%llu, trimmed %llu pooled buffer bytes\n", operation, result == VK_SUCCESS ? "recovered" : "still failed", static_cast<int>(initial), static_cast<unsigned long long>(allocation.allocationSize), static_cast<unsigned long long>(pooled));
+        if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+            *memory = VK_NULL_HANDLE;
+            throw OutOfDeviceMemory(std::string("AGC graphics: ") + operation + ": Vulkan result " + std::to_string(static_cast<int>(result)));
+        }
+    }
+    Check(result, operation);
+}
 
 namespace {
 
