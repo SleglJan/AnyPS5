@@ -401,9 +401,7 @@ struct ColumnRecords {
 struct NarrowMask {
     std::vector<std::uint8_t> selected;
     bool outside = false;
-    bool range = false;
-    std::uint64_t base = 0;
-    std::uint64_t size = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
 };
 
 bool TableMemo() {
@@ -589,16 +587,16 @@ void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColu
     if (last == trace) return;
     last = trace;
     std::string key = "none";
-    if (column.keyDomain.has_value()) {
-        const auto& domain = *column.keyDomain;
-        key = (domain.value ? "value source " : "scan source ") + std::to_string(domain.source);
+    for (const auto& domain : column.keyDomains) {
+        std::string text = (domain.value ? "value source " : "scan source ") + std::to_string(domain.source);
         if (!domain.value) {
-            key += " offset 0x" + hexText(domain.offset) + " stride " + std::to_string(domain.stride);
-            if (domain.recordStride) key += " (record stride)";
+            text += " offset 0x" + hexText(domain.offset) + " stride " + std::to_string(domain.stride);
+            if (domain.recordStride) text += " (record stride)";
         }
-        if (domain.shift != 0u) key += " shift " + std::to_string(domain.shift);
-        if (domain.mask != 0xffffffffu) key += " mask 0x" + hexText(domain.mask);
-        if (domain.addend != 0u) key += " addend " + std::to_string(domain.addend);
+        if (domain.shift != 0u) text += " shift " + std::to_string(domain.shift);
+        if (domain.mask != 0xffffffffu) text += " mask 0x" + hexText(domain.mask);
+        if (domain.addend != 0u) text += " addend " + std::to_string(domain.addend);
+        key = key == "none" ? text : key + "; " + text;
     }
     std::fprintf(stderr, "[image-table] shader 0x%llx table %u (%s): base 0x%llx size 0x%llx stride 0x%x addend 0x%x offset 0x%x dwords %u, %u records, %u keys%s, %u structural poison, key %s\n", static_cast<unsigned long long>(plan.shaderHash), table, column.sampler ? "sampler" : "image", static_cast<unsigned long long>(trace.base), static_cast<unsigned long long>(trace.size), column.stride, column.addend, column.offset, column.dwordCount, trace.records, trace.keys, trace.narrowed ? " (narrowed)" : "", trace.poison, key.c_str());
 }
@@ -730,7 +728,7 @@ private:
             if (entry.source < activeSources.size() && activeSources[entry.source] == 0u) return false;
             ColumnRecords inputs;
             if (!TableInputs(column, inputs) || inputs.base != entry.base || inputs.size != entry.size || inputs.records != entry.records || inputs.keys != entry.keys || inputs.outside != entry.outside) return false;
-            if (column.keyDomain.has_value() && inputs.keys != 0u && TableNarrowing()) keyed.emplace_back(entry.source, std::move(inputs));
+            if (!column.keyDomains.empty() && inputs.keys != 0u && TableNarrowing()) keyed.emplace_back(entry.source, std::move(inputs));
         }
         const bool profiled = MaterializeProfiled();
         const auto started = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -752,7 +750,9 @@ private:
                 out.outside = mask->outside;
                 masked = true;
             }
-            if (mask->range && std::find(tables.ranges.begin(), tables.ranges.end(), std::pair<std::uint64_t, std::uint64_t>{mask->base, mask->size}) == tables.ranges.end()) tables.ranges.emplace_back(mask->base, mask->size);
+            for (const auto& range : mask->ranges) {
+                if (std::find(tables.ranges.begin(), tables.ranges.end(), range) == tables.ranges.end()) tables.ranges.push_back(range);
+            }
         }
         if (masked) tables.hash = ResultKey::TablesHash(tables);
         memo.used = ++memos.clock;
@@ -871,23 +871,23 @@ private:
     }
 
     std::optional<NarrowMask> NarrowKeys(const TableColumn& column, const ColumnRecords& records) {
-        const auto& domain = *column.keyDomain;
         const auto skip = [&] {
             tableCounters().narrowSkipped.fetch_add(1, std::memory_order_relaxed);
             return std::nullopt;
         };
         std::vector<std::uint32_t> values{0u};
         NarrowMask mask;
-        std::uint64_t positions = 0;
-        if (domain.value) {
-            DescriptorValue key;
-            try {
-                walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
-            } catch (const std::exception&) {
-                return skip();
+        for (const auto& domain : column.keyDomains) {
+            if (domain.value) {
+                DescriptorValue key;
+                try {
+                    walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
+                } catch (const std::exception&) {
+                    return skip();
+                }
+                values.push_back(key.dwords[0]);
+                continue;
             }
-            values.push_back(key.dwords[0]);
-        } else {
             ShaderBufferResource keyBuffer;
             try {
                 keyBuffer = EvaluateBuffer(domain.source);
@@ -895,18 +895,19 @@ private:
                 return skip();
             }
             if (keyBuffer.Type() != 0u) return skip();
-            mask.base = keyBuffer.Base48();
-            mask.size = keyBuffer.GetSize();
+            const std::uint64_t base = keyBuffer.Base48();
+            const std::uint64_t size = keyBuffer.GetSize();
             const std::uint64_t stride = domain.recordStride && keyBuffer.Stride() >= 4u ? keyBuffer.Stride() & ~3u : domain.stride;
             const std::uint64_t first = domain.offset & ~3u;
-            positions = mask.size >= first + 4u ? (mask.size - first - 4u) / stride + 1u : 0u;
+            const std::uint64_t positions = size >= first + 4u ? (size - first - 4u) / stride + 1u : 0u;
             if (positions > TableKeyScanLimit() || first > 0xffffffffull) return skip();
-            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, mask.base + first, mask.size - first)) return skip();
+            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) return skip();
             for (std::uint64_t index = 0; index < positions; index++) {
-                const auto address = mask.base + first + index * stride;
-                if (!PageAccessible(address, mask.base, mask.base + mask.size)) return skip();
+                const auto address = base + first + index * stride;
+                if (!PageAccessible(address, base, base + size)) return skip();
                 values.push_back(((Read(address) >> domain.shift) & domain.mask) + domain.addend);
             }
+            if (positions != 0u) mask.ranges.emplace_back(base, size);
         }
         mask.selected.assign(records.keys, 0u);
         for (const auto value : values) {
@@ -919,7 +920,6 @@ private:
             }
             if (column.address || ImageTableAbi::ScalarBufferDword(relative + column.addend, column.offset, records.size).has_value()) mask.outside = true;
         }
-        mask.range = positions != 0u;
         tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
         return mask;
     }
@@ -941,7 +941,7 @@ private:
         }
         records.outside = mask->outside;
         records.narrowed = true;
-        if (mask->range) tables.ranges.emplace_back(mask->base, mask->size);
+        for (const auto& range : mask->ranges) tables.ranges.push_back(range);
     }
 
     // Words appended in bulk by a reused column (Reuse) enter the index on the next lookup, in
@@ -1422,7 +1422,7 @@ private:
         records.words.assign(records.keys, 0u);
         if (MaterializeProfiled()) tableCounters().setupNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - setupStarted).count()), std::memory_order_relaxed);
         if (records.keys != 0u) WalkRecords(column, records);
-        if (column.keyDomain.has_value() && records.keys != 0u && TableNarrowing()) Narrow(column, records);
+        if (!column.keyDomains.empty() && records.keys != 0u && TableNarrowing()) Narrow(column, records);
         return records;
     }
 

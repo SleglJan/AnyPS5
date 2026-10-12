@@ -41,6 +41,7 @@ bool g_disassemble = false;
 bool g_assembly = false;
 bool g_memory = false;
 bool g_spirv = false;
+bool g_plan = false;
 bool g_graph = false;
 bool g_maintenance8 = false;
 bool g_tableStores = false;
@@ -110,6 +111,10 @@ bool Replay(const char* path) {
         auto program = ShaderRecompiler::PrepareResourceProgram(request.request);
         constexpr ShaderRecompiler::ResourceMaterializer materializer;
         static_cast<void>(materializer.ExtractPlan(program));
+        for (std::size_t index = 0; g_plan && index < program.Info().images.size(); ++index) {
+            const auto& image = program.Info().images[index];
+            std::printf("  image %zu: table %u dim %u class %u depthBits %d srgb %d fmask %d flatLine %d flatVolume %d compare %d emulated %u modes %zu\n", index, static_cast<unsigned>(image.table), static_cast<unsigned>(image.dimension), static_cast<unsigned>(image.resourceClass), image.depthBitsCompatible ? 1 : 0, image.srgbDecodeCompatible ? 1 : 0, image.fmaskCompatible ? 1 : 0, image.flatLineCompatible ? 1 : 0, image.flatVolumeCompatible ? 1 : 0, image.depthCompare ? 1 : 0, static_cast<unsigned>(image.emulatedCompare), materializer.RuntimeImageModes(image).size());
+        }
     } catch (const std::exception& error) {
         std::printf("  resource analysis failed: %s\n", FirstLine(error.what()).c_str());
         return false;
@@ -158,7 +163,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--code] [--maintenance8] [--table-stores] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--plan] [--code] [--maintenance8] [--table-stores] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
         return 2;
     }
     int failures = 0;
@@ -193,6 +198,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--spv") {
             g_spirv = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--plan") {
+            g_plan = true;
             continue;
         }
         try {
