@@ -556,6 +556,11 @@ bool WholeTableReuse() {
     return reuse;
 }
 
+bool TableNarrowing() {
+    static const bool narrowing = std::getenv("APS5_NO_TABLE_NARROWING") == nullptr;
+    return narrowing;
+}
+
 struct TableTrace {
     std::uint64_t base = 0;
     std::uint64_t size = 0;
@@ -699,7 +704,7 @@ private:
             if (entry.memo->version != entry.version || entry.memo->generation == 0) return false;
             if (entry.source >= plan.descriptorSources.size() || !plan.descriptorSources[entry.source].tableColumn.has_value()) return false;
             const auto& column = *plan.descriptorSources[entry.source].tableColumn;
-            if (column.keyDomain.has_value() || !entry.memo->SameColumn(column)) return false;
+            if ((column.keyDomain.has_value() && TableNarrowing()) || !entry.memo->SameColumn(column)) return false;
             if (entry.source < activeSources.size() && activeSources[entry.source] == 0u) return false;
             ColumnRecords inputs;
             if (!TableInputs(column, inputs) || inputs.base != entry.base || inputs.size != entry.size || inputs.records != entry.records || inputs.keys != entry.keys || inputs.outside != entry.outside) return false;
@@ -752,7 +757,7 @@ private:
             if (found == columns.end()) return;
             const auto& records = found->second;
             // A key-domain column (narrowed or not) is never reused whole (ReuseWhole).
-            if (records.pure == nullptr || records.fault != 0u || records.narrowed || plan.descriptorSources.at(source).tableColumn->keyDomain.has_value()) return;
+            if (records.pure == nullptr || records.fault != 0u || records.narrowed || (TableNarrowing() && plan.descriptorSources.at(source).tableColumn->keyDomain.has_value())) return;
             memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.outside});
         }
         if (memo.columns.empty()) return;
@@ -1359,7 +1364,7 @@ private:
         if (!TableInputs(column, records)) return records;
         if (!column.address && records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
         records.states.assign(records.keys, RecordState::Read);
-        if (column.keyDomain.has_value() && records.keys != 0u) {
+        if (column.keyDomain.has_value() && records.keys != 0u && TableNarrowing()) {
             Narrow(column, records);
         }
         records.words.assign(records.keys, 0u);
