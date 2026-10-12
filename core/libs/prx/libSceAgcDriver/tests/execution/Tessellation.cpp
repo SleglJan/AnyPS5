@@ -100,6 +100,22 @@ alignas(256) constexpr std::array<std::uint32_t, 49> HullAndSaveexec{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 40> DomainMaskedRelative{
+    0xf8000941, 0x00000000, 0x34020e84, 0x16020283, 0xe0341000, 0x04030a01, 0xe0341010, 0x04030c01,
+    0xe0341020, 0x04030e01, 0xbf8c3f70, 0x08040af2, 0x08040d02, 0x10201505, 0x3e201906, 0x3e201d02,
+    0x10221705, 0x3e221b06, 0x3e221f02, 0xd5510012, 0x040a0d05, 0x102424ff, 0x40400000, 0x7e260280,
+    0x7e2802f2, 0xbe940380, 0xbe86047e, 0x7c220af0, 0xbf880002, 0x100e24f2, 0x7e240307, 0xbefe0406,
+    0x80148114, 0xbf0a8214, 0xbf85fff7, 0xf80008cf, 0x14131110, 0xf800020f, 0x14131214, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 35> DomainRelativeLeak{
+    0xf8000941, 0x00000000, 0x34020e84, 0x16020283, 0xe0341000, 0x04030a01, 0xe0341010, 0x04030c01,
+    0xe0341020, 0x04030e01, 0xbf8c3f70, 0x08040af2, 0x08040d02, 0x10201505, 0x3e201906, 0x3e201d02,
+    0x10221705, 0x3e221b06, 0x3e221f02, 0xd5510012, 0x040a0d05, 0x102424ff, 0x40400000, 0x7e260280,
+    0x7e2802f2, 0xbe86047e, 0x7c220af0, 0xbf880001, 0x7e240d07, 0xbefe0406, 0xf80008cf, 0x14131110,
+    0xf800020f, 0x14131214, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 36> DomainPatchRead{
     0xf8000941, 0x00000000, 0x34020e84, 0x16020283, 0xe0341000, 0x04030a01, 0xe0341010, 0x04030c01,
     0xe0341020, 0x04030e01, 0x4a060e81, 0x16060690, 0x4c0606ff, 0x00008000, 0xe0341000, 0x04030c03,
@@ -337,12 +353,12 @@ std::uint32_t CoveredPixels(std::uint32_t patch, bool interior) {
     return count;
 }
 
-void RequirePatches(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> local, std::span<const std::uint32_t> hull, const ShaderRecompiler::TessellationConfiguration& configuration, const std::string& program) {
+void RequirePatches(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> local, std::span<const std::uint32_t> hull, const ShaderRecompiler::TessellationConfiguration& configuration, const std::string& program, std::span<const std::uint32_t> domain = DomainCode) {
     std::uint32_t cursor = 0;
     const Stages stages{
         Compile(target, ShaderStage::Local, local, cursor, configuration),
         Compile(target, ShaderStage::TessellationControl, hull, cursor, configuration),
-        Compile(target, ShaderStage::TessellationEvaluation, DomainCode, cursor, configuration),
+        Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, configuration),
         Compile(target, ShaderStage::Fragment, PixelCode, cursor),
     };
     const auto center = Row(-0.5f + 1.0f / 3.0f);
@@ -486,9 +502,11 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainPatchRead, "patch constants");
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainCulledPrimitive, "passthrough primitive");
         ExpectRefusal(target, ShaderStage::Local, LocalIndexAsData, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainRelativeLeak, "outside a tessellation ring or LDS address");
 
         RequirePatches(*device, target, LocalCode, HullCode, Patches, "hull program");
         RequirePatches(*device, target, LocalCode, HullRestoredExecSaved, Patches, "hull program saving its restored exec");
+        RequirePatches(*device, target, LocalCode, HullCode, Patches, "domain program whose masked-off lanes keep the relative patch index", DomainMaskedRelative);
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullCode, "more input than output control points", ShaderRecompiler::TessellationConfiguration{4u, 3u, 1u, 2u, 2u, true});
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullForeignRecord, "outside its own control point's record", MergedPatches);
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullDivergentBarrier, "s_barrier that some invocations do not reach", MergedPatches);
