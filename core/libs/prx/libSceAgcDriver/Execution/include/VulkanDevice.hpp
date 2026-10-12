@@ -244,6 +244,16 @@ public:
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
     // precollect, presync, stage A (the driver's 'prepare:' rows).
     static std::span<const double, 6> PreparePhaseMs(const PreparedDispatch& prepared);
+    // Pipelines of the dispatches queued behind the one being prepared, created ahead on a small pool
+    // (APS5_AHEAD_PIPELINES threads, 0 or unset = off): the driver compiles 007's lighting variants
+    // for up to ~110 s each, one after another on the queue that needs them, while the next ones
+    // already sit in its waiting submissions. A dispatch whose variant is being created ahead joins
+    // that creation (computePipeline). The pool takes the result and its stage A build; the build
+    // is released on the pool thread once the pipeline exists.
+    static unsigned AheadPipelineThreads();
+    bool NeedsComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
+    bool HasPipelineForProgram(std::uint64_t programAddress) const;
+    bool CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive);
     // `recipe`, when given, receives the Recipe a successful call built for its dispatch-cache
     // variant (design_cpu_final M4): only when the resource cache served or took the object
     // (reusable, cacheable) and recipes are on (APS5_NO_DISPATCH_RECIPE=1 builds none); else null.
@@ -327,6 +337,8 @@ private:
     // this call, or those another thread is creating, waited for (a pipeline is compiled once).
     // `locked` says whether the caller holds the GPU mutex (the [dispatch] pipeline line).
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, const Graphics::ShaderResources& resources, std::uint64_t programAddress, bool locked);
+    void aheadPipelineWorker();
+    void stopAheadPipelines();
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
     // A DISPATCH_INDIRECT's argument path (see DispatchIndirect): GPU-side from the host import, or

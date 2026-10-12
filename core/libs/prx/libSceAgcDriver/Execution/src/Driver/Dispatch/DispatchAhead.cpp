@@ -1,13 +1,18 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
+#include <utility>
 
 namespace AgcDriver::DriverDetail {
 
@@ -29,6 +34,16 @@ std::size_t& Driver::currentPacketOffset() {
 bool& Driver::resolvingAhead() {
     static thread_local bool resolving = false;
     return resolving;
+}
+
+bool& Driver::prewarmingAhead() {
+    static thread_local bool prewarming = false;
+    return prewarming;
+}
+
+std::size_t& Driver::pipelinesQueuedAhead() {
+    static thread_local std::size_t queued = 0;
+    return queued;
 }
 
 bool& Driver::gateOpened() {
@@ -198,6 +213,98 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
     stats.resolveMs += ms;
     stats.resolveMaxMs = std::max(stats.resolveMaxMs, ms);
     reportGroupCapture(submission.queue);
+}
+
+void Driver::createPipelinesAhead(const Submission& submission, const QueueState& live, VulkanDevice& localDevice) {
+    constexpr std::size_t aheadSubmissions = 24;
+    constexpr std::size_t aheadResolves = 32;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto begin = std::chrono::steady_clock::now();
+    std::vector<Submission> waiting;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto worker = workers.find(submission.queue); worker != workers.end()) {
+            for (const auto& next : worker->second.pending) {
+                if (waiting.size() == aheadSubmissions) break;
+                if (next.suspend || next.shaders == nullptr) continue;
+                auto& copy = waiting.emplace_back();
+                copy.serial = next.serial;
+                copy.queue = next.queue;
+                copy.commands = next.commands;
+                copy.shaders = next.shaders;
+                copy.conditionalEnds = next.conditionalEnds;
+                copy.registerLists = next.registerLists;
+            }
+        }
+    }
+    // A program is resolved ahead once per registration on this worker, whatever came of it (an HLE
+    // kernel, a stale capture, a variant the dispatch then did not use).
+    static thread_local std::set<std::pair<std::uint64_t, const void*>> attempted;
+    QueueState scratch = live;
+    std::size_t resolves = 0, failures = 0, scanned = 0;
+    const auto queuedBefore = pipelinesQueuedAhead();
+    struct Prewarming {
+        std::size_t offset;
+        Prewarming() : offset(currentPacketOffset()) {
+            resolvingAhead() = true;
+            prewarmingAhead() = true;
+        }
+        ~Prewarming() {
+            resolvingAhead() = false;
+            prewarmingAhead() = false;
+            currentPacketOffset() = offset;
+        }
+    } prewarming;
+    const auto scan = [&](const Submission& source, std::size_t cursor) {
+        const auto& commands = source.commands;
+        while (cursor < commands.size() && resolves < aheadResolves) {
+            const auto header = commands[cursor];
+            if (Pm4::FillerPacket(header)) {
+                ++cursor;
+                continue;
+            }
+            const auto count = Pm4::PacketWords(header);
+            if (count == 0 || cursor + count > commands.size()) return;
+            const auto packet = std::span(commands).subspan(cursor, count);
+            const auto opcode = (header >> 8u) & 0xffu;
+            const auto at = cursor;
+            cursor += count;
+            if (header == FlipPacketHeader || header == RenderingWaitPacketHeader) continue;
+            if (opcode == 0x15 || opcode == 0x16) {
+                const auto address = (static_cast<std::uint64_t>(readRegister(scratch.shader, 0x20c)) << 8u) | (static_cast<std::uint64_t>(readRegister(scratch.shader, 0x20d) & 0xffu) << 40u);
+                if (address == 0 || localDevice.HasPipelineForProgram(address)) continue;
+                const auto registered = RegisteredProgram(*source.shaders, address, {0});
+                if (!attempted.emplace(address, registered.get()).second) continue;
+                ++resolves;
+                currentPacketOffset() = at;
+                try {
+                    if (opcode == 0x15) dispatch(scratch, packet, source);
+                    else dispatchIndirect(scratch, packet, source);
+                } catch (const std::exception&) {
+                    ++failures;
+                }
+                continue;
+            }
+            const bool draw = opcode == 0x2d || opcode == 0x35 || opcode == 0x27 || opcode == 0x25 || opcode == 0x38 || opcode == 0x2c;
+            const bool registerLoad = opcode == 0x63 || opcode == 0x64 || opcode == 0x9f;
+            if (draw || opcode == 0x3c || opcode == 0x93 || opcode == 0x37 || opcode == 0x49 || opcode == 0x3f || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || (Pm4::AccessesMemory(header) && !registerLoad)) continue;
+            try {
+                Pm4::Execute(packet, scratch);
+            } catch (const std::exception&) {
+            }
+        }
+    };
+    const auto offset = prewarming.offset;
+    if (offset < submission.commands.size()) scan(submission, offset + std::max<std::size_t>(Pm4::PacketWords(submission.commands[offset]), 1));
+    for (const auto& next : waiting) {
+        if (resolves == aheadResolves) break;
+        ++scanned;
+        scan(next, 0);
+    }
+    if (profile) {
+        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+        AgcDriver::ProfilePrint_nid_no_patch("[ahead] queue 0x%x: %zu dispatches resolved over the rest of the submission and %zu waiting (%zu failed), %zu pipelines queued, in %.1f ms\n", submission.queue, resolves, scanned, failures, pipelinesQueuedAhead() - queuedBefore, ms);
+    }
 }
 
 void Driver::reportGroupCapture(std::uint32_t queue) {
