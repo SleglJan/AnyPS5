@@ -103,8 +103,10 @@ int main() {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_PIN_WAIT_MS", "2000");
+        _putenv_s("APS5_ASSERT_GPU_LOCK", "1");
 #else
         setenv("APS5_PIN_WAIT_MS", "2000", 1);
+        setenv("APS5_ASSERT_GPU_LOCK", "1", 1);
 #endif
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -145,6 +147,7 @@ int main() {
         remapped.Register();
         Import(*device, remapped.Ranges());
         Require(Imported(handle, remapped.Address(), AllocationBytes), "host import at map: a range mapped again was not imported");
+
         GuestAllocation gone;
         const auto goneRanges = gone.Ranges();
         gone.Unregister();
@@ -173,6 +176,50 @@ int main() {
         release = true;
         holder.join();
         Require(unlocked && Imported(handle, contended.Address(), AllocationBytes), "host import at map: a mapping on a device that already imports needed the GPU lock");
+
+        constexpr std::size_t WindowBytes = std::size_t{8} << 20u;
+        constexpr std::size_t HalfBytes = WindowBytes / 2u;
+        std::uint8_t* window = nullptr;
+#ifdef _WIN32
+        auto* reserved = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * WindowBytes, MEM_RESERVE, PAGE_NOACCESS));
+        Require(reserved != nullptr, "host import at map: cannot reserve the import window");
+        window = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(reserved) + WindowBytes - 1u) & ~(static_cast<std::uintptr_t>(WindowBytes) - 1u));
+        Require(VirtualAlloc(window, WindowBytes, MEM_COMMIT, PAGE_READWRITE) != nullptr, "host import at map: cannot commit the import window");
+#else
+        window = static_cast<std::uint8_t*>(std::aligned_alloc(WindowBytes, WindowBytes));
+#endif
+        Require(window != nullptr, "host import at map: cannot allocate the import window");
+        std::memset(window, 0, WindowBytes);
+        const auto mappedAt = [](const std::uint8_t* address) {
+            GuestAllocations::Mapped ranges;
+            for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+                if (range->address == static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address))) ranges.push_back(range);
+            }
+            return ranges;
+        };
+        GuestAllocations::Mutation().Add(window, HalfBytes, true, true, true);
+        Require(device->ImportGuestMemory(mappedAt(window), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false), "host import at map: the first half of the window needed the GPU lock");
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> pattern{9u, 10u, 11u, 12u};
+            Require(device->FillBuffer(probe.Address(), BlockBytes, pattern), "host import at map: the fill that keeps the recorder busy was not imported");
+        }
+        GuestAllocations::Mutation().Add(window + HalfBytes, HalfBytes, true, true, true);
+        Require(device->ImportGuestMemory(mappedAt(window + HalfBytes), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false), "host import at map: the mapping that completes the window needed the GPU lock while the recorder held work");
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> pattern{13u, 14u, 15u, 16u};
+            Require(device->FillBuffer(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(window)), WindowBytes, pattern), "host import at map: the window completed by a second mapping was not imported as one");
+            device->WaitIdle();
+        }
+        Require(Imported(handle, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(window)), WindowBytes), "host import at map: the window completed while the recorder held work is not one import");
+        GuestAllocations::Mutation().Remove(window + HalfBytes);
+        GuestAllocations::Mutation().Remove(window);
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        std::free(window);
+#endif
         std::puts("host import at map tests passed");
         return 0;
     } catch (const std::exception& error) {
