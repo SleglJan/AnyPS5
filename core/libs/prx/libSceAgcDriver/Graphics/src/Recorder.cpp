@@ -3541,6 +3541,19 @@ void Recorder::Sync() {
     activeSyncSite = previousSite;
 }
 
+void Recorder::SyncReleasingKept() {
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
+    Submit();
+    if (!DeferredBatches().empty()) DestroyDeferred(TakeDeferred(), false);
+    while (!inFlight.empty()) {
+        auto batch = std::move(inFlight.front());
+        inFlight.pop_front();
+        finish(std::move(batch), true, 4, true);
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (deferredPending.load(std::memory_order_acquire) != 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+}
+
 void Recorder::FlushDeferredReleases() {
     holdKept.clear();
     ReleaseDeferredKeeps();

@@ -325,6 +325,78 @@ bool resourceCacheTests(Context context, const std::string& mode) {
     return true;
 }
 
+// Out-of-memory recovery when every cached texture is held by a cached descriptor set: the release
+// drops the set, evicts the texture or storage image it held and builds once more; a second failure
+// within the second does not drop the cache again. APS5_NO_OOM_CACHE_RELEASE=1 stops at the eviction
+// of unreferenced entries, which frees nothing here, and the lookup throws as before.
+bool outOfMemoryTests(Context context, const std::string& mode) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    Block block(context);
+    if (context.hostImportAlignment == 0 || HostImportFor(context, block.Surface(0), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "out-of-memory tests require host imports");
+        std::puts("skipped, out-of-memory tests require host imports");
+        return false;
+    }
+    const bool storage = mode == "oom-storage";
+    const bool release = std::getenv("APS5_NO_OOM_CACHE_RELEASE") == nullptr;
+    auto& cache = SharedResourceCache();
+    cache.Clear();
+    ClearCachedTextures(context.device);
+    const auto lookup = [&](std::size_t surface) -> std::shared_ptr<void> {
+        if (storage) return CachedStorageSurface(context, Resource(block.Surface(surface)));
+        return Sampled(context, block.Surface(surface));
+    };
+    const auto cachedSet = [&](std::size_t surface, std::uint32_t key) {
+        auto set = ImageResources(context, block, surface, 1, !storage);
+        Require(set->Reusable(), "the descriptor set is not eligible for resource caching");
+        std::weak_ptr<void> image;
+        if (storage) image = StorageTexture::FindLive(block.Surface(surface), SurfaceBytes);
+        else image = set->SampledTextures().front();
+        Require(!image.expired(), "the descriptor set holds no image");
+        if (!storage) Require(!set->SampledTextures().front()->ViewsStorageImage(), "the sampled texture is not a snapshot");
+        cache.Insert({key}, set);
+        Require(cache.Find({key}) == set, "the resource cache did not accept the descriptor set");
+        return std::make_pair(std::weak_ptr<ShaderResources>(set), image);
+    };
+    const auto throwsOutOfMemory = [&](std::size_t surface) {
+        try {
+            static_cast<void>(lookup(surface));
+        } catch (const OutOfDeviceMemory&) {
+            return true;
+        }
+        return false;
+    };
+    try {
+        const auto [set, image] = cachedSet(0, 1);
+        ImageAllocationFailuresForTest().store(2);
+        if (!release) {
+            Require(throwsOutOfMemory(1), "a failed allocation with the release switched off did not throw");
+            Require(!set.expired() && !image.expired() && cache.Size() == 1, "the release switched off still dropped the cached descriptor set");
+            std::puts(storage ? "out-of-memory storage image without release passed" : "out-of-memory sampled texture without release passed");
+        } else {
+            const auto made = lookup(1);
+            Require(made != nullptr && ImageAllocationFailuresForTest().load() == 0, "the allocation was not retried after the release");
+            Require(set.expired() && cache.Size() == 0, "the release kept the cached descriptor set");
+            Require(image.expired(), "the release did not evict the image the dropped set held");
+            const auto [again, againImage] = cachedSet(2, 2);
+            ImageAllocationFailuresForTest().store(2);
+            Require(throwsOutOfMemory(3), "a second failure within the second released the caches again");
+            Require(!again.expired() && !againImage.expired() && cache.Size() == 1, "a second failure within the second dropped the cached descriptor set");
+            std::puts(storage ? "out-of-memory storage image release passed" : "out-of-memory sampled texture release passed");
+        }
+    } catch (...) {
+        ImageAllocationFailuresForTest().store(0);
+        cache.Clear();
+        throw;
+    }
+    ImageAllocationFailuresForTest().store(0);
+    cache.Clear();
+    return true;
+}
+
 void viewTests(const Context& context) {
     if (context.hostImportAlignment == 0) {
         std::puts("host imports unavailable: views of storage images not tested");
@@ -604,6 +676,7 @@ int main(int argc, char** argv) {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
+        const bool outOfMemory = mode == "oom-sampled" || mode == "oom-storage";
 #ifdef _WIN32
         if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
 #else
@@ -611,7 +684,7 @@ int main(int argc, char** argv) {
 #endif
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>(resources);
+            device = std::make_unique<Device>(resources || outOfMemory);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -624,6 +697,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!resourceCacheTests(context, mode)) return VulkanTestSkipped;
             std::puts("resource cache tests passed");
+            return 0;
+        }
+        if (outOfMemory) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            if (!outOfMemoryTests(context, mode)) return VulkanTestSkipped;
+            std::puts("out-of-memory tests passed");
             return 0;
         }
         if (memory) {

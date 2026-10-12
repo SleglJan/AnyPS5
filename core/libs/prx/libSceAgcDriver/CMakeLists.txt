@@ -1358,8 +1358,17 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_resource_cache_oversized_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-oversized)
     add_test(NAME agc_driver_resource_cache_storage_clear COMMAND agc_driver_sampled_cache_budget_tests resource-clear)
     set_tests_properties(agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_driver_oom_cache_release_sampled COMMAND agc_driver_sampled_cache_budget_tests oom-sampled)
+    add_test(NAME agc_driver_oom_cache_release_sampled_off COMMAND agc_driver_sampled_cache_budget_tests oom-sampled)
+    add_test(NAME agc_driver_oom_cache_release_storage COMMAND agc_driver_sampled_cache_budget_tests oom-storage)
+    add_test(NAME agc_driver_oom_cache_release_storage_off COMMAND agc_driver_sampled_cache_budget_tests oom-storage)
+    set_tests_properties(agc_driver_oom_cache_release_sampled PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_SAMPLED_FROM_STORAGE=1")
+    set_tests_properties(agc_driver_oom_cache_release_sampled_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_SAMPLED_FROM_STORAGE=1;APS5_NO_OOM_CACHE_RELEASE=1")
+    set_tests_properties(agc_driver_oom_cache_release_storage PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    set_tests_properties(agc_driver_oom_cache_release_storage_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_OOM_CACHE_RELEASE=1")
+    set_tests_properties(agc_driver_oom_cache_release_sampled agc_driver_oom_cache_release_sampled_off agc_driver_oom_cache_release_storage agc_driver_oom_cache_release_storage_off PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_driver_sampled_cache_budget_memory agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_sampled_cache_budget_memory agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear agc_driver_oom_cache_release_sampled agc_driver_oom_cache_release_sampled_off agc_driver_oom_cache_release_storage agc_driver_oom_cache_release_storage_off PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     # The driver draw test again with the draw key off: the draw cache then keys on the decoded vertex

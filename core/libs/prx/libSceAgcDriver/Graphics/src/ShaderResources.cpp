@@ -559,6 +559,8 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     return budget;
 }
 
+std::optional<std::uint64_t> releaseTextureHolders();
+
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false) {
     CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
@@ -683,7 +685,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
-    std::lock_guard lock(cache.mutex);
+    std::unique_lock lock(cache.mutex);
     dropUncachedViews(cache);
     if (auto it = findTexture(cache, key); it != cache.entries.end()) {
         if (it->source != nullptr) {
@@ -762,9 +764,18 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         try {
             entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
         } catch (const OutOfDeviceMemory&) {
-            const auto released = releaseUnreferenced(cache);
-            std::fprintf(stderr, "[gpu] sampled texture 0x%llx: out of device memory, released %llu MiB of cached textures nothing else holds%s\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(released >> 20u), released != 0 ? "; retrying" : "");
-            if (released == 0) throw;
+            auto released = releaseUnreferenced(cache);
+            bool holdersReleased = false;
+            if (released == 0) {
+                lock.unlock();
+                const auto holders = releaseTextureHolders();
+                lock.lock();
+                holdersReleased = holders.has_value();
+                released = holders.value_or(0);
+                if (const auto again = findTexture(cache, key); again != cache.entries.end()) eraseTexture(cache, again);
+            }
+            std::fprintf(stderr, "[gpu] sampled texture 0x%llx: out of device memory, released %llu MiB of cached textures nothing else holds%s%s\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(released >> 20u), holdersReleased ? " after dropping their cached holders" : "", released != 0 || holdersReleased ? "; retrying" : "");
+            if (released == 0 && !holdersReleased) throw;
             entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
         }
         entry.accounted = entry.texture->AllocationBytes();
@@ -871,6 +882,71 @@ std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::li
     return texture;
 }
 
+// Out-of-memory recovery: evicts the entries nothing but the cache references; returns the bytes
+// they accounted.
+std::uint64_t releaseUnreferencedStorage(StorageTextureCache& cache) {
+    std::uint64_t released = 0;
+    for (auto entry = cache.entries.begin(); entry != cache.entries.end();) {
+        if (entry->texture.use_count() != 1) {
+            ++entry;
+            continue;
+        }
+        released += entry->accounted;
+        static_cast<void>(evictStorage(cache, entry++));
+    }
+    return released;
+}
+
+// Debug aid: APS5_NO_OOM_CACHE_RELEASE=1 ends the out-of-memory recovery of a texture or storage
+// image at the eviction of the cache entries nothing else references, as before.
+bool OomCacheReleaseEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_OOM_CACHE_RELEASE") != nullptr;
+    return !disabled;
+}
+
+std::atomic<bool> holderReleaseRan{false};
+std::atomic<std::chrono::steady_clock::rep> holderReleaseAt{0};
+
+// Out-of-memory recovery once evicting the unreferenced entries freed nothing. Every cached texture
+// is then held by a descriptor set: one in the resource cache (the only cache that holds sets; the
+// recipe, reused-table and framebuffer caches hold textures weakly or not at all), or one a
+// recorded batch keeps. The resource cache drops its entries (a later lookup misses and builds
+// anew), the recorder submits and finishes every batch and destroys what they kept (their sets,
+// the upload buffers and images of the textures they wrote), and then the textures and storage
+// images nothing holds any more are evicted. What the caller holds stays: the object being built,
+// the textures it looked up so far, its render targets. The caller holds neither texture cache
+// mutex. At most once a second, so that a working set larger than the heap evicts between
+// releases instead of rebuilding every cached set at each allocation. Nullopt when it did not
+// run, else the cache bytes evicted.
+std::optional<std::uint64_t> releaseTextureHolders() {
+    if (!OomCacheReleaseEnabled()) return std::nullopt;
+    const auto now = std::chrono::steady_clock::now();
+    auto last = holderReleaseAt.load(std::memory_order_relaxed);
+    if (holderReleaseRan.load(std::memory_order_acquire) && now - std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(last)) < std::chrono::seconds(1)) return std::nullopt;
+    if (!holderReleaseAt.compare_exchange_strong(last, now.time_since_epoch().count(), std::memory_order_relaxed)) return std::nullopt;
+    holderReleaseRan.store(true, std::memory_order_release);
+    std::vector<std::shared_ptr<ShaderResources>> sets;
+    SharedResourceCache().Clear(&sets);
+    const auto cachedSets = sets.size();
+    auto* recorder = Recorder::Active();
+    const bool retired = recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread();
+    if (retired) recorder->SyncReleasingKept();
+    sets.clear();
+    std::uint64_t released = 0;
+    {
+        auto& sampled = Textures();
+        std::lock_guard lock(sampled.mutex);
+        released += releaseUnreferenced(sampled);
+    }
+    {
+        auto& storage = StorageTextures();
+        std::lock_guard lock(storage.mutex);
+        released += releaseUnreferencedStorage(storage);
+    }
+    std::fprintf(stderr, "[gpu] out of device memory: dropped %zu cached resource sets%s, then evicted %llu MiB of textures and storage images nothing holds now\n", cachedSets, retired ? " and retired every recorded batch" : "", static_cast<unsigned long long>(released >> 20u));
+    return released;
+}
+
 // Storage images are shared by every descriptor of one surface (address, extent, layers, format, tile
 // mode): the image holds the whole mip chain, and render targets in the same memory attach to it.
 std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextureResource& resource) {
@@ -932,7 +1008,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     std::vector<std::shared_ptr<StorageTexture>> evicted;
     std::shared_ptr<StorageTexture> texture;
     {
-        std::lock_guard lock(cache.mutex);
+        std::unique_lock lock(cache.mutex);
         if (resource.mipCount > AllocatedLevels(resource)) {
             auto allocated = resource;
             allocated.mipCount = AllocatedLevels(resource);
@@ -956,17 +1032,18 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             try {
                 made = StorageTexture::Create(context, *context.detiler, resource, mip);
             } catch (const OutOfDeviceMemory&) {
-                std::uint64_t released = 0;
-                for (auto entry = cache.entries.begin(); entry != cache.entries.end();) {
-                    if (entry->texture.use_count() != 1) {
-                        ++entry;
-                        continue;
-                    }
-                    released += entry->accounted;
-                    static_cast<void>(evictStorage(cache, entry++));
+                auto released = releaseUnreferencedStorage(cache);
+                bool holdersReleased = false;
+                if (released == 0) {
+                    lock.unlock();
+                    const auto holders = releaseTextureHolders();
+                    lock.lock();
+                    holdersReleased = holders.has_value();
+                    released = holders.value_or(0);
+                    if (const auto again = findStorage(cache, key); again != cache.entries.end()) evicted.push_back(evictStorage(cache, again));
                 }
-                std::fprintf(stderr, "[gpu] storage image 0x%llx: out of device memory, released %llu MiB of cached storage images nothing else holds%s\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(released >> 20u), released != 0 ? "; retrying" : "");
-                if (released == 0) throw;
+                std::fprintf(stderr, "[gpu] storage image 0x%llx: out of device memory, released %llu MiB of cached storage images nothing else holds%s%s\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(released >> 20u), holdersReleased ? " after dropping their cached holders" : "", released != 0 || holdersReleased ? "; retrying" : "");
+                if (released == 0 && !holdersReleased) throw;
                 made = StorageTexture::Create(context, *context.detiler, resource, mip);
             }
             CachedStorageTexture entry{key, mip, std::move(made)};
@@ -3467,8 +3544,11 @@ std::uint64_t ResourceCache::Touches() {
     return resourceCacheTouches.load(std::memory_order_relaxed);
 }
 
-void ResourceCache::Clear() {
+void ResourceCache::Clear(std::vector<std::shared_ptr<ShaderResources>>* evicted) {
     std::lock_guard lock(mutex);
+    if (evicted != nullptr) {
+        for (auto& entry : entries) evicted->push_back(std::move(entry.second));
+    }
     index.clear();
     entries.clear();
 }

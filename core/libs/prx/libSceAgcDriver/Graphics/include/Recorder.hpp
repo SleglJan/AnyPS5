@@ -188,6 +188,11 @@ public:
     void FinishUpTo(std::uint64_t serial);
     // Submits and waits for every batch, running completions in order.
     void Sync();
+    // Sync, with every finished batch's kept objects (and those this thread deferred before)
+    // destroyed here rather than at the unlock, and the release thread's batches waited for (up to
+    // a second): out-of-memory recovery frees what only batches held. Under GuestMemory::GpuMutex
+    // only; without it nothing is done.
+    void SyncReleasingKept();
     void CountSamples();
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
     std::uint64_t SamplesTotal();
