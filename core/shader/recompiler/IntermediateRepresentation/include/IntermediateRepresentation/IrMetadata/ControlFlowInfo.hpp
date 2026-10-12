@@ -41,9 +41,11 @@ struct TableColumn {
     std::uint32_t maxKey = 0xffffffffu;
     bool sampler = false;
     bool address = false;
-    std::optional<KeyDomain> keyDomain;
+    std::vector<KeyDomain> keyDomains;
 
-    bool operator==(const TableColumn& other) const = default;
+    bool operator==(const TableColumn& other) const {
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && maxKey == other.maxKey && sampler == other.sampler && address == other.address;
+    }
 };
 
 struct DescriptorSource {

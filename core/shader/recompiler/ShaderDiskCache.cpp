@@ -899,8 +899,7 @@ void encodeTableColumn(Writer& out, const TableColumn& column) {
     out.Value(column.maxKey);
     out.Value(column.sampler);
     out.Value(column.address);
-    out.Value(column.keyDomain.has_value());
-    if (column.keyDomain.has_value()) encodeKeyDomain(out, *column.keyDomain);
+    out.List(column.keyDomains, encodeKeyDomain);
 }
 
 void decodeTableColumn(Reader& in, TableColumn& column) {
@@ -912,11 +911,7 @@ void decodeTableColumn(Reader& in, TableColumn& column) {
     in.Value(column.maxKey);
     in.Value(column.sampler);
     in.Value(column.address);
-    if (in.Get<bool>()) {
-        KeyDomain domain;
-        decodeKeyDomain(in, domain);
-        column.keyDomain = domain;
-    }
+    in.List(column.keyDomains, 26, decodeKeyDomain);
 }
 
 bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
@@ -1143,7 +1138,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     if (!valid || !reader.Done() || fill.words > plan.uniformFill.values.size()) return false;
     const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
-    if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || knownSource(source.tableColumn->heapSource)); })) return false;
+    if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && std::ranges::all_of(source.tableColumn->keyDomains, [&](const KeyDomain& domain) { return knownSource(domain.source); }))); })) return false;
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
     if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;

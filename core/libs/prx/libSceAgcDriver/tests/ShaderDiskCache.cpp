@@ -1345,7 +1345,7 @@ IrResourcePlan handBuiltPlan() {
     domain.shift = 2u;
     domain.mask = 0xffu;
     domain.addend = 1u;
-    column.keyDomain = domain;
+    column.keyDomains = {domain};
     table.tableColumn = column;
     DescriptorSource heap;
     heap.dwordCount = 4u;
@@ -1431,7 +1431,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && a.tableColumn->keyDomains != b.tableColumn->keyDomains)) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }
@@ -1594,6 +1594,7 @@ void verifyMalformedPlans() {
     rejects("a descriptor of nine dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].dwordCount = 9u; });
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
     rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
+    rejects("an image table key source past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomains[0].source = 4u; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
