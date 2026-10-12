@@ -264,12 +264,12 @@ void importJoinTests(const Context& context) {
         else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, range);
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
-    const auto bind = [&](std::uintptr_t address) {
+    const auto bind = [&](std::uintptr_t address, std::size_t bytes = 32) {
         GuestBufferMemory plain(importing);
-        plain.AddInPlace(address, 32, false);
+        plain.AddInPlace(address, bytes, false);
         plain.Upload();
         std::uint32_t adjustment = 0;
-        const auto view = plain.Descriptor(address, 32, adjustment);
+        const auto view = plain.Descriptor(address, bytes, adjustment);
         plain.Release();
         return view.buffer;
     };
@@ -299,6 +299,10 @@ void importJoinTests(const Context& context) {
     change(heap + piece, piece, true);
     reject([&] { static_cast<void>(bind(reinterpret_cast<std::uintptr_t>(heap + piece) - 16)); }, "has no host import");
     Require(HostImportFor(importing, reinterpret_cast<std::uintptr_t>(heap + piece) - 16, 32) == nullptr, "two pieces no larger than the import window were joined");
+    const auto heapBase = reinterpret_cast<std::uintptr_t>(heap);
+    const auto piecesBuffer = bind(heapBase, 2 * piece);
+    const auto* pieces = HostImportFor(importing, heapBase, 2 * piece);
+    Require(pieces != nullptr && pieces->base == heapBase && pieces->bytes == 2 * piece && piecesBuffer == pieces->buffer, "a buffer bound exactly over two pieces no larger than the import window was not imported as one");
     const auto* kept = HostImportFor(importing, first, 16);
     Require(kept != nullptr && kept->buffer == joinedBuffer && kept->bytes == 2 * large, "a registry change elsewhere re-imported the joined ranges");
     change(guest + 2 * large, large, true);
