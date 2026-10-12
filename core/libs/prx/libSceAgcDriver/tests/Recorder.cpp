@@ -1070,6 +1070,114 @@ void hostImportRetirementTests(const Device& device) {
     std::cout << "Host import retirement locking and GPU readback tests passed\n";
 }
 
+// An import holding unpublished unit shadows retires when a mapping grows its registration. The
+// mapping without the GPU lock leaves it alone (ImportMappedRanges defers to the locked retry), and
+// the locked retry publishes the shadowed bytes into guest memory before the import goes: no unit
+// is lost on retirement.
+void hostImportRetirementShadowTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& context = device.GetContext();
+    if (!UnitShadowEnabled()) {
+        std::cout << "unit shadows off: host import retirement shadows not tested\n";
+        return;
+    }
+    constexpr std::uint64_t unit = 65536;
+    constexpr std::size_t bytes = 2 * unit;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: host import retirement shadows not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } releaseBlock{block};
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(context);
+    SetHostImportWindow(0);
+    Recorder recorder(context);
+    recorder.Activate();
+    bool second = false;
+    const auto cleanup = [&] {
+        if (!gpu.owns_lock()) gpu.lock();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        ClearHostImports(context.device);
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        if (second) mutation.Remove(static_cast<std::uint8_t*>(block) + unit);
+    };
+    try {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, unit, true, true, true);
+        }
+        Require(ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "host import retirement shadows could not adopt the device");
+        const auto* import = HostImportFor(context, address, unit);
+        Require(import != nullptr && import->base == address && import->bytes == unit, "host import retirement shadows could not import their first unit");
+        if (!Watched(address, unit)) {
+            cleanup();
+            std::cout << "host imports are compared, not watched: host import retirement shadows not tested\n";
+            return;
+        }
+        CollectWritesUncached(address, unit);
+        auto destination = ShadowDestinationFor(context, *import, address, address + unit);
+        if (!destination.has_value()) {
+            cleanup();
+            std::cout << "no shadow slab offered: host import retirement shadows not tested\n";
+            return;
+        }
+        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(pattern->Bytes().data(), 0x5a, pattern->Bytes().size());
+        {
+            const auto commands = recorder.Commands();
+            recorder.Keep(pattern);
+            recorder.Keep(destination->slab);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            const VkBufferCopy piece{0, SlabOffset(*import, *destination->slab, address), unit};
+            context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, pattern->Handle(), destination->buffer, 1, &piece);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            const ShadowedRange range{address, address + unit, destination->slab};
+            MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+        }
+        destination.reset();
+        recorder.Sync();
+        Require(AnyShadowedOverlaps(address, unit), "host import retirement shadows: the unit is not shadowed");
+        const auto lostBefore = ShadowUnitsLostOnRetire();
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(static_cast<std::uint8_t*>(block) + unit, unit, true, true, true);
+        }
+        second = true;
+        GuestAllocations::Mapped grown;
+        for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+            if (range->address == address + unit) grown.push_back(range);
+        }
+        Require(grown.size() == 1, "host import retirement shadows lost the grown range");
+        const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        gpu.unlock();
+        const bool deferred = !ImportMappedRanges(context, grown, generation, false);
+        gpu.lock();
+        Require(deferred, "host import retirement shadows: the mapping without the GPU lock retired the shadowed import");
+        Require(ShadowUnitsLostOnRetire() == lostBefore && AnyShadowedOverlaps(address, unit), "host import retirement shadows: the deferred mapping dropped the shadowed unit");
+        Require(ImportMappedRanges(context, grown, generation, true), "host import retirement shadows: the retry under the GPU lock was refused");
+        recorder.Sync();
+        Require(ShadowUnitsLostOnRetire() == lostBefore, "host import retirement shadows: the retirement under the GPU lock lost shadowed units");
+        const auto* words = static_cast<const std::uint8_t*>(block);
+        Require(std::all_of(words, words + unit, [](std::uint8_t byte) { return byte == 0x5a; }), "host import retirement shadows: the shadowed bytes did not reach guest memory before the import retired");
+        const auto* grownImport = HostImportFor(context, address, bytes);
+        Require(grownImport != nullptr && grownImport->base == address && grownImport->bytes == bytes, "host import retirement shadows: the grown registration is not one import");
+    } catch (...) {
+        cleanup();
+        throw;
+    }
+    cleanup();
+    std::cout << "Host import retirement keeps shadowed units tests passed\n";
+}
+
 void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -5254,6 +5362,7 @@ int main(int argc, char** argv) {
                 return 77;
             }
             hostImportRetirementTests(device);
+            hostImportRetirementShadowTests(device);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {

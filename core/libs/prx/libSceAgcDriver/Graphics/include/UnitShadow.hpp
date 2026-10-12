@@ -147,6 +147,8 @@ void PublishAllShadows(const Context& context, PublishReason reason);
 void DestroyShadows(VkDevice device);
 // The [storage] line's shadow segment (10 s deltas, live slab totals).
 std::string ShadowReport();
+// Shadowed units an import retirement could not publish (it ran without the GPU lock), since start.
+std::uint64_t ShadowUnitsLostOnRetire();
 // APS5_SHADOW_VERIFY=1: after a shadow-sourced upload, the units read must carry no stamp newer
 // than their generation (counted as mismatches otherwise).
 bool ShadowVerify();
