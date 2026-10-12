@@ -373,7 +373,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::shared_ptr<PreparedDispatch> prepared;
         if (recipeHit == nullptr || VulkanDevice::VerifyRecipes()) {
             try {
-                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads);
+                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads, address);
             } catch (const std::exception& error) {
                 if (rethrow(error)) return;
             }
@@ -389,6 +389,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                     phaseMs[PhasePreparePrecollect] += phases[2];
                     phaseMs[PhasePreparePresync] += phases[3];
                     phaseMs[PhasePrepareStageA] += phases[4];
+                    phaseMs[PhasePreparePipeline] += phases[5];
                     for (const auto part : phases) parts += part;
                 }
                 phaseMs[PhasePrepareOther] += std::max(0.0, prepareMs - parts);
