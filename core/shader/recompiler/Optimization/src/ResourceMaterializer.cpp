@@ -588,7 +588,7 @@ void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColu
     auto& last = seen[{plan.shaderHash, table}];
     if (last == trace) return;
     last = trace;
-    std::string key = "none";
+    std::string key = column.unkeyed ? "none (an access has no domain)" : "none";
     for (const auto& domain : column.keyDomains) {
         std::string text = (domain.value ? "value source " : "scan source ") + std::to_string(domain.source);
         if (!domain.value) {
@@ -930,6 +930,11 @@ private:
                 values.push_back(((Read(address) >> domain.shift) & domain.mask) + domain.addend);
             }
             if (positions != 0u) mask.ranges.emplace_back(base, size);
+        }
+        if (TableTraced()) {
+            std::string list;
+            for (std::size_t index = 0; index < values.size() && index < 24u; index++) list += " " + std::to_string(values[index]);
+            std::fprintf(stderr, "[image-table] shader 0x%llx column keys (%zu, %u records):%s%s\n", static_cast<unsigned long long>(plan.shaderHash), values.size(), records.keys, list.c_str(), values.size() > 24u ? " ..." : "");
         }
         mask.selected.assign(records.keys, 0u);
         for (const auto value : values) {

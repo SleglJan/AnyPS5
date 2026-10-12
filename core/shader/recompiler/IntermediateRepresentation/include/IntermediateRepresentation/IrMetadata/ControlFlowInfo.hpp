@@ -42,6 +42,7 @@ struct TableColumn {
     bool sampler = false;
     bool address = false;
     std::vector<KeyDomain> keyDomains;
+    bool unkeyed = false;
 
     bool operator==(const TableColumn& other) const {
         return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && maxKey == other.maxKey && sampler == other.sampler && address == other.address;
