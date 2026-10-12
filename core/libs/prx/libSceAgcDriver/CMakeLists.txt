@@ -163,6 +163,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/WaitStatistics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/WorkerSampler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
@@ -226,8 +227,9 @@ add_custom_target(agc_trace_revision
         BYPRODUCTS ${agcTraceRevisionHeader}
         VERBATIM
 )
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp PROPERTIES
-        INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib
+set(agcZlibIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp PROPERTIES
+        INCLUDE_DIRECTORIES ${agcZlibIncludeDir}
 )
 
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
@@ -288,9 +290,9 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
-    add_test_executable(agc_performance_trace_tests tests/PerformanceTrace.cpp)
-    target_include_directories(agc_performance_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(agc_performance_trace_tests PRIVATE libc)
+    add_test_executable(agc_performance_trace_tests tests/PerformanceTrace.cpp Execution/src/TraceFile.cpp)
+    target_include_directories(agc_performance_trace_tests PRIVATE ${LIBS_INCLUDE_DIR} ${agcZlibIncludeDir})
+    target_link_libraries(agc_performance_trace_tests PRIVATE libc jpeg_turbo)
     configure_windows_unwind(agc_performance_trace_tests)
     add_test(NAME agc_performance_trace COMMAND agc_performance_trace_tests)
     set_tests_properties(agc_performance_trace PROPERTIES TIMEOUT 20)

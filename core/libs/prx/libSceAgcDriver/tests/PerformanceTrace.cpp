@@ -1,5 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
+#include "zlib.h"
+#include <fstream>
 #include <iostream>
+#include <iterator>
 
 namespace {
 
@@ -136,6 +140,50 @@ void SummaryFields() {
     Check(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
 }
 
+void GzipFile() {
+    std::string text;
+    for (int index = 0; index < 20000; ++index) text += "{\"name\":\"Driver.Packet\",\"ph\":\"X\",\"ts\":" + std::to_string(index) + "}\n";
+    const auto stem = "aps5-trace-test-" + std::to_string(Clock::now().time_since_epoch().count());
+    const auto path = std::filesystem::temp_directory_path() / (stem + ".json.gz");
+    AgcDriver::TraceFile::WriteGzip(path, text);
+    std::ifstream input(path, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    Check(bytes.size() > 18 && bytes[0] == 0x1f && bytes[1] == 0x8b && bytes[2] == 8 && bytes[3] == 0, "the gzip header is wrong");
+    z_stream stream{};
+    Check(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
+    std::string inflated(text.size() + 1, 0);
+    stream.next_in = const_cast<Bytef*>(bytes.data() + 10);
+    stream.avail_in = static_cast<uInt>(bytes.size() - 18);
+    stream.next_out = reinterpret_cast<Bytef*>(inflated.data());
+    stream.avail_out = static_cast<uInt>(inflated.size());
+    const int status = inflate(&stream, Z_FINISH);
+    inflated.resize(inflated.size() - stream.avail_out);
+    const bool consumed = stream.avail_in == 0;
+    inflateEnd(&stream);
+    Check(status == Z_STREAM_END && consumed, "the deflate stream does not end at the trailer");
+    Check(inflated == text, "the gzip file does not hold the text");
+    const auto word = [&](std::size_t at) {
+        std::uint32_t value = 0;
+        for (unsigned index = 0; index < 4; ++index) value |= static_cast<std::uint32_t>(bytes[at + index]) << (8 * index);
+        return value;
+    };
+    Check(word(bytes.size() - 8) == crc32(0, reinterpret_cast<const Bytef*>(text.data()), static_cast<uInt>(text.size())), "the CRC-32 is wrong");
+    Check(word(bytes.size() - 4) == text.size(), "the size is wrong");
+}
+
+void AppendLines() {
+    const auto path = std::filesystem::temp_directory_path() / ("aps5-summary-test-" + std::to_string(Clock::now().time_since_epoch().count()) + ".jsonl");
+    AgcDriver::TraceFile::AppendLine(path, "{\"presents\":1}\n");
+    AgcDriver::TraceFile::AppendLine(path, "{\"presents\":2}\n");
+    std::ifstream input(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    Check(written == "{\"presents\":1}\n{\"presents\":2}\n", "summary lines were not appended");
+}
+
 }
 
 int main() {
@@ -148,6 +196,8 @@ int main() {
         EscapeStrings();
         EventsShape();
         SummaryFields();
+        GzipFile();
+        AppendLines();
         std::cout << "performance trace tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,11 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
-#include "zlib.h"
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <mutex>
 #include <system_error>
@@ -90,43 +89,6 @@ std::vector<std::pair<std::string, std::string>> environment() {
     return result;
 }
 
-void writeGzip(const std::filesystem::path& path, std::string_view text) {
-    z_stream stream{};
-    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK) throw std::runtime_error("deflateInit2 failed");
-    struct End {
-        z_stream& stream;
-        ~End() { deflateEnd(&stream); }
-    } end{stream};
-    std::ofstream output;
-    output.exceptions(std::ios::badbit | std::ios::failbit);
-    output.open(path, std::ios::binary | std::ios::trunc);
-    std::vector<unsigned char> chunk(1 << 16);
-    std::size_t offset = 0;
-    int status = Z_OK;
-    while (status != Z_STREAM_END) {
-        if (stream.avail_in == 0 && offset < text.size()) {
-            const auto piece = std::min<std::size_t>(text.size() - offset, std::numeric_limits<uInt>::max());
-            stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(text.data() + offset));
-            stream.avail_in = static_cast<uInt>(piece);
-            offset += piece;
-        }
-        stream.next_out = chunk.data();
-        stream.avail_out = static_cast<uInt>(chunk.size());
-        status = deflate(&stream, offset == text.size() ? Z_FINISH : Z_NO_FLUSH);
-        if (status != Z_OK && status != Z_STREAM_END) throw std::runtime_error("deflate failed with " + std::to_string(status));
-        output.write(reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(chunk.size() - stream.avail_out));
-    }
-    output.close();
-}
-
-void appendLine(const std::filesystem::path& path, std::string_view line) {
-    std::ofstream output;
-    output.exceptions(std::ios::badbit | std::ios::failbit);
-    output.open(path, std::ios::binary | std::ios::app);
-    output.write(line.data(), static_cast<std::streamsize>(line.size()));
-    output.close();
-}
-
 }
 
 void PerformanceTrace::BindThread(const char* name) {
@@ -190,11 +152,13 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     output = std::make_unique<ProfileOutput>([directory = std::filesystem::path(traceDirectory != nullptr ? traceDirectory : "."), name = summary.trace, line = TraceFormat::Summary(summary, snapshots, state.presents)](std::string_view text) {
         try {
             std::filesystem::create_directories(directory);
-            writeGzip(directory / name, text);
-            appendLine(directory / "aps5-summary.jsonl", line);
+            TraceFile::WriteGzip(directory / name, text);
+            TraceFile::AppendLine(directory / "aps5-summary.jsonl", line);
             std::fprintf(stderr, "[trace] wrote %s and its line in aps5-summary.jsonl\n", name.c_str());
+            std::fflush(stderr);
         } catch (const std::exception& error) {
             std::fprintf(stderr, "[trace] writing %s failed: %s\n", name.c_str(), error.what());
+            std::fflush(stderr);
             throw;
         }
     }, std::numeric_limits<std::size_t>::max());
