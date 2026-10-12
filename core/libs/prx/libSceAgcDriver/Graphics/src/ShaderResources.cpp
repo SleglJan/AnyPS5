@@ -1138,6 +1138,7 @@ void ClearCachedTextures(VkDevice device) {
     auto& sampled = Textures();
     {
         std::lock_guard lock(sampled.mutex);
+        std::erase_if(sampled.uncachedSnapshots, [device](const auto& entry) { return entry.first.device == device; });
         for (auto it = sampled.entries.begin(); it != sampled.entries.end();) {
             if (it->key.device == device) eraseTexture(sampled, it++);
             else ++it;
