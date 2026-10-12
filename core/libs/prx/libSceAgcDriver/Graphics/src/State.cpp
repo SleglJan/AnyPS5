@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
@@ -901,7 +902,17 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
         color.surfaceAddress -= color.pipeBankXor;
     }
     color.arrayAddress = color.arrayLastSlice != 0 ? color.surfaceAddress : 0;
-    if (slice != 0 && !volume) color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+    if (slice != 0 && !volume) {
+        color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+        if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) {
+            const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
+            Require(equation != nullptr, "a sliced color target has no swizzle equation");
+            const auto coordinates = slice << 24u;
+            for (std::uint32_t bit = 0; bit < equation->bits.size(); ++bit) {
+                color.pipeBankXor ^= (std::popcount(equation->bits[bit] & coordinates) & 1u) << bit;
+            }
+        }
+    }
     color.address = color.surfaceAddress + mipOffset;
     color.bytes = colorLayout.Bytes();
     GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, colorLayout.Alignment(), true);
