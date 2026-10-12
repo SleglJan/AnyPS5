@@ -23,6 +23,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -62,8 +63,174 @@
 #include <unordered_map>
 #include <vector>
 #include <utility>
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <execinfo.h>
+#endif
 
 namespace AgcDriver {
+
+// Diagnostic (local branch): APS5_PROFILE_VRAM=1 tracks every vkAllocateMemory and vkFreeMemory
+// the device resolver hands out and prints, every 10 s, at an out-of-memory result and at device
+// teardown, the live device-local and host bytes and the call sites (module+offset, caller and
+// its two callers) holding the most device-local memory.
+namespace VramTrack {
+#ifndef _WIN32
+struct Record {
+    VkDeviceSize bytes = 0;
+    std::uint32_t type = 0;
+    std::array<void*, 3> site{};
+};
+
+std::mutex& Mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+PFN_vkGetDeviceProcAddr realProc = nullptr;
+std::atomic<PFN_vkAllocateMemory> realAllocate{nullptr};
+std::atomic<PFN_vkFreeMemory> realFree{nullptr};
+std::unordered_map<VkDeviceMemory, Record>& Live() {
+    static std::unordered_map<VkDeviceMemory, Record> live;
+    return live;
+}
+VkPhysicalDeviceMemoryProperties properties{};
+bool haveProperties = false;
+std::chrono::steady_clock::time_point lastReport{};
+std::uint64_t allocations = 0;
+std::uint64_t frees = 0;
+std::uint64_t failures = 0;
+VkDeviceSize peakDevice = 0;
+#endif
+
+bool Enabled() {
+#ifdef _WIN32
+    return false;
+#else
+    static const bool enabled = std::getenv("APS5_PROFILE_VRAM") != nullptr;
+    return enabled;
+#endif
+}
+
+#ifndef _WIN32
+bool deviceLocal(std::uint32_t type) {
+    return haveProperties && type < properties.memoryTypeCount && (properties.memoryHeaps[properties.memoryTypes[type].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+}
+
+std::string siteName(void* address) {
+    if (address == nullptr) return "-";
+    Dl_info module{};
+    char text[160];
+    if (::dladdr(address, &module) != 0 && module.dli_fbase != nullptr) {
+        const char* name = module.dli_fname != nullptr ? std::strrchr(module.dli_fname, '/') : nullptr;
+        name = name != nullptr ? name + 1 : (module.dli_fname != nullptr ? module.dli_fname : "?");
+        std::snprintf(text, sizeof(text), "%s+0x%llx", name, static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module.dli_fbase)));
+    } else {
+        std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address)));
+    }
+    return text;
+}
+
+void reportLocked(const char* why) {
+    VkDeviceSize device = 0;
+    VkDeviceSize host = 0;
+    std::size_t deviceCount = 0;
+    std::unordered_map<std::string, std::pair<VkDeviceSize, std::size_t>> sites;
+    for (const auto& [memory, record] : Live()) {
+        if (!deviceLocal(record.type)) {
+            host += record.bytes;
+            continue;
+        }
+        device += record.bytes;
+        ++deviceCount;
+        auto& site = sites[siteName(record.site[0]) + " < " + siteName(record.site[1]) + " < " + siteName(record.site[2])];
+        site.first += record.bytes;
+        ++site.second;
+    }
+    peakDevice = std::max(peakDevice, device);
+    std::vector<std::pair<std::string, std::pair<VkDeviceSize, std::size_t>>> ranked(sites.begin(), sites.end());
+    std::sort(ranked.begin(), ranked.end(), [](const auto& left, const auto& right) { return left.second.first > right.second.first; });
+    const auto [copies, copyBytes] = Graphics::CommittedDrawInputCopies();
+    std::fprintf(stderr, "[vram] %s: device-local %.0f MiB in %zu allocations (peak %.0f MiB), host %.0f MiB; %llu allocations, %llu frees, %llu failures; partial index copies %llu (%.0f MiB)\n", why, device / 1048576.0, deviceCount, peakDevice / 1048576.0, host / 1048576.0, static_cast<unsigned long long>(allocations), static_cast<unsigned long long>(frees), static_cast<unsigned long long>(failures), static_cast<unsigned long long>(copies), copyBytes / 1048576.0);
+    for (std::size_t index = 0; index < ranked.size() && index < 12; ++index) std::fprintf(stderr, "[vram]   %.0f MiB in %zu: %s\n", ranked[index].second.first / 1048576.0, ranked[index].second.second, ranked[index].first.c_str());
+    std::fflush(stderr);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL allocate(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* callbacks, VkDeviceMemory* memory) {
+    const auto result = realAllocate.load(std::memory_order_acquire)(device, info, callbacks, memory);
+    void* frames[5]{};
+    const int count = ::backtrace(frames, 5);
+    std::lock_guard lock(Mutex());
+    if (result == VK_SUCCESS) {
+        ++allocations;
+        Live()[*memory] = {info->allocationSize, info->memoryTypeIndex, {count > 1 ? frames[1] : nullptr, count > 2 ? frames[2] : nullptr, count > 3 ? frames[3] : nullptr}};
+    } else {
+        ++failures;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (result != VK_SUCCESS || now - lastReport > std::chrono::seconds(10)) {
+        lastReport = now;
+        char why[160];
+        if (result != VK_SUCCESS) std::snprintf(why, sizeof(why), "allocation of %.1f MiB (type %u) failed with %d at %s", info->allocationSize / 1048576.0, info->memoryTypeIndex, static_cast<int>(result), siteName(count > 1 ? frames[1] : nullptr).c_str());
+        else std::snprintf(why, sizeof(why), "10 s");
+        reportLocked(why);
+    }
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL release(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* callbacks) {
+    {
+        std::lock_guard lock(Mutex());
+        if (Live().erase(memory) != 0) ++frees;
+    }
+    realFree.load(std::memory_order_acquire)(device, memory, callbacks);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice device, const char* name) {
+    const auto function = realProc(device, name);
+    if (function == nullptr || name == nullptr) return function;
+    if (std::strcmp(name, "vkAllocateMemory") == 0) {
+        realAllocate.store(reinterpret_cast<PFN_vkAllocateMemory>(function), std::memory_order_release);
+        return reinterpret_cast<PFN_vkVoidFunction>(&allocate);
+    }
+    if (std::strcmp(name, "vkFreeMemory") == 0) {
+        realFree.store(reinterpret_cast<PFN_vkFreeMemory>(function), std::memory_order_release);
+        return reinterpret_cast<PFN_vkVoidFunction>(&release);
+    }
+    return function;
+}
+#endif
+
+PFN_vkGetDeviceProcAddr Wrap(PFN_vkGetDeviceProcAddr real) {
+#ifdef _WIN32
+    return real;
+#else
+    if (!Enabled() || real == nullptr) return real;
+    realProc = real;
+    return &deviceProc;
+#endif
+}
+
+void SetProperties(const VkPhysicalDeviceMemoryProperties& memory) {
+#ifndef _WIN32
+    if (!Enabled()) return;
+    std::lock_guard lock(Mutex());
+    properties = memory;
+    haveProperties = true;
+#else
+    static_cast<void>(memory);
+#endif
+}
+
+void Report(const char* why) {
+#ifndef _WIN32
+    if (!Enabled()) return;
+    std::lock_guard lock(Mutex());
+    reportLocked(why);
+#else
+    static_cast<void>(why);
+#endif
+}
+}
 namespace {
 
 void check(VkResult result, const char* operation) {
@@ -945,7 +1112,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->window = window->context;
         APS5_LOG_OUT("Vulkan surface created surface=%p window=%p", reinterpret_cast<void*>(state->surface), state->window);
     }
-    state->deviceProc = state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+    state->deviceProc = VramTrack::Wrap(state->InstanceFunction<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr"));
     const auto enumerate = state->InstanceFunction<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
     std::uint32_t count = 0;
     check(enumerate(state->instance, &count, nullptr), "vkEnumeratePhysicalDevices");
@@ -1046,6 +1213,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryHeapCount; ++i) APS5_LOG_OUT("Memory heap %u size=%.1f MiB flags=0x%x", i, state->memoryProperties.memoryHeaps[i].size / 1048576.0, state->memoryProperties.memoryHeaps[i].flags);
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryTypeCount; ++i) APS5_LOG_OUT("Memory type %u heap=%u flags=0x%x", i, state->memoryProperties.memoryTypes[i].heapIndex, state->memoryProperties.memoryTypes[i].propertyFlags);
+    VramTrack::SetProperties(state->memoryProperties);
     std::uint32_t extensionCount = 0;
     const auto enumerateDeviceExtensions = state->InstanceFunction<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
     check(enumerateDeviceExtensions(selected, nullptr, &extensionCount, nullptr), "vkEnumerateDeviceExtensionProperties");
@@ -1739,7 +1907,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
 }
 
-VulkanDevice::~VulkanDevice() = default;
+VulkanDevice::~VulkanDevice() {
+    VramTrack::Report("device teardown");
+}
 
 bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (adoptDevice) GuestMemory::AssertGpuLockHeld("VulkanDevice::ImportGuestMemory");

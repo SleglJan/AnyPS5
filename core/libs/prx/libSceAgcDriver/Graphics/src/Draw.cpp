@@ -940,7 +940,18 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     return copy;
 }
 
+namespace {
+std::atomic<std::uint64_t> committedCopies{0};
+std::atomic<std::uint64_t> committedCopyBytes{0};
+}
+
+std::pair<std::uint64_t, std::uint64_t> CommittedDrawInputCopies() {
+    return {committedCopies.load(std::memory_order_relaxed), committedCopyBytes.load(std::memory_order_relaxed)};
+}
+
 DrawInputCopy CopyCommittedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> committed, Recorder::SnapshotUse use) {
+    committedCopies.fetch_add(1, std::memory_order_relaxed);
+    committedCopyBytes.fetch_add(bytes, std::memory_order_relaxed);
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     Require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "draw input range overflow");
     DrawInputCopy copy;
