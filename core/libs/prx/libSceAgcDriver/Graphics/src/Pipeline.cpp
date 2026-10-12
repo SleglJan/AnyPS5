@@ -577,7 +577,7 @@ VkPipelineLayout Pipeline::Layout() const {
     return layout;
 }
 
-std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::uint32_t layers, std::span<const std::uint8_t> persistent) {
+std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::uint32_t layers, std::span<const std::uint8_t> persistent, const std::shared_ptr<void>& depthOwner) {
     Require(targets.size() == attachments && owners.size() == colorAttachments, "render targets do not match the pipeline's attachments");
     bool resident = true;
     for (std::size_t i = 0; i < owners.size(); ++i) resident = resident && (owners[i] != nullptr || (i < persistent.size() && persistent[i] != 0));
@@ -586,6 +586,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
         // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [](const CachedFramebuffer& entry) {
             if (entry.framebuffer.use_count() != 1) return false;
+            if (entry.depthOwned && entry.depthOwner.expired()) return true;
             for (std::size_t i = 0; i < entry.owners.size(); ++i) {
                 if (entry.owned[i] && entry.owners[i].expired()) return true;
             }
@@ -597,7 +598,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             // very objects the views were made for.
             bool same = true;
             for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->owners[i].lock().get() == owners[i].get();
-            if (!same) continue;
+            if (!same || it->depthOwned != (depthOwner != nullptr) || it->depthOwner.lock() != depthOwner) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
         }
@@ -615,6 +616,8 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     entry.views.assign(targets.begin(), targets.end());
     entry.owners.assign(owners.begin(), owners.end());
     for (const auto& owner : owners) entry.owned.push_back(owner != nullptr);
+    entry.depthOwner = depthOwner;
+    entry.depthOwned = depthOwner != nullptr;
     entry.extent = extent;
     entry.layers = layers;
     entry.framebuffer = framebuffer;

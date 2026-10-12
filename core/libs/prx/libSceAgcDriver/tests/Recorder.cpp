@@ -5385,6 +5385,63 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void depthSurfaceReleaseTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    constexpr std::uint32_t side = 64;
+    constexpr std::size_t bytes = 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the retired depth surface block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearDepthSurfaces(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{context, block};
+    const DepthTarget first{address, 0, {side, side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    const DepthTarget second{address, 0, {side / 2u, side / 2u}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    std::shared_ptr<void> owner;
+    Require(DepthSurfaceView(context, first, &owner) != VK_NULL_HANDLE && owner != nullptr, "the first depth surface has no view or owner");
+    std::weak_ptr<void> retired = owner;
+    owner.reset();
+    Require(DepthSurfaceView(context, second, &owner) != VK_NULL_HANDLE && owner != nullptr, "the second depth surface has no view or owner");
+    Require(owner != retired.lock(), "a depth surface of another extent reused the retired surface");
+    Require(!retired.expired(), "a retired depth surface was destroyed while the open batch could still use it");
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    recorder.FlushDeferredReleases();
+    for (int attempt = 0; attempt < 2000 && !retired.expired(); ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(retired.expired(), "a retired depth surface outlived the batch that last recorded it");
+    std::weak_ptr<void> bound = owner;
+    owner.reset();
+    Require(DepthSurfaceView(context, second, &owner) != VK_NULL_HANDLE && owner == bound.lock(), "binding a live depth surface again did not return it");
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    owner.reset();
+    Require(!bound.expired(), "a depth surface still bound was destroyed");
+}
+
 void depthSurfaceProofTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (!device.NullDescriptors()) {
@@ -6610,6 +6667,11 @@ int main(int argc, char** argv) {
             std::cout << "Draw descriptor writes and snapshot overrides passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-surface-release-only") {
+            depthSurfaceReleaseTests(device, recorder);
+            std::cout << "Retired depth surface release tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
             std::cout << "Draw snapshot cap tests passed\n";
@@ -6638,6 +6700,7 @@ int main(int argc, char** argv) {
         readWrittenStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        depthSurfaceReleaseTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
