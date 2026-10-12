@@ -308,6 +308,9 @@ public:
     // where a per-dword lookup would not do.
     bool PendingLabelIn(std::uint64_t address, std::size_t bytes) const;
     bool CompletionLabelIn(std::uint64_t address, std::size_t bytes) const;
+    // Whether a recorded label kept behind completions (stored by the CPU at reap) covers a dword of
+    // the range; queued labels of other queues do not count.
+    bool HeldLabelIn(std::uint64_t address, std::size_t bytes) const;
     // The dwords of the recorded labels kept behind completions (stored by the CPU at reap).
     std::vector<std::pair<std::uint64_t, std::size_t>> HeldLabelRanges() const;
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
