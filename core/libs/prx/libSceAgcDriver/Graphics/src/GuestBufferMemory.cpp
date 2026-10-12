@@ -148,7 +148,6 @@ struct HostImports {
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
     PFN_vkFreeMemory freeMemory = nullptr;
     std::map<std::uint64_t, HostImport> imports;
-    std::vector<std::shared_ptr<void>> retired;
     std::uint64_t liveBytes = 0;
     std::set<std::uint64_t> failed;
     std::set<std::uint64_t> unaliasedSpans;
@@ -201,18 +200,9 @@ struct RetiredImport {
 
 // Drops an import. Recorded batches (dispatches, recorded draws, GPU label writes) may still read it,
 // so the objects live until the batch open now completed; with no batches in flight all GPU work that
-// used it was synchronous and it is destroyed at once. The recorder belongs to the GpuMutex holder: a
-// retire without it (an import at a mapping) parks the objects until the next import access under it.
+// used it was synchronous and it is destroyed at once.
 const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 bool runCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
-
-void releaseRetired(HostImports& state) {
-    if (state.retired.empty() || !GuestMemory::GpuMutex().HeldByThisThread()) return;
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) {
-        for (auto& holder : state.retired) recorder->Keep(std::move(holder));
-    }
-    state.retired.clear();
-}
 
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease) {
     // Results shadowed for the import reach its (old) buffer first where the memory is still a
@@ -220,12 +210,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end); });
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, it->second);
-    if (!GuestMemory::GpuMutex().HeldByThisThread()) {
-        state.retired.push_back(std::move(holder));
-    } else {
-        releaseRetired(state);
-        if (auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) recorder->Keep(std::move(holder));
-    }
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !recorder->Idle()) recorder->Keep(std::move(holder));
     ++state.epoch;
     state.liveBytes -= it->second.bytes;
     state.imports.erase(it);
@@ -623,7 +608,6 @@ const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint6
 bool importsStale(const Context& context, const HostImports& state);
 
 const HostImport* importAllocation(const Context& context, HostImports& state, std::uint64_t address, const GuestAllocations::Lease& lease) {
-    releaseRetired(state);
     if (!importsStale(context, state)) {
         if (const auto* current = findImport(state, address, address + 1)) return current;
     }
@@ -787,7 +771,6 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
 #endif
         }
         state.imports.clear();
-        state.retired.clear();
         state.liveBytes = 0;
         state.failed.clear();
         state.device = context.device;
@@ -1757,7 +1740,6 @@ void ClearHostImports(VkDevice device) {
 #endif
     }
     state.imports.clear();
-    state.retired.clear();
     state.liveBytes = 0;
     state.failed.clear();
     state.device = VK_NULL_HANDLE;
@@ -1974,7 +1956,6 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     ensurePinWaiter();
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    releaseRetired(state);
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (const auto* entry = findImport(state, address, address + bytes)) return entry;
