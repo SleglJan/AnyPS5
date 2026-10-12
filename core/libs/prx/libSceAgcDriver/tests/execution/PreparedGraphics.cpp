@@ -301,6 +301,13 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
     merged.Bind(queue, 0x148u, 0x10bu);
     domain.Bind(queue, 0xc8u, 0x8bu);
     fragment.Bind(queue, 0x8u, 0xbu);
+    const auto unset = queue;
+    const auto null = [&] {
+        auto state = queue;
+        state.shader[0x102u] = 0u;
+        state.shader[0x103u] = 0u;
+        return state;
+    }();
     alignas(8) const std::array<std::uint32_t, 2> pointer{};
     const auto pointerAddress = reinterpret_cast<std::uintptr_t>(pointer.data());
     queue.shader[0x102u] = static_cast<std::uint32_t>(pointerAddress);
@@ -326,6 +333,14 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
         const auto& hull = decoded->programs[1];
         Require(local.snapshot == merged.snapshot && hull.snapshot == merged.snapshot && local.codeOffset == 64u && hull.codeOffset == 64u, "the local and hull stages of a merged hull program refer to another program");
         Require(local.binary.stage == ShaderStage::Local && hull.binary.stage == ShaderStage::TessellationControl && local.firstUserSgpr == 8u && hull.firstUserSgpr == 0u && hull.userData.size() == local.userData.size() + 8u, "a merged hull program's stages lost the merged user SGPR layout");
+    }
+    Require(draw.programs[1].userData[0] == static_cast<std::uint32_t>(pointerAddress) && draw.programs[1].userData[1] == static_cast<std::uint32_t>(pointerAddress >> 32u), "a merged hull draw did not pass its user-data address");
+    for (const auto* state : {&unset, &null}) {
+        DrawDecode without{};
+        without.state = prepared.state;
+        without.pixel = prepared.pixel;
+        DecodeGraphicsPrograms(without, *state, registry, false, true);
+        Require(without.roles == draw.roles && without.programs[1].userData.size() == draw.programs[1].userData.size() && without.programs[1].userData[0] == 0u && without.programs[1].userData[1] == 0u, "a merged hull draw without a user-data address was not decoded with zero s[0:1]");
     }
     const auto stages = PrepareGraphicsStages(prepared, device.Target());
     Require(stages.size() == 4u && stages[0].entry.handle != stages[1].entry.handle, "a merged hull program was not prepared as separate local and hull stages");
@@ -361,6 +376,13 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
     halves.pixel = prepared.pixel;
     DecodeGraphicsPrograms(halves, separate, registry, false, true);
     Require(!halves.state.stages.tessellation->mergedHull && halves.programs[0].snapshot == front.snapshot && halves.programs[1].snapshot == back.snapshot, "separate hull halves were decoded as a merged hull program");
+    auto halvesUnset = unset;
+    front.Bind(halvesUnset, 0x148u, 0x10bu);
+    back.Bind(halvesUnset, 0x108u, 0x10bu);
+    DrawDecode halvesWithout{};
+    halvesWithout.state = prepared.state;
+    halvesWithout.pixel = prepared.pixel;
+    Reject([&] { DecodeGraphicsPrograms(halvesWithout, halvesUnset, registry, false, true); }, "merged shader user-data address is null");
 }
 
 void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
