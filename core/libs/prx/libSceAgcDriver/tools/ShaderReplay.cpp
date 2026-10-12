@@ -126,6 +126,10 @@ bool Replay(const char* path) {
         }
         if (g_memory) {
             for (const auto& binding : result.bindings) {
+                if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
+                    std::printf("  %s: %u elements bound\n", binding.role == ShaderRecompiler::DescriptorRole::ImageTable ? "image table" : binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage ? "storage table" : "sampler table", binding.count);
+                    continue;
+                }
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
                 for (std::size_t i = 0; i + 4 <= binding.guestDescriptor.size(); i += 4) {
                     const auto* v = binding.guestDescriptor.data() + i;
