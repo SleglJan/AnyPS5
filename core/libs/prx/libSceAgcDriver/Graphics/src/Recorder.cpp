@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
@@ -451,6 +452,61 @@ void JoinReleaseThread() {
     std::lock_guard lock(queue.mutex);
     queue.started = false;
     queue.stop = false;
+}
+
+// The held-label lander's state (see Recorder::heldLabelLander): one thread for the process, started
+// at the first held label, as the release thread, and leaked for the same reason. A device or
+// recorder teardown pauses it (HeldLabelLanderPause): `pauses` counts the teardowns in progress, the
+// thread leaves and is joined at the first, and nothing starts it again until the last ends; held
+// labels counted meanwhile (a late count during the teardown's Sync) get it back then. `failed`:
+// the thread hit a Vulkan or recording failure and left for good; the queue workers land held
+// labels from then on and report the failure themselves.
+struct HeldLabelLanderState {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::thread thread;
+    bool started = false;
+    std::uint32_t pauses = 0;
+    bool failed = false;
+    std::mutex joinMutex;
+};
+
+HeldLabelLanderState& HeldLanderState() {
+    static HeldLabelLanderState* const state = new HeldLabelLanderState;
+    return *state;
+}
+
+// Debug aid: APS5_NO_PROMPT_HELD_LABELS=1 starts no lander; held labels land when a queue worker
+// submits and reaps their batch, as before.
+bool PromptHeldLabels() {
+    static const bool prompt = std::getenv("APS5_NO_PROMPT_HELD_LABELS") == nullptr;
+    return prompt;
+}
+
+// The open batch's held labels are submitted within the queue workers' label flush deadline, read
+// as Driver::labelFlushDeadline reads it: APS5_LABEL_FLUSH_US, else 1000 us with label batching and
+// 250 us without (APS5_NO_LABEL_BATCH_SUBMIT or APS5_NO_LABEL_BATCHING).
+std::chrono::microseconds HeldLabelDeadline() {
+    static const std::chrono::microseconds value = [] {
+        const char* text = std::getenv("APS5_LABEL_FLUSH_US");
+        if (text != nullptr) return std::chrono::microseconds(std::max(0, std::atoi(text)));
+        const bool batching = std::getenv("APS5_NO_LABEL_BATCH_SUBMIT") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
+        return std::chrono::microseconds(batching ? 1000 : 250);
+    }();
+    return value;
+}
+
+bool HeldLanderPaused() {
+    auto& state = HeldLanderState();
+    std::lock_guard lock(state.mutex);
+    return state.pauses != 0;
+}
+
+void HeldLanderFailed(const char* what) {
+    std::fprintf(stderr, "[gpu] held-label lander stopped: %s; held labels land when a queue worker reaps\n", what);
+    auto& state = HeldLanderState();
+    std::lock_guard lock(state.mutex);
+    state.failed = true;
 }
 
 // The unlock hook: hands what this thread deferred to the release thread, or destroys it here
@@ -1113,6 +1169,9 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
 }
 
 Recorder::~Recorder() {
+    // The lander touches the active recorder under the mutex only, but a teardown without the mutex
+    // (a test's device) must not overlap it, and no late held label may start it again meanwhile.
+    const HeldLabelLanderPause landerPause;
     try {
         Sync();
     } catch (const std::exception& error) {
@@ -2861,6 +2920,12 @@ void Recorder::noteLabelOn(Batch& batch, std::uint64_t address, std::span<const 
     recordedLabels.store(labels.size(), std::memory_order_relaxed);
 }
 
+void Recorder::countHeldLabel(Batch& batch) {
+    if (batch.heldLabelCount++ == 0) batch.heldSince = std::chrono::steady_clock::now();
+    heldLabels.fetch_add(1, std::memory_order_acq_rel);
+    wakeHeldLabelLander();
+}
+
 void Recorder::markBehindCompletion(const Batch& batch, std::uint64_t begin, std::uint64_t end) {
     std::lock_guard tableLock(labelTableMutex);
     for (auto it = labels.lower_bound(begin); it != labels.end() && it->first < end; ++it) {
@@ -3058,8 +3123,7 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     } else {
         ++batch.completionLabelCount;
         completionLabels.fetch_add(1, std::memory_order_acq_rel);
-        ++batch.heldLabelCount;
-        heldLabels.fetch_add(1, std::memory_order_acq_rel);
+        countHeldLabel(batch);
     }
     // The table entry before the write note: the note bumps the generation a poller watches, and a
     // poller that sees the bump then finds the label without the GPU mutex.
@@ -3103,8 +3167,7 @@ void Recorder::NoteWrittenBack(std::uint64_t address, std::size_t bytes) {
             label.counted = true;
             ++batch.completionLabelCount;
             completionLabels.fetch_add(1, std::memory_order_acq_rel);
-            ++batch.heldLabelCount;
-            heldLabels.fetch_add(1, std::memory_order_acq_rel);
+            recorder->countHeldLabel(batch);
             completionLabelsCountedLate.fetch_add(1, std::memory_order_relaxed);
             recorder->markBehindCompletion(batch, label.begin, label.end);
         }
@@ -3235,6 +3298,143 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
     return result;
 }
 
+}
+
+HeldLabelLanderPause::HeldLabelLanderPause() {
+    auto& state = HeldLanderState();
+    std::lock_guard joining(state.joinMutex);
+    std::thread worker;
+    {
+        std::lock_guard lock(state.mutex);
+        ++state.pauses;
+        if (!state.started) return;
+        worker = std::move(state.thread);
+    }
+    state.wake.notify_all();
+    worker.join();
+    std::lock_guard lock(state.mutex);
+    state.started = false;
+}
+
+HeldLabelLanderPause::~HeldLabelLanderPause() {
+    auto& state = HeldLanderState();
+    {
+        std::lock_guard lock(state.mutex);
+        --state.pauses;
+    }
+    if (heldLabels.load(std::memory_order_acquire) != 0) Recorder::wakeHeldLabelLander();
+}
+
+void Recorder::wakeHeldLabelLander() {
+    if (!PromptHeldLabels()) return;
+    auto& state = HeldLanderState();
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.pauses != 0 || state.failed) return;
+        if (!state.started) {
+            try {
+                state.thread = std::thread(&Recorder::heldLabelLander);
+            } catch (const std::exception& error) {
+                static std::atomic<bool> reported{false};
+                if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] held-label lander not started (%s); held labels land when a queue worker reaps\n", error.what());
+                return;
+            }
+            state.started = true;
+        }
+    }
+    state.wake.notify_one();
+}
+
+Recorder::HeldLanding Recorder::landHeld(std::chrono::steady_clock::duration deadline) {
+    HeldLanding next;
+    if (!inFlight.empty()) Reap();
+    if (open != nullptr && open->heldLabelCount != 0) {
+        const auto age = std::chrono::steady_clock::now() - open->heldSince;
+        if (age >= deadline) Submit();
+        else next.pause = deadline - age;
+    }
+    for (const auto& batch : inFlight) {
+        if (batch->heldLabelCount == 0) continue;
+        next.serial = batch->serial;
+        break;
+    }
+    return next;
+}
+
+// A completion label kept behind completions (AfterCompletions) reaches guest memory only when its
+// batch is submitted and then reaped. Both were left to the queue workers (a packet boundary, a
+// WAIT_REG_MEM poll, the end of a submission, an idle worker's reap), so a held label waited as
+// long as the workers were busy elsewhere or had nothing to execute, seconds at times, while a
+// guest polling it with plain loads gives up and reads its results anyway. While any label is
+// held, this thread submits the open batch holding one once the label flush deadline passed, waits
+// on the timeline (without the mutex) for the oldest in-flight batch holding one, and reaps it
+// under the mutex as soon as it finished. A reap's write-back can wait for a later batch under the
+// mutex (why a compute worker never reaps queue 0's batches); this thread executes no queue's
+// packets, so such a wait holds up no queue beyond the mutex itself. The mutex is only tried, with
+// a backoff up to about 1 ms, so a teardown holding it while it pauses the thread never deadlocks.
+// A failure (a lost device, a failed submit) stops the thread for good: it cannot report one to
+// the driver, the queue workers meet the same failure and do.
+void Recorder::heldLabelLander() {
+    CpuTopology::PinHelperThread("held-label lander");
+    auto& state = HeldLanderState();
+    constexpr auto LongestWait = std::chrono::milliseconds(4);
+    constexpr auto IdlePoll = std::chrono::microseconds(500);
+    constexpr std::uint32_t LongestBackoff = 5;
+    auto& mutex = GuestMemory::GpuMutex();
+    for (;;) {
+        {
+            std::unique_lock lock(state.mutex);
+            state.wake.wait(lock, [&] { return state.pauses != 0 || heldLabels.load(std::memory_order_acquire) != 0; });
+            if (state.pauses != 0) return;
+        }
+        bool locked = false;
+        for (std::uint32_t backoff = 1; !locked; backoff = std::min(backoff * 2, 1u << LongestBackoff)) {
+            locked = mutex.try_lock();
+            if (locked) break;
+            if (HeldLanderPaused()) return;
+            if (heldLabels.load(std::memory_order_acquire) == 0) break;
+            PreciseSleepUs(32ull * backoff);
+        }
+        if (!locked) continue;
+        HeldLanding next;
+        VkDevice device = VK_NULL_HANDLE;
+        VkSemaphore semaphore = VK_NULL_HANDLE;
+        PFN_vkWaitSemaphoresKHR waitSemaphores = nullptr;
+        std::optional<UnlockedWaiter> waiter;
+        try {
+            if (auto* recorder = activeRecorder; recorder != nullptr) {
+                next = recorder->landHeld(HeldLabelDeadline());
+                if (next.serial != 0 && recorder->timeline != VK_NULL_HANDLE) waitSemaphores = recorder->context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR");
+                if (waitSemaphores != nullptr) {
+                    device = recorder->context.device;
+                    semaphore = recorder->timeline;
+                    waiter.emplace(recorder->id);
+                }
+            }
+        } catch (const std::exception& error) {
+            mutex.unlock();
+            HeldLanderFailed(error.what());
+            return;
+        }
+        mutex.unlock();
+        auto wait = next.pause != std::chrono::steady_clock::duration::zero() ? std::min<std::chrono::steady_clock::duration>(next.pause, LongestWait) : std::chrono::steady_clock::duration(LongestWait);
+        if (waiter.has_value()) {
+            VkSemaphoreWaitInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
+            info.semaphoreCount = 1;
+            info.pSemaphores = &semaphore;
+            info.pValues = &next.serial;
+            const auto result = waitSemaphores(device, &info, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(wait).count()));
+            waiter.reset();
+            if (result == VK_SUCCESS || result == VK_TIMEOUT) continue;
+            const auto what = "timeline wait failed (Vulkan result " + std::to_string(static_cast<int>(result)) + ")";
+            HeldLanderFailed(what.c_str());
+            return;
+        }
+        if (next.serial != 0 || next.pause == std::chrono::steady_clock::duration::zero()) wait = std::min<std::chrono::steady_clock::duration>(wait, IdlePoll);
+        std::unique_lock lock(state.mutex);
+        state.wake.wait_for(lock, wait, [&] { return state.pauses != 0; });
+        if (state.pauses != 0) return;
+    }
 }
 
 void Recorder::WaitSerial(std::uint64_t serial) {
