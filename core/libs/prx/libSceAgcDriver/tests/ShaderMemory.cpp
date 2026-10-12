@@ -2556,6 +2556,7 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     auto legacy = decodeBase64(merged);
     legacy.pop_back();
+    legacy.pop_back();
     legacy[4] = 23u;
     const auto upgraded = serializer.Deserialize(encodeBase64(legacy));
     require(upgraded.request.graphics.has_value() && upgraded.request.graphics->tessellation.has_value() && !upgraded.request.graphics->tessellation->mergedHull, "a version 23 tessellation request read a merged hull flag");
