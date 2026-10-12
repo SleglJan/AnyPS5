@@ -992,14 +992,13 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     if (!decoded.roles.empty() && decoded.roles.back() == ShaderRecompiler::ProgramRole::Fragment) expected.push_back(ShaderRecompiler::ProgramRole::Fragment);
     require(expected == decoded.roles, "graphics ABI linked programs do not match the stage routing");
     std::vector<ShaderRecompiler::LinkedProgram> linked;
-    std::vector<ShaderRecompiler::MemoryRegion> memory;
+    const auto memory = ProgramMemory(decoded.programs);
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
         const auto& program = decoded.programs[index];
         require(program.snapshot != nullptr && program.codeOffset < program.snapshot->code.size(), "graphics ABI has an invalid registered entry point");
         const auto code = std::span(program.snapshot->code).subspan(program.codeOffset);
         require(program.binary.code.data() == code.data() && program.binary.code.size() == code.size() && program.binary.codeAddress == program.snapshot->codeAddress + program.codeOffset * sizeof(std::uint32_t), "graphics ABI entry point differs from its snapshot");
         linked.push_back({decoded.roles[index], program.binary, program.userDataBase, program.firstUserSgpr, program.userData});
-        memory.insert(memory.end(), program.memory.begin(), program.memory.end());
     }
     std::vector<PreparedGraphicsStage> prepared;
     std::uint32_t pushOffset = 0;
