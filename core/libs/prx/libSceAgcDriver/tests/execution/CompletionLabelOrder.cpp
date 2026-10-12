@@ -170,6 +170,17 @@ constexpr std::uint32_t BoundTarget = 0x2468ace0u;
 constexpr std::size_t OverLabelOffset = 320;
 constexpr std::uint32_t HeldValue = 1u;
 constexpr std::uint32_t LaterValue = 2u;
+constexpr std::size_t SubmittedLabelOffset = 384;
+constexpr std::size_t OpenLabelOffset = 448;
+
+bool Lands(const GuestBlock& block, std::size_t offset, std::uint32_t value, std::chrono::milliseconds bound) {
+    const auto until = std::chrono::steady_clock::now() + bound;
+    while (std::chrono::steady_clock::now() < until) {
+        if (Word(block, offset) == value) return true;
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    return Word(block, offset) == value;
+}
 
 }
 
@@ -179,7 +190,8 @@ constexpr std::uint32_t LaterValue = 2u;
 // value; (b) a WAIT_REG_MEM on the held label is answered by the label table at once (no wait on
 // the reap), and a waiter that submits and reaps, as a queue worker does for a refused late
 // label, sees it land in guest memory after the copied results; (d) a plain store recorded over a
-// held label lands after it, not under it.
+// held label lands after it, not under it; (e) a held label lands within a bounded time with
+// nothing further from the recording thread, in a submitted batch and in the open one.
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_CPU_COPIES", "1");
@@ -249,14 +261,17 @@ int main() {
 
         const auto thirdOutput = third.Address() + 4u;
         RecordDispatch(*device, input, thirdOutput);
-        const int waitReason = HoldLabel(*device, labels.Address() + WaitLabelOffset, Label, 3);
-        Require(waitReason == 5, "completion label order: the waited label was not kept behind the write-back (reason " + std::to_string(waitReason) + ")");
+        int waitReason = -1;
         AgcDriver::Graphics::Recorder::LabelRefusal refusal{};
         std::optional<AgcDriver::Graphics::Recorder::LabelHit> hit;
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            const auto bytes = std::as_bytes(std::span(&Label, 1));
+            waitReason = device->WriteLabelOnGpu(labels.Address() + WaitLabelOffset, bytes, 3, 0, false, true);
             hit = device->PendingLabel(labels.Address() + WaitLabelOffset, 4, 0, &refusal);
+            device->SubmitRecorded(true);
         }
+        Require(waitReason == 5, "completion label order: the waited label was not kept behind the write-back (reason " + std::to_string(waitReason) + ")");
         Require(hit.has_value() && hit->value == Label, "completion label order: the label table does not answer a wait on the held label with its value (refusal " + std::to_string(static_cast<int>(refusal)) + ")");
         bool landed = false;
         std::thread waiter([&] {
@@ -296,6 +311,22 @@ int main() {
         char overLine[200];
         std::snprintf(overLine, sizeof(overLine), "completion label order: a store recorded after a held label (reason %d) holds 0x%08x after the reap, not its value 0x%08x", laterReason, Word(labels, OverLabelOffset), LaterValue);
         Require(Word(labels, OverLabelOffset) == LaterValue, overLine);
+
+        const GuestBlock sixth(Fill, false);
+        const auto sixthOutput = sixth.Address() + 4u;
+        RecordDispatch(*device, input, sixthOutput);
+        const int submittedReason = HoldLabel(*device, labels.Address() + SubmittedLabelOffset, Label, 7);
+        Require(submittedReason == 5, "completion label order: the submitted label was not kept behind the write-back (reason " + std::to_string(submittedReason) + ")");
+        Require(Lands(labels, SubmittedLabelOffset, Label, std::chrono::milliseconds(2000)), "completion label order: a held label in a submitted batch did not land within 2 s with no reap by the recording thread");
+        Require(Stored(sixth, sixthOutput), "completion label order: a held label landed before the dispatch's copied results");
+        const GuestBlock seventh(Fill, false);
+        const auto seventhOutput = seventh.Address() + 4u;
+        RecordDispatch(*device, input, seventhOutput);
+        const int openReason = HoldLabel(*device, labels.Address() + OpenLabelOffset, Label, 8, false);
+        Require(openReason == 5, "completion label order: the open-batch label was not kept behind the write-back (reason " + std::to_string(openReason) + ")");
+        Require(Lands(labels, OpenLabelOffset, Label, std::chrono::milliseconds(2000)), "completion label order: a held label left in the open batch did not land within 2 s with no submit by the recording thread");
+        Require(Stored(seventh, seventhOutput), "completion label order: a held label in the open batch landed before the dispatch's copied results");
+        device->WaitIdle();
         std::printf("completion label order tests passed (polled label %s before the reap)\n", seenEarly ? "seen" : "not seen");
         return 0;
     } catch (const std::exception& error) {
