@@ -78,6 +78,7 @@ private:
     std::size_t capacity;
     VkDeviceSize allocationBytes = 0;
     VkBufferUsageFlags usage;
+    bool pooled = true;
     std::shared_ptr<BufferPool> cache;
 };
 

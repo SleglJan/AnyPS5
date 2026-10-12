@@ -43,6 +43,7 @@ struct MockDevice {
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     std::uint64_t attempts = 0;
+    std::vector<std::uint32_t> attemptedTypes;
 };
 
 MockDevice mock;
@@ -61,6 +62,7 @@ VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer bu
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
     ++mock.attempts;
+    mock.attemptedTypes.push_back(info->memoryTypeIndex);
     auto result = VK_SUCCESS;
     if (!mock.results.empty()) {
         result = mock.results.front();
@@ -459,6 +461,38 @@ void AllocationFailure(VkResult initial, VkResult final, bool cached) {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "failure cleanup leaked a resource");
 }
 
+void DeviceBufferHostFallback(VkResult fallbackResult) {
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        context.memory.memoryTypes[1].heapIndex = 1;
+        mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY, fallbackResult};
+        const auto before = mock.attempts;
+        std::string failure;
+        bool typed = false;
+        try {
+            DeviceBuffer buffer(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            Expect(mock.attemptedTypes.size() == 2 && mock.attemptedTypes[0] == 0 && mock.attemptedTypes[1] == 1, "a device buffer did not fall back to the host-visible type on the other heap");
+            Expect(mock.liveBytes == 4 * MiB, "the host fallback did not allocate the device buffer");
+        } catch (const OutOfDeviceMemory& error) {
+            failure = error.what();
+            typed = true;
+        } catch (const std::exception& error) {
+            failure = error.what();
+        }
+        Expect(mock.attempts == before + 2, "the host fallback was not tried exactly once after the device-local attempt");
+        if (fallbackResult == VK_SUCCESS) {
+            Expect(failure.empty(), "a device buffer threw although the host fallback succeeded: " + failure);
+            Expect(mock.liveBytes == 0 && mock.frees == 1, "a host fallback allocation was kept in the device buffer pool");
+            DeviceBuffer next(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            Expect(mock.attemptedTypes.back() == 0, "a later device buffer did not try device-local memory first");
+        } else {
+            Expect(typed && failure.find("Vulkan result " + std::to_string(fallbackResult)) != std::string::npos, "a failed host fallback did not report OutOfDeviceMemory with its result");
+        }
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "the host fallback leaked a resource");
+}
+
 void SuccessfulAllocationKeepsPool() {
     mock = MockDevice{};
     {
@@ -514,6 +548,8 @@ int main() {
         AllocationFailure(VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_DEVICE_LOST, true);
         SuccessfulAllocationKeepsPool();
         PartialSlabDoesNotRetry();
+        DeviceBufferHostFallback(VK_SUCCESS);
+        DeviceBufferHostFallback(VK_ERROR_OUT_OF_HOST_MEMORY);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
