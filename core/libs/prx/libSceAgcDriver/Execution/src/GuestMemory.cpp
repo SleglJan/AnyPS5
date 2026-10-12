@@ -31,6 +31,8 @@
 #else
 #include <cerrno>
 #include <cstdint>
+#include <dlfcn.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <fstream>
 #include <pthread.h>
@@ -47,6 +49,37 @@ void require(bool condition, const char* reason) {
 }
 
 // A code address relative to its module, for symbolizing debug traces with nm.
+// Diagnostic (local branch): "module+offset" of a code address and a short backtrace, for the
+// APS5_TRACE_UNREADABLE lines.
+std::string CallerText(const void* address) {
+    char text[256];
+#ifdef _WIN32
+    std::snprintf(text, sizeof(text), "+0x%llx", ModuleOffset(address));
+#else
+    Dl_info module{};
+    if (::dladdr(address, &module) != 0 && module.dli_fbase != nullptr) {
+        const char* name = module.dli_fname != nullptr ? std::strrchr(module.dli_fname, '/') : nullptr;
+        name = name != nullptr ? name + 1 : (module.dli_fname != nullptr ? module.dli_fname : "?");
+        std::snprintf(text, sizeof(text), "%s+0x%llx", name, static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module.dli_fbase)));
+    } else {
+        std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address)));
+    }
+#endif
+    return text;
+}
+
+std::string BacktraceText() {
+#ifdef _WIN32
+    return {};
+#else
+    void* frames[12];
+    const int count = ::backtrace(frames, 12);
+    std::string text;
+    for (int index = 1; index < count; ++index) text += " " + CallerText(frames[index]);
+    return text;
+#endif
+}
+
 unsigned long long ModuleOffset(const void* address) {
 #ifdef _WIN32
     HMODULE module = nullptr;
@@ -667,7 +700,7 @@ void CheckRange(const void* pointer, std::size_t bytes, std::size_t alignment, b
     if (!reason.empty()) {
         // Debug aid: APS5_TRACE_UNREADABLE names the code that checked an inaccessible range.
         static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
-        if (trace) std::fprintf(stderr, "[unreadable] %s from +0x%llx\n", reason.c_str(), ModuleOffset(__builtin_return_address(0)));
+        if (trace) std::fprintf(stderr, "[unreadable] %s from %s; stack%s\n", reason.c_str(), CallerText(__builtin_return_address(0)).c_str(), BacktraceText().c_str());
         require(false, reason.c_str());
     }
 }
@@ -1847,7 +1880,7 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
         CheckRange(source, destination.size(), alignment);
     } catch (const std::runtime_error&) {
         static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
-        if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(__builtin_return_address(0)));
+        if (trace) std::fprintf(stderr, "[unreadable]   read from %s\n", CallerText(__builtin_return_address(0)).c_str());
         throw;
     }
     std::memcpy(destination.data(), source, destination.size());
