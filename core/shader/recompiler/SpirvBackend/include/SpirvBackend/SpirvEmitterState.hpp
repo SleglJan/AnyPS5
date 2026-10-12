@@ -82,6 +82,7 @@ struct SpirvTableAccess {
     std::uint32_t dword3 = 0;
     std::uint32_t samplerElement = 0;
     bool active = false;
+    bool storage = false;
 };
 
 struct SpirvEmitterState {

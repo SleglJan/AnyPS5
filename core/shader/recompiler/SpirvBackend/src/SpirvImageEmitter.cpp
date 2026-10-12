@@ -1640,19 +1640,23 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto element = TableMapAt(state, record, ImageTableAbi::ImageRecordElement);
         const auto rejected = both(selected, flagged(flags));
         EmitTableFault(ctx, inst, word, flags, both(exec, rejected));
-        const auto inBounds = Binary(state, spv::OpULessThan, boolean, element, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementCount)));
+        const bool storage = base.resourceClass == ImageResourceClass::Storage;
+        const auto sampledCount = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementCount));
+        const auto inBounds = Binary(state, spv::OpULessThan, boolean, element, storage ? LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderStorageElementCount)) : sampledCount);
         const auto outside = both(both(selected, negate(rejected)), negate(inBounds));
         EmitTableFault(ctx, inst, word, ConstantU32(state, ImageTableAbi::OutsideSnapshotPoison), both(exec, outside));
         const auto checked = both(both(selected, negate(rejected)), inBounds);
-        const auto faults = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementFaults));
+        auto faults = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementFaults));
+        if (storage) faults = Binary(state, spv::OpIAdd, u32, faults, sampledCount);
         const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, faults, element), ConstantU32(state, 0u)));
         const auto driverRejected = both(checked, flagged(driverFault));
         EmitTableFault(ctx, inst, word, driverFault, both(exec, driverRejected));
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        state.tableAccess.element = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, storage ? ImageTableAbi::HeaderStorageElementBase : ImageTableAbi::HeaderElementBase)), element);
         DecorateTableNonUniform(state, state.tableAccess.element);
+        state.tableAccess.storage = storage;
         state.tableAccess.dword3 = dword3;
     }
     if (tableSampler) {

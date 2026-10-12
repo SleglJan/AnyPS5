@@ -3021,6 +3021,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.partiallyBound = state->partiallyBound;
     context.variableDescriptorCount = state->variableDescriptorCount;
     context.imageTableCapacity = ImageTableCapacity(context);
+    context.imageTableStorageCapacity = ImageTableStorageCapacity(context);
     context.samplerTableCapacity = SamplerTableCapacity(context);
     context.geometryShader = state->geometryShader;
     context.sampleRateShading = state->sampleRateShading;

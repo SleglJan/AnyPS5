@@ -7,7 +7,7 @@
 
 namespace ShaderRecompiler::ImageTableAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;
@@ -17,7 +17,9 @@ inline constexpr std::uint32_t HeaderPoisonCount = 4;
 inline constexpr std::uint32_t HeaderElementFaults = 5;
 inline constexpr std::uint32_t HeaderSamplerFaults = 6;
 inline constexpr std::uint32_t HeaderTableCount = 7;
-inline constexpr std::uint32_t HeaderWords = 8;
+inline constexpr std::uint32_t HeaderStorageElementBase = 8;
+inline constexpr std::uint32_t HeaderStorageElementCount = 9;
+inline constexpr std::uint32_t HeaderWords = 10;
 
 inline constexpr std::uint32_t TableMapStart = 0;
 inline constexpr std::uint32_t TableKeyCount = 1;
@@ -51,6 +53,7 @@ inline constexpr std::uint32_t FirstEntryPoison = 2;
 inline constexpr std::uint32_t MaxKeys = 65536;
 inline constexpr std::uint32_t MaxModes = 256;
 inline constexpr std::uint32_t ImageElementBudget = 65536;
+inline constexpr std::uint32_t StorageElementBudget = 1024;
 inline constexpr std::uint32_t SamplerElementBudget = 1024;
 
 enum class PoisonReason : std::uint32_t {

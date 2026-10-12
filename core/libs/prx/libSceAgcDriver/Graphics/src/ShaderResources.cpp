@@ -1740,18 +1740,27 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             const auto& map = table.map;
             Require(map.size() >= ShaderRecompiler::ImageTableAbi::HeaderWords, "image table map is truncated");
             const auto elements = table.images != nullptr ? table.images->count : 0u;
-            Require(map[ShaderRecompiler::ImageTableAbi::HeaderElementCount] == elements, "image table map disagrees with its image binding");
+            const auto sampledElements = map[ShaderRecompiler::ImageTableAbi::HeaderElementCount];
+            const auto storageElements = map[ShaderRecompiler::ImageTableAbi::HeaderStorageElementCount];
+            Require(static_cast<std::uint64_t>(sampledElements) + storageElements == elements, "image table map disagrees with its image binding");
             const auto faults = map[ShaderRecompiler::ImageTableAbi::HeaderElementFaults];
             const auto samplerFaults = map[ShaderRecompiler::ImageTableAbi::HeaderSamplerFaults];
             Require(static_cast<std::uint64_t>(faults) + elements <= map.size() && static_cast<std::uint64_t>(samplerFaults) + map[ShaderRecompiler::ImageTableAbi::HeaderSamplerCount] / 4u <= map.size(), "image table map is truncated");
             if (table.images == nullptr) continue;
             table.elementBase = tableElements;
             table.map[ShaderRecompiler::ImageTableAbi::HeaderElementBase] = table.elementBase;
-            tableElements += elements;
+            tableElements += sampledElements;
+            table.storageElementBase = tableStorageElements;
+            table.map[ShaderRecompiler::ImageTableAbi::HeaderStorageElementBase] = table.storageElementBase;
+            tableStorageElements += storageElements;
             tableFlags |= VulkanStage(table.stage);
         }
         if (tableFlags != 0) {
             Require(context.imageTableCapacity != 0, "image tables need runtimeDescriptorArray, descriptorBindingPartiallyBound and descriptorBindingVariableDescriptorCount, which the device lacks");
+            if (context.imageTableStorageCapacity != 0) {
+                bindings.push_back({{ShaderRecompiler::RuntimeAbi::ImageTableStorageBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, context.imageTableStorageCapacity, tableFlags, nullptr}, {}, {}, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT});
+                tableStorageBinding = bindings.size() - 1u;
+            }
             bindings.push_back({{ShaderRecompiler::RuntimeAbi::ImageTableBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, context.imageTableCapacity, tableFlags, nullptr}, {}, {}, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT});
             tableBinding = bindings.size() - 1u;
         }
@@ -1792,7 +1801,8 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             if (storageBuffers != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(storageBuffers)});
             const auto tableDescriptors = tableBinding != std::numeric_limits<std::size_t>::max() ? std::max(1u, std::min(tableElements, context.imageTableCapacity)) : 0u;
             if (plannedSampledImages + tableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, plannedSampledImages + tableDescriptors});
-            if (plannedStorageImages != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages});
+            const auto storageTableDescriptors = tableStorageBinding != std::numeric_limits<std::size_t>::max() ? context.imageTableStorageCapacity : 0u;
+            if (plannedStorageImages + storageTableDescriptors != 0) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, plannedStorageImages + storageTableDescriptors});
             std::uint32_t samplerDescriptors = 0;
             for (const auto& binding : bindings) {
                 if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) samplerDescriptors += binding.layout.descriptorCount;
@@ -1897,6 +1907,7 @@ void ShaderResources::buildComplete() {
                         for (auto element = first; element < last; ++element) {
                             const auto index = binding.imageAllocations[element];
                             if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) images.push_back({samplers[index]->Handle(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
+                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index]), VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         writes.push_back(write);
@@ -4126,6 +4137,16 @@ std::uint32_t ImageTableCapacity(const Context& context) {
     return static_cast<std::uint32_t>(capacity);
 }
 
+std::uint32_t ImageTableStorageCapacity(const Context& context) {
+    if (ImageTableCapacity(context) == 0u) return 0u;
+    constexpr std::uint64_t storageHeaps = static_cast<std::uint64_t>(static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers) - ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding) * ShaderRecompiler::RuntimeAbi::StorageHeapCapacity;
+    const auto room = [](std::uint64_t limit, std::uint64_t reserve) { return limit > reserve ? limit - reserve : 0u; };
+    std::uint64_t capacity = ShaderRecompiler::ImageTableAbi::StorageElementBudget;
+    capacity = std::min(capacity, room(context.limits.maxPerStageDescriptorStorageImages, storageHeaps));
+    capacity = std::min(capacity, room(context.limits.maxDescriptorSetStorageImages, storageHeaps * ShaderRecompiler::RuntimeAbi::StageCount));
+    return static_cast<std::uint32_t>(capacity);
+}
+
 std::uint32_t SamplerTableCapacity(const Context& context) {
     if (!context.runtimeDescriptorArray || !context.partiallyBound) return 0u;
     const auto room = [](std::uint64_t limit, std::uint64_t reserve) { return limit > reserve ? limit - reserve : 0u; };
@@ -4212,10 +4233,44 @@ void ShaderResources::resolveImageTables() {
     auto& counters = TextureCounts();
     auto& item = bindings[tableBinding];
     item.imageAllocations.assign(std::min(tableElements, context.imageTableCapacity), std::numeric_limits<std::size_t>::max());
+    auto* storageItem = tableStorageBinding != std::numeric_limits<std::size_t>::max() ? &bindings[tableStorageBinding] : nullptr;
+    if (storageItem != nullptr) storageItem->imageAllocations.assign(context.imageTableStorageCapacity, std::numeric_limits<std::size_t>::max());
     for (auto& table : tableStages) {
         if (table.images == nullptr) continue;
         const auto& binding = *table.images;
         const auto faults = table.map[ShaderRecompiler::ImageTableAbi::HeaderElementFaults];
+        const auto sampledCount = table.map[ShaderRecompiler::ImageTableAbi::HeaderElementCount];
+        const auto storageElement = [&](std::uint32_t element) { return element < binding.imageWritten.size() && binding.imageWritten[element]; };
+        const auto bindStorage = [&](std::uint32_t element, std::span<const std::uint32_t> words) {
+            const auto absolute = static_cast<std::uint64_t>(table.storageElementBase) + (element - sampledCount);
+            if (storageItem == nullptr || absolute >= context.imageTableStorageCapacity) {
+                table.map[faults + element] = rejectTableElement(table, words, "the image table exceeds the device's capacity of " + std::to_string(context.imageTableStorageCapacity) + " storage images");
+                return;
+            }
+            try {
+                const auto resource = DecodeTextureResource(words);
+                const auto shape = binding.imageShapes.at(element);
+                const bool firstLayer = shape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
+                if (!firstLayer && !MatchesGuestDimension(shape, resource.dimension)) throw std::runtime_error("AGC graphics: guest storage texture dimension disagrees with the table entry's image shape");
+                const auto guestBytes = DescribeSurface(resource).guestBytes;
+                static_cast<void>(ResolveTextureFormat(resource.format));
+                const auto mip = resource.baseLevel;
+                Require(resource.minLod <= mip * 256u, "guest storage texture descriptor clamps its minimum LOD above the level it addresses, which is not implemented");
+                if (!DepthSurfaceAt(resource.baseAddress)) RetireDepthSurfaces(context.device, resource.baseAddress, guestBytes);
+                auto texture = cachedStorageTexture(context, words, resource, mip, guestBytes, true);
+                storageTextures.push_back(std::move(texture));
+                storageMips.push_back(mip);
+                storageKeys.push_back(resource.dccAddress);
+                storageFirstLayer.push_back(firstLayer);
+                storageWritten.push_back(true);
+                storageAtomic.push_back(false);
+                storageAtomic64.push_back(false);
+                describedRanges.push_back({"storage", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
+                storageItem->imageAllocations[static_cast<std::size_t>(absolute)] = storageTextures.size() - 1u;
+            } catch (const std::runtime_error& error) {
+                table.map[faults + element] = rejectTableElement(table, words, error.what());
+            }
+        };
         const auto stageSamplers = std::span<const std::shared_ptr<Sampler>>(samplers).subspan(table.firstSampler, table.samplerCount);
         table.elementTextures.assign(binding.count, std::numeric_limits<std::size_t>::max());
         const auto capacityMessage = [&] { return "the image table exceeds the device's capacity of " + std::to_string(context.imageTableCapacity) + " images"; };
@@ -4267,6 +4322,11 @@ void ShaderResources::resolveImageTables() {
         bool reusable = state.epoch != 0;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+            if (storageElement(element)) {
+                bindStorage(element, words);
+                reusable = false;
+                continue;
+            }
             const auto absolute = static_cast<std::uint64_t>(table.elementBase) + element;
             if (absolute >= context.imageTableCapacity) {
                 table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
