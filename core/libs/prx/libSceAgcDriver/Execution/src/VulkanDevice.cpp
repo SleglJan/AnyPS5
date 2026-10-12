@@ -3251,6 +3251,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
+    target.imageTableStorage = Graphics::ImageTableStorageCapacity(limits, state->runtimeDescriptorArray && state->descriptorBindingPartiallyBound && state->descriptorBindingVariableDescriptorCount && state->descriptorIndexing) != 0u && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageImageArrayDynamicIndexing)) != state->capabilities.end();
     target.fixedPushSlots = state->graphicsPipelineLibrary;
     target.registrationModules = state->graphicsPipelineLibrary;
     target.srgbDecodeFormats = state->srgbDecodeFormats;

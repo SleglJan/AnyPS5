@@ -41,6 +41,9 @@ DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::ImageTable) {
         return DescriptorKind::SampledImage;
     }
+    if (kind == DescriptorBindingKind::ImageTableStorage) {
+        return DescriptorKind::StorageImage;
+    }
     const ImageResourceClass imageClass = ImageBindingResourceClass(kind);
     if (imageClass == ImageResourceClass::Sampled) {
         return DescriptorKind::SampledImage;
@@ -81,6 +84,9 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
     }
     if (kind == DescriptorBindingKind::ImageTableMap) {
         return DescriptorRole::ImageTableMap;
+    }
+    if (kind == DescriptorBindingKind::ImageTableStorage) {
+        return DescriptorRole::ImageTableStorage;
     }
     if (ImageBindingResourceClass(kind) != ImageResourceClass::None) {
         return DescriptorRole::GuestImages;
@@ -547,16 +553,18 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             }
             break;
         case DescriptorRole::ImageTable:
+        case DescriptorRole::ImageTableStorage: {
             if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
-            physical.guestDescriptor.reserve((tables->elements.size() + tables->storageElements.size()) * 8u);
-            for (const auto* list : {&tables->elements, &tables->storageElements})
-            for (const auto& element : *list) {
+            const bool storage = physical.role == DescriptorRole::ImageTableStorage;
+            const auto& elements = storage ? tables->storageElements : tables->elements;
+            physical.guestDescriptor.reserve(elements.size() * 8u);
+            for (const auto& element : elements) {
                 physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
                 ImageResource shape;
                 shape.dimension = element.dimension;
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
-                physical.imageWritten.push_back(list == &tables->storageElements);
+                physical.imageWritten.push_back(storage);
                 physical.imageAtomic.push_back(false);
                 std::uint32_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
@@ -564,8 +572,9 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 }
                 physical.imageSamplers.push_back(samplers);
             }
-            physical.count = static_cast<std::uint32_t>(tables->elements.size() + tables->storageElements.size());
+            physical.count = static_cast<std::uint32_t>(elements.size());
             break;
+        }
         case DescriptorRole::SamplerTable:
             if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
             physical.guestDescriptor.reserve(tables->samplers.size() * 4u);

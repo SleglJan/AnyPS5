@@ -136,7 +136,7 @@ static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: upda
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
-static_assert(fieldCount<IrResourcePlan>() == 21, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<IrResourcePlan>() == 22, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
@@ -933,6 +933,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.Value(plan.userDataBase);
     writer.Value(plan.userDataCount);
     writer.Value(plan.srgbDecodeFormats);
+    writer.Value(plan.imageTableStorage);
     writer.List(plan.blockStorage, [](Writer& out, const std::unique_ptr<IrBlock>& block) { out.Value(block->Id()); });
     writer.List(plan.valueStorage, [&](Writer& out, const std::unique_ptr<IrValue>& value) {
         const auto bank = static_cast<std::uint32_t>(value->Register().bank);
@@ -1011,6 +1012,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Value(plan.userDataBase);
     reader.Value(plan.userDataCount);
     reader.Value(plan.srgbDecodeFormats);
+    reader.Value(plan.imageTableStorage);
     std::vector<std::uint32_t> blockIds;
     reader.Values(blockIds);
     std::vector<PlanValueRecord> records;

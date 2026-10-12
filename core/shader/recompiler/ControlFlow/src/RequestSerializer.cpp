@@ -777,6 +777,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
     if (request.graphics.has_value() && request.graphics->tessellation.has_value()) writer.WriteBool(request.graphics->tessellation->mergedHull);
+    writer.WriteBool(request.target.imageTableStorage);
     return base64Encode(buffer);
 }
 
@@ -811,6 +812,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 18u) result.request.target.vertexSubgroups = reader.ReadBool();
     if (version >= 21u) result.request.target.float16DenormPreserve = reader.ReadBool();
     if (version >= 24u && result.request.graphics.has_value() && result.request.graphics->tessellation.has_value()) result.request.graphics->tessellation->mergedHull = reader.ReadBool();
+    if (version >= 24u) result.request.target.imageTableStorage = reader.ReadBool();
     return result;
 }
 

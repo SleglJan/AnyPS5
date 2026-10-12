@@ -75,6 +75,7 @@ void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
     if (!state.tableIndexNonUniform) return;
     state.module.EmitCapability(spv::CapabilityShaderNonUniform);
     state.module.EmitCapability(spv::CapabilitySampledImageArrayNonUniformIndexing);
+    if (state.storageTableArrays) state.module.EmitCapability(spv::CapabilityStorageImageArrayNonUniformIndexing);
     state.module.AddAnnotation(spv::OpDecorate, id, spv::DecorationNonUniform);
 }
 

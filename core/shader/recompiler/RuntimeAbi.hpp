@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 12u;
+inline constexpr std::uint32_t Version = 13u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t StageCount = 4u;
@@ -30,7 +30,8 @@ enum class Binding : std::uint32_t {
     SamplerTable = 63u,
     ImageTableMap = 64u,
     Count = 65u,
-    ImageTable = 256u
+    ImageTable = 256u,
+    ImageTableStorage = 257u
 };
 
 enum class Stage : std::uint32_t { Main, Fragment, TessellationControl, TessellationEvaluation };
@@ -101,6 +102,7 @@ inline constexpr std::uint32_t ImageTableBinding = ImageTableStorageBinding + 1u
 
 inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
     if (binding == Binding::ImageTable) return ImageTableBinding;
+    if (binding == Binding::ImageTableStorage) return ImageTableStorageBinding;
     const auto group = static_cast<std::uint32_t>(stage);
     const auto index = static_cast<std::uint32_t>(binding);
     const auto count = static_cast<std::uint32_t>(Binding::Count);

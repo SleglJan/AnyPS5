@@ -436,6 +436,7 @@ void verifyKeySensitivity() {
     changes("the narrow subgroup clock", [](SampleRequest& sample) { sample.request.target.narrowSubgroupClock = true; });
     changes("f64 denormal preservation", [](SampleRequest& sample) { sample.request.target.float64DenormPreserve = true; });
     changes("f16 denormal preservation", [](SampleRequest& sample) { sample.request.target.float16DenormPreserve = true; });
+    changes("image table stores", [](SampleRequest& sample) { sample.request.target.imageTableStorage = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -1283,6 +1284,7 @@ IrResourcePlan handBuiltPlan() {
     plan.userDataBase = 2u;
     plan.userDataCount = 4u;
     plan.srgbDecodeFormats = 5u;
+    plan.imageTableStorage = true;
     MemoryInfo memory;
     memory.kind = ResourceKind::Image;
     memory.resource = 1u;
@@ -1420,7 +1422,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
             if (!sameBlock(a.PhiBlock(operand), b.PhiBlock(operand))) return false;
         }
     }
-    if (left.stage != right.stage || left.shaderHash != right.shaderHash || left.userDataBase != right.userDataBase || left.userDataCount != right.userDataCount || left.srgbDecodeFormats != right.srgbDecodeFormats) return false;
+    if (left.stage != right.stage || left.shaderHash != right.shaderHash || left.userDataBase != right.userDataBase || left.userDataCount != right.userDataCount || left.srgbDecodeFormats != right.srgbDecodeFormats || left.imageTableStorage != right.imageTableStorage) return false;
     if (left.memoryInfo != right.memoryInfo || left.descriptorSources.size() != right.descriptorSources.size() || left.controlFlow.size() != right.controlFlow.size() || left.srtReads.size() != right.srtReads.size()) return false;
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];

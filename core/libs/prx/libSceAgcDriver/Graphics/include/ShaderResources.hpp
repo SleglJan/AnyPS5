@@ -336,6 +336,7 @@ private:
         ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Compute;
         const ShaderRecompiler::RecompileResult* program = nullptr;
         const ShaderRecompiler::DescriptorBinding* images = nullptr;
+        const ShaderRecompiler::DescriptorBinding* storageImages = nullptr;
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
