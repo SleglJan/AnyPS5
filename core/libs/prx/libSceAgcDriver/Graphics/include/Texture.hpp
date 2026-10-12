@@ -196,6 +196,8 @@ public:
     bool AnyPending() const;
     const char* LastUploadReason() const { return lastUploadReason; }
     static void FlushAllPending(const char* reason);
+    static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
+    static std::size_t StoreSmallPending(const char* reason);
     static bool AnyPending();
     static void FlushDumpSelected(const char* reason);
     static bool StoreAtFlipRequested(const char* value);
