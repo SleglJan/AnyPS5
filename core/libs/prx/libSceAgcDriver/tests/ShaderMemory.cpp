@@ -1190,11 +1190,12 @@ void verifyImageTableRegistration() {
     const std::vector<std::uint32_t> storeCode{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0200f08u, 0x00050200u, 0xbf810000u};
     const auto store = CompileTable(TableRequest(storeCode, userData));
     const auto& storePlan = *store.capture->plan;
-    require(storePlan.info.images.size() == 1u && storePlan.info.images[0].table == 0u && storePlan.info.images[0].tableOperation == TableOperation::Unsupported, "image table registration: a table T# feeding image_store was not an unsupported table operation");
+    require(storePlan.info.images.size() == 1u && storePlan.info.images[0].table == 0u && storePlan.info.images[0].tableOperation != TableOperation::Unsupported, "image table registration: a table T# feeding image_store was marked an unsupported table operation");
     const auto& storeMap = TableMap(*store.result);
-    const auto storeFault = storeMap[Abi::TableHeader(0) + Abi::TableFault];
-    require((storeFault & Abi::PoisonFlag) != 0u && store.result->imageTablePoison.at(storeFault & ~Abi::PoisonFlag).reason == static_cast<std::uint32_t>(Abi::PoisonReason::UnsupportedOperation) && store.result->imageTableFaults != 0u, "image table registration: the store's table does not fault on use");
-    require(TableBinding(*store.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*store.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: an unsupported table bound elements");
+    require(storeMap[Abi::TableHeader(0) + Abi::TableFault] == 0u && store.result->imageTableFaults == 0u, "image table registration: a table feeding image_store was poisoned");
+    const auto* storeBinding = TableBinding(*store.result, DescriptorRole::ImageTable);
+    require(storeBinding != nullptr && storeBinding->count != 0u && storeBinding->count == storeMap[Abi::HeaderStorageElementCount] && storeMap[Abi::HeaderElementCount] == 0u, "image table registration: a table feeding image_store did not bind its entries as storage elements");
+    require(storeBinding->imageWritten.size() == storeBinding->count && std::all_of(storeBinding->imageWritten.begin(), storeBinding->imageWritten.end(), [](bool written) { return written; }), "image table registration: a storage element of a store table is not marked written");
 
     const std::vector<std::uint32_t> compareCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0fc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
     auto compareRequest = TableRequest(compareCode, userData);
