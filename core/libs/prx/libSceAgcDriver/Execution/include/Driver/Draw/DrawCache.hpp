@@ -34,6 +34,10 @@ struct DrawDecode {
 
 void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment);
 
+// The code and header regions of a draw's programs, each once: the local and hull stages of a
+// merged hull program are one binary, and a request's memory regions must not overlap.
+std::vector<ShaderRecompiler::MemoryRegion> ProgramMemory(const std::vector<DrawProgram>& programs);
+
 struct PreparedGraphicsStage {
     std::shared_ptr<const ShaderSnapshot> snapshot;
     PreparedShaders::Entry entry;

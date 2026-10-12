@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,18 @@ std::uint32_t ReadGraphicsRegister(const Registers& registers, std::uint32_t off
     return found == registers.end() ? 0u : found->second;
 }
 
+}
+
+std::vector<ShaderRecompiler::MemoryRegion> ProgramMemory(const std::vector<DrawProgram>& programs) {
+    std::vector<ShaderRecompiler::MemoryRegion> memory;
+    for (const auto& program : programs) {
+        for (const auto& region : program.memory) {
+            if (region.bytes.empty()) continue;
+            const bool listed = std::any_of(memory.begin(), memory.end(), [&](const ShaderRecompiler::MemoryRegion& known) { return known.guestAddress == region.guestAddress && known.bytes.data() == region.bytes.data() && known.bytes.size() == region.bytes.size(); });
+            if (!listed) memory.push_back(region);
+        }
+    }
+    return memory;
 }
 
 void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment) {

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/RequestMemoryView.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -335,6 +336,13 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
         Require(local.binary.stage == ShaderStage::Local && hull.binary.stage == ShaderStage::TessellationControl && local.firstUserSgpr == 8u && hull.firstUserSgpr == 0u && hull.userData.size() == local.userData.size() + 8u, "a merged hull program's stages lost the merged user SGPR layout");
     }
     Require(draw.programs[1].userData[0] == static_cast<std::uint32_t>(pointerAddress) && draw.programs[1].userData[1] == static_cast<std::uint32_t>(pointerAddress >> 32u), "a merged hull draw did not pass its user-data address");
+    const auto programMemory = ProgramMemory(draw.programs);
+    Require(programMemory.size() == 6u, "a merged hull draw's program memory does not list each code and header region once");
+    try {
+        const RequestMemoryView view(programMemory);
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("a merged hull draw's program memory is not a valid request memory: ") + error.what());
+    }
     for (const auto* state : {&unset, &null}) {
         DrawDecode without{};
         without.state = prepared.state;
