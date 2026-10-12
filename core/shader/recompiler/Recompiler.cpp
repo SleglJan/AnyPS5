@@ -1240,7 +1240,7 @@ bool VerifyResultMemo() {
     return verify;
 }
 
-constexpr std::size_t TableMemoEntries = 8;
+constexpr std::size_t TableMemoEntries = 32;
 
 struct ResultMemoCounters {
     std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0}, tableHits{0}, tableMisses{0}, verified{0};
