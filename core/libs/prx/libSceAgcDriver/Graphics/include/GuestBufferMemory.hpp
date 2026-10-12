@@ -63,7 +63,9 @@ bool WatchedImportsStampPages();
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+// `settleHeldLabels`: a GPU reader of the range waits for completion labels kept behind write-backs
+// there (SettleHeldLabels); the store of a label itself passes false.
+const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, bool settleHeldLabels = true);
 void SetHostImportWindow(std::uint64_t bytes);
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice);
 // Whether an existing import covers [address, address + bytes), without reconciling the imports

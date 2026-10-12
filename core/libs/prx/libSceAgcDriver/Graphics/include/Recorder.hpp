@@ -303,6 +303,8 @@ public:
     // where a per-dword lookup would not do.
     bool PendingLabelIn(std::uint64_t address, std::size_t bytes) const;
     bool CompletionLabelIn(std::uint64_t address, std::size_t bytes) const;
+    // The dwords of the recorded labels kept behind completions (stored by the CPU at reap).
+    std::vector<std::pair<std::uint64_t, std::size_t>> HeldLabelRanges() const;
     // PendingLabel of the active recorder WITHOUT GuestMemory::GpuMutex: the table has a small mutex
     // of its own (every mutation holds both), so a WAIT_REG_MEM consults it without queueing behind
     // device work. Nothing is done under the table mutex but the lookup (it never takes the GPU mutex).
@@ -810,6 +812,13 @@ private:
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     bool refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes);
 };
+
+// A completion label kept behind copied write-backs (VulkanDevice::WriteLabelOnGpu) is stored by
+// the CPU when its batch is reaped, not by the GPU. GPU work about to read guest memory in place
+// waits for that store first: SettleHeldLabels for the range it binds, SettleAllHeldLabels for a
+// reader of any registered address (an address-based build).
+void SettleHeldLabels(std::uint64_t address, std::size_t bytes);
+void SettleAllHeldLabels();
 
 }
 
