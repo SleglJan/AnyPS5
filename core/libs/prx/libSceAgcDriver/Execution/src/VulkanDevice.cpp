@@ -543,6 +543,7 @@ struct VulkanDevice::State {
     std::condition_variable aheadReady;
     std::deque<AheadPipeline> ahead;
     std::vector<std::thread> aheadThreads;
+    std::size_t aheadRunning = 0;
     bool aheadStopping = false;
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
@@ -4060,6 +4061,7 @@ std::uint64_t ComputePipelineKey(const ShaderRecompiler::RecompileResult& shader
 }
 
 thread_local bool onAheadPool = false;
+std::atomic<std::uint64_t> aheadQueued{0};
 
 }
 
@@ -4197,18 +4199,30 @@ bool VulkanDevice::HasPipelineForProgram(std::uint64_t programAddress) const {
 }
 
 bool VulkanDevice::CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto declined = [&](const char* reason) {
+        if (profile) std::fprintf(stderr, "[ahead] program 0x%llx not queued: %s\n", static_cast<unsigned long long>(programAddress), reason);
+        return false;
+    };
     const auto threads = AheadPipelineThreads();
-    if (threads == 0 || shader == nullptr || shader->spirv.size() < 5 || shader->spirv[0] != 0x07230203u || !NeedsComputePipeline(*shader)) return false;
+    if (threads == 0 || shader == nullptr) return false;
+    if (shader->spirv.size() < 5 || shader->spirv[0] != 0x07230203u) return declined("no SPIR-V module");
+    if (!NeedsComputePipeline(*shader)) return declined(ComputePipelineKey(*shader) == 0 ? "no pipeline variant" : "its variant has or is getting a pipeline");
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader->runtimeAbiVersion);
     const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, shader.get(), 0};
     auto resources = std::make_shared<Graphics::ShaderResources>(graphicsContext(), compute, snapshots, true, 0);
-    if (resources->Layout() == VK_NULL_HANDLE) return false;
+    if (resources->Layout() == VK_NULL_HANDLE) return declined("its build needs the device lock (address tables)");
     std::lock_guard lock(state->aheadMutex);
     if (state->aheadStopping) return false;
     while (state->aheadThreads.size() < threads) state->aheadThreads.emplace_back([this] { aheadPipelineWorker(); });
     state->ahead.push_back({std::move(shader), std::move(resources), programAddress, std::move(keepAlive)});
     state->aheadReady.notify_one();
+    aheadQueued.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+std::uint64_t VulkanDevice::AheadPipelinesQueued() {
+    return aheadQueued.load(std::memory_order_relaxed);
 }
 
 void VulkanDevice::aheadPipelineWorker() {
@@ -4222,24 +4236,36 @@ void VulkanDevice::aheadPipelineWorker() {
             if (state->aheadStopping) return;
             job = std::move(state->ahead.front());
             state->ahead.pop_front();
+            ++state->aheadRunning;
         }
         try {
             static_cast<void>(computePipeline(*job.shader, *job.resources, job.programAddress, false));
         } catch (const std::exception& error) {
             if (profile) std::fprintf(stderr, "[ahead] pipeline of program 0x%llx failed: %s\n", static_cast<unsigned long long>(job.programAddress), error.what());
         }
+        job = {};
+        std::lock_guard lock(state->aheadMutex);
+        --state->aheadRunning;
     }
 }
 
+// The queued jobs are dropped; a creation already running cannot be cancelled and is waited for
+// (up to one driver compile per pool thread, ~110 s for 007's largest), since the device it compiles
+// on is destroyed next.
 void VulkanDevice::stopAheadPipelines() {
+    std::size_t running = 0;
     {
         std::lock_guard lock(state->aheadMutex);
         state->aheadStopping = true;
         state->ahead.clear();
+        running = state->aheadRunning;
     }
     state->aheadReady.notify_all();
+    const auto start = std::chrono::steady_clock::now();
     for (auto& thread : state->aheadThreads) thread.join();
     state->aheadThreads.clear();
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && running != 0) std::fprintf(stderr, "[ahead] device teardown waited %.0f ms for %zu pipelines being created ahead\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), running);
 }
 
 std::shared_ptr<RecipeHit> VulkanDevice::PrepareRecipe(const std::shared_ptr<const Recipe>& recipe, bool indirect) {
