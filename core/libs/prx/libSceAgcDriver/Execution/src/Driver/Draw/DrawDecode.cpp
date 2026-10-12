@@ -79,10 +79,20 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             program.userData[0] = low;
             program.userData[1] = high;
         };
-        const auto& graphics = product->state;
+        auto& graphics = product->state;
         if (graphics.stages.path == Graphics::ShaderPath::Tessellation) {
-            if (!staticAbi || programAddress(0x148) != 0) append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
-            append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            const auto localAddress = programAddress(0x148);
+            const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
+            const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
+            require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
+            graphics.stages.tessellation->mergedHull = mergedHull;
+            if (mergedHull) {
+                append(0x148, 3, Stage::Local, 0x10b, 0x10c, Role::Local);
+                append(0x148, 3, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            } else {
+                if (local != nullptr) append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
+                append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            }
             initializeMerged(programs.back(), 0x102, true);
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);
         } else if (graphics.stages.path == Graphics::ShaderPath::Geometry) {

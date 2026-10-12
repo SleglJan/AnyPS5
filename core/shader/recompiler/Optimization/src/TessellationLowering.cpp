@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -350,10 +351,15 @@ std::uint32_t ComponentCount(IrOpcode opcode) {
 
 class Lowering {
 public:
-    Lowering(IrProgram& program, const ShaderTessellationInputInfo& tessellation)
-        : program(program), tessellation(tessellation), stage(program.Resources().stage), evaluator(stage == IrShaderStage::TessellationControl ? tessellation.outputControlPoints : 0u, stage == IrShaderStage::Local ? LocalVertexIndexCount : PatchIndexCount) {}
+    Lowering(IrProgram& program, const ShaderTessellationInputInfo& tessellation, const TessellationTargetLimits* limits)
+        : program(program), tessellation(tessellation), limits(limits), stage(program.Resources().stage), merged(stage == IrShaderStage::TessellationControl && tessellation.mergedHull),
+          evaluator(stage == IrShaderStage::TessellationControl ? tessellation.outputControlPoints : 0u, stage == IrShaderStage::Local ? LocalVertexIndexCount : PatchIndexCount), localStride(program.Metadata().tessellationLocalStride) {}
 
     void Run() {
+        if (merged) {
+            if (tessellation.inputControlPoints > tessellation.outputControlPoints) Fail("a merged hull program with more input than output control points runs its local part on lanes the hull stage does not have", 0u);
+            requireUniformBarriers();
+        }
         for (IrBlock* block : program.BlockOrder()) {
             for (IrValue* inst : block->Instructions()) {
                 if (IrValue* source = SavedLaneBit(inst)) inst->ReplaceAllUsesWith(source);
@@ -383,6 +389,8 @@ public:
         deadCodeEliminator.Eliminate(program);
         program.Metadata().tessellationLocalStride = localStride;
         program.Metadata().tessellationControlStride = controlStride;
+        program.Metadata().tessellationSharedStride = sharedStride;
+        if (merged) requireMergedLimits();
     }
 
 private:
@@ -404,6 +412,8 @@ private:
                     if (access.components == 0u || (shared != SharedAccess::Read && shared != SharedAccess::Write)) Fail("only 32-bit LDS reads and writes are supported in tessellation stages", flags.pc);
                     if (stage == IrShaderStage::Local && access.write) {
                         access.kind = TessellationAttribute::LocalOutput;
+                    } else if (merged) {
+                        access.kind = TessellationAttribute::ControlShared;
                     } else if (stage == IrShaderStage::TessellationControl && !access.write) {
                         access.kind = TessellationAttribute::ControlInput;
                     } else {
@@ -448,6 +458,10 @@ private:
             if (access.kind == TessellationAttribute::LocalOutput) agree(localStride, access.address.relative, access.pc);
             if (access.kind == TessellationAttribute::ControlInput && access.address.vertex != 0) agree(localStride, access.address.vertex, access.pc);
             if (access.kind == TessellationAttribute::ControlOutput && access.address.vertex != 0) agree(controlStride, access.address.vertex, access.pc);
+            if (access.kind == TessellationAttribute::ControlShared) {
+                if (access.address.relative <= 0 || access.address.relative % inputs != 0) Fail("the merged hull program accesses LDS outside its patch", access.pc);
+                agree(sharedStride, access.address.relative / inputs, access.pc);
+            }
             if (access.kind == TessellationAttribute::EvaluationInput) {
                 if (access.address.relative <= 0 || access.address.relative % outputs != 0) Fail("domain shader reads of patch constants or other patches are unsupported", access.pc);
                 agree(controlStride, access.address.relative / outputs, access.pc);
@@ -487,6 +501,13 @@ private:
                 if (tessellation.domain != 1u || address.vertex != 0 || address.relative != TriangleFactorBytes || address.constant < 0 || end > TriangleFactorBytes) Fail("the hull shader writes tessellation factors outside its patch's triangle factors", access.pc);
                 requireFirstInvocation(access);
                 break;
+            case TessellationAttribute::ControlShared:
+                if (access.write) {
+                    if (address.vertex != sharedStride || address.constant < 0 || end > sharedStride) Fail("the merged hull program writes LDS outside its own control point's record", access.pc);
+                } else if ((address.vertex != 0 && address.vertex != sharedStride) || address.constant < 0 || end + address.vertex * (outputs - 1) > inputs * sharedStride) {
+                    Fail("the merged hull program reads LDS outside its patch's control point records", access.pc);
+                }
+                break;
             case TessellationAttribute::PatchOutput:
                 break;
             }
@@ -524,6 +545,56 @@ private:
         }
     }
 
+    void requireUniformBarriers() const {
+        const auto& blocks = program.BlockOrder();
+        for (IrBlock* block : blocks) {
+            if (std::none_of(block->Instructions().begin(), block->Instructions().end(), [](const IrValue* inst) { return inst->Opcode() == IrOpcode::Barrier; })) continue;
+            std::unordered_set<IrBlock*> seen{block};
+            std::vector<IrBlock*> pending;
+            if (blocks.front() != block) pending.push_back(blocks.front());
+            while (!pending.empty()) {
+                IrBlock* current = pending.back();
+                pending.pop_back();
+                if (!seen.insert(current).second) continue;
+                if (current->Successors().empty()) Fail("the merged hull program has an s_barrier that some invocations do not reach", 0u);
+                pending.insert(pending.end(), current->Successors().begin(), current->Successors().end());
+            }
+            seen = {};
+            pending.assign(block->Successors().begin(), block->Successors().end());
+            while (!pending.empty()) {
+                IrBlock* current = pending.back();
+                pending.pop_back();
+                if (current == block) Fail("the merged hull program has an s_barrier inside a loop", 0u);
+                if (!seen.insert(current).second) continue;
+                pending.insert(pending.end(), current->Successors().begin(), current->Successors().end());
+            }
+        }
+    }
+
+    void requireMergedLimits() const {
+        if (limits == nullptr) Fail("the target has no tessellation limits for a merged hull program", 0u);
+        std::uint32_t patchBegin = std::numeric_limits<std::uint32_t>::max();
+        std::uint32_t patchEnd = 0u;
+        for (IrBlock* block : program.BlockOrder()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() != IrOpcode::SetTessellationAttribute || !IsImmediate(inst->Argument(0), static_cast<std::uint32_t>(TessellationAttribute::PatchOutput)) || !inst->Argument(1)->Resolve()->HasImmediate()) continue;
+                const auto offset = inst->Argument(1)->Resolve()->ImmediateU32();
+                patchBegin = std::min(patchBegin, offset);
+                patchEnd = std::max(patchEnd, offset + 4u);
+            }
+        }
+        const auto vectors = [](std::uint32_t bytes) { return (bytes + 15u) / 16u; };
+        const auto patch = patchEnd > patchBegin ? vectors(patchEnd - patchBegin) : 0u;
+        const auto perVertex = vectors(controlStride) + vectors(sharedStride);
+        const auto locations = vectors(controlStride) + patch + vectors(sharedStride);
+        const auto total = 4ull * (static_cast<std::uint64_t>(tessellation.outputControlPoints) * perVertex + patch);
+        if (4u * locations > limits->maxControlPerVertexOutputComponents || 4u * patch > limits->maxControlPerPatchOutputComponents || total > limits->maxControlTotalOutputComponents || 4u > limits->maxControlPerVertexInputComponents) {
+            char text[256];
+            std::snprintf(text, sizeof(text), "the merged hull program's outputs exceed the device limits (%u per-vertex locations, %u patch vectors, %llu components)", locations, patch, static_cast<unsigned long long>(total));
+            Fail(text, 0u);
+        }
+    }
+
     void requireFirstInvocation(const Access& access) {
         std::unordered_set<IrValue*> path;
         if (!FirstInvocationOnly(access.predicate, evaluator, path)) Fail("per-patch tessellation output is not written by control point 0 alone", access.pc);
@@ -544,7 +615,8 @@ private:
 
     IrValue& componentAddress(const Access& access, std::uint32_t component) {
         IrValue& offset = constant(static_cast<std::uint32_t>(access.address.constant) + 4u * component);
-        if (access.kind != TessellationAttribute::ControlInput || access.address.vertex == 0) return offset;
+        const bool indexed = access.kind == TessellationAttribute::ControlInput || (access.kind == TessellationAttribute::ControlShared && !access.write);
+        if (!indexed || access.address.vertex == 0) return offset;
         IrValue& invocation = insert(access, IrOpcode::GetBuiltin, IrType::U32, {&constant(static_cast<std::uint32_t>(StageInputKind::InvocationId)), &constant(0u)});
         IrValue& scaled = insert(access, IrOpcode::IMul32, IrType::U32, {&invocation, &constant(static_cast<std::uint32_t>(access.address.vertex))});
         return insert(access, IrOpcode::IAdd32, IrType::U32, {&scaled, &offset});
@@ -603,19 +675,22 @@ private:
 
     IrProgram& program;
     const ShaderTessellationInputInfo& tessellation;
+    const TessellationTargetLimits* limits;
     IrShaderStage stage;
+    bool merged;
     AddressEvaluator evaluator;
     std::vector<Access> accesses;
-    std::uint32_t localStride = 0;
+    std::uint32_t localStride;
     std::uint32_t controlStride = 0;
+    std::uint32_t sharedStride = 0;
 };
 
 }
 
-void TessellationLowering::Lower(IrProgram& program, const ShaderTessellationInputInfo& tessellation) const {
+void TessellationLowering::Lower(IrProgram& program, const ShaderTessellationInputInfo& tessellation, const TessellationTargetLimits* limits) const {
     const auto stage = program.Resources().stage;
     if (stage != IrShaderStage::Local && stage != IrShaderStage::TessellationControl && stage != IrShaderStage::TessellationEvaluation) return;
-    Lowering(program, tessellation).Run();
+    Lowering(program, tessellation, limits).Run();
 }
 
 }

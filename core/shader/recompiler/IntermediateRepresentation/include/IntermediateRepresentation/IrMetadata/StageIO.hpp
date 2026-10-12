@@ -13,7 +13,8 @@ enum class TessellationAttribute {
     ControlOutput,
     EvaluationInput,
     PatchOutput,
-    Factor
+    Factor,
+    ControlShared
 };
 
 enum class TessellationBaseKind {
