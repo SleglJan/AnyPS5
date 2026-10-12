@@ -491,6 +491,53 @@ private:
         return false;
     }
 
+    static bool SrtScalarCone(const IrValue* value) {
+        std::vector<const IrValue*> pending{value};
+        std::vector<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (current->HasImmediate() || std::find(seen.begin(), seen.end(), current) != seen.end()) continue;
+            seen.push_back(current);
+            switch (current->Opcode()) {
+                case IrOpcode::GetUserData:
+                case IrOpcode::GetSrtResource: continue;
+                case IrOpcode::Phi:
+                case IrOpcode::ReadFirstLane:
+                case IrOpcode::ReadLane:
+                case IrOpcode::Ballot:
+                case IrOpcode::LaneId:
+                case IrOpcode::GetBuiltin:
+                case IrOpcode::ReadConstBuffer:
+                case IrOpcode::LoadBuffer:
+                case IrOpcode::LoadImage:
+                case IrOpcode::LoadShared:
+                case IrOpcode::LoadAddressU8:
+                case IrOpcode::LoadAddressU16:
+                case IrOpcode::LoadAddressU32:
+                case IrOpcode::LoadAddressU32x2:
+                case IrOpcode::LoadAddressU32x3:
+                case IrOpcode::LoadAddressU32x4:
+                case IrOpcode::LoadBufferU8:
+                case IrOpcode::LoadBufferU16:
+                case IrOpcode::LoadBufferU32:
+                case IrOpcode::LoadBufferU32x2:
+                case IrOpcode::LoadBufferU32x3:
+                case IrOpcode::LoadBufferU32x4:
+                case IrOpcode::LoadSharedU8:
+                case IrOpcode::LoadSharedU16:
+                case IrOpcode::LoadSharedU32:
+                case IrOpcode::LoadSharedU32x2:
+                case IrOpcode::LoadSharedU32x3:
+                case IrOpcode::LoadSharedU32x4: return false;
+                default: break;
+            }
+            if (current->ArgumentCount() == 0u) return false;
+            for (std::size_t index = 0; index < current->ArgumentCount(); index++) pending.push_back(current->Argument(index));
+        }
+        return true;
+    }
+
     std::optional<KeyDomain> MatchKeyDomain(IrValue* key, IrValue*& read) {
         read = nullptr;
         key = key->Resolve();
@@ -498,7 +545,7 @@ private:
         direct.dwordCount = 1u;
         direct.dwords[0] = key;
         std::uint32_t badDword = 0;
-        if (!ReadsThroughDescriptor(key) && ValidateSource(direct, badDword)) {
+        if (SrtScalarCone(key) && ValidateSource(direct, badDword)) {
             KeyDomain domain{InternSource(direct), 0u, 4u};
             domain.value = true;
             return domain;
