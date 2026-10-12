@@ -124,9 +124,19 @@ struct TextureCache {
     std::chrono::steady_clock::time_point passedSince{};
     std::uint64_t firstUsesPresent = 0;
     std::unordered_set<TextureKey, TextureKeyHash> firstUses;
+    // Snapshots handed out uncached (admitTexture refused them), by key: a later lookup of the same
+    // unchanged surface reuses the live texture instead of uploading a duplicate image.
+    struct UncachedSnapshot {
+        std::weak_ptr<Texture> texture;
+        std::uint64_t generation = 0;
+        DccKeys keys = DccKeys::Uncompressed;
+        std::uint64_t bytes = 0;
+    };
+    std::unordered_map<TextureKey, UncachedSnapshot, TextureKeyHash> uncachedSnapshots;
     struct Counts {
         std::uint64_t inserted = 0;
         std::uint64_t uncached = 0;
+        std::uint64_t uncachedReused = 0;
         std::uint64_t evicted = 0;
         std::uint64_t passed = 0;
         std::uint64_t stale = 0;
@@ -199,6 +209,22 @@ void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
     ++cache.erasures;
 }
 
+// Out-of-memory recovery: erases the entries nothing but the cache references (no resource object,
+// view or recorded batch holds their texture); returns the bytes they accounted.
+std::uint64_t releaseUnreferenced(TextureCache& cache) {
+    std::uint64_t released = 0;
+    for (auto it = cache.entries.begin(); it != cache.entries.end();) {
+        if (it->texture.use_count() != 1) {
+            ++it;
+            continue;
+        }
+        released += it->accounted;
+        eraseTexture(cache, it++);
+    }
+    cache.uncachedSnapshots.clear();
+    return released;
+}
+
 void dropUncachedViews(TextureCache& cache) {
     auto& uncached = Uncached();
     if (!uncached.any.load(std::memory_order_acquire)) return;
@@ -264,7 +290,7 @@ void reportCacheCounts(TextureCache& cache, std::uint64_t budget) {
     if (now - cache.countsReported < std::chrono::seconds(10)) return;
     cache.countsReported = now;
     const auto counts = std::exchange(cache.counts, {});
-    AgcDriver::ProfilePrint_nid_no_patch("[texture-cache] (10 s): %llu textures cached, %llu used uncached (first use this frame, the least recently used entry used this frame or the last), %llu evicted, %llu held ones passed over, %llu found changed; %llu MiB in %zu entries, budget %llu MiB, frame %llu\n", static_cast<unsigned long long>(counts.inserted), static_cast<unsigned long long>(counts.uncached), static_cast<unsigned long long>(counts.evicted), static_cast<unsigned long long>(counts.passed), static_cast<unsigned long long>(counts.stale), static_cast<unsigned long long>(cache.bytes >> 20u), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(Recorder::Presents()));
+    AgcDriver::ProfilePrint_nid_no_patch("[texture-cache] (10 s): %llu textures cached, %llu used uncached (first use this frame, the least recently used entry used this frame or the last), %llu uncached ones reused, %llu evicted, %llu held ones passed over, %llu found changed; %llu MiB in %zu entries, budget %llu MiB, frame %llu\n", static_cast<unsigned long long>(counts.inserted), static_cast<unsigned long long>(counts.uncached), static_cast<unsigned long long>(counts.uncachedReused), static_cast<unsigned long long>(counts.evicted), static_cast<unsigned long long>(counts.passed), static_cast<unsigned long long>(counts.stale), static_cast<unsigned long long>(cache.bytes >> 20u), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(Recorder::Presents()));
 }
 
 struct ImageMemoEntry {
@@ -681,6 +707,19 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         eraseTexture(cache, it);
         ++cache.counts.stale;
     }
+    if (source == nullptr) {
+        if (const auto found = cache.uncachedSnapshots.find(key); found != cache.uncachedSnapshots.end()) {
+            const auto& held = found->second;
+            if (auto live = held.texture.lock(); live != nullptr && held.bytes == guestBytes && held.keys == *keys && (*keys != DccKeys::Uncompressed || GuestMemory::UnchangedSince(address, bytes, held.generation))) {
+                ++cache.counts.uncachedReused;
+                logLookup({live.get(), resource, guestBytes, *keys, held.generation, nullptr});
+                reportTextureCounters();
+                if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
+                return live;
+            }
+            cache.uncachedSnapshots.erase(found);
+        }
+    }
     CachedTexture entry{key, address, std::vector<std::byte>(source != nullptr ? 0u : bytes), nullptr, *keys, generation};
     if (source != nullptr) {
         entry.source = source;
@@ -703,13 +742,24 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             for (std::size_t i = 0; i < entry.bytes.size(); i += 64) nonzero += entry.bytes[i] != std::byte{0};
             std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, entry.bytes.size() / 64);
         }
-        entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
+        try {
+            entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
+        } catch (const OutOfDeviceMemory&) {
+            const auto released = releaseUnreferenced(cache);
+            std::fprintf(stderr, "[gpu] sampled texture 0x%llx: out of device memory, released %llu MiB of cached textures nothing else holds%s\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(released >> 20u), released != 0 ? "; retrying" : "");
+            if (released == 0) throw;
+            entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, entry.bytes, depthCompare);
+        }
         entry.accounted = entry.texture->AllocationBytes();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
+        if (source == nullptr) {
+            if (cache.uncachedSnapshots.size() >= 16384) std::erase_if(cache.uncachedSnapshots, [](const auto& held) { return held.second.texture.expired(); });
+            cache.uncachedSnapshots[key] = {texture, generation, *keys, guestBytes};
+        }
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
@@ -719,6 +769,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     cache.bytes += entry.accounted;
     entry.present = Recorder::Presents();
     ++cache.counts.inserted;
+    cache.uncachedSnapshots.erase(key);
     logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
@@ -898,7 +949,24 @@ std::shared_ptr<StorageTexture> lookupStorageTexture(const Context& context, std
         } else {
             if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
             if (StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
-            CachedStorageTexture entry{key, mip, std::make_shared<StorageTexture>(context, *context.detiler, resource, mip)};
+            std::shared_ptr<StorageTexture> made;
+            try {
+                made = std::make_shared<StorageTexture>(context, *context.detiler, resource, mip);
+            } catch (const OutOfDeviceMemory&) {
+                std::uint64_t released = 0;
+                for (auto entry = cache.entries.begin(); entry != cache.entries.end();) {
+                    if (entry->texture.use_count() != 1) {
+                        ++entry;
+                        continue;
+                    }
+                    released += entry->accounted;
+                    static_cast<void>(evictStorage(cache, entry++));
+                }
+                std::fprintf(stderr, "[gpu] storage image 0x%llx: out of device memory, released %llu MiB of cached storage images nothing else holds%s\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(released >> 20u), released != 0 ? "; retrying" : "");
+                if (released == 0) throw;
+                made = std::make_shared<StorageTexture>(context, *context.detiler, resource, mip);
+            }
+            CachedStorageTexture entry{key, mip, std::move(made)};
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);

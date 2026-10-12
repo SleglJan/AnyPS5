@@ -2,9 +2,25 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESOURCES_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include <atomic>
 #include <span>
+#include <stdexcept>
 
 namespace AgcDriver::Graphics {
+
+// Thrown when device memory for an image could not be had even after the buffer pool was trimmed:
+// a texture cache catches it, drops its entries nothing else references and builds once more.
+struct OutOfDeviceMemory : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// vkAllocateMemory for an image. On VK_ERROR_OUT_OF_DEVICE_MEMORY (or host memory) it trims the
+// buffer pool (its retained buffers hold device memory) and tries once more; a failure of the retry
+// throws OutOfDeviceMemory, any other failure what Check throws.
+void AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, VkDeviceMemory* memory, const char* operation);
+// Test hook: the next this many AllocateImageMemory attempts report VK_ERROR_OUT_OF_DEVICE_MEMORY
+// without allocating.
+std::atomic<unsigned>& ImageAllocationFailuresForTest();
 
 class Buffer {
 public:
