@@ -41,14 +41,16 @@ std::array<std::uint32_t, 4> TableV(std::uint64_t address, std::uint32_t stride,
 
 const std::vector<std::uint32_t> TableWholeCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
-const std::vector<std::uint32_t> TableKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+const std::vector<std::uint32_t> TableKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
 ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>& code, std::span<const std::uint32_t> userData) {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    for (const auto word : code) hash = (hash ^ word) * 0x100000001b3ull;
     RecompileRequest request{};
-    request.shader = {ShaderStage::Compute, 0x7770000u, code, 0, {}};
+    request.shader = {ShaderStage::Compute, 0x7770000u + (hash & 0xffffu) * 0x100u, code, 0, {}};
     request.context.waveSize = 64;
     request.context.userDataBaseRegister = 0;
     request.context.userData = userData;
