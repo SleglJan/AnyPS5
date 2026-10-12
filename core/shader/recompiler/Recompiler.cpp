@@ -105,10 +105,21 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code) {
+bool MergedHullStage(const RecompileRequest& request) {
+    const auto stage = request.shader.stage;
+    return (stage == ShaderStage::Local || stage == ShaderStage::TessellationControl) && request.graphics && request.graphics->tessellation && request.graphics->tessellation->mergedHull;
+}
+
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull) {
+    static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
+    if (stage == ShaderStageKind::Local && mergedHull) {
+        RdnaProgram program;
+        program.code = EndProgram;
+        program.instructions.push_back(DecodeRdnaInstruction(0u, EndProgram, 0u));
+        return program;
+    }
     if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
-    static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
     program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
     return program;
 }
@@ -131,8 +142,8 @@ std::atomic<std::uint64_t> frontEndBuilds{0};
 
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
-        : stage(request.shader.stage), swappc(swappcInfo), code(request.shader.code.begin(), request.shader.code.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+        : stage(request.shader.stage), mergedHull(MergedHullStage(request)), swappc(swappcInfo), code(request.shader.code.begin(), request.shader.code.end()),
+          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
     }
 
@@ -140,12 +151,13 @@ struct PreparedControlFlow {
     PreparedControlFlow& operator=(const PreparedControlFlow&) = delete;
 
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
-        return stage == request.shader.stage && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
+        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
                swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount &&
                std::ranges::equal(code, request.shader.code);
     }
 
     ShaderStage stage;
+    bool mergedHull;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
     RdnaProgram decoded;
@@ -199,8 +211,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     constexpr InstructionTranslator translator;
 
+    if (frontend->mergedHull && cfg.hasFetchCall) throw std::runtime_error("a merged hull program that calls a fetch subroutine is unsupported");
     EmbeddedFetchPlan embeddedFetch;
-    if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
+    if ((stageKind == ShaderStageKind::Vertex || stageKind == ShaderStageKind::Local) && !frontend->mergedHull && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded) {
         embeddedFetch = EmbeddedVertexFetchAnalyzer{}.Analyze(decoded, inputInfo.vertex->fetchAttribReg, inputInfo.vertex->fetchBufferReg, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize);
         translateOptions.embeddedFetch = &embeddedFetch;
     }
@@ -271,7 +284,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     if (inputInfo.vertex != nullptr) {
         constexpr TessellationLowering tessellationLowering;
-        tessellationLowering.Lower(program, inputInfo.vertex->tess);
+        tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);
     }
 
     constexpr SrtWalker srtWalker;
@@ -1140,6 +1153,7 @@ ResultKeyParts resultKeyParts(const RecompileRequest& request, const ResourceSna
         if (request.graphics && request.graphics->tessellation) {
             const auto& tessellation = *request.graphics->tessellation;
             for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+            mix(tessellation.mergedHull);
         }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);
@@ -1471,6 +1485,7 @@ std::uint64_t fullSnapshotHash(const RecompileRequest& request, const ResourceSn
         if (request.graphics && request.graphics->tessellation) {
             const auto& tessellation = *request.graphics->tessellation;
             for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+            mix(tessellation.mergedHull);
         }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);
@@ -1531,6 +1546,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         if (request.graphics && request.graphics->tessellation) {
             const auto& tessellation = *request.graphics->tessellation;
             for (const auto value : {tessellation.inputControlPoints, tessellation.outputControlPoints, tessellation.domain, tessellation.partitioning, tessellation.outputTopology}) mix(value);
+            mix(tessellation.mergedHull);
         }
         for (std::uint32_t i = 0; i < count; ++i) {
             for (const auto field : vertex.resources[i].fields) mix(field);

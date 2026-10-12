@@ -329,7 +329,7 @@ void CollectComputeInputs(const ShaderComputeInputInfo* compute, ShaderInfo& inf
 void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (program.Resources().stage == IrShaderStage::TessellationControl && inst->Opcode() == IrOpcode::LaneId) {
+            if (program.Resources().stage == IrShaderStage::TessellationControl && (inst->Opcode() == IrOpcode::LaneId || inst->Opcode() == IrOpcode::SetTessellationAttribute)) {
                 AddInput(info, StageInputKind::InvocationId, 0, 1, "gl_InvocationID");
             }
             if (inst->Opcode() != IrOpcode::GetBuiltin) {
