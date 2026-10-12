@@ -172,6 +172,11 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     };
 }
 
+std::span<const std::uint32_t> UserDataSlots(std::span<const std::uint32_t> userData, std::uint32_t firstUserSgpr) {
+    if (firstUserSgpr > 8u || userData.size() < 8u - firstUserSgpr) throw std::runtime_error("AGC graphics: user data do not reach the first user SGPR s8");
+    return userData.subspan(8u - firstUserSgpr);
+}
+
 ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<DecodeRead>* reads, bool staticAbi) {
     if (header.empty()) return {};
     if (header.size() < sizeof(Shader)) throw std::runtime_error("AGC graphics: shader header is smaller than the fixed AGC header");

@@ -696,7 +696,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     }
     plan->userData.resize(userCount);
     if (stage != Stage::Compute && stage != Stage::Fragment && snapshot.type != 6) {
-        vertex = Graphics::DecodeVertexStageInfo(snapshot.header, snapshot.headerAddress, plan->userData, nullptr, true);
+        vertex = Graphics::DecodeVertexStageInfo(snapshot.header, snapshot.headerAddress, Graphics::UserDataSlots(plan->userData, firstUser), nullptr, true);
         const auto outputs = state.context.find(0x207u);
         if (outputs != state.context.end()) vertex->paClVsOutCntl = Graphics::PositionExportLayout(outputs->second);
     }
@@ -887,7 +887,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         const auto wave = fragment ? decoded.state.stages.fragmentWaveSize : decoded.state.stages.vertexWaveSize;
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
         if (!fragment) {
-            vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true);
+            vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, Graphics::UserDataSlots(program.userData, program.firstUserSgpr), nullptr, true);
             vertex->paClVsOutCntl = Graphics::PositionExportLayout(decoded.state.paClVsOutCntl);
         }
         pushOffset = Graphics::StagePushOffset(pushOffset, program.binary.stage, fixedSlots);
