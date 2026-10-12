@@ -437,6 +437,50 @@ private:
         return true;
     }
 
+    const MemoryInfo* LaneReadMemory(const IrValue& read, std::uint32_t& index) const {
+        switch (read.Opcode()) {
+            case IrOpcode::LoadBufferU32:
+            case IrOpcode::LoadBufferU32x2:
+            case IrOpcode::LoadBufferU32x3:
+            case IrOpcode::LoadBufferU32x4: break;
+            default: return nullptr;
+        }
+        if (read.ArgumentCount() != 5u) return nullptr;
+        index = read.Flags<MemoryFlags>().index;
+        if (index >= m_program.Resources().memoryInfo.size()) return nullptr;
+        const auto& memory = m_program.Resources().memoryInfo[index];
+        return memory.kind == ResourceKind::Buffer && memory.dataBits == 32u ? &memory : nullptr;
+    }
+
+    std::optional<KeyDomain> MatchLaneKey(IrValue* key, KeyDomain domain, IrValue*& read) {
+        std::uint32_t component = 0;
+        IrValue* load = key->Resolve();
+        if (load->Opcode() == IrOpcode::CompositeExtractU32x2 || load->Opcode() == IrOpcode::CompositeExtractU32x3 || load->Opcode() == IrOpcode::CompositeExtractU32x4) {
+            if (load->ArgumentCount() != 2u || !immediateU32(load->Argument(1), component)) return std::nullopt;
+            load = load->Argument(0)->Resolve();
+        }
+        std::uint32_t memoryIndex = 0;
+        const MemoryInfo* memory = LaneReadMemory(*load, memoryIndex);
+        if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *load)) return std::nullopt;
+        std::uint32_t soffset = 0;
+        if (!immediateU32(load->Argument(3), soffset)) return std::nullopt;
+        DescriptorSource source;
+        std::uint32_t sourceIndex = 0;
+        if (!MakeRuntimeSource(*load->Argument(0)->Resolve(), IrOpcode::GetBufferResource, 4u, sourceIndex, source)) return std::nullopt;
+        domain.source = sourceIndex;
+        domain.offset = memory->offset + soffset + component * 4u;
+        domain.stride = 4u;
+        domain.recordStride = memory->idxen;
+        if (memory->idxen) {
+            IrValue* index = load->Argument(1)->Resolve();
+            std::uint32_t addend = 0;
+            if (index->Opcode() == IrOpcode::IAdd32 && index->ArgumentCount() == 2u && (immediateU32(index->Argument(1), addend) || immediateU32(index->Argument(0), addend))) domain.recordAddend = addend;
+        }
+        domain.lane = true;
+        read = load;
+        return domain;
+    }
+
     std::optional<KeyDomain> MatchKeyDomain(IrValue* key, IrValue*& read) {
         read = nullptr;
         key = key->Resolve();
@@ -472,6 +516,21 @@ private:
                 key = immediateU32(key->Argument(1), immediate) ? key->Argument(0) : key->Argument(1);
                 continue;
             }
+            if (key->Opcode() == IrOpcode::ReadFirstLane && key->ArgumentCount() >= 1u) {
+                key = key->Argument(0);
+                continue;
+            }
+            if (key->Opcode() == IrOpcode::SelectU32 && key->ArgumentCount() == 3u) {
+                std::uint32_t zero = 1u;
+                if (immediateU32(key->Argument(2), zero) && zero == 0u) {
+                    key = key->Argument(1);
+                    continue;
+                }
+                if (immediateU32(key->Argument(1), zero) && zero == 0u) {
+                    key = key->Argument(2);
+                    continue;
+                }
+            }
             if (key->IsPhi()) {
                 IrValue* single = nullptr;
                 std::vector<IrValue*> pending{key};
@@ -500,6 +559,7 @@ private:
             break;
         }
         std::uint32_t memoryIndex = 0;
+        if (const auto lane = MatchLaneKey(key, domain, read); lane.has_value()) return lane;
         const MemoryInfo* memory = ScalarReadMemory(*key, memoryIndex);
         if (memory == nullptr) {
             return std::nullopt;
