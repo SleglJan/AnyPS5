@@ -1,5 +1,12 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "Recompiler.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
@@ -7,6 +14,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -163,6 +171,21 @@ alignas(256) constexpr std::array<std::uint32_t, 88> MergedHullDivergentBarrier{
     0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 93> MergedHullGlobalLoad{
+    0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf880022,
+    0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
+    0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
+    0x3e1008ff, 0x3e800000, 0x7e180200, 0x7e1a0201, 0xdc308000, 0x0b7d000c, 0xbf8c3f70, 0x1010110b,
+    0xd54b0009, 0x03c5e105, 0x161406a0, 0xd9340000, 0x0000080a, 0xd8340008, 0x0000070a, 0xd8340010,
+    0x0000070a, 0xbf8cc07f, 0xbefe04c1, 0xbf8cc07f, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1,
+    0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014, 0x02151101, 0x362402ff, 0x000000ff, 0x160028a0,
+    0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000, 0x02000015, 0x162c2890, 0xd5430016, 0x045a24ff,
+    0x00000030, 0xbf8cc07f, 0xe0781000, 0x02020216, 0x7da82881, 0xbe94047e, 0xb06a0060, 0x162602f9,
+    0x0086066a, 0xd8d80048, 0x06000013, 0xd8dc1008, 0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306,
+    0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414, 0xe0781000, 0x0403180a, 0x4a162481, 0x16161690,
+    0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 92> MergedHullSelectedMask{
     0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf880021,
     0xbe94047e, 0xbf068005, 0x85928014, 0xd5010002, 0x004a0505, 0xd5480004, 0x02090502, 0xd5480005,
@@ -203,12 +226,13 @@ struct Stages {
     ShaderRecompiler::RecompileResult fragment;
 };
 
+std::array<std::uint32_t, 16> HullUserData{0x1000u};
+
 ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const ShaderRecompiler::TessellationConfiguration& configuration = Patches) {
-    static const std::array<std::uint32_t, 16> hullUserData{0x1000u};
     static const std::array<std::uint32_t, 8> domainUserData{};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const bool hull = stage == ShaderStage::TessellationControl;
-    const auto userData = hull ? std::span<const std::uint32_t>(hullUserData) : stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(domainUserData) : std::span<const std::uint32_t>();
+    const auto userData = hull ? std::span<const std::uint32_t>(HullUserData) : stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(domainUserData) : std::span<const std::uint32_t>();
     std::optional<ShaderRecompiler::ShaderPixelStageInfo> pixel;
     std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
     std::optional<ShaderRecompiler::GraphicsCompileContext> graphics;
@@ -381,6 +405,55 @@ void RequireRegisteredStages() {
     AgcDriverShutdown_nid_postfix();
 }
 
+class GuestBlock {
+public:
+    static constexpr std::size_t Bytes = 65536;
+
+    GuestBlock() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, Bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        block = static_cast<std::uint8_t*>(std::aligned_alloc(Bytes, Bytes));
+#endif
+        Require(block != nullptr, "cannot allocate the merged hull program's guest block");
+        GuestAllocations::Mutation().Add(block, Bytes, true, true, true);
+    }
+
+    ~GuestBlock() {
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        std::free(block);
+#endif
+    }
+
+    GuestBlock(const GuestBlock&) = delete;
+    GuestBlock& operator=(const GuestBlock&) = delete;
+
+    std::uint8_t* Data() { return block; }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+void RequireGlobalLoad(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    GuestBlock guest;
+    constexpr float scale = 1.0f;
+    std::memcpy(guest.Data(), &scale, sizeof(scale));
+    const auto address = reinterpret_cast<std::uintptr_t>(guest.Data());
+    const auto saved = HullUserData;
+    HullUserData[0] = static_cast<std::uint32_t>(address);
+    HullUserData[1] = static_cast<std::uint32_t>(address >> 32u);
+    try {
+        RequirePatches(device, target, MergedHullGlobalLoad, MergedHullGlobalLoad, MergedPatches, "merged hull program reading guest memory in its local part");
+    } catch (...) {
+        HullUserData = saved;
+        throw;
+    }
+    HullUserData = saved;
+}
+
 void RequireRegisteredMergedStages() {
     const auto low = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 8u); };
     const auto high = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 40u); };
@@ -422,6 +495,7 @@ int main() {
         RequirePatches(*device, target, MergedHullCode, MergedHullCode, MergedPatches, "merged hull program");
         RequirePatches(*device, target, MergedHullRegisters, MergedHullRegisters, MergedPatches, "merged hull program storing its local part's registers");
         RequirePatches(*device, target, MergedHullSelectedMask, MergedHullSelectedMask, MergedPatches, "merged hull program selecting with a uniformly chosen saved exec mask");
+        RequireGlobalLoad(*device, target);
         device.reset();
         RequireRegisteredMergedStages();
         RequireRegisteredStages();
