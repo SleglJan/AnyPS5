@@ -880,10 +880,21 @@ private:
         for (const auto& domain : column.keyDomains) {
             if (domain.value) {
                 DescriptorValue key;
+                SrtReadTrace reads;
+                SrtRuntime traced = runtime;
+                traced.readTrace = &reads;
                 try {
-                    walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
+                    walker.EvaluateDescriptorSource(plan, domain.source, traced, key);
                 } catch (const std::exception&) {
                     return skip();
+                }
+                if (runtime.readTrace != nullptr) runtime.readTrace->otherReads.insert(runtime.readTrace->otherReads.end(), reads.otherReads.begin(), reads.otherReads.end());
+                std::sort(reads.otherReads.begin(), reads.otherReads.end());
+                reads.otherReads.erase(std::unique(reads.otherReads.begin(), reads.otherReads.end()), reads.otherReads.end());
+                for (const auto address : reads.otherReads) {
+                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) return skip();
+                    if (!mask.ranges.empty() && mask.ranges.back().first + mask.ranges.back().second == address) mask.ranges.back().second += sizeof(std::uint32_t);
+                    else mask.ranges.emplace_back(address, static_cast<std::uint64_t>(sizeof(std::uint32_t)));
                 }
                 values.push_back(key.dwords[0]);
                 continue;
