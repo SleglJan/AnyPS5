@@ -439,12 +439,18 @@ void AllocationFailure(VkResult initial, VkResult final, bool cached) {
         mock.results = {initial, final};
         const auto before = mock.attempts;
         std::string failure;
+        bool typed = false;
         try {
             DeviceBuffer buffer(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        } catch (const OutOfDeviceMemory& error) {
+            failure = error.what();
+            typed = true;
         } catch (const std::exception& error) {
             failure = error.what();
         }
         const bool reclaimed = cached && (initial == VK_ERROR_OUT_OF_DEVICE_MEMORY || initial == VK_ERROR_OUT_OF_HOST_MEMORY);
+        const auto last = reclaimed ? final : initial;
+        Expect(typed == (last == VK_ERROR_OUT_OF_DEVICE_MEMORY || last == VK_ERROR_OUT_OF_HOST_MEMORY), "a device buffer's final out-of-memory was not OutOfDeviceMemory, or another failure was");
         Expect(mock.attempts == before + (reclaimed ? 2 : 1), "allocation retries were not bounded or a non-memory failure was retried");
         Expect(failure.find("Vulkan result " + std::to_string(reclaimed ? final : initial)) != std::string::npos, "allocation failure lost its final Vulkan result");
         Expect(mock.liveBuffers.size() == (cached && !reclaimed ? 1u : 0u), "a failed allocation retained its buffer");
