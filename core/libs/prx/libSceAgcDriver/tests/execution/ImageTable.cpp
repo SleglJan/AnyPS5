@@ -1188,6 +1188,16 @@ alignas(256) constexpr std::array<std::uint32_t, 15> PixelTableCode{
     0xbf8c3f70u, 0xe0700000u, 0x80021000u, 0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 13> VertexDirectCode{
+    0x7e140280u, 0x7e160280u, 0xf0008f08u, 0x0001100au, 0xbf8c3f70u, 0xe0702000u, 0x80041005u, 0xe0382000u,
+    0x80000005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> PixelDirectCode{
+    0x7e140280u, 0x7e160280u, 0xf0008f08u, 0x0000100au, 0xbf8c3f70u, 0xe0700000u, 0x80021000u, 0x7e0e02f2u,
+    0xf800180fu, 0x07070707u, 0xbf810000u,
+};
+
 constexpr std::uint32_t TargetWidth = 64;
 constexpr std::uint32_t TargetHeight = 32;
 alignas(256) std::array<std::byte, TargetWidth * TargetHeight * 4> Pixels{};
@@ -1196,8 +1206,10 @@ alignas(256) std::array<std::uint32_t, 4> PixelResults{};
 alignas(256) std::array<std::uint32_t, 4 * 4> GraphicsTable{};
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
-std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey) {
+std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey, bool vertexTable = true, bool pixelTable = true) {
     const auto target = device.Target();
+    const auto vertexCode = vertexTable ? std::span<const std::uint32_t>(VertexTableCode) : std::span<const std::uint32_t>(VertexDirectCode);
+    const auto pixelCode = pixelTable ? std::span<const std::uint32_t>(PixelTableCode) : std::span<const std::uint32_t>(PixelDirectCode);
     Pixels.fill(std::byte{0});
     VertexResults.fill(0xdeadbeefu);
     PixelResults.fill(0xdeadbeefu);
@@ -1206,12 +1218,16 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     const auto vertices = VertexBuffer(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     const auto vertexOutput = VertexBuffer(VertexResults.data(), 16u, 4u);
     std::copy(vertices.begin(), vertices.end(), vertexUserData.begin());
-    std::copy(table.begin(), table.end(), vertexUserData.begin() + 4);
-    vertexUserData[8] = vertexKey;
+    if (vertexTable) {
+        std::copy(table.begin(), table.end(), vertexUserData.begin() + 4);
+        vertexUserData[8] = vertexKey;
+    } else {
+        std::copy_n(GraphicsTable.begin() + vertexKey * 4u, 4u, vertexUserData.begin() + 4);
+    }
     std::copy(vertexOutput.begin(), vertexOutput.end(), vertexUserData.begin() + 16);
-    const std::array<ShaderRecompiler::MemoryRegion, 2> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexTableCode.data()), std::as_bytes(std::span(VertexTableCode))}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> vertexMemory{{{reinterpret_cast<std::uintptr_t>(vertexCode.data()), std::as_bytes(vertexCode)}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
     ShaderRecompiler::RecompileRequest vertex{
-        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexTableCode.data()), VertexTableCode, 0, {}},
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(vertexCode.data()), vertexCode, 0, {}},
         {64, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
         target,
         {0, 0, 0, 64}
@@ -1228,17 +1244,25 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     pixel.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(12, 0u);
     const auto pixelOutput = Buffer(PixelResults.data(), static_cast<std::uint32_t>(sizeof(PixelResults)));
-    std::copy(table.begin(), table.end(), pixelUserData.begin());
-    pixelUserData[4] = pixelKey;
+    if (pixelTable) {
+        std::copy(table.begin(), table.end(), pixelUserData.begin());
+        pixelUserData[4] = pixelKey;
+    } else {
+        std::copy_n(GraphicsTable.begin() + pixelKey * 4u, 4u, pixelUserData.begin());
+    }
     std::copy(pixelOutput.begin(), pixelOutput.end(), pixelUserData.begin() + 8);
-    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), std::as_bytes(std::span(PixelTableCode))}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
     ShaderRecompiler::RecompileRequest fragment{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), PixelTableCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
     };
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    if (target.registrationModules) {
+        Require(vertexResult.registrationModule == !vertexTable, std::string("image table graphics: a vertex shader ") + (vertexTable ? "with a table was emitted in registration form" : "without a table was not emitted in registration form"));
+        Require(pixelResult.registrationModule == !pixelTable, std::string("image table graphics: a pixel shader ") + (pixelTable ? "with a table was emitted in registration form" : "without a table was not emitted in registration form"));
+    }
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
@@ -1279,6 +1303,12 @@ void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) Require(VertexResults[vertex * 4u] == static_cast<std::uint32_t>(SintTexels[0]), "image table graphics: the vertex stage read the wrong entry after the keys changed");
     Require(PixelResults[0] == std::bit_cast<std::uint32_t>(FloatTexels[0]), "image table graphics: the pixel stage read the wrong entry after the keys changed");
     Require(first == second, "image table graphics: other table keys built another pipeline");
+    DrawTables(device, 1u, 2u, false, true);
+    for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) Require(VertexResults[vertex * 4u] == UintTexels[0], "image table graphics: the vertex stage read the wrong direct image beside a pixel table (" + Hex(VertexResults[vertex * 4u]) + ")");
+    Require(PixelResults[0] == static_cast<std::uint32_t>(SintTexels[0]), "image table graphics: the pixel stage read the wrong entry beside a direct vertex image (" + Hex(PixelResults[0]) + ")");
+    DrawTables(device, 2u, 0u, true, false);
+    for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) Require(VertexResults[vertex * 4u] == static_cast<std::uint32_t>(SintTexels[0]), "image table graphics: the vertex stage read the wrong entry beside a direct pixel image (" + Hex(VertexResults[vertex * 4u]) + ")");
+    Require(PixelResults[0] == std::bit_cast<std::uint32_t>(FloatTexels[0]), "image table graphics: the pixel stage read the wrong direct image beside a vertex table (" + Hex(PixelResults[0]) + ")");
 }
 
 }
