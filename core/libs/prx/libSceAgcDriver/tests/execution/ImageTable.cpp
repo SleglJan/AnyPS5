@@ -190,6 +190,19 @@ alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
     0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 19> StoreTableValueCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080300u, 0x7e0a0280u, 0x7e0c0280u, 0x7e0e0280u,
+    0xf0208f08u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 28> StoreTableWaterfallCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x360200bfu, 0x36060081u, 0x34060682u, 0xbf8cc07fu,
+    0xe0301000u, 0x80020303u, 0x7e040280u, 0x7e080300u, 0x7e0a0280u, 0x7e0c0280u, 0x7e0e0280u, 0xbf8c3f70u,
+    0xbe8c047eu, 0x7e200503u, 0x7da40610u, 0x9312b010u, 0xf42c0802u, 0x24000000u, 0xbf8cc07fu, 0xf0208f08u,
+    0x00090401u, 0x8afe7e0cu, 0xbf89fff5u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 30> PointerCode{
     0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
     0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0x360200bfu, 0x7e020d01u,
@@ -952,16 +965,52 @@ void RunModeTests(AgcDriver::VulkanDevice& device) {
     SetClassRecords();
 }
 
+void FlushStoredTexels(AgcDriver::VulkanDevice& device) {
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(UintTexels.data()), sizeof(UintTexels), nullptr, "test");
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(SintTexels.data()), sizeof(SintTexels), nullptr, "test");
+    device.WaitIdle();
+}
+
 void RunStoreTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+        void* data;
+    };
+    const Registration uintRegistration(UintTexels.data(), sizeof(UintTexels));
+    const Registration sintRegistration(SintTexels.data(), sizeof(SintTexels));
     SetClassRecords();
-    const auto saved = UintTexels;
+    Fill();
+    const auto savedUint = UintTexels;
+    const auto savedSint = SintTexels;
     Keys = {};
     Keys[0] = 1;
     const auto cut = Run(device, StoreTableCutCode, 1, Lanes, 64);
     Require(!Faulted(cut), "image table store: a store with EXEC clear faulted:\n" + cut.log);
-    const auto stored = Run(device, StoreTableCode, 1, Lanes, 64);
-    Require(Faulted(stored) && stored.log.find("unsupported operation") != std::string::npos, "image table store: an image_store through a table did not fault as an unsupported operation:\n" + stored.log);
-    Require(UintTexels == saved, "image table store: an unsupported store reached the image");
+    FlushStoredTexels(device);
+    Require(UintTexels == savedUint, "image table store: a store with EXEC clear reached the image");
+    const auto stored = Run(device, StoreTableValueCode, 1, Lanes, 64);
+    Require(!Faulted(stored), "image table store: an image_store through a table faulted:\n" + stored.log);
+    FlushStoredTexels(device);
+    for (std::uint32_t x = 0; x < Width; ++x) {
+        Require(UintTexels[x] == x, "image table store: lane " + std::to_string(x) + " stored " + Hex(UintTexels[x]) + " through the table, expected " + Hex(x));
+    }
+    Require(std::equal(UintTexels.begin() + Width, UintTexels.end(), savedUint.begin() + Width), "image table store: the store through a table changed texels outside its row");
+    Require(SintTexels == savedSint, "image table store: the store through a table reached another entry's image");
+    Fill();
+    Keys = {};
+    Keys[0] = 1;
+    Keys[1] = 2;
+    const auto waterfall = Run(device, StoreTableWaterfallCode, 1, Lanes, 64);
+    Require(!Faulted(waterfall), "image table store: a waterfall of per-lane keys faulted:\n" + waterfall.log);
+    FlushStoredTexels(device);
+    for (std::uint32_t x = 0; x < Width; ++x) {
+        const bool uint = (x & 1u) == 0u;
+        Require(UintTexels[x] == (uint ? x : savedUint[x]), "image table store: per-lane keys: uint texel " + std::to_string(x) + " is " + Hex(UintTexels[x]));
+        Require(SintTexels[x] == (uint ? savedSint[x] : static_cast<std::int32_t>(x)), "image table store: per-lane keys: sint texel " + std::to_string(x) + " is " + Hex(static_cast<std::uint32_t>(SintTexels[x])));
+    }
+    Require(std::equal(UintTexels.begin() + Width, UintTexels.end(), savedUint.begin() + Width) && std::equal(SintTexels.begin() + Width, SintTexels.end(), savedSint.begin() + Width), "image table store: per-lane keys changed texels outside the first row");
 }
 
 void RunPointerTests(AgcDriver::VulkanDevice& device) {

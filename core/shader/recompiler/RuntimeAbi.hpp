@@ -96,7 +96,8 @@ inline void RequireVersion(std::uint32_t version) {
     if (version != Version) throw std::runtime_error("Shader runtime ABI: incompatible version");
 }
 
-inline constexpr std::uint32_t ImageTableBinding = StageCount * static_cast<std::uint32_t>(Binding::Count);
+inline constexpr std::uint32_t ImageTableStorageBinding = StageCount * static_cast<std::uint32_t>(Binding::Count);
+inline constexpr std::uint32_t ImageTableBinding = ImageTableStorageBinding + 1u;
 
 inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
     if (binding == Binding::ImageTable) return ImageTableBinding;
@@ -108,7 +109,7 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));
-static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageTableBinding == 260u);
+static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageTableStorageBinding == 260u && ImageTableBinding == 261u);
 
 }
 

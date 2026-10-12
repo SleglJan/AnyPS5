@@ -341,6 +341,7 @@ private:
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
         std::vector<std::string> messages;
         std::uint32_t elementBase = 0;
+        std::uint32_t storageElementBase = 0;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
         std::vector<std::size_t> elementTextures;
@@ -349,6 +350,8 @@ private:
     std::vector<TableStage> tableStages;
     std::size_t tableBinding = std::numeric_limits<std::size_t>::max();
     std::uint32_t tableElements = 0;
+    std::size_t tableStorageBinding = std::numeric_limits<std::size_t>::max();
+    std::uint32_t tableStorageElements = 0;
     TableStage& tableStage(const CompiledShader& shader);
     static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
     std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);

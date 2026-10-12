@@ -1700,13 +1700,15 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
-                const auto [found, inserted] = elementIndex.try_emplace({element, mode.dimension, mode.depthCompare, kind}, static_cast<std::uint32_t>(out.elements.size()));
-                if (inserted && out.elements.size() >= Abi::ImageElementBudget) {
+                const bool storageKind = ImageBindingResourceClass(kind) == ImageResourceClass::Storage;
+                auto& list = storageKind ? out.storageElements : out.elements;
+                const auto [found, inserted] = elementIndex.try_emplace({element, mode.dimension, mode.depthCompare, kind}, static_cast<std::uint32_t>(list.size()));
+                if (inserted && list.size() >= (storageKind ? Abi::StorageElementBudget : Abi::ImageElementBudget)) {
                     elementIndex.erase(found);
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
-                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
-                    out.elements[found->second].samplers |= directSamplers[resource];
+                    if (inserted) list.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
+                    list[found->second].samplers |= directSamplers[resource];
                     record[Abi::ImageRecordFlags] = decoded << Abi::ModeShift;
                     record[Abi::ImageRecordElement] = found->second;
                 }
@@ -1790,11 +1792,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         if (info.samplers[resource].table != NoTable) fill(resource, info.samplers[resource].table, true);
     }
     out.map[Abi::HeaderElementCount] = static_cast<std::uint32_t>(out.elements.size());
+    out.map[Abi::HeaderStorageElementCount] = static_cast<std::uint32_t>(out.storageElements.size());
     out.map[Abi::HeaderSamplerCount] = static_cast<std::uint32_t>(out.samplers.size());
     out.map[Abi::HeaderPoisonCount] = static_cast<std::uint32_t>(out.poison.size());
     out.map[Abi::HeaderTableCount] = count;
     out.map[Abi::HeaderElementFaults] = static_cast<std::uint32_t>(out.map.size());
-    out.map.resize(out.map.size() + out.elements.size(), 0u);
+    out.map.resize(out.map.size() + out.elements.size() + out.storageElements.size(), 0u);
     out.map[Abi::HeaderSamplerFaults] = static_cast<std::uint32_t>(out.map.size());
     out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
     out.faults = static_cast<std::uint32_t>(expected.size() + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));

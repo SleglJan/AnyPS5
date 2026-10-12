@@ -36,6 +36,7 @@ struct ImageTablePoisonRecord {
 struct ResolvedImageTables {
     std::vector<std::uint32_t> map;
     std::vector<ImageTableElement> elements;
+    std::vector<ImageTableElement> storageElements;
     std::vector<ImageTableSamplerElement> samplers;
     std::vector<ImageTablePoisonRecord> poison;
     std::uint32_t faults = 0;
