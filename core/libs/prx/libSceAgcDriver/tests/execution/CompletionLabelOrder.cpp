@@ -167,6 +167,9 @@ constexpr std::uint32_t FreshMarker = 0xbbbb0000u;
 constexpr std::size_t MarkerDword = 14;
 constexpr std::size_t BoundLabelOffset = 256;
 constexpr std::uint32_t BoundTarget = 0x2468ace0u;
+constexpr std::size_t OverLabelOffset = 320;
+constexpr std::uint32_t HeldValue = 1u;
+constexpr std::uint32_t LaterValue = 2u;
 
 }
 
@@ -175,7 +178,8 @@ constexpr std::uint32_t BoundTarget = 0x2468ace0u;
 // results; (a) a dispatch recorded after it that reads the label's bytes in place sees the new
 // value; (b) a WAIT_REG_MEM on the held label is answered by the label table at once (no wait on
 // the reap), and a waiter that submits and reaps, as a queue worker does for a refused late
-// label, sees it land in guest memory after the copied results.
+// label, sees it land in guest memory after the copied results; (d) a plain store recorded over a
+// held label lands after it, not under it.
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_CPU_COPIES", "1");
@@ -275,6 +279,23 @@ int main() {
         waiter.join();
         Require(landed, "completion label order: a waiter submitting and reaping did not see the held label land after the copied results");
         device->WaitIdle();
+
+        const GuestBlock fifth(Fill, false);
+        RecordDispatch(*device, input, fifth.Address() + 4u);
+        int heldOverReason = -1;
+        int laterReason = -1;
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            const auto address = labels.Address() + OverLabelOffset;
+            heldOverReason = device->WriteLabelOnGpu(address, std::as_bytes(std::span(&HeldValue, 1)), 5, 0, false, true);
+            laterReason = device->WriteLabelOnGpu(address, std::as_bytes(std::span(&LaterValue, 1)), 6, 0, false, false);
+            device->SubmitRecorded(true);
+        }
+        device->WaitIdle();
+        Require(heldOverReason == 5, "completion label order: the label under a later store was not kept behind the write-back (reason " + std::to_string(heldOverReason) + ")");
+        char overLine[200];
+        std::snprintf(overLine, sizeof(overLine), "completion label order: a store recorded after a held label (reason %d) holds 0x%08x after the reap, not its value 0x%08x", laterReason, Word(labels, OverLabelOffset), LaterValue);
+        Require(Word(labels, OverLabelOffset) == LaterValue, overLine);
         std::printf("completion label order tests passed (polled label %s before the reap)\n", seenEarly ? "seen" : "not seen");
         return 0;
     } catch (const std::exception& error) {
