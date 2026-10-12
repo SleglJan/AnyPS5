@@ -588,7 +588,19 @@ void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColu
     auto& last = seen[{plan.shaderHash, table}];
     if (last == trace) return;
     last = trace;
-    std::fprintf(stderr, "[image-table] shader 0x%llx table %u (%s): base 0x%llx size 0x%llx stride 0x%x addend 0x%x offset 0x%x dwords %u, %u records, %u keys%s, %u structural poison\n", static_cast<unsigned long long>(plan.shaderHash), table, column.sampler ? "sampler" : "image", static_cast<unsigned long long>(trace.base), static_cast<unsigned long long>(trace.size), column.stride, column.addend, column.offset, column.dwordCount, trace.records, trace.keys, trace.narrowed ? " (narrowed)" : "", trace.poison);
+    std::string key = "none";
+    if (column.keyDomain.has_value()) {
+        const auto& domain = *column.keyDomain;
+        key = (domain.value ? "value source " : "scan source ") + std::to_string(domain.source);
+        if (!domain.value) {
+            key += " offset 0x" + hexText(domain.offset) + " stride " + std::to_string(domain.stride);
+            if (domain.recordStride) key += " (record stride)";
+        }
+        if (domain.shift != 0u) key += " shift " + std::to_string(domain.shift);
+        if (domain.mask != 0xffffffffu) key += " mask 0x" + hexText(domain.mask);
+        if (domain.addend != 0u) key += " addend " + std::to_string(domain.addend);
+    }
+    std::fprintf(stderr, "[image-table] shader 0x%llx table %u (%s): base 0x%llx size 0x%llx stride 0x%x addend 0x%x offset 0x%x dwords %u, %u records, %u keys%s, %u structural poison, key %s\n", static_cast<unsigned long long>(plan.shaderHash), table, column.sampler ? "sampler" : "image", static_cast<unsigned long long>(trace.base), static_cast<unsigned long long>(trace.size), column.stride, column.addend, column.offset, column.dwordCount, trace.records, trace.keys, trace.narrowed ? " (narrowed)" : "", trace.poison, key.c_str());
 }
 
 class TableSnapshotter {
