@@ -203,6 +203,19 @@ public:
     // (their count and size remain): a compute template then serves dispatches whose constants
     // differ, and the hit refreshes its data buffers with the dispatch's words (RefreshData).
     static std::vector<std::uint32_t> ContentKey(const CompiledShader& shader, bool dataWords = true, bool movableBuffers = false);
+    // ContentKey(shader, true, movableBuffers) in ten words, for draw keys (Draw.cpp DrawResourceKey):
+    // a marker no ContentKey starts with (2; its first word is the data-words flag), the stage, the
+    // variant (two words) and the binding count as the key has them, then the key's length and a
+    // 128-bit hash of all its words. An image-table stage's key runs to tens of thousands of words.
+    using ContentDigest = std::array<std::uint32_t, 10>;
+    static constexpr std::uint32_t ContentDigestMarker = 2;
+    static ContentDigest ContentKeyDigest(const CompiledShader& shader, bool movableBuffers);
+    // The digest of a stage whose program is `*owner` or an unchanged copy of it, kept per owner
+    // object: the result memo and the draw cache hand the same materialized result to many draws.
+    // An entry names its owner by control block, so a later object at the same address misses.
+    static ContentDigest SharedContentKeyDigest(const std::shared_ptr<const ShaderRecompiler::RecompileResult>& owner, ShaderRecompiler::ShaderStage stage, bool movableBuffers);
+    // DIAG: SharedContentKeyDigest calls that found their owner's digest, and those that computed it.
+    static std::pair<std::uint64_t, std::uint64_t> SharedContentDigestCounts();
     // Records the shader's ShaderData and FlattenedSrt words into this object's data buffers
     // (vkCmdUpdateBuffer, a transfer write the caller's pre-dispatch barrier makes visible; a
     // buffer already holding the words is left alone). Returns whether anything was recorded. With

@@ -464,9 +464,11 @@ DrawProfile& Profile() {
 }
 
 // DIAG: nanoseconds of the cacheable draws' lookups by sub-phase: 0 key, 1 find, 2 revalidate,
-// 3 moved buffers (and copied-region proofs); 4 counts the finds that returned an object.
-std::array<std::atomic<std::uint64_t>, 5>& DiagLookup() {
-    static std::array<std::atomic<std::uint64_t>, 5> lookup{};
+// 3 moved buffers (and copied-region proofs); 4 counts the finds that returned an object; 5 the
+// nanoseconds of PrepareDrawResourceKey (worker, before the lock), 6 its calls, 7 the lookups that
+// used a prepared key.
+std::array<std::atomic<std::uint64_t>, 8>& DiagLookup() {
+    static std::array<std::atomic<std::uint64_t>, 8> lookup{};
     return lookup;
 }
 
@@ -577,7 +579,9 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
         auto& lookup = DiagLookup();
         const auto found = std::max<std::uint64_t>(lookup[4].exchange(0), 1u);
         const auto key = lookup[0].exchange(0), find = lookup[1].exchange(0), revalidate = lookup[2].exchange(0), movedNs = lookup[3].exchange(0);
-        std::fprintf(stderr, "[rescache-diag] lookup (10 s): key %.1f ms, find %.1f ms, revalidate %.1f ms (%.1f us per found), moved/copied proofs %.1f ms (%.1f us per found); %llu found\n", key / 1e6, find / 1e6, revalidate / 1e6, revalidate / 1e3 / static_cast<double>(found), movedNs / 1e6, movedNs / 1e3 / static_cast<double>(found), static_cast<unsigned long long>(found));
+        const auto preparedNs = lookup[5].exchange(0), prepared = lookup[6].exchange(0), preparedUsed = lookup[7].exchange(0);
+        const auto [digestHits, digestMisses] = ShaderResources::SharedContentDigestCounts();
+        std::fprintf(stderr, "[rescache-diag] lookup (10 s): key %.1f ms, find %.1f ms, revalidate %.1f ms (%.1f us per found), moved/copied proofs %.1f ms (%.1f us per found); %llu found; prepared keys %llu (%.1f ms before the lock), %llu used; stage digests (total) kept %llu / made %llu\n", key / 1e6, find / 1e6, revalidate / 1e6, revalidate / 1e3 / static_cast<double>(found), movedNs / 1e6, movedNs / 1e3 / static_cast<double>(found), static_cast<unsigned long long>(found), static_cast<unsigned long long>(prepared), preparedNs / 1e6, static_cast<unsigned long long>(preparedUsed), static_cast<unsigned long long>(digestHits), static_cast<unsigned long long>(digestMisses));
     }
     std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
     profile.totalsUs.fill(0);
@@ -756,7 +760,24 @@ bool MovableBuffers() {
     return enabled;
 }
 
-ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
+// Each stage enters the key as its digest (ShaderResources::ContentKeyDigest) rather than its whole
+// content key: an image-table stage's key ran to tens of thousands of words, which the committer
+// built and hashed under the GPU mutex for every draw (94 of its 258 us per draw on 007's title
+// screen). PrepareDrawResourceKey makes the key on the worker beforehand. APS5_NO_DRAW_KEY_DIGEST=1
+// keys the stages' whole content under the lock as before.
+bool DrawKeyDigests() {
+    static const bool enabled = std::getenv("APS5_NO_DRAW_KEY_DIGEST") == nullptr;
+    return enabled;
+}
+
+// Debug aid: APS5_VERIFY_DRAW_KEY_DIGEST=1 recomputes a prepared key from the draw's stages under
+// the lock, and checks that one digest key never stands for two whole-content keys (the last 256).
+bool VerifyDrawKeyDigests() {
+    static const bool enabled = std::getenv("APS5_VERIFY_DRAW_KEY_DIGEST") != nullptr;
+    return enabled;
+}
+
+ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, std::span<const ShaderResources::ContentDigest> digests, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
     ResourceCache::Key key{0xffffffffu};
     const auto append64 = [&](std::uint64_t value) {
         key.push_back(static_cast<std::uint32_t>(value));
@@ -764,8 +785,13 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     };
     append64(reinterpret_cast<std::uint64_t>(context.device));
     key.push_back(static_cast<std::uint32_t>(shaders.size()));
-    for (const auto& shader : shaders) {
-        const auto part = ShaderResources::ContentKey(shader, true, MovableBuffers());
+    for (std::size_t stage = 0; stage < shaders.size(); ++stage) {
+        if (stage < digests.size()) {
+            key.push_back(static_cast<std::uint32_t>(digests[stage].size()));
+            key.insert(key.end(), digests[stage].begin(), digests[stage].end());
+            continue;
+        }
+        const auto part = ShaderResources::ContentKey(shaders[stage], true, MovableBuffers());
         key.push_back(static_cast<std::uint32_t>(part.size()));
         key.insert(key.end(), part.begin(), part.end());
     }
@@ -777,6 +803,29 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
         append64(indexBytes);
     }
     return key;
+}
+
+ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
+    std::vector<ShaderResources::ContentDigest> digests;
+    if (DrawKeyDigests()) {
+        digests.reserve(shaders.size());
+        for (const auto& shader : shaders) digests.push_back(ShaderResources::ContentKeyDigest(shader, MovableBuffers()));
+    }
+    return DrawResourceKey(context, shaders, digests, target, colorAttachments, indexAddress, indexBytes, ranges);
+}
+
+// APS5_VERIFY_DRAW_KEY_DIGEST: a prepared key equals the one the stages give now, and its digest key
+// maps to one whole-content key.
+void verifyPreparedDrawKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, const ResourceCache::Key& prepared) {
+    const auto fresh = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0, false);
+    Require(fresh == prepared, "a prepared draw resource key differs from the one its stages give under the lock");
+    const auto whole = DrawResourceKey(context, shaders, std::span<const ShaderResources::ContentDigest>{}, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0, false);
+    static std::mutex mutex;
+    static std::map<ResourceCache::Key, ResourceCache::Key> seen;
+    std::lock_guard lock(mutex);
+    const auto [found, inserted] = seen.try_emplace(prepared, whole);
+    Require(inserted || found->second == whole, "two draw contents share a digest key");
+    if (seen.size() > 256) seen.erase(seen.begin());
 }
 
 // The alias checks the build makes for every guest buffer descriptor (ShaderResources::
@@ -803,6 +852,25 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
     }
 }
 
+}
+
+ResourceCache::Key PrepareDrawResourceKey(const Context& context, const State& state, std::span<const CompiledShader> shaders, std::span<const std::shared_ptr<const ShaderRecompiler::RecompileResult>> owners) {
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    if (!DrawKeyDigests() || !trimKey) return {};
+    static const bool lookupProfiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto start = lookupProfiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    std::vector<ShaderResources::ContentDigest> digests;
+    digests.reserve(shaders.size());
+    for (std::size_t stage = 0; stage < shaders.size(); ++stage) {
+        if (stage < owners.size() && owners[stage] != nullptr) digests.push_back(ShaderResources::SharedContentKeyDigest(owners[stage], shaders[stage].stage, MovableBuffers()));
+        else digests.push_back(ShaderResources::ContentKeyDigest(shaders[stage], MovableBuffers()));
+    }
+    auto key = DrawResourceKey(context, shaders, digests, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0, false);
+    if (lookupProfiled) {
+        DiagLookup()[5] += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        ++DiagLookup()[6];
+    }
+    return key;
 }
 
 std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters& draw) {
@@ -1311,7 +1379,7 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer, const ResourceCache::Key* preparedKey) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -1336,7 +1404,16 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             DiagLookup()[phase] += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - stamp).count());
             stamp = now;
         };
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        // A key the worker prepared (PrepareDrawResourceKey) serves while it names this context's
+        // device: the driver may have replaced the device since.
+        const auto deviceHandle = reinterpret_cast<std::uint64_t>(context.device);
+        if (preparedKey != nullptr && preparedKey->size() > 3 && (*preparedKey)[1] == static_cast<std::uint32_t>(deviceHandle) && (*preparedKey)[2] == static_cast<std::uint32_t>(deviceHandle >> 32u)) {
+            resolved.contentKey = *preparedKey;
+            if (VerifyDrawKeyDigests()) verifyPreparedDrawKey(context, shaders, state, resolved.contentKey);
+            if (lookupProfiled) ++DiagLookup()[7];
+        } else {
+            resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        }
         lap(0);
         auto cached = SharedResourceCache().Find(resolved.contentKey);
         lap(1);
@@ -1915,7 +1992,7 @@ std::optional<std::string> KnownValidationFailure(const Context& context, std::s
     return std::nullopt;
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut) {
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const ResourceCache::Key* preparedKey) {
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
     PerformanceTimer timing("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
@@ -2056,7 +2133,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool recordDraws = RecordDraws();
     auto* recorder = Recorder::Active();
     const bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
-    auto resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    auto resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer, preparedKey);
     auto& resources = resolved.resources;
     const auto& contentKey = resolved.contentKey;
     const bool cacheable = resolved.cacheable;

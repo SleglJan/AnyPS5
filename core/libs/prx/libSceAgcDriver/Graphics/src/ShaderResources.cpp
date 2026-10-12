@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -2216,6 +2217,150 @@ std::vector<std::uint32_t> ShaderResources::ContentKey(const CompiledShader& sha
     return key;
 }
 
+namespace {
+
+// A 128-bit hash of a word stream, taken in stripes of eight words: one lane is xxHash64 (four
+// accumulators, its round, merge and avalanche), the other runs the same stripes through another
+// round (xor, multiply, rotate) and the murmur3 finalizer; both mix in the word count, so a
+// zero-padded tail differs from words that are zero.
+class WordStreamHash {
+public:
+    void Add(std::uint32_t word) {
+        stripe[filled++] = word;
+        ++count;
+        if (filled == stripe.size()) consume();
+    }
+
+    std::array<std::uint64_t, 2> Finish() {
+        if (filled != 0) {
+            std::fill(stripe.begin() + static_cast<std::ptrdiff_t>(filled), stripe.end(), 0u);
+            consume();
+        }
+        std::uint64_t first = std::rotl(xx[0], 1) + std::rotl(xx[1], 7) + std::rotl(xx[2], 12) + std::rotl(xx[3], 18);
+        std::uint64_t second = std::rotl(other[0], 5) + std::rotl(other[1], 17) + std::rotl(other[2], 29) + std::rotl(other[3], 41);
+        for (std::size_t lane = 0; lane < 4; ++lane) {
+            first = (first ^ xxRound(0, xx[lane])) * Prime1 + Prime4;
+            second = (second ^ otherRound(0, other[lane])) * Prime3 + Prime5;
+        }
+        first += count;
+        second ^= count * Prime2;
+        first ^= first >> 33u;
+        first *= Prime2;
+        first ^= first >> 29u;
+        first *= Prime3;
+        first ^= first >> 32u;
+        second ^= second >> 33u;
+        second *= 0xff51afd7ed558ccdull;
+        second ^= second >> 33u;
+        second *= 0xc4ceb9fe1a85ec53ull;
+        second ^= second >> 33u;
+        return {first, second};
+    }
+
+private:
+    static constexpr std::uint64_t Prime1 = 0x9e3779b185ebca87ull;
+    static constexpr std::uint64_t Prime2 = 0xc2b2ae3d27d4eb4full;
+    static constexpr std::uint64_t Prime3 = 0x165667b19e3779f9ull;
+    static constexpr std::uint64_t Prime4 = 0x85ebca77c2b2ae63ull;
+    static constexpr std::uint64_t Prime5 = 0x27d4eb2f165667c5ull;
+
+    static std::uint64_t xxRound(std::uint64_t accumulator, std::uint64_t input) {
+        return std::rotl(accumulator + input * Prime2, 31) * Prime1;
+    }
+
+    static std::uint64_t otherRound(std::uint64_t accumulator, std::uint64_t input) {
+        return std::rotl((accumulator ^ input) * 0x9fb21c651e98df25ull, 29) * Prime5;
+    }
+
+    void consume() {
+        for (std::size_t lane = 0; lane < 4; ++lane) {
+            const auto chunk = static_cast<std::uint64_t>(stripe[lane * 2]) | (static_cast<std::uint64_t>(stripe[lane * 2 + 1]) << 32u);
+            xx[lane] = xxRound(xx[lane], chunk);
+            other[lane] = otherRound(other[lane], chunk);
+        }
+        filled = 0;
+    }
+
+    std::array<std::uint32_t, 8> stripe{};
+    std::size_t filled = 0;
+    std::uint64_t count = 0;
+    std::array<std::uint64_t, 4> xx{Prime1 + Prime2, Prime2, 0, 0 - Prime1};
+    std::array<std::uint64_t, 4> other{Prime3, Prime4 + Prime5, Prime5, 0 - Prime3};
+};
+
+struct ContentDigestMemo {
+    struct Entry {
+        std::weak_ptr<const ShaderRecompiler::RecompileResult> owner;
+        ShaderRecompiler::ShaderStage stage;
+        bool movableBuffers;
+        ShaderResources::ContentDigest digest;
+    };
+    std::mutex mutex;
+    std::unordered_map<const ShaderRecompiler::RecompileResult*, Entry> entries;
+    std::size_t pruneAt = 4096;
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+};
+
+ContentDigestMemo& contentDigestMemo() {
+    static ContentDigestMemo memo;
+    return memo;
+}
+
+bool sameOwner(const std::weak_ptr<const ShaderRecompiler::RecompileResult>& stored, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& owner) {
+    return !stored.owner_before(owner) && !owner.owner_before(stored);
+}
+
+}
+
+ShaderResources::ContentDigest ShaderResources::ContentKeyDigest(const CompiledShader& shader, bool movableBuffers) {
+    WordStreamHash hash;
+    ContentDigest digest{};
+    std::size_t index = 0;
+    VisitContentKey(shader, true, movableBuffers, [&](std::uint32_t word) {
+        if (index < 5) digest[index] = word;
+        ++index;
+        hash.Add(word);
+    });
+    Require(index >= 5 && index <= std::numeric_limits<std::uint32_t>::max(), "shader content key has an unexpected length");
+    const auto hashed = hash.Finish();
+    digest[0] = ContentDigestMarker;
+    digest[5] = static_cast<std::uint32_t>(index);
+    digest[6] = static_cast<std::uint32_t>(hashed[0]);
+    digest[7] = static_cast<std::uint32_t>(hashed[0] >> 32u);
+    digest[8] = static_cast<std::uint32_t>(hashed[1]);
+    digest[9] = static_cast<std::uint32_t>(hashed[1] >> 32u);
+    return digest;
+}
+
+ShaderResources::ContentDigest ShaderResources::SharedContentKeyDigest(const std::shared_ptr<const ShaderRecompiler::RecompileResult>& owner, ShaderRecompiler::ShaderStage stage, bool movableBuffers) {
+    Require(owner != nullptr, "missing compiled shader");
+    auto& memo = contentDigestMemo();
+    {
+        std::lock_guard lock(memo.mutex);
+        const auto found = memo.entries.find(owner.get());
+        if (found != memo.entries.end() && found->second.stage == stage && found->second.movableBuffers == movableBuffers && sameOwner(found->second.owner, owner)) {
+            ++memo.hits;
+            return found->second.digest;
+        }
+    }
+    const auto digest = ContentKeyDigest(CompiledShader{stage, owner.get(), 0}, movableBuffers);
+    std::lock_guard lock(memo.mutex);
+    ++memo.misses;
+    memo.entries.insert_or_assign(owner.get(), ContentDigestMemo::Entry{owner, stage, movableBuffers, digest});
+    if (memo.entries.size() >= memo.pruneAt) {
+        std::erase_if(memo.entries, [](const auto& entry) { return entry.second.owner.expired(); });
+        memo.pruneAt = std::max<std::size_t>(4096, memo.entries.size() * 2);
+    }
+    return digest;
+}
+
+std::pair<std::uint64_t, std::uint64_t> ShaderResources::SharedContentDigestCounts() {
+    auto& memo = contentDigestMemo();
+    std::lock_guard lock(memo.mutex);
+    return {memo.hits, memo.misses};
+}
+
 bool MatchesContentKey(const CompiledShader& shader, std::span<const std::uint32_t> key) {
     std::size_t cursor = 0;
     bool equal = true;
@@ -3069,6 +3214,9 @@ struct ChurnCounts {
     std::uint64_t sameKey = 0;
     std::uint64_t layout = 0;
     std::uint64_t drawWords = 0;
+    // Draw keys of digested stages (ShaderResources::ContentKeyDigest): a difference in the hashed
+    // part names no binding.
+    std::uint64_t digest = 0;
 };
 
 // Dispatch keys and draw keys are counted apart: what churns a draw's key decides the draw steps.
@@ -3088,6 +3236,15 @@ ChurnProfile& Churn() {
 // Charges word `diff` of `key` to the binding of the ContentKey that starts at `at` (the layout of
 // ShaderResources::ContentKey), moving `at` past that key; false when `diff` lies beyond it.
 bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t diff) {
+    if (at < key.size() && key[at] == ShaderResources::ContentDigestMarker) {
+        const auto end = at + std::tuple_size_v<ShaderResources::ContentDigest>;
+        if (diff < end) {
+            ++(diff < at + 5 ? profile.layout : profile.digest);
+            return true;
+        }
+        at = end;
+        return false;
+    }
     if (at + 5 > key.size() || diff < at + 5) {
         ++profile.layout;
         return true;
@@ -3205,7 +3362,7 @@ void ResourceCache::noteMiss(const Key& key) {
                 line += item;
             }
         }
-        std::snprintf(item, sizeof(item), "; layout %llu, draw target/index %llu, same key %llu (not inserted or evicted), first seen %llu", static_cast<unsigned long long>(churn.layout), static_cast<unsigned long long>(churn.drawWords), static_cast<unsigned long long>(churn.sameKey), static_cast<unsigned long long>(churn.firstSeen));
+        std::snprintf(item, sizeof(item), "; layout %llu, draw target/index %llu, same key %llu (not inserted or evicted), first seen %llu, stage digest %llu", static_cast<unsigned long long>(churn.layout), static_cast<unsigned long long>(churn.drawWords), static_cast<unsigned long long>(churn.sameKey), static_cast<unsigned long long>(churn.firstSeen), static_cast<unsigned long long>(churn.digest));
         line += item;
         AgcDriver::ProfilePrint_nid_no_patch("%s\n", line.c_str());
     };

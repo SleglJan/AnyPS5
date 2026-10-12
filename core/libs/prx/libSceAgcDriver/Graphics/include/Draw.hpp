@@ -19,7 +19,13 @@ struct HostImport;
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+// `preparedKey`, when given, is the draw's resource-cache key from PrepareDrawResourceKey.
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const ResourceCache::Key* preparedKey = nullptr);
+// A draw's resource-cache key made before the draw takes the GPU mutex (the queue-0 worker, before
+// it hands the draw to the committer), from its stages' digests; `owners[i]`, when set, is the
+// shared result shaders[i].program is an unchanged copy of (its digest is kept per object). Empty
+// when the key is not made from digests (APS5_NO_DRAW_KEY_DIGEST=1, APS5_NO_DRAW_KEY_TRIM=1).
+ResourceCache::Key PrepareDrawResourceKey(const Context& context, const State& state, std::span<const CompiledShader> shaders, std::span<const std::shared_ptr<const ShaderRecompiler::RecompileResult>> owners);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
