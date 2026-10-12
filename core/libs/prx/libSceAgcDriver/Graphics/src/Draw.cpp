@@ -977,6 +977,22 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     return copy;
 }
 
+DrawInputCopy CopyCommittedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> committed, Recorder::SnapshotUse use) {
+    Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
+    Require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "draw input range overflow");
+    DrawInputCopy copy;
+    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    const auto span = copy.buffer->Bytes();
+    std::fill(span.begin(), span.end(), std::byte{0});
+    const auto end = address + bytes;
+    for (const auto& [runBegin, runEnd] : committed) {
+        const auto first = std::max(runBegin, address);
+        const auto last = std::min(runEnd, end);
+        if (first < last) GuestMemory::Read(first, span.subspan(static_cast<std::size_t>(first - address), static_cast<std::size_t>(last - first)), 1);
+    }
+    return copy;
+}
+
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
     if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
@@ -1060,7 +1076,18 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     const auto indexBytes = inputs.indexBytes;
     APS5_LOG_OUT_DEBUG("Index buffer bytes=%llu", static_cast<unsigned long long>(indexBytes));
     Require(indexBytes <= std::numeric_limits<std::size_t>::max(), "index buffer size overflow");
-    if (draw.indexed) GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
+    // An indirect draw binds the declared INDEX_BUFFER_SIZE range, of which the GPU reads only the
+    // indices its records select: a part that is not committed (unbacked pages of a sparse heap)
+    // is bound as zeros instead of failing the draw. A CPU-known index range must be readable.
+    GuestMemory::Commitment indexCommitment;
+    bool partialIndices = false;
+    if (draw.indexed && args != nullptr) {
+        Require(draw.indexAddress != 0 && draw.indexAddress % draw.indexSize == 0, "null or misaligned index base");
+        indexCommitment = GuestMemory::DescribeCommitted(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+        partialIndices = !indexCommitment.whole;
+    } else if (draw.indexed) {
+        GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
+    }
     APS5_LOG_CHARS_OUT_DEBUG("Index buffer range OK");
     Require(!draw.indexed || !state.hasColorTarget || draw.indexAddress + indexBytes <= state.color.address || state.color.address + state.color.bytes <= draw.indexAddress, "index buffer aliases the render target");
     if (state.rectList) Require(draw.indexCount % 3 == 0, "incomplete rect-list primitive");
@@ -1099,9 +1126,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
-        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
+        const auto* import = partialIndices ? nullptr : InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
         DrawInputCopy copy;
-        if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
+        if (partialIndices) copy = CopyCommittedDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), indexCommitment.ranges, use);
+        else if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
         std::optional<std::uint32_t> highest;
         if (!copy.reused) {

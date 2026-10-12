@@ -15,6 +15,15 @@
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -330,6 +339,39 @@ private:
     std::uint32_t* records = nullptr;
 };
 
+std::size_t PageBytes() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    return static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+#endif
+}
+
+// A reservation of `reserved` bytes whose first `committed` bytes are readable and writable, the
+// rest unbacked: a sparse heap's view.
+std::uint8_t* ReserveSparse(std::size_t reserved, std::size_t committed) {
+#ifdef _WIN32
+    auto* block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, reserved, MEM_RESERVE, PAGE_NOACCESS));
+    Require(block != nullptr && VirtualAlloc(block, committed, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot reserve the sparse index buffer");
+    return block;
+#else
+    void* mapped = mmap(nullptr, reserved, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED && mprotect(mapped, committed, PROT_READ | PROT_WRITE) == 0, "cannot reserve the sparse index buffer");
+    return static_cast<std::uint8_t*>(mapped);
+#endif
+}
+
+void ReleaseSparse(std::uint8_t* block, std::size_t reserved) {
+#ifdef _WIN32
+    static_cast<void>(reserved);
+    VirtualFree(block, 0, MEM_RELEASE);
+#else
+    munmap(block, reserved);
+#endif
+}
+
 AgcDriver::DriverDetail::DrawProgram Program(const std::vector<std::uint32_t>& userData) {
     AgcDriver::DriverDetail::DrawProgram program{};
     program.firstUserSgpr = 8;
@@ -474,6 +516,39 @@ std::string Run(Fixture& fixture) {
             fixture.Place(0x51u, bufferIndices, 0x62u);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn on the GPU", bufferIndices, 0x51u, 0x62u, true);
+        }
+        {
+            const std::string what = "indexed indirect record over an index buffer whose declared range runs into unbacked pages";
+            const auto page = PageBytes();
+            auto* block = ReserveSparse(2 * page, page);
+            try {
+                std::copy(Indices.begin(), Indices.end(), reinterpret_cast<std::uint16_t*>(block));
+                const auto vertex = fixture.Vertex(VertexCode, staleUserData);
+                AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(block), static_cast<std::uint32_t>(page), 2, 0, 0, true, 0, 0};
+                draw.indirect = indexedIndirect;
+                draw.indirect->baseVertexLocation = NoLocation;
+                draw.indirect->startInstanceLocation = NoLocation;
+                draw.indirect->baseVertexSgpr = -1;
+                draw.indirect->startInstanceSgpr = -1;
+                failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::Constant);
+                fixture.Place(0x51u, bufferIndices, 0x62u);
+                fixture.Draw(vertex, draw);
+                failures += fixture.Check(what + ", drawn on the GPU", bufferIndices, 0x51u, 0x62u, true);
+                const auto across = reinterpret_cast<std::uintptr_t>(block + page - 4);
+                const auto direct = FoldedDraw(vertex, staleUserData, {across, Vertices, 2, Instances, 0, true, 0, 0});
+                std::string refusal;
+                try {
+                    fixture.Draw(vertex, direct);
+                } catch (const std::exception& error) {
+                    refusal = error.what();
+                }
+                std::cout << "direct indexed draw whose own indices run into unbacked pages: " << (refusal.empty() ? std::string("drawn") : refusal) << '\n';
+                if (refusal.find("not readable") == std::string::npos) failures += "a direct indexed draw whose own indices run into unbacked pages was not refused as unreadable\n";
+            } catch (...) {
+                ReleaseSparse(block, 2 * page);
+                throw;
+            }
+            ReleaseSparse(block, 2 * page);
         }
     }
     return failures;
