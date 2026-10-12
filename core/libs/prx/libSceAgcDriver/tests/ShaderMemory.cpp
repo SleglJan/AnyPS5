@@ -752,9 +752,16 @@ struct TableCompiled {
     std::vector<std::byte> key;
 };
 
-TableCompiled CompileTable(ShaderRecompiler::RecompileRequest request) {
+std::pair<std::uint64_t, std::uint64_t> PendingKeyRange{};
+
+AgcDriver::ShaderMemory::PendingWrite PendingKeyQuery(std::uint64_t address, std::size_t bytes, std::span<std::byte>) {
+    const auto [base, size] = PendingKeyRange;
+    return address < base + size && base < address + bytes ? AgcDriver::ShaderMemory::PendingWrite::Sync : AgcDriver::ShaderMemory::PendingWrite::None;
+}
+
+TableCompiled CompileTable(ShaderRecompiler::RecompileRequest request, AgcDriver::ShaderMemory::PendingWriteQuery pending = nullptr) {
     TableCompiled out;
-    AgcDriver::ShaderMemory memory({});
+    AgcDriver::ShaderMemory memory({}, pending);
     out.capture = memory.Capture(request);
     out.regions = memory.Regions();
     request.context.memory = out.regions;
@@ -1281,6 +1288,38 @@ void verifyImageTableKeyUnion() {
     const auto moved = CompileTable(request);
     const auto& movedSnapshot = moved.capture->snapshot.tables.tables.at(0);
     require((movedSnapshot.codes[2] & Abi::PoisonFlag) == 0u && movedSnapshot.codes[3] == outside && (movedSnapshot.codes[1] & Abi::PoisonFlag) == 0u && moved.result->spirv == compiled.result->spirv, "image table key union: a changed second key did not move the union or changed the module");
+}
+
+void verifyImageTablePendingKey() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[4];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = TableT(textures[2].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[3] = TableT(textures[3].bytes.data(), TableFormat32UInt, TableType2D);
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableSrtKeyCode, userData);
+    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    const std::pair<std::uint64_t, std::uint64_t> keyRange{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&guest.srt[16])), sizeof(std::uint32_t)};
+    const auto settled = CompileTable(request);
+    const auto& tables = settled.capture->snapshot.tables;
+    require(tables.tables.at(0).codes[1] == outside && tables.tables.at(0).codes[3] == outside && (tables.tables.at(0).codes[2] & Abi::PoisonFlag) == 0u, "image table pending key: a settled SRT key did not narrow the table");
+    require(std::find(tables.ranges.begin(), tables.ranges.end(), keyRange) != tables.ranges.end(), "image table pending key: the key's dword is not among the snapshot ranges");
+    const auto* settledImages = TableBinding(*settled.result, DescriptorRole::ImageTable);
+    require(settledImages != nullptr && settledImages->count == 2u, "image table pending key: a settled key did not bind the selected record and the first alone");
+    PendingKeyRange = keyRange;
+    const auto pending = CompileTable(request, &PendingKeyQuery);
+    PendingKeyRange = {};
+    const auto& pendingTable = pending.capture->snapshot.tables.tables.at(0);
+    require(std::none_of(pendingTable.codes.begin(), pendingTable.codes.end(), [&](std::uint32_t code) { return code == outside; }), "image table pending key: a key pending a GPU write narrowed the table");
+    const auto* pendingImages = TableBinding(*pending.result, DescriptorRole::ImageTable);
+    require(pendingImages != nullptr && pendingImages->count == 4u && pending.result->spirv == settled.result->spirv, "image table pending key: a key pending a GPU write did not bind the whole domain with the same module");
 }
 
 void verifyImageTableRegistration() {
@@ -3787,6 +3826,7 @@ int main(int argc, char** argv) {
             verifyImageTables();
             verifyImageTableSrtKey();
             verifyImageTableKeyUnion();
+            verifyImageTablePendingKey();
             verifyImageTableKeyTransforms();
             verifyImageTableRegistration();
             verifyScalarAddressRule();
