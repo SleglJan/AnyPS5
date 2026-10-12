@@ -657,6 +657,24 @@ const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint6
 bool importsStale(const Context& context, const HostImports& state);
 const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease);
 
+// Pinned imports count against the driver's system memory budget; past it ordinary host
+// allocations fail, so imports stop at APS5_HOST_IMPORT_MIB (default 6 GiB, which covers the
+// registered memory of address-based shaders; past it they copy gigabytes per dispatch).
+std::uint64_t importBudget() {
+    static const std::uint64_t budget = [] {
+        const char* value = std::getenv("APS5_HOST_IMPORT_MIB");
+        return (value ? std::strtoull(value, nullptr, 10) : 6144ull) << 20u;
+    }();
+    return budget;
+}
+
+std::uint64_t overlappedImportBytes(const HostImports& state, std::uint64_t base, std::uint64_t bytes) {
+    std::uint64_t overlapped = 0;
+    for (auto it = state.imports.lower_bound(base); it != state.imports.end() && it->first < base + bytes; ++it) overlapped += it->second.bytes;
+    if (auto it = state.imports.lower_bound(base); it != state.imports.begin() && std::prev(it)->second.base + std::prev(it)->second.bytes > base) overlapped += std::prev(it)->second.bytes;
+    return overlapped;
+}
+
 const HostImport* importAllocation(const Context& context, HostImports& state, std::uint64_t address, const GuestAllocations::Lease& lease) {
     if (!importsStale(context, state)) {
         if (const auto* current = findImport(state, address, address + 1)) return current;
@@ -686,6 +704,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end())});
         return nullptr;
     }
+    if (joined && state.liveBytes - overlappedImportBytes(state, base, bytes) + bytes > importBudget()) return nullptr;
     if (const auto found = state.imports.find(base); found != state.imports.end()) {
         if (sameRun(found->second, run)) return &found->second;
         retireImport(context.device, state, found, lease);
@@ -701,13 +720,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         if (sameRun(failed->second, run)) return nullptr;
         failures.erase(failed);
     }
-    // Pinned imports count against the driver's system memory budget; past it ordinary host
-    // allocations fail, so imports stop at APS5_HOST_IMPORT_MIB (default 6 GiB, which covers the
-    // registered memory of address-based shaders; past it they copy gigabytes per dispatch).
-    static const std::uint64_t budget = [] {
-        const char* value = std::getenv("APS5_HOST_IMPORT_MIB");
-        return (value ? std::strtoull(value, nullptr, 10) : 6144ull) << 20u;
-    }();
+    const auto budget = importBudget();
     const auto live = state.liveBytes;
     if (live + bytes > budget) {
         // A refused import turns every later use of the range into CPU copies, so say so.
@@ -2971,7 +2984,8 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
         ++Mirrors().subranges;
     }
     bool importsRefreshed = false;
-    if (context.hostImportAlignment != 0) {
+    static const bool joinImports = std::getenv("APS5_NO_JOINED_IMPORTS") == nullptr;
+    if (joinImports && context.hostImportAlignment != 0) {
         auto& state = Imports();
         std::lock_guard lock(state.mutex);
         if (importsStale(context, state)) refreshImports(context, state, importRanges());
