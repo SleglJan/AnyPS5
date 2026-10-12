@@ -1737,7 +1737,12 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // completion action of the open batch, after the write-backs of it and every batch before it,
     // and not on the GPU. Debug aid: APS5_LABEL_GPU_OVER_COPIES=1 stores it on the GPU as before.
     static const bool gpuOverCopies = std::getenv("APS5_LABEL_GPU_OVER_COPIES") != nullptr;
-    if (completionLabel && !gpuOverCopies && state->AnyCopiedWriter()) {
+    // A store over a label still held there (any store: a plain packet store, or a label recorded
+    // once no copied write-back is pending) is held too: stored on the GPU it would land first and
+    // the held label's reap store would put the older value back over it. Held stores land in
+    // completion order, which is program order.
+    const bool overHeld = Graphics::Recorder::HeldCompletionLabels() != 0 && recorder.HeldLabelIn(address, bytes.size());
+    if (overHeld || (completionLabel && !gpuOverCopies && state->AnyCopiedWriter())) {
         if (drain) return 2;
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;

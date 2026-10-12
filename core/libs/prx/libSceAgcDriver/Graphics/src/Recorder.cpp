@@ -2923,6 +2923,16 @@ bool Recorder::CompletionLabelIn(std::uint64_t address, std::size_t bytes) const
     return false;
 }
 
+bool Recorder::HeldLabelIn(std::uint64_t address, std::size_t bytes) const {
+    std::lock_guard tableLock(labelTableMutex);
+    if (bytes == 0) return false;
+    const auto end = address + bytes;
+    for (auto it = labels.lower_bound(address); it != labels.end() && it->first < end; ++it) {
+        if (it->second.behindCompletion) return true;
+    }
+    return false;
+}
+
 std::vector<std::pair<std::uint64_t, std::size_t>> Recorder::HeldLabelRanges() const {
     std::lock_guard tableLock(labelTableMutex);
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
