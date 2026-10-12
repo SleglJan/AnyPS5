@@ -75,8 +75,11 @@ public:
     // 1 nothing recorded (the write is already ordered), 2 write-backs pending and 3 memory not
     // imported, 4 unsuitable size or alignment.
     // `reapFirst` retires finished batches before the checks; a caller recording a group of labels
-    // under one lock passes it for the first label only.
-    int WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst = true);
+    // under one lock passes it for the first label only. `completionLabel` marks a label a guest
+    // CPU may poll before reading what the work before it wrote (RELEASE_MEM, WRITE_DATA, EOP
+    // labels): while a copied write-back is pending it is kept behind the write-backs (5), not
+    // stored by the GPU, so the guest never sees it before the results.
+    int WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst = true, bool completionLabel = false);
     bool AfterRecordedWork(std::function<void()> action, bool reapFirst);
     // Pending-label table lookup and open-batch overlap test for WAIT_REG_MEM (see Recorder).
     std::optional<Graphics::Recorder::LabelHit> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, Graphics::Recorder::LabelRefusal* refusal = nullptr) const;
