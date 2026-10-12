@@ -86,7 +86,7 @@ IrValue* HostLaneWord(IrValue* raw, std::uint32_t word) {
     return value;
 }
 
-IrValue* SavedLaneBit(IrValue* value) {
+IrValue* LaneWord(IrValue* value) {
     if (value->Opcode() != IrOpcode::INotEqual32) return nullptr;
     IrValue* masked = VariableOperand(value, 0u);
     if (masked == nullptr || masked->Opcode() != IrOpcode::BitwiseAnd32) return nullptr;
@@ -94,12 +94,13 @@ IrValue* SavedLaneBit(IrValue* value) {
     if (shifted == nullptr || shifted->Opcode() != IrOpcode::ShiftRightLogical32) return nullptr;
     IrValue* bit = shifted->Argument(1)->Resolve();
     if (bit->Opcode() != IrOpcode::BitwiseAnd32 || !IsLaneId(VariableOperand(bit, 31u))) return nullptr;
-    IrValue* word = shifted->Argument(0)->Resolve();
-    if (word->Opcode() != IrOpcode::SelectU32) return BallotSource(HostLaneWord(word, 0u), 0u);
-    IrValue* low = word->Argument(0)->Resolve();
-    if (low->Opcode() != IrOpcode::ULessThan32 || !IsLaneId(low->Argument(0)) || !IsImmediate(low->Argument(1), 32u)) return nullptr;
-    IrValue* source = BallotSource(HostLaneWord(word->Argument(1), 0u), 0u);
-    return source != nullptr && BallotSource(HostLaneWord(word->Argument(2), 1u), 1u) == source ? source : nullptr;
+    return shifted->Argument(0)->Resolve();
+}
+
+bool IsHalfSelect(const IrValue* word) {
+    if (word->Opcode() != IrOpcode::SelectU32) return false;
+    const IrValue* low = word->Argument(0)->Resolve();
+    return low->Opcode() == IrOpcode::ULessThan32 && IsLaneId(low->Argument(0)) && IsImmediate(low->Argument(1), 32u);
 }
 
 bool Implies(IrValue* rawPredicate, IrValue* rawCondition) {
@@ -427,7 +428,7 @@ public:
         }
         for (IrBlock* block : program.BlockOrder()) {
             for (IrValue* inst : block->Instructions()) {
-                if (IrValue* source = SavedLaneBit(inst)) inst->ReplaceAllUsesWith(source);
+                if (IrValue* source = savedLaneBit(*block, inst)) inst->ReplaceAllUsesWith(source);
             }
         }
         collect();
@@ -460,6 +461,49 @@ public:
     }
 
 private:
+    IrValue* savedLaneBit(IrBlock& block, IrValue* inst) {
+        IrValue* word = LaneWord(inst);
+        if (word == nullptr) return nullptr;
+        if (IsHalfSelect(word)) return halvesBit(block, inst, word->Argument(1), word->Argument(2));
+        return wordBit(block, inst, word);
+    }
+
+    IrValue* halvesBit(IrBlock& block, IrValue* position, IrValue* rawLow, IrValue* rawHigh) {
+        IrValue* low = rawLow->Resolve();
+        IrValue* high = rawHigh->Resolve();
+        if (IsImmediate(low, 0u) && IsImmediate(high, 0u)) return &constantBool(false);
+        if (low->Opcode() == IrOpcode::SelectU32 && high->Opcode() == IrOpcode::SelectU32 && low->Argument(0)->Resolve() == high->Argument(0)->Resolve()) {
+            IrValue* chosen = halvesBit(block, position, low->Argument(1), high->Argument(1));
+            IrValue* other = chosen != nullptr ? halvesBit(block, position, low->Argument(2), high->Argument(2)) : nullptr;
+            return other != nullptr ? &selectBit(block, position, low->Argument(0)->Resolve(), chosen, other) : nullptr;
+        }
+        IrValue* source = BallotSource(HostLaneWord(low, 0u), 0u);
+        return source != nullptr && BallotSource(HostLaneWord(high, 1u), 1u) == source ? source : nullptr;
+    }
+
+    IrValue* wordBit(IrBlock& block, IrValue* position, IrValue* raw) {
+        IrValue* word = raw->Resolve();
+        if (word->Opcode() == IrOpcode::SelectU32 && !IsHalfSelect(word)) {
+            IrValue* chosen = IsImmediate(word->Argument(1), 0u) ? &constantBool(false) : wordBit(block, position, word->Argument(1));
+            IrValue* other = chosen == nullptr ? nullptr : IsImmediate(word->Argument(2), 0u) ? &constantBool(false) : wordBit(block, position, word->Argument(2));
+            return other != nullptr ? &selectBit(block, position, word->Argument(0)->Resolve(), chosen, other) : nullptr;
+        }
+        return BallotSource(HostLaneWord(word, 0u), 0u);
+    }
+
+    IrValue& constantBool(bool value) {
+        IrValue& result = program.CreateValue(IrOpcode::Void, IrType::Bool);
+        result.SetImmediateBool(value);
+        return result;
+    }
+
+    IrValue& selectBit(IrBlock& block, IrValue* position, IrValue* condition, IrValue* chosen, IrValue* other) {
+        IrValue& value = program.CreateValue(IrOpcode::SelectU1, IrType::Bool);
+        for (IrValue* argument : {condition, chosen, other}) value.AddArgument(argument);
+        block.InsertInstructionBefore(position, &value);
+        return value;
+    }
+
     void collect() {
         const auto& memoryInfo = program.Resources().memoryInfo;
         for (IrBlock* block : program.BlockOrder()) {
