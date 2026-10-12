@@ -783,6 +783,7 @@ private:
     HeldLanding landHeld(std::chrono::steady_clock::duration deadline);
     static void heldLabelLander();
     static void wakeHeldLabelLander();
+    friend class HeldLabelLanderPause;
     // Flags the recorded entries of the dwords overlapping [address, end) as overwritten.
     void markOverwritten(std::uint64_t address, std::uint64_t end);
     // Whether a write-back noted after `sequence` overlapped [begin, end); true when the ring no
@@ -857,6 +858,17 @@ private:
     std::map<DrawSnapshotKey, IndexRange> indexRanges;
     std::list<DrawSnapshotKey> indexRangeRecency;
     bool refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes);
+};
+
+// Pauses the held-label lander (see Recorder.cpp) for its lifetime: the thread is joined before the
+// constructor returns and not started again until the last pause ends. A device teardown takes one
+// before it touches its recorder, and ~Recorder takes its own.
+class HeldLabelLanderPause {
+public:
+    HeldLabelLanderPause();
+    ~HeldLabelLanderPause();
+    HeldLabelLanderPause(const HeldLabelLanderPause&) = delete;
+    HeldLabelLanderPause& operator=(const HeldLabelLanderPause&) = delete;
 };
 
 // A completion label kept behind copied write-backs (VulkanDevice::WriteLabelOnGpu) is stored by

@@ -825,6 +825,7 @@ struct VulkanDevice::State {
     }
 
     ~State() {
+        const Graphics::HeldLabelLanderPause landerPause;
         contextReady = false;
         if (compileOnly && device != VK_NULL_HANDLE) {
             reinterpret_cast<PFN_vkDestroyDevice>(deviceProc(device, "vkDestroyDevice"))(device, nullptr);
