@@ -150,11 +150,6 @@ public:
             if (!noted) { noted = true; std::fprintf(stderr, "[local] depth surface 0x%llx treated as reused memory for a vk format %d storage image\n", static_cast<unsigned long long>(target.address), static_cast<int>(storageFormat)); }
             return;
         }
-        if ((descriptor.width != target.extent.width || descriptor.height != target.extent.height) && std::getenv("APS5_LOCAL_DEPTH_REUSE") != nullptr) {
-            static bool notedExtent = false;
-            if (!notedExtent) { notedExtent = true; std::fprintf(stderr, "[local] depth surface 0x%llx (%ux%u) treated as reused memory for a %ux%u storage image\n", static_cast<unsigned long long>(target.address), target.extent.width, target.extent.height, descriptor.width, descriptor.height); }
-            return;
-        }
         if (!storageFits(target, descriptor, storageFormat) || (layer != 0 && layer > descriptor.depthOrLastArray)) {
             char text[256];
             std::snprintf(text, sizeof(text), "AGC graphics: storage image access to depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u image of vk format %d, dimension %d, %u mips is not implemented", static_cast<unsigned long long>(target.address), target.extent.width, target.extent.height, static_cast<int>(target.format), descriptor.width, descriptor.height, static_cast<int>(storageFormat), static_cast<int>(descriptor.dimension), descriptor.mipCount);
