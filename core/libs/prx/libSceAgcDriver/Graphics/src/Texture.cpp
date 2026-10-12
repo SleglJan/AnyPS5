@@ -91,6 +91,10 @@ std::atomic<std::uint64_t> pretestSkipped{0}, unregisteredDropped{0}, keyFlipKep
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> refreshesProved{0};
+// CPU-path storage uploads per 10 s on the [storage] line: why the path was taken (DCC keys other
+// than Uncompressed, or no host import over the surface), how many were recorded into the open
+// batch, and the time the waiting ones spent in SubmitAndWait.
+std::atomic<std::uint64_t> cpuUploadsDccKeys{0}, cpuUploadsUnimported{0}, cpuUploadsRecorded{0}, cpuUploadWaitedUs{0};
 
 struct StorageTraffic {
     std::mutex mutex;
@@ -131,6 +135,9 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     const auto take = [](std::atomic<std::uint64_t>& counter) { return static_cast<unsigned long long>(counter.exchange(0, std::memory_order_relaxed)); };
     const auto partialUploadCount = take(partialUploads), partialWriteBackCount = take(partialWriteBacks);
     const auto uploadMiB = take(partialUploadBytes) / 1048576.0, writeBackMiB = take(partialWriteBackBytes) / 1048576.0;
+    const auto cpuDcc = take(cpuUploadsDccKeys), cpuUnimported = take(cpuUploadsUnimported), cpuRecorded = take(cpuUploadsRecorded);
+    std::snprintf(text, sizeof(text), "; cpu path: dcc keys %llu, no import %llu, recorded %llu, waited %.1f ms", cpuDcc, cpuUnimported, cpuRecorded, take(cpuUploadWaitedUs) / 1000.0);
+    line += text;
     AgcDriver::ProfilePrint_nid_no_patch( "[storage] uploads by path (count/MiB, 10 s):%s; %llu write-backs GPU-direct, %llu stored nothing; block units: partial uploads %llu/%.1f, partial write-backs %llu/%.1f, %llu widened to every pending unit, units dropped %llu, superseded %llu, dropped unregistered %llu, kept over a key flip %llu%s, pretest skipped %llu, evicted stale %llu\n", line.c_str(), static_cast<unsigned long long>(traffic.directWriteBacks), take(emptyWriteBacks), partialUploadCount, uploadMiB, partialWriteBackCount, writeBackMiB, take(coalescedWriteBacks), take(unitsDropped), take(unitsSuperseded), take(unregisteredDropped), take(keyFlipKept), ShadowReport().c_str(), take(pretestSkipped), take(staleEvicted));
     traffic.writeBacks.clear();
     traffic.uploadReasons.clear();
@@ -2338,25 +2345,51 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     original.resize(static_cast<std::size_t>(guestBytes));
     GuestMemory::ReadCommitted(descriptor.baseAddress, original);
     {
-            Buffer staging(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging.Bytes().data(), original.data(), original.size());
-            else ReadTextureSurface(descriptor, uploadedKeys, staging.Bytes().first(original.size()));
-            DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            DeviceBuffer linear(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            // The CPU upload is recorded into the open batch like the clear and direct ones (the
+            // buffers and the image kept by it): a batch of its own submitted the recorder's work and
+            // waited for all of it under the GPU mutex, 2.4 ms per upload on 007's title screen and
+            // ~53 ms behind a frame's heavy compute. The guest bytes are read here either way. Without
+            // a recorder (tests) the batch still waits; APS5_SYNC_STORAGE_CPU_UPLOAD=1 waits always.
+            static const bool syncCpuUpload = std::getenv("APS5_SYNC_STORAGE_CPU_UPLOAD") != nullptr;
+            auto* recorder = syncCpuUpload ? nullptr : Recorder::Active();
+            (uploadedKeys == DccKeys::Uncompressed ? cpuUploadsUnimported : cpuUploadsDccKeys).fetch_add(1, std::memory_order_relaxed);
+            auto staging = std::make_shared<Buffer>(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging->Bytes().data(), original.data(), original.size());
+            else ReadTextureSurface(descriptor, uploadedKeys, staging->Bytes().first(original.size()));
+            auto tiled = std::make_shared<DeviceBuffer>(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             detiler.BeginBatch();
-            CommandBatch batch(context);
-            const auto commands = batch.Handle();
+            std::unique_ptr<CommandBatch> batch;
+            VkCommandBuffer commands = VK_NULL_HANDLE;
+            auto timing = Recorder::NoTiming;
+            if (recorder != nullptr) {
+                commands = recorder->Commands();
+                timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
+                recorder->Keep(staging, original.size());
+                recorder->Keep(tiled, original.size());
+                recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
+                // The image itself must outlive the recorded copy: the cache may evict it right after.
+                if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+                Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, 4);
+                if (Recorder::BarrierValidate()) {
+                    const std::pair<VkImage, bool> written{image, true};
+                    recorder->NoteAccess(Recorder::CommandClass::StorageUpload, Recorder::Access{{}, {}, std::span(&written, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
+                }
+            } else {
+                batch = std::make_unique<CommandBatch>(context);
+                commands = batch->Handle();
+            }
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-            CopyBuffer(context, commands, staging.Handle(), 0, tiled.Handle(), 0, original.size());
+            CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, original.size());
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled.Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
-            const auto linearRead = WholeBufferBarrier(linear.Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            const auto linearRead = WholeBufferBarrier(linear->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -2367,16 +2400,24 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
             const auto regions = CopyRegions();
-            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear->Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
             VkImageMemoryBarrier toGeneral = toTransfer;
             toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
             toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            APS5_LOG_CHARS_OUT("StorageTexture upload submit");
-            batch.SubmitAndWait();
-            APS5_LOG_CHARS_OUT("StorageTexture upload done");
+            if (batch) {
+                APS5_LOG_CHARS_OUT("StorageTexture upload submit");
+                const auto waitStart = std::chrono::steady_clock::now();
+                batch->SubmitAndWait();
+                cpuUploadWaitedUs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waitStart).count()), std::memory_order_relaxed);
+                APS5_LOG_CHARS_OUT("StorageTexture upload done");
+            } else {
+                recorder->EndGpuTiming(timing, guestBytes);
+                cpuUploadsRecorded.fetch_add(1, std::memory_order_relaxed);
+                APS5_LOG_CHARS_OUT("StorageTexture upload recorded");
+            }
     }
     countStorageUpload(2, guestBytes);
     ++version;

@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -435,8 +436,11 @@ void CommandBatch::Wait() {
     Require(submitted, "command batch has not been submitted");
     if (!pending) return;
     PerformanceTimer timing("Graphics.Wait");
+    const auto waitStart = std::chrono::steady_clock::now();
     const auto result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 5'000'000'000ULL);
     timing.Mark("fence_wait");
+    // Counted with the recorder's fence waits in the [lock] line's locked GPU waits.
+    GuestMemory::NoteLockedGpuWait(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count());
     if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST) pending = false;
     Check(result, "vkWaitForFences graphics");
     // Recorded batches preceded this one, so their completions (write-backs) can run now.
