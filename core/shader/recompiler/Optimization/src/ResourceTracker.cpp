@@ -477,6 +477,15 @@ private:
 
     std::optional<KeyDomain> MatchKeyDomain(IrValue* key) {
         key = key->Resolve();
+        DescriptorSource direct;
+        direct.dwordCount = 1u;
+        direct.dwords[0] = key;
+        std::uint32_t badDword = 0;
+        if (ValidateSource(direct, badDword)) {
+            KeyDomain domain{InternSource(direct), 0u, 0u};
+            domain.value = true;
+            return domain;
+        }
         std::uint32_t memoryIndex = 0;
         const MemoryInfo* memory = ScalarReadMemory(*key, memoryIndex);
         if (memory == nullptr) {
