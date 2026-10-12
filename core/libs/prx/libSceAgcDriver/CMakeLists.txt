@@ -162,6 +162,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/WaitMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/WaitStatistics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/WorkerSampler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
@@ -218,9 +219,21 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Submit/src/Dcb.cpp
 )
 
+find_package(Git QUIET)
+set(agcTraceRevisionHeader ${agcTextureDetileGeneratedRoot}/prx/libSceAgcDriver/TraceRevision.hpp)
+add_custom_target(agc_trace_revision
+        COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${agcTraceRevisionHeader} -P ${CMAKE_CURRENT_SOURCE_DIR}/trace_revision.cmake
+        BYPRODUCTS ${agcTraceRevisionHeader}
+        VERBATIM
+)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceTrace.cpp PROPERTIES
+        INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib
+)
+
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${agcDriverSources}
 )
+add_dependencies(libSceAgcDriver agc_trace_revision)
 
 target_include_directories(libSceAgcDriver PRIVATE
         ${LIBS_INCLUDE_DIR}
@@ -246,6 +259,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        jpeg_turbo
         ${CMAKE_DL_LIBS}
 )
 
@@ -271,6 +285,17 @@ if(BUILD_TESTING)
     set_tests_properties(agc_profile_output PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(agc_profile_output PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(agc_performance_trace_tests tests/PerformanceTrace.cpp)
+    target_include_directories(agc_performance_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_performance_trace_tests PRIVATE libc)
+    configure_windows_unwind(agc_performance_trace_tests)
+    add_test(NAME agc_performance_trace COMMAND agc_performance_trace_tests)
+    set_tests_properties(agc_performance_trace PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(agc_performance_trace PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -942,7 +967,8 @@ target_include_directories(agc_driver_mesh_tests PRIVATE
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
         ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
 )
-target_link_libraries(agc_driver_mesh_tests PRIVATE shader_recompiler_agc_driver SDL2-static libc libkernel ${CMAKE_DL_LIBS})
+target_link_libraries(agc_driver_mesh_tests PRIVATE shader_recompiler_agc_driver SDL2-static libc libkernel jpeg_turbo ${CMAKE_DL_LIBS})
+add_dependencies(agc_driver_mesh_tests agc_trace_revision)
 set_target_properties(agc_driver_mesh_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_mesh_tests)
 
@@ -1241,7 +1267,9 @@ if(AGC_BUILD_VISUAL_TEST)
             SDL2-static
             libc
             libkernel
+            jpeg_turbo
     )
+    add_dependencies(agc_driver_visual_test agc_trace_revision)
 
     set_target_properties(agc_driver_visual_test PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_driver_visual_test)

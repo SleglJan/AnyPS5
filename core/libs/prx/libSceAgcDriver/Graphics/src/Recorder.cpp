@@ -1808,7 +1808,7 @@ bool Recorder::GpuTimingEnabled() {
 }
 
 bool Recorder::BatchStampsEnabled() {
-    return GpuTimingEnabled() || DrawProfiled();
+    return GpuTimingEnabled() || DrawProfiled() || PerformanceTrace::Configured();
 }
 
 void Recorder::CountBarriers(CommandClass which, std::uint32_t count) {
@@ -1900,7 +1900,7 @@ std::uint32_t Recorder::BeginGpuTiming(std::uint64_t key) {
 
 std::uint32_t Recorder::beginTiming(std::uint64_t key) {
     const bool full = GpuTimingEnabled();
-    if (!full && !(key == BatchTimingKey && DrawProfiled())) return NoTiming;
+    if (!full && !(key == BatchTimingKey && BatchStampsEnabled())) return NoTiming;
     const auto commands = open->commands;
     const std::uint32_t queryCount = full ? MaxTimedRanges * 2 : 2;
     if (open->queries == VK_NULL_HANDLE) {

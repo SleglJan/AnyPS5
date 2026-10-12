@@ -371,6 +371,7 @@ struct VulkanDevice::State {
     void* uploadMapping = nullptr;
     VkDeviceSize uploadSize = 0;
     VkPhysicalDeviceProperties properties{};
+    std::string driverInfo;
     VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     std::vector<std::uint32_t> capabilities{1};
     std::vector<std::string_view> spirvExtensions;
@@ -992,7 +993,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     std::vector<VkExtensionProperties> availableExtensions(extensionCount);
     check(enumerateDeviceExtensions(selected, nullptr, &extensionCount, availableExtensions.data()), "vkEnumerateDeviceExtensionProperties");
     const auto hasExtension = [&](const char* name) { return std::any_of(availableExtensions.begin(), availableExtensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; }); };
-    auto byteFeatures = QueryBdaByteFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
+    if (hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+        VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
+        state->driverInfo = std::string(driver.driverName) + " " + driver.driverInfo;
+    }
+    auto byteFeatures =QueryBdaByteFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
     auto bdaFeatures = QueryBdaFeatures(selected, state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2"), availableExtensions);
     require(hasExtension(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME), "VK_KHR_shader_float_controls is unavailable");
     VkPhysicalDeviceFloatControlsProperties floatControls{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
@@ -2857,6 +2864,10 @@ ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize
 
 std::string VulkanDevice::DeviceName() const {
     return state->properties.deviceName;
+}
+
+std::string VulkanDevice::DriverInfo() const {
+    return state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
 }
 
 const std::uint32_t* VulkanDevice::WorkGroupCountLimit() const {
