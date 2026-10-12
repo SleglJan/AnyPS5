@@ -57,7 +57,7 @@ struct Statistics {
     std::atomic<std::uint64_t> retiled{0}, retiledBytes{0}, refused{0}, refusedBytes{0}, seeds{0}, seedBytes{0};
     std::atomic<std::uint64_t> detiledShadow{0}, detiledShadowBytes{0}, detiledImport{0}, detiledImportBytes{0}, tailPublishes{0};
     std::array<std::atomic<std::uint64_t>, ReasonCount> published{}, publishedBytes{};
-    std::atomic<std::uint64_t> staleDroppedCpu{0}, staleDroppedDriver{0}, skippedInCompletion{0}, evictions{0}, lostOnRetire{0}, droppedOnRetire{0}, slabLost{0}, verified{0}, mismatches{0};
+    std::atomic<std::uint64_t> staleDroppedCpu{0}, staleDroppedDriver{0}, skippedInCompletion{0}, evictions{0}, lostOnRetire{0}, lostOnRetireTotal{0}, droppedOnRetire{0}, slabLost{0}, verified{0}, mismatches{0};
 };
 
 Statistics& Stats() {
@@ -771,6 +771,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
             published = publishUnits(shadow, 0, shadow->Units() - 1, selected, PublishReason::Retire);
         } else {
             Stats().lostOnRetire.fetch_add(shadow->liveUnits, std::memory_order_relaxed);
+            Stats().lostOnRetireTotal.fetch_add(shadow->liveUnits, std::memory_order_relaxed);
             static std::atomic<int> reports{0};
             if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[shadow] import 0x%llx+0x%llx retired outside the device lock: %u shadowed units lost\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes), shadow->liveUnits);
         }
@@ -816,6 +817,10 @@ void DestroyShadows(VkDevice device) {
         }
         it = registry.byBase.erase(it);
     }
+}
+
+std::uint64_t ShadowUnitsLostOnRetire() {
+    return Stats().lostOnRetireTotal.load(std::memory_order_relaxed);
 }
 
 std::string ShadowReport() {
