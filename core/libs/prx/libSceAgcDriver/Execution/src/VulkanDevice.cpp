@@ -50,6 +50,7 @@
 #include <deque>
 #include <limits>
 #include <list>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -67,7 +68,9 @@ namespace AgcDriver {
 // Diagnostic (local branch): APS5_PROFILE_VRAM=1 tracks every vkAllocateMemory and vkFreeMemory
 // the device resolver hands out and prints, every 10 s, at an out-of-memory result and at device
 // teardown, the live device-local and host bytes and the call sites (module+offset, caller and
-// its two callers) holding the most device-local memory.
+// its two callers) holding the most device-local memory. Failures report in full for the first
+// three, then at most every 10 s with the count of failures not reported since; a site is named
+// once per report, not once per live allocation.
 namespace VramTrack {
 #ifndef _WIN32
 struct Record {
@@ -93,6 +96,8 @@ std::chrono::steady_clock::time_point lastReport{};
 std::uint64_t allocations = 0;
 std::uint64_t frees = 0;
 std::uint64_t failures = 0;
+std::uint64_t failuresUnreported = 0;
+std::chrono::steady_clock::time_point lastFailureReport{};
 VkDeviceSize peakDevice = 0;
 #endif
 
@@ -128,7 +133,7 @@ void reportLocked(const char* why) {
     VkDeviceSize device = 0;
     VkDeviceSize host = 0;
     std::size_t deviceCount = 0;
-    std::unordered_map<std::string, std::pair<VkDeviceSize, std::size_t>> sites;
+    std::map<std::array<void*, 3>, std::pair<VkDeviceSize, std::size_t>> sites;
     for (const auto& [memory, record] : Live()) {
         if (!deviceLocal(record.type)) {
             host += record.bytes;
@@ -136,16 +141,20 @@ void reportLocked(const char* why) {
         }
         device += record.bytes;
         ++deviceCount;
-        auto& site = sites[siteName(record.site[0]) + " < " + siteName(record.site[1]) + " < " + siteName(record.site[2])];
+        auto& site = sites[record.site];
         site.first += record.bytes;
         ++site.second;
     }
     peakDevice = std::max(peakDevice, device);
-    std::vector<std::pair<std::string, std::pair<VkDeviceSize, std::size_t>>> ranked(sites.begin(), sites.end());
-    std::sort(ranked.begin(), ranked.end(), [](const auto& left, const auto& right) { return left.second.first > right.second.first; });
+    std::vector<std::pair<std::array<void*, 3>, std::pair<VkDeviceSize, std::size_t>>> ranked(sites.begin(), sites.end());
+    const auto shown = std::min<std::size_t>(ranked.size(), 12);
+    std::partial_sort(ranked.begin(), ranked.begin() + static_cast<std::ptrdiff_t>(shown), ranked.end(), [](const auto& left, const auto& right) { return left.second.first > right.second.first; });
     const auto [copies, copyBytes] = Graphics::CommittedDrawInputCopies();
     std::fprintf(stderr, "[vram] %s: device-local %.0f MiB in %zu allocations (peak %.0f MiB), host %.0f MiB; %llu allocations, %llu frees, %llu failures; partial index copies %llu (%.0f MiB)\n", why, device / 1048576.0, deviceCount, peakDevice / 1048576.0, host / 1048576.0, static_cast<unsigned long long>(allocations), static_cast<unsigned long long>(frees), static_cast<unsigned long long>(failures), static_cast<unsigned long long>(copies), copyBytes / 1048576.0);
-    for (std::size_t index = 0; index < ranked.size() && index < 12; ++index) std::fprintf(stderr, "[vram]   %.0f MiB in %zu: %s\n", ranked[index].second.first / 1048576.0, ranked[index].second.second, ranked[index].first.c_str());
+    for (std::size_t index = 0; index < shown; ++index) {
+        const auto& site = ranked[index].first;
+        std::fprintf(stderr, "[vram]   %.0f MiB in %zu: %s < %s < %s\n", ranked[index].second.first / 1048576.0, ranked[index].second.second, siteName(site[0]).c_str(), siteName(site[1]).c_str(), siteName(site[2]).c_str());
+    }
     std::fflush(stderr);
 }
 
@@ -161,11 +170,19 @@ VKAPI_ATTR VkResult VKAPI_CALL allocate(VkDevice device, const VkMemoryAllocateI
         ++failures;
     }
     const auto now = std::chrono::steady_clock::now();
+    if (result != VK_SUCCESS && failures > 3 && now - lastFailureReport < std::chrono::seconds(10)) {
+        ++failuresUnreported;
+        return result;
+    }
     if (result != VK_SUCCESS || now - lastReport > std::chrono::seconds(10)) {
         lastReport = now;
-        char why[160];
-        if (result != VK_SUCCESS) std::snprintf(why, sizeof(why), "allocation of %.1f MiB (type %u) failed with %d at %s", info->allocationSize / 1048576.0, info->memoryTypeIndex, static_cast<int>(result), siteName(count > 1 ? frames[1] : nullptr).c_str());
-        else std::snprintf(why, sizeof(why), "10 s");
+        char why[224];
+        if (result != VK_SUCCESS) {
+            lastFailureReport = now;
+            std::snprintf(why, sizeof(why), "allocation of %.1f MiB (type %u) failed with %d at %s (%llu failures unreported since the last report)", info->allocationSize / 1048576.0, info->memoryTypeIndex, static_cast<int>(result), siteName(count > 1 ? frames[1] : nullptr).c_str(), static_cast<unsigned long long>(std::exchange(failuresUnreported, 0)));
+        } else {
+            std::snprintf(why, sizeof(why), "10 s");
+        }
         reportLocked(why);
     }
     return result;
