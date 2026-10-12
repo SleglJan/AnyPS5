@@ -654,33 +654,139 @@ private:
         return address && address->dynamic && address->relative == static_cast<std::int64_t>(tessellation.inputControlPoints) * localStride;
     }
 
+    using Literals = std::vector<std::pair<IrValue*, bool>>;
+
+    static bool Contradictory(const Literals& literals) {
+        return std::any_of(literals.begin(), literals.end(), [&](const auto& literal) { return std::find(literals.begin(), literals.end(), std::pair{literal.first, !literal.second}) != literals.end(); });
+    }
+
+    static Literals With(Literals literals, IrValue* predicate, bool value) {
+        if (std::find(literals.begin(), literals.end(), std::pair{predicate, value}) == literals.end()) literals.emplace_back(predicate, value);
+        return literals;
+    }
+
+    static Literals Intersection(const Literals& lhs, const Literals& rhs) {
+        Literals result;
+        for (const auto& literal : lhs) {
+            if (std::find(rhs.begin(), rhs.end(), literal) != rhs.end()) result.push_back(literal);
+        }
+        return result;
+    }
+
+    static bool ImpliesNot(IrValue* raw, IrValue* condition) {
+        IrValue* predicate = raw->Resolve();
+        if (predicate->Opcode() == IrOpcode::LogicalNot && predicate->Argument(0)->Resolve() == condition) return true;
+        return predicate->Opcode() == IrOpcode::LogicalAnd && (ImpliesNot(predicate->Argument(0), condition) || ImpliesNot(predicate->Argument(1), condition));
+    }
+
+    static bool Excluded(IrValue* predicate, const Literals& literals) {
+        return std::any_of(literals.begin(), literals.end(), [&](const auto& literal) { return literal.second ? ImpliesNot(predicate, literal.first) : Implies(predicate, literal.first); });
+    }
+
+    static bool CrossLane(IrOpcode opcode) {
+        switch (opcode) {
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::ReadLane:
+        case IrOpcode::WriteLane:
+        case IrOpcode::Ballot:
+        case IrOpcode::DppMoveU32:
+        case IrOpcode::DppUpdateU32:
+        case IrOpcode::WqmU64:
+        case IrOpcode::Permlane16U32:
+        case IrOpcode::BpermuteU32:
+        case IrOpcode::PermuteU32:
+        case IrOpcode::SwizzleU32:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool Affine(IrOpcode opcode) {
+        switch (opcode) {
+        case IrOpcode::IAdd32:
+        case IrOpcode::ISub32:
+        case IrOpcode::IMul32:
+        case IrOpcode::ShiftLeftLogical32:
+        case IrOpcode::ShiftRightLogical32:
+        case IrOpcode::BitwiseAnd32:
+        case IrOpcode::BitwiseOr32:
+        case IrOpcode::BitFieldUExtract:
+        case IrOpcode::SelectU32:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    std::optional<Literals> relativeTaint(IrValue* inst, const std::unordered_map<IrValue*, Literals>& taint) {
+        const auto of = [&](IrValue* raw) -> const Literals* {
+            const auto found = taint.find(raw->Resolve());
+            return found == taint.end() ? nullptr : &found->second;
+        };
+        const bool dynamicRead = inst->Opcode() == IrOpcode::GetTessellationAttribute && dynamicInputAddress(inst, inst->Argument(1));
+        std::optional<Literals> result;
+        const auto add = [&](const Literals& contribution) {
+            if (Contradictory(contribution)) return;
+            result = result ? Intersection(*result, contribution) : contribution;
+        };
+        const auto opcode = inst->Opcode();
+        if (opcode == IrOpcode::SelectU1 || opcode == IrOpcode::SelectU32 || opcode == IrOpcode::SelectF32) {
+            IrValue* condition = inst->Argument(0)->Resolve();
+            if (const auto* literals = of(condition)) add(*literals);
+            if (const auto* literals = of(inst->Argument(1))) add(With(*literals, condition, true));
+            if (const auto* literals = of(inst->Argument(2))) add(With(*literals, condition, false));
+        } else if (opcode == IrOpcode::LogicalAnd || opcode == IrOpcode::LogicalOr) {
+            for (std::size_t index = 0; index < 2u; ++index) {
+                if (const auto* literals = of(inst->Argument(index))) add(With(*literals, inst->Argument(1u - index)->Resolve(), opcode == IrOpcode::LogicalAnd));
+            }
+        } else {
+            for (std::size_t index = 0; index < inst->ArgumentCount(); ++index) {
+                if (dynamicRead && index == 1u) continue;
+                if (const auto* literals = of(inst->Argument(index))) add(*literals);
+            }
+        }
+        if (result && Affine(opcode)) {
+            const auto address = evaluator.Evaluate(inst, nullptr);
+            if (address && address->relative == 0) return std::nullopt;
+        }
+        return result;
+    }
+
     void requireRelativeIndependence(const std::vector<IrValue*>& bases) {
-        std::vector<IrValue*> pending(bases.begin(), bases.end());
-        std::unordered_set<IrValue*> visited(bases.begin(), bases.end());
-        while (!pending.empty()) {
-            IrValue* value = pending.back();
-            pending.pop_back();
-            for (IrValue* user : value->Uses()) {
-                switch (user->Opcode()) {
-                case IrOpcode::Identity:
-                case IrOpcode::IAdd32:
-                case IrOpcode::ISub32:
-                case IrOpcode::IMul32:
-                case IrOpcode::ShiftLeftLogical32:
-                case IrOpcode::ShiftRightLogical32:
-                case IrOpcode::BitwiseAnd32:
-                case IrOpcode::BitwiseOr32:
-                case IrOpcode::BitFieldUExtract:
-                case IrOpcode::SelectU32:
-                case IrOpcode::Phi:
-                    if (visited.insert(user).second) pending.push_back(user);
-                    continue;
-                default:
-                    break;
+        if (bases.empty()) return;
+        std::unordered_map<IrValue*, Literals> taint;
+        for (IrValue* base : bases) taint.emplace(base, Literals{});
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (IrBlock* block : program.BlockOrder()) {
+                for (IrValue* inst : block->Instructions()) {
+                    if (inst->Type() == IrType::Void || (taint.contains(inst) && taint.at(inst).empty())) continue;
+                    const auto literals = relativeTaint(inst, taint);
+                    if (!literals) continue;
+                    const auto found = taint.find(inst);
+                    if (found == taint.end()) {
+                        taint.emplace(inst, *literals);
+                        changed = true;
+                    } else if (const auto narrowed = Intersection(found->second, *literals); narrowed.size() != found->second.size()) {
+                        found->second = narrowed;
+                        changed = true;
+                    }
                 }
-                if (dynamicInputAddress(user, value)) continue;
-                const auto address = evaluator.Evaluate(value, nullptr);
-                if (!address || address->relative != 0) Fail("the relative patch or vertex index is used outside a tessellation ring or LDS address", 0u);
+            }
+        }
+        for (IrBlock* block : program.BlockOrder()) {
+            for (IrValue* inst : block->Instructions()) {
+                const bool crossLane = CrossLane(inst->Opcode());
+                if (!crossLane && !IrOpcodeHasSideEffects(inst->Opcode())) continue;
+                const auto count = inst->ArgumentCount();
+                IrValue* predicate = !crossLane && count != 0u && inst->Argument(count - 1u)->Type() == IrType::Bool ? inst->Argument(count - 1u)->Resolve() : nullptr;
+                for (std::size_t index = 0; index < count; ++index) {
+                    const auto found = taint.find(inst->Argument(index)->Resolve());
+                    if (found == taint.end()) continue;
+                    if (predicate != nullptr && inst->Argument(index)->Resolve() != predicate && Excluded(predicate, found->second)) continue;
+                    Fail("the relative patch or vertex index is used outside a tessellation ring or LDS address", 0u);
+                }
             }
         }
     }
