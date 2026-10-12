@@ -2503,6 +2503,68 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
 }
 
+// An image allocation that runs out of device memory trims the buffer pool and tries once more; a
+// retry that fails too throws OutOfDeviceMemory, the type the texture caches catch to release
+// their unreferenced entries and build again.
+void imageMemoryRecoveryTests(const Device& device) {
+    const auto& base = device.GetContext();
+    constexpr std::uint32_t side = 64;
+    constexpr std::size_t bytes = 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the image memory recovery block");
+    std::memset(block, 0x33, bytes);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = reinterpret_cast<std::uint64_t>(block);
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes <= bytes, "the recovery test surface exceeds its block");
+    const auto release = [&] {
+        ImageAllocationFailuresForTest().store(0);
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        std::free(block);
+#endif
+    };
+    try {
+        ImageAllocationFailuresForTest().store(1);
+        auto recovered = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+        Require(recovered->AllocationBytes() != 0 && ImageAllocationFailuresForTest().load() == 0, "an image allocation that failed once was not retried after the pool trim");
+        recovered.reset();
+        ImageAllocationFailuresForTest().store(2);
+        bool typed = false;
+        try {
+            static_cast<void>(std::make_shared<StorageTexture>(context, detiler, resource, 0));
+        } catch (const OutOfDeviceMemory&) {
+            typed = true;
+        }
+        Require(typed, "an image allocation whose retry failed did not throw OutOfDeviceMemory");
+        Require(ImageAllocationFailuresForTest().load() == 0, "an image allocation retried more than once");
+        auto again = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+        Require(again->AllocationBytes() != 0, "an image allocation failed after recovered out-of-memory results");
+    } catch (...) {
+        release();
+        throw;
+    }
+    release();
+    std::cout << "Image memory recovery tests passed\n";
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -5408,6 +5470,7 @@ int main(int argc, char** argv) {
         unitShadowTests(device, recorder);
         storageRefreshTests(device, recorder, false);
         storageRefreshTests(device, recorder, true);
+        imageMemoryRecoveryTests(device);
         writeBackPaddingTests(device, recorder, false);
         writeBackPaddingTests(device, recorder, true);
         singlePassTests(device, recorder, false);
