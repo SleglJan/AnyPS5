@@ -609,7 +609,8 @@ public:
     // Find and Touch calls so far (the [rescache] line: a recipe hit touches instead of finding).
     static std::uint64_t Finds();
     static std::uint64_t Touches();
-    void Clear();
+    // `evicted`, when given, receives every entry's object instead of its being destroyed here.
+    void Clear(std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     std::size_t Size() const;
 
 private:
