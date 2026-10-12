@@ -30,6 +30,11 @@ bool outOfMemory(VkResult result) {
     return result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY;
 }
 
+bool vramBudgetTrim() {
+    static const bool disabled = std::getenv("APS5_NO_VRAM_BUDGET_TRIM") != nullptr;
+    return !disabled;
+}
+
 bool outOfMemoryThrown() {
     static const bool plain = std::getenv("APS5_NO_BUFFER_OOM_RECOVERY") != nullptr;
     return !plain;
@@ -41,6 +46,36 @@ BufferPool::BufferPool(const Context& context) : device(context.device), unmap(c
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = DeviceTierEnabled() ? DeviceBudget(context.memory) : 0;
+    if (!vramBudgetTrim() || context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return;
+    VkDeviceSize largest = 0;
+    for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0 || context.memory.memoryHeaps[heap].size <= largest) continue;
+        largest = context.memory.memoryHeaps[heap].size;
+        vramHeap = heap;
+    }
+    if (largest == 0) return;
+    physical = context.physical;
+    memoryProperties2 = context.memoryProperties2;
+    vramHeadroom = std::clamp<VkDeviceSize>(largest / 16u, VkDeviceSize{256} << 20u, VkDeviceSize{1} << 30u);
+}
+
+bool BufferPool::overVramBudget() {
+    if (memoryProperties2 == nullptr) return false;
+    const auto now = std::chrono::steady_clock::now();
+    if (vramRead != std::chrono::steady_clock::time_point{} && now - vramRead < std::chrono::milliseconds(100)) return vramOver;
+    vramRead = now;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    properties.pNext = &reported;
+    memoryProperties2(physical, &properties);
+    const auto budget = reported.heapBudget[vramHeap];
+    const auto usage = reported.heapUsage[vramHeap];
+    vramOver = budget != 0 && usage + vramHeadroom > budget;
+    if (vramOver && !vramReported) {
+        vramReported = true;
+        std::fprintf(stderr, "[bufferpool] device-local heap %u uses %llu of its %llu MiB budget (headroom %llu MiB): released device buffers are destroyed instead of retained while it stays there\n", vramHeap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(vramHeadroom >> 20u));
+    }
+    return vramOver;
 }
 
 BufferPool::~BufferPool() {
@@ -336,7 +371,10 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
     try {
         std::lock_guard lock(mutex);
         auto& tier = tierFor(allocation.bytes, allocation.properties);
-        if (allocation.allocationBytes > tier.budget) {
+        if (&tier == &deviceTier && overVramBudget()) {
+            evicted.push_back(allocation);
+            while (tier.slots != 0) evictOldest(tier, evicted);
+        } else if (allocation.allocationBytes > tier.budget) {
             evicted.push_back(allocation);
         } else {
             while (tier.slots != 0 && (tier.retainedBytes + allocation.allocationBytes > tier.budget || tier.slots >= maxSlots)) evictOldest(tier, evicted);

@@ -44,6 +44,9 @@ struct MockDevice {
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     std::uint64_t attempts = 0;
     std::vector<std::uint32_t> attemptedTypes;
+    VkDeviceSize heapBudget = 0;
+    VkDeviceSize heapUsage = 0;
+    std::uint64_t budgetReads = 0;
 };
 
 MockDevice mock;
@@ -112,6 +115,13 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
 
 VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const VkBufferDeviceAddressInfo* info) {
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    ++mock.budgetReads;
+    auto* budget = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    budget->heapBudget[0] = mock.heapBudget;
+    budget->heapUsage[0] = mock.heapUsage;
 }
 
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
@@ -493,6 +503,27 @@ void DeviceBufferHostFallback(VkResult fallbackResult) {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "the host fallback leaked a resource");
 }
 
+void VramBudgetTrim(bool over) {
+    mock = MockDevice{};
+    mock.heapBudget = VkDeviceSize{8} << 30u;
+    mock.heapUsage = over ? mock.heapBudget - 128 * MiB : VkDeviceSize{1} << 30u;
+    {
+        auto context = mockContext();
+        static int physicalTag = 0;
+        context.physical = reinterpret_cast<VkPhysicalDevice>(&physicalTag);
+        context.memoryProperties2 = mockMemoryProperties2;
+        context.memory.memoryHeapCount = 1;
+        context.memory.memoryHeaps[0] = {VkDeviceSize{8} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        { DeviceBuffer first(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
+        { DeviceBuffer second(context, 4 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); }
+        Expect(mock.budgetReads == 1, "the VRAM budget was not read once within its interval");
+        Expect(mock.liveBytes == (over ? 0 : 6 * MiB), over ? "a released device buffer was retained over the VRAM budget" : "a released device buffer was not retained under the VRAM budget");
+        { Buffer host(context, 2 * MiB, VK_BUFFER_USAGE_TRANSFER_SRC_BIT); }
+        Expect(mock.liveBytes == (over ? 2 : 8) * MiB, "the VRAM budget changed host buffer retention");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "the VRAM budget trim leaked a resource");
+}
+
 void SuccessfulAllocationKeepsPool() {
     mock = MockDevice{};
     {
@@ -550,6 +581,8 @@ int main() {
         PartialSlabDoesNotRetry();
         DeviceBufferHostFallback(VK_SUCCESS);
         DeviceBufferHostFallback(VK_ERROR_OUT_OF_HOST_MEMORY);
+        VramBudgetTrim(false);
+        VramBudgetTrim(true);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
