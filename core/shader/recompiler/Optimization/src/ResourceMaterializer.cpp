@@ -834,30 +834,37 @@ private:
             }
             values.push_back(key.dwords[0]);
         } else {
-            const auto keyBuffer = EvaluateBuffer(domain.source);
+            ShaderBufferResource keyBuffer;
+            try {
+                keyBuffer = EvaluateBuffer(domain.source);
+            } catch (const std::exception&) {
+                skip();
+                return;
+            }
             if (keyBuffer.Type() != 0u) {
                 skip();
                 return;
             }
             base = keyBuffer.Base48();
             size = keyBuffer.GetSize();
+            const std::uint64_t stride = domain.recordStride && keyBuffer.Stride() >= 4u ? keyBuffer.Stride() & ~3u : domain.stride;
             const std::uint64_t first = domain.offset & ~3u;
-            positions = size >= first + 4u ? (size - first - 4u) / domain.stride + 1u : 0u;
+            positions = size >= first + 4u ? (size - first - 4u) / stride + 1u : 0u;
             if (positions > TableKeyScanLimit() || first > 0xffffffffull) {
                 skip();
                 return;
             }
-            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, (positions - 1u) * domain.stride + sizeof(std::uint32_t))) {
+            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) {
                 skip();
                 return;
             }
             for (std::uint64_t index = 0; index < positions; index++) {
-                const auto address = base + first + index * domain.stride;
+                const auto address = base + first + index * stride;
                 if (!PageAccessible(address, base, base + size)) {
                     skip();
                     return;
                 }
-                values.push_back(Read(address));
+                values.push_back(((Read(address) >> domain.shift) & domain.mask) + domain.addend);
             }
         }
         records.states.assign(records.keys, RecordState::OutsideDomain);

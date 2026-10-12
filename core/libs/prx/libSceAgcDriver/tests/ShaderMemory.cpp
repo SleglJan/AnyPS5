@@ -783,6 +783,7 @@ constexpr std::uint32_t TableType3D = 10;
 
 const std::vector<std::uint32_t> TableMaterialCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableSrtKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+const std::vector<std::uint32_t> TableLoopKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xbe900380u, 0xbe940380u, 0x8f118510u, 0xf42c0902u, 0x22000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00490000u, 0x93129014u, 0xf4200406u, 0x24000004u, 0x80148114u, 0xbf0a8314u, 0xbf8cc07fu, 0xbf85fff3u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 const std::vector<std::uint32_t> TableWholeCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
 std::vector<std::uint32_t> TableLoadCode(std::vector<std::uint32_t> code) {
@@ -1268,6 +1269,44 @@ void verifyResultMemoKey() {
     require(map2 != nullptr && map2->guestDescriptor != map0->guestDescriptor, "table memo: changed table contents reused the memoized tables");
 }
 
+void verifyImageTableKeyTransforms() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    const auto run = [&](const std::vector<std::uint32_t>& code, const std::array<std::array<std::uint32_t, 4>, 3>& materials, const std::string& what, bool recordStride, std::uint32_t shift, std::uint32_t mask) {
+        std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+        heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+        heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+        heap[3] = heap[0];
+        guest.materials = materials;
+        FillTableSrt(guest, heap.data(), 32u, 4u);
+        const auto userData = TableUserData(guest);
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, (what + ": the T# was not planned as a table").c_str());
+        const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+        require(column.has_value() && column->keyDomain.has_value() && !column->keyDomain->value && column->keyDomain->offset == 4u && column->keyDomain->recordStride == recordStride && column->keyDomain->shift == shift && column->keyDomain->mask == mask, (what + ": the key domain is wrong").c_str());
+        const auto compiled = CompileTable(request);
+        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        require(snapshot.records == 4u && snapshot.keys == 4u && !snapshot.outside && snapshot.codes.size() == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && (snapshot.codes[1] & Abi::PoisonFlag) == 0u && snapshot.codes[2] == outside && snapshot.codes[3] == snapshot.codes[0], (what + ": the snapshot was not narrowed to the material keys").c_str());
+        const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+        require(images != nullptr && images->count == 2u, (what + ": the binding holds other entries than the material keys").c_str());
+    };
+    auto shifted = TableMaterialCode;
+    shifted.insert(shifted.begin() + 12, 0x90109010u);
+    run(shifted, {{{0u, 1u << 16u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u << 16u, 0u, 0u}}}, "image table shifted key", false, 16u, 0xffffffffu);
+    auto masked = TableMaterialCode;
+    masked.insert(masked.begin() + 12, {0x8710ff10u, 0x000000ffu});
+    run(masked, {{{0u, 0x101u, 0u, 0u}, {0u, 0x100u, 0u, 0u}, {0u, 0x103u, 0u, 0u}}}, "image table masked key", false, 0u, 0xffu);
+    auto records = TableMaterialCode;
+    records[9] = 0x80101010u;
+    run(records, {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}}, "image table record-stride key", true, 0u, 0xffffffffu);
+    run(TableLoopKeyCode, {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 3u, 0u, 0u}}}, "image table loop-carried key", false, 0u, 0xffffffffu);
+}
+
 void verifyImageTableSrtKey() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -1281,7 +1320,8 @@ void verifyImageTableSrtKey() {
     heap[3] = heap[0];
     FillTableSrt(guest, heap.data(), 32u, 4u);
     guest.srt[16] = 2u;
-    const auto request = TableRequest(TableSrtKeyCode, TableUserData(guest));
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableSrtKeyCode, userData);
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table SRT key: the T# was not planned as a table");
     const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
@@ -1293,6 +1333,10 @@ void verifyImageTableSrtKey() {
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
     require(images != nullptr && images->count == 2u, "image table SRT key: the binding holds other entries than the selected one and the first");
     require(TableCovered(compiled.regions, &guest.srt[16], sizeof(std::uint32_t)), "image table SRT key: the key was not captured");
+    guest.srt[16] = 3u;
+    const auto moved = CompileTable(request);
+    const auto& movedSnapshot = moved.capture->snapshot.tables.tables.at(0);
+    require((movedSnapshot.codes[3] & Abi::PoisonFlag) == 0u && movedSnapshot.codes[2] == outside && movedSnapshot.codes[1] == outside && moved.result->spirv == compiled.result->spirv && moved.key == compiled.key, "image table SRT key: a changed key did not move the snapshot alone");
 }
 
 void verifyImageTableRegistration() {
@@ -1410,11 +1454,12 @@ void verifyPointerImageTable() {
 
     const std::vector<std::uint32_t> maskedCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
         0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    keys = {1u, 2u, 3u, 4u, 255u, 0u, 0u, 0u};
     const auto masked = request(maskedCode, 0x31000u);
     const auto plan = GetResourcePlan(masked);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "pointer image table: the T# was not planned as a table");
     const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.address && column.stride == 32u && column.addend == 0u && column.offset == Palette && column.dwordCount == 8u && column.maxKey == 0xffu && !column.keyDomain.has_value(), "pointer image table: the column is wrong");
+    require(column.address && column.stride == 32u && column.addend == 0u && column.offset == Palette && column.dwordCount == 8u && column.maxKey == 0xffu && column.keyDomain.has_value() && !column.keyDomain->value && column.keyDomain->offset == 0u && column.keyDomain->stride == 4u && column.keyDomain->mask == 0xffu && column.keyDomain->shift == 0u && column.keyDomain->addend == 0u, "pointer image table: the column is wrong");
     require(plan->descriptorSources.at(column.heapSource).dwordCount == 2u, "pointer image table: the table base is not a 64-bit pointer");
     std::uint32_t planningOnly = 0;
     for (const auto& memory : plan->memoryInfo) {
@@ -1427,9 +1472,12 @@ void verifyPointerImageTable() {
     const auto& snapshot = tables.tables.at(0);
     require(snapshot.base == base && snapshot.size == 0u && snapshot.keys == Entries && snapshot.records == Entries && !snapshot.outside && snapshot.fault == 0u, "pointer image table: the column snapshot is wrong");
     require(snapshot.codes[0] == snapshot.codes[1] && snapshot.codes[2] == snapshot.codes[255] && snapshot.codes[0] != snapshot.codes[2] && tables.words.at(snapshot.codes[2]).dwords[0] == root[(Palette + 2u * 32u) / 4u], "pointer image table: the snapshot words are wrong");
-    require(tables.ranges == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + Palette, Entries * 32u}}, "pointer image table: the snapshot range is wrong");
-    require(snapshot.readRanges == tables.ranges && compiled.result->imageTableReadRanges.size() == 1u && compiled.result->imageTableReadRanges[0] == snapshot.readRanges, "pointer image table: the consumed ranges did not retain table ownership");
-    require(TableCovered(compiled.regions, root + Palette / 4u, Entries * 32u) && !TableTouched(compiled.regions, root + (Palette + Entries * 32u) / 4u, Committed - Palette - Entries * 32u), "pointer image table: the captured regions are wrong");
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> palette{{base + Palette, Entries * 32u}};
+    const std::pair<std::uint64_t, std::uint64_t> keyRange{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(keys.data())), sizeof(keys)};
+    require(tables.ranges.size() == 2u && std::find(tables.ranges.begin(), tables.ranges.end(), palette[0]) != tables.ranges.end() && std::find(tables.ranges.begin(), tables.ranges.end(), keyRange) != tables.ranges.end(), "pointer image table: the snapshot ranges are wrong");
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> selected{{base + Palette, 5u * 32u}, {base + Palette + 255u * 32u, 32u}};
+    require(snapshot.readRanges == selected && compiled.result->imageTableReadRanges.size() == 1u && compiled.result->imageTableReadRanges[0] == selected, "pointer image table: the consumed ranges did not retain table ownership");
+    require(TableCovered(compiled.regions, root + Palette / 4u, 5u * 32u) && TableCovered(compiled.regions, root + (Palette + 255u * 32u) / 4u, 32u) && !TableTouched(compiled.regions, root + (Palette + Entries * 32u) / 4u, Committed - Palette - Entries * 32u), "pointer image table: the captured regions are wrong");
     const auto& map = TableMap(*compiled.result);
     const auto codes = TableCodes(map, 0);
     require(codes.size() == Entries && codes[0] == codes[1] && codes[2] == codes[255] && codes[3] == Abi::NullCode && map[Abi::HeaderElementCount] == 2u, "pointer image table: the map codes are wrong");
@@ -1453,7 +1501,9 @@ void verifyPointerImageTable() {
     root[12] = static_cast<std::uint32_t>(pointer) | 2u;
     const auto unaligned = CompileTable(loaded);
     const auto& unalignedCodes = unaligned.capture->snapshot.tables.tables.at(0).codes;
-    require(unalignedCodes.size() == Entries && std::all_of(unalignedCodes.begin(), unalignedCodes.end(), [](std::uint32_t code) { return code == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)); }), "pointer image table: a pointer that is not dword-aligned was read");
+    const auto unmapped = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
+    const auto unselected = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    require(unalignedCodes.size() == Entries && std::all_of(unalignedCodes.begin(), unalignedCodes.end(), [&](std::uint32_t code) { return code == unmapped || code == unselected; }) && unalignedCodes[0] == unmapped && unalignedCodes[4] == unmapped && unalignedCodes[255] == unmapped, "pointer image table: a pointer that is not dword-aligned was read");
     require(unaligned.result->imageTableReadRanges == std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>>{{}}, "pointer image table: an unaligned pointer recorded consumed ranges");
     root[12] = static_cast<std::uint32_t>(pointer);
 
@@ -1478,7 +1528,7 @@ void verifyPointerImageTable() {
     const auto& wideSnapshot = wideTable.capture->snapshot.tables.tables.at(0);
     constexpr std::uint32_t mapped = static_cast<std::uint32_t>((Committed - Palette) / 32u);
     require(wideSnapshot.keys == Abi::MaxKeys && wideSnapshot.outside && wideTable.result->imageTableFaults != 0u, "pointer image table: an unbounded key did not snapshot the capped records");
-    require(std::equal(snapshot.codes.begin(), snapshot.codes.end(), wideSnapshot.codes.begin()) && (wideSnapshot.codes[mapped - 1u] & Abi::PoisonFlag) == 0u, "pointer image table: an unbounded key changed the mapped records");
+    require(snapshot.codes[0] == wideSnapshot.codes[0] && snapshot.codes[2] == wideSnapshot.codes[2] && snapshot.codes[4] == wideSnapshot.codes[4] && snapshot.codes[255] == wideSnapshot.codes[255] && (wideSnapshot.codes[mapped - 1u] & Abi::PoisonFlag) == 0u, "pointer image table: an unbounded key changed the mapped records");
     require(wideSnapshot.codes[mapped] == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)) && wideSnapshot.codes.back() == wideSnapshot.codes[mapped], "pointer image table: records past the mapping are not Unmapped poison");
     require(!TableTouched(wideTable.regions, root + Committed / 4u, Reserved - Committed), "pointer image table: an unmapped record was read");
 
@@ -4216,6 +4266,7 @@ int main(int argc, char** argv) {
             verifyImageTableKeys();
             verifyImageTables();
             verifyImageTableSrtKey();
+            verifyImageTableKeyTransforms();
             verifyImageTableRegistration();
             verifyScalarAddressRule();
             verifyPointerImageTable();

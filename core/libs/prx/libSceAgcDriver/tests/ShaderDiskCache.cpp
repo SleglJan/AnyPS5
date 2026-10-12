@@ -1341,6 +1341,10 @@ IrResourcePlan handBuiltPlan() {
     domain.source = 0u;
     domain.offset = 4u;
     domain.stride = 8u;
+    domain.recordStride = true;
+    domain.shift = 2u;
+    domain.mask = 0xffu;
+    domain.addend = 1u;
     column.keyDomain = domain;
     table.tableColumn = column;
     DescriptorSource heap;

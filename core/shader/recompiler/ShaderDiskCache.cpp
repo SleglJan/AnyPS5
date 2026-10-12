@@ -101,7 +101,7 @@ static_assert(sizeof(IrResourcePlan) == 584, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 120, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 136, "DescriptorSource changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 80, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
 static_assert(sizeof(UniformFill) == 28, "UniformFill changed: update the plan encoder");
@@ -141,7 +141,7 @@ static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update t
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 9, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
-static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
+static_assert(fieldCount<KeyDomain>() == 8, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
 static_assert(fieldCount<UniformFill>() == 5, "UniformFill changed: update the plan encoder");
@@ -873,6 +873,10 @@ void encodeKeyDomain(Writer& out, const KeyDomain& domain) {
     out.Value(domain.offset);
     out.Value(domain.stride);
     out.Value(domain.value);
+    out.Value(domain.recordStride);
+    out.Value(domain.shift);
+    out.Value(domain.mask);
+    out.Value(domain.addend);
 }
 
 void decodeKeyDomain(Reader& in, KeyDomain& domain) {
@@ -880,6 +884,10 @@ void decodeKeyDomain(Reader& in, KeyDomain& domain) {
     in.Value(domain.offset);
     in.Value(domain.stride);
     in.Value(domain.value);
+    in.Value(domain.recordStride);
+    in.Value(domain.shift);
+    in.Value(domain.mask);
+    in.Value(domain.addend);
 }
 
 void encodeTableColumn(Writer& out, const TableColumn& column) {
