@@ -7,6 +7,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "BdaAbi.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "ImageTableAbi.hpp"
 #include "ResultKey.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -39,6 +40,8 @@ std::array<std::uint32_t, 4> TableV(std::uint64_t address, std::uint32_t stride,
 }
 
 const std::vector<std::uint32_t> TableWholeCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+
+const std::vector<std::uint32_t> TableKeyCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0xf4000400u, 0xfa000040u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
 ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>& code, std::span<const std::uint32_t> userData) {
     using namespace ShaderRecompiler;
@@ -98,7 +101,7 @@ int collectBench(int argc, char** argv) {
 // check: captures of one table over write-watched memory with CPU stores into the table between
 // some of them; every snapshot must hold the table's current descriptors (a skipped column, a
 // whole reused snapshot or a full walk alike), and a carried hash must be the snapshot's.
-int checkReuse() {
+int checkReuse(bool narrowed) {
     if (!AgcDriver::GuestMemory::WriteWatched()) {
         std::printf("no write watching: skipped\n");
         return 77;
@@ -128,13 +131,16 @@ int checkReuse() {
     const std::array<std::uint32_t, 2> user{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
     std::uint32_t carried = 0;
     std::uint32_t stores = 0;
+    const auto outsideDomain = ShaderRecompiler::ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::OutsideDomain));
     for (std::uint32_t round = 0; round < 60u; ++round) {
         AgcDriver::GuestMemory::BumpCollectEpoch();
         if (round % 9 == 4) {
             entry((round * 977u) % Entries, round);
             ++stores;
         }
-        auto request = TableRequest(TableWholeCode, user);
+        const std::uint32_t key = narrowed ? 1u + round % 3u : 0u;
+        words[16] = key;
+        auto request = TableRequest(narrowed ? TableKeyCode : TableWholeCode, user);
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
         const auto regions = memory.Regions();
@@ -143,6 +149,10 @@ int checkReuse() {
         require(tables.tables.size() == 1u && tables.tables[0].keys == Entries && tables.tables[0].codes.size() == Entries, "check: the table was not snapshotted whole");
         for (std::uint32_t index = 0; index < Entries; ++index) {
             const auto code = tables.tables[0].codes[index];
+            if (narrowed && index != 0u && index != key) {
+                require(code == outsideDomain, "check: a record outside the key domain is not OutsideDomain poison");
+                continue;
+            }
             require(code < tables.words.size(), "check: a code is not a word");
             const auto& value = tables.words[code];
             require(value.dwordCount == 8u && std::memcmp(value.dwords.data(), table + index * 8u, 32u) == 0, "check: a snapshot holds a descriptor the table no longer has");
@@ -157,14 +167,17 @@ int checkReuse() {
     }
     const bool reuse = std::getenv("APS5_NO_WHOLE_TABLE_REUSE") == nullptr && std::getenv("APS5_NO_TABLE_SKIP") == nullptr && std::getenv("APS5_NO_TABLE_MEMO") == nullptr && std::getenv("APS5_NO_TABLE_OUTPUT_REUSE") == nullptr;
     require(!reuse || carried >= 30u, "check: few snapshots carried a hash (whole reuse did not happen)");
-    std::printf("table reuse check passed: 60 captures, %u table stores, %u snapshots with a carried hash\n", stores, carried);
+    std::printf("table reuse check passed (%s): 60 captures, %u table stores, %u snapshots with a carried hash\n", narrowed ? "narrowed" : "whole", stores, carried);
     return 0;
 }
 
 int main(int argc, char** argv) {
     try {
         if (argc > 1 && std::string_view(argv[1]) == "collect") return collectBench(argc, argv);
-        if (argc > 1 && std::string_view(argv[1]) == "check") return checkReuse();
+        if (argc > 1 && std::string_view(argv[1]) == "check") {
+            const auto whole = checkReuse(false);
+            return whole != 0 ? whole : checkReuse(true);
+        }
         const auto captures = argc > 1 ? std::strtoul(argv[1], nullptr, 0) : 2000ul;
         const auto entries = argc > 2 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0)) : 18960u;
         // SRT copies the per-capture user data cycles through: equal contents ("same"), or each
