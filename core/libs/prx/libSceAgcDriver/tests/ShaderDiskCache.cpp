@@ -1346,6 +1346,7 @@ IrResourcePlan handBuiltPlan() {
     domain.mask = 0xffu;
     domain.addend = 1u;
     column.keyDomains = {domain};
+    column.unkeyed = true;
     table.tableColumn = column;
     DescriptorSource heap;
     heap.dwordCount = 4u;
@@ -1431,7 +1432,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && a.tableColumn->keyDomains != b.tableColumn->keyDomains)) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && a.tableColumn->keyDomains != b.tableColumn->keyDomains) || (a.tableColumn.has_value() && a.tableColumn->unkeyed != b.tableColumn->unkeyed)) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }

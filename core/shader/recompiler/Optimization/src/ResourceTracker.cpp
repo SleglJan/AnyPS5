@@ -662,9 +662,12 @@ private:
         columnSource.tableColumn = column;
         plan.handle = &handle;
         plan.source = InternSource(columnSource);
-        if (plan.keyDomain.has_value()) {
-            auto& domains = m_sources[plan.source].tableColumn->keyDomains;
-            if (std::find(domains.begin(), domains.end(), *plan.keyDomain) == domains.end()) domains.push_back(*plan.keyDomain);
+        auto& shared = *m_sources[plan.source].tableColumn;
+        if (!plan.keyDomain.has_value()) {
+            shared.unkeyed = true;
+            shared.keyDomains.clear();
+        } else if (!shared.unkeyed && std::find(shared.keyDomains.begin(), shared.keyDomains.end(), *plan.keyDomain) == shared.keyDomains.end()) {
+            shared.keyDomains.push_back(*plan.keyDomain);
         }
         plan.offset = offset;
         return true;

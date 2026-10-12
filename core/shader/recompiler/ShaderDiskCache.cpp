@@ -101,7 +101,7 @@ static_assert(sizeof(IrResourcePlan) == 584, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 136, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 144, "DescriptorSource changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 80, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
 static_assert(sizeof(UniformFill) == 28, "UniformFill changed: update the plan encoder");
@@ -140,7 +140,7 @@ static_assert(fieldCount<IrResourcePlan>() == 22, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 30, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 9, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
+static_assert(fieldCount<TableColumn>() == 10, "TableColumn changed: update encodeTableColumn and decodeTableColumn");
 static_assert(fieldCount<KeyDomain>() == 8, "KeyDomain changed: update encodeKeyDomain and decodeKeyDomain");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -900,6 +900,7 @@ void encodeTableColumn(Writer& out, const TableColumn& column) {
     out.Value(column.sampler);
     out.Value(column.address);
     out.List(column.keyDomains, encodeKeyDomain);
+    out.Value(column.unkeyed);
 }
 
 void decodeTableColumn(Reader& in, TableColumn& column) {
@@ -912,6 +913,7 @@ void decodeTableColumn(Reader& in, TableColumn& column) {
     in.Value(column.sampler);
     in.Value(column.address);
     in.List(column.keyDomains, 26, decodeKeyDomain);
+    in.Value(column.unkeyed);
 }
 
 bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
