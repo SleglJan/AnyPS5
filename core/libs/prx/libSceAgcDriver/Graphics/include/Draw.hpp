@@ -8,6 +8,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <memory>
+#include <span>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -30,6 +32,8 @@ struct DrawInputCopy {
 };
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes);
+// A copy of [address, address + bytes) whose parts outside the committed runs read as zeros.
+DrawInputCopy CopyCommittedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> committed, Recorder::SnapshotUse use);
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived);
 const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment);
 struct InPlaceIndices {

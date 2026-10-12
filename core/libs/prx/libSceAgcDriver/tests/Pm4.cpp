@@ -21,6 +21,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 extern "C" int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size);
@@ -350,6 +353,51 @@ void testIndirectDraw() {
     const auto counted = AgcDriver::Pm4::ResolveDraw(makePacket(0x2c, {0, 0x280, 0x280, 0x280 | (1u << 30u), 5, low(&countValue), high(&countValue), 16, 2}), state);
     check(counted.indirect->countIndirect && counted.indirect->count == 5 && counted.indirect->countAddress == reinterpret_cast<std::uintptr_t>(&countValue) && AgcDriver::Pm4::ReadDrawCount(*counted.indirect) == 2, "indirect draw count mismatch");
     expectFailure([&] { AgcDriver::Pm4::ReadDrawCount(*local.indirect); }, "count address");
+}
+
+// An indexed indirect draw binds the declared INDEX_BUFFER_SIZE range, of which the CP reads only
+// what the records select: a declared range running into unbacked pages of a sparse heap resolves.
+// A direct draw's own index range is known and must stay readable.
+void testPartiallyCommittedIndexBuffer() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE, PAGE_NOACCESS));
+    check(block != nullptr && VirtualAlloc(block, page, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot reserve the sparse index buffer");
+#else
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, 2 * page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(mapped != MAP_FAILED && mprotect(mapped, page, PROT_READ | PROT_WRITE) == 0, "cannot reserve the sparse index buffer");
+    auto* block = static_cast<std::uint8_t*>(mapped);
+#endif
+    const auto release = [&] {
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        munmap(block, 2 * page);
+#endif
+    };
+    try {
+        AgcDriver::QueueState state;
+        alignas(16) std::array<std::uint32_t, 5> record{3, 1, 0, 0, 0};
+        state.drawIndirectBase = reinterpret_cast<std::uintptr_t>(record.data());
+        state.indexBase = reinterpret_cast<std::uintptr_t>(block);
+        state.indexType = 0;
+        state.indexBufferSize = static_cast<std::uint32_t>(2 * page / 2);
+        state.userConfig[0x24a] = 0;
+        const auto indirect = AgcDriver::Pm4::ResolveDraw(makePacket(0x25, {0, 0x280, 0x280, 0}), state);
+        check(indirect.indexed && indirect.indirect.has_value() && indirect.indexAddress == state.indexBase && indirect.indexCount == state.indexBufferSize, "an indexed indirect draw over a partly committed index buffer did not resolve to its declared range");
+        const auto inside = reinterpret_cast<std::uintptr_t>(block + page - 8);
+        const auto direct = AgcDriver::Pm4::ResolveDraw(makePacket(0x27, {4, static_cast<std::uint32_t>(inside), static_cast<std::uint32_t>(inside >> 32u), 4, 0}), state);
+        check(direct.indexAddress == inside && direct.indexCount == 4, "a direct indexed draw inside the committed page did not resolve");
+        const auto across = reinterpret_cast<std::uintptr_t>(block + page - 4);
+        expectFailure([&] { AgcDriver::Pm4::ResolveDraw(makePacket(0x27, {4, static_cast<std::uint32_t>(across), static_cast<std::uint32_t>(across >> 32u), 4, 0}), state); }, "not readable");
+    } catch (...) {
+        release();
+        throw;
+    }
+    release();
 }
 
 void testMemory() {
@@ -1136,6 +1184,7 @@ int main(int argc, char** argv) {
         testIndexedDraw();
         testAutoDraw();
         testIndirectDraw();
+        testPartiallyCommittedIndexBuffer();
         testMemory();
         testCopies();
         testMemoryCopyDecode();
