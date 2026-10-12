@@ -374,6 +374,9 @@ public:
     static std::uint64_t PublishGeneration();
     // labels waiting in completion actions (the CPU must reap their batch for them to land);
     static std::uint64_t PendingCompletionLabels();
+    // of those, the labels kept behind completions (the table marks them behindCompletion), without
+    // the end-of-pipe interrupts AfterRecordedWork counts there: 0 means no held label to settle;
+    static std::uint64_t HeldCompletionLabels();
     // write-back completions (OnComplete) of unfinished batches: a reaper retires them when every
     // worker sleeps, as for the labels above;
     static std::uint64_t PendingWriteBackCompletions();
@@ -561,6 +564,8 @@ private:
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
+        // Of those, the labels kept behind completions (HeldCompletionLabels), likewise.
+        std::uint32_t heldLabelCount = 0;
         // Write-back completions (OnComplete), likewise.
         std::uint32_t writeBackCompletionCount = 0;
         // The ranges of the completion labels also stored on the GPU, and whether each entered the
