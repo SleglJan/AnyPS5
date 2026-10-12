@@ -229,6 +229,7 @@ struct SpirvTarget {
     bool narrowSubgroupClock = false;
     bool fixedPushSlots = false;
     bool float64DenormPreserve = false;
+    bool imageTableStorage = false;
 };
 
 struct BindingLayout {
@@ -342,7 +343,8 @@ enum class DescriptorRole {
     ShaderData,
     ImageTable,
     SamplerTable,
-    ImageTableMap
+    ImageTableMap,
+    ImageTableStorage
 };
 
 struct DescriptorBinding {

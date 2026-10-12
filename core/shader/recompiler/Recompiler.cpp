@@ -267,6 +267,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
+    program.Resources().imageTableStorage = request.target.imageTableStorage;
 
     return program;
 }
@@ -1466,11 +1467,16 @@ std::string resultDifference(const RecompileResult& left, const RecompileResult&
 std::string tablesDifference(const ResolvedImageTables& left, const ResolvedImageTables& right) {
     if (left.map != right.map) return "map";
     if (left.faults != right.faults) return "faults";
-    if (left.elements.size() != right.elements.size() || left.samplers.size() != right.samplers.size() || left.poison.size() != right.poison.size()) return "counts";
+    if (left.elements.size() != right.elements.size() || left.storageElements.size() != right.storageElements.size() || left.samplers.size() != right.samplers.size() || left.poison.size() != right.poison.size()) return "counts";
     for (std::size_t index = 0; index < left.elements.size(); ++index) {
         const auto& a = left.elements[index];
         const auto& b = right.elements[index];
         if (a.words != b.words || a.dimension != b.dimension || a.depthCompare != b.depthCompare || a.kind != b.kind || a.samplers != b.samplers) return "element " + std::to_string(index);
+    }
+    for (std::size_t index = 0; index < left.storageElements.size(); ++index) {
+        const auto& a = left.storageElements[index];
+        const auto& b = right.storageElements[index];
+        if (a.words != b.words || a.dimension != b.dimension || a.depthCompare != b.depthCompare || a.kind != b.kind || a.samplers != b.samplers) return "storage element " + std::to_string(index);
     }
     for (std::size_t index = 0; index < left.samplers.size(); ++index) {
         const auto& a = left.samplers[index];

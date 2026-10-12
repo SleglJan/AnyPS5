@@ -78,7 +78,8 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
         if (stage.program == nullptr) continue;
         visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
         for (const auto& binding : stage.program->bindings) {
-            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
+            const bool storageHeap = (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) || binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage;
+            if (!storageHeap) continue;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
                 if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;

@@ -2686,6 +2686,7 @@ void imageTableAllocationTests() {
                 images.imageShapes.resize(count);
                 images.imageDepthCompare.resize(count);
                 images.imageSamplers.resize(count);
+                images.imageWritten.assign(count, false);
                 program.bindings.push_back(std::move(images));
                 const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
                 {

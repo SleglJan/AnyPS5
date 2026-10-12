@@ -2913,6 +2913,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.nonConstantImageOffsets = state->maintenance8;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
+    target.imageTableStorage = Graphics::ImageTableStorageCapacity(limits, state->runtimeDescriptorArray && state->partiallyBound && state->variableDescriptorCount && state->descriptorIndexing) != 0u && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityStorageImageArrayDynamicIndexing)) != state->capabilities.end();
     target.fixedPushSlots = state->graphicsPipelineLibrary;
     target.srgbDecodeFormats = state->srgbDecodeFormats;
     if (state->meshShader) {

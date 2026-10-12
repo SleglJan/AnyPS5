@@ -166,11 +166,6 @@ alignas(256) constexpr std::array<std::uint32_t, 17> ReadDirect256Code{
     0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 15> StoreTableCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
-    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0xf0208f08u, 0x00090401u, 0xbf810000u,
-};
-
 alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7da400ffu, 0x00001000u, 0xf0208f08u, 0x00090401u,
@@ -188,6 +183,13 @@ alignas(256) constexpr std::array<std::uint32_t, 28> StoreTableWaterfallCode{
     0xe0301000u, 0x80020303u, 0x7e040280u, 0x7e080300u, 0x7e0a0280u, 0x7e0c0280u, 0x7e0e0280u, 0xbf8c3f70u,
     0xbe8c047eu, 0x7e200503u, 0x7da40610u, 0x9312b010u, 0xf42c0802u, 0x24000000u, 0xbf8cc07fu, 0xf0208f08u,
     0x00090401u, 0x8afe7e0cu, 0xbf89fff5u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 28> StoreTableMixedCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x360200bfu, 0x7e040280u, 0xbf8cc07fu, 0xf4240404u,
+    0xfa000000u, 0xbf8cc07fu, 0x9312b010u, 0x9313b011u, 0xf42c0802u, 0x24000000u, 0xf42c0a02u, 0x26000000u,
+    0xbf8cc07fu, 0xf0008108u, 0x00090401u, 0xbf8c3f70u, 0x4a0808ffu, 0x00000100u, 0x7e0a0280u, 0x7e0c0280u,
+    0x7e0e0280u, 0xf0208f08u, 0x000b0401u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 30> PointerCode{
@@ -931,6 +933,7 @@ void FlushStoredTexels(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(UintTexels.data()), sizeof(UintTexels), nullptr, "test");
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(SintTexels.data()), sizeof(SintTexels), nullptr, "test");
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(FloatTexels.data()), sizeof(FloatTexels), nullptr, "test");
     device.WaitIdle();
 }
 
@@ -942,10 +945,12 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     };
     const Registration uintRegistration(UintTexels.data(), sizeof(UintTexels));
     const Registration sintRegistration(SintTexels.data(), sizeof(SintTexels));
+    const Registration floatRegistration(FloatTexels.data(), sizeof(FloatTexels));
     SetClassRecords();
     Fill();
     const auto savedUint = UintTexels;
     const auto savedSint = SintTexels;
+    const auto savedFloat = FloatTexels;
     Keys = {};
     Keys[0] = 1;
     const auto cut = Run(device, StoreTableCutCode, 1, Lanes, 64);
@@ -960,6 +965,7 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     }
     Require(std::equal(UintTexels.begin() + Width, UintTexels.end(), savedUint.begin() + Width), "image table store: the store through a table changed texels outside its row");
     Require(SintTexels == savedSint, "image table store: the store through a table reached another entry's image");
+    Require(FloatTexels == savedFloat, "image table store: the store through a table reached a float entry's image");
     Fill();
     Keys = {};
     Keys[0] = 1;
@@ -973,6 +979,17 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
         Require(SintTexels[x] == (uint ? savedSint[x] : static_cast<std::int32_t>(x)), "image table store: per-lane keys: sint texel " + std::to_string(x) + " is " + Hex(static_cast<std::uint32_t>(SintTexels[x])));
     }
     Require(std::equal(UintTexels.begin() + Width, UintTexels.end(), savedUint.begin() + Width) && std::equal(SintTexels.begin() + Width, SintTexels.end(), savedSint.begin() + Width), "image table store: per-lane keys changed texels outside the first row");
+    Fill();
+    Keys = {};
+    Keys[0] = 1;
+    Keys[1] = 2;
+    const auto mixed = Run(device, StoreTableMixedCode, 1, Lanes, 64);
+    Require(!Faulted(mixed), "image table store: a load and a store through the same table faulted:\n" + mixed.log);
+    FlushStoredTexels(device);
+    for (std::uint32_t x = 0; x < Width; ++x) {
+        Require(SintTexels[x] == static_cast<std::int32_t>(savedUint[x] + 0x100u), "image table store: a load through one entry and a store through another: sint texel " + std::to_string(x) + " is " + Hex(static_cast<std::uint32_t>(SintTexels[x])));
+    }
+    Require(UintTexels == savedUint && std::equal(SintTexels.begin() + Width, SintTexels.end(), savedSint.begin() + Width), "image table store: a load and a store through the same table changed other texels");
 }
 
 void RunPointerTests(AgcDriver::VulkanDevice& device) {

@@ -147,6 +147,12 @@ bool fragmentWritesMemory(std::span<const CompiledShader> shaders) {
             case ShaderRecompiler::DescriptorRole::FaultBuffer:
             case ShaderRecompiler::DescriptorRole::FlattenedSrt:
             case ShaderRecompiler::DescriptorRole::ShaderData:
+            case ShaderRecompiler::DescriptorRole::ImageTable:
+            case ShaderRecompiler::DescriptorRole::SamplerTable:
+            case ShaderRecompiler::DescriptorRole::ImageTableMap:
+                break;
+            case ShaderRecompiler::DescriptorRole::ImageTableStorage:
+                if (binding.count != 0u) return true;
                 break;
             }
         }

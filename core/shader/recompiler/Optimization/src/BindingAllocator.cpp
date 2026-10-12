@@ -171,6 +171,9 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (imageTables) {
         addBinding(next, DescriptorBindingKind::ImageTable);
     }
+    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable && image.resourceClass == ImageResourceClass::Storage && image.tableOperation != TableOperation::Unsupported; })) {
+        addBinding(next, DescriptorBindingKind::ImageTableStorage);
+    }
 
     if (next.ShaderDataDwords() != 0u && !next.UsesPushData()) {
         addBinding(next, DescriptorBindingKind::ShaderData);

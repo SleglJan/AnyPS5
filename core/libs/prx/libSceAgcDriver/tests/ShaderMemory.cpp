@@ -722,6 +722,7 @@ ShaderRecompiler::RecompileRequest TableRequest(const std::vector<std::uint32_t>
     request.target.supportedExtensions = extensions;
     request.target.bdaAbiVersion = BdaAbi::Version;
     request.target.fragmentShaderBarycentricEnabled = false;
+    request.target.imageTableStorage = true;
     request.layout.pushConstantSizeBytes = 128;
     return request;
 }
@@ -1193,9 +1194,15 @@ void verifyImageTableRegistration() {
     require(storePlan.info.images.size() == 1u && storePlan.info.images[0].table == 0u && storePlan.info.images[0].tableOperation != TableOperation::Unsupported, "image table registration: a table T# feeding image_store was marked an unsupported table operation");
     const auto& storeMap = TableMap(*store.result);
     require(storeMap[Abi::TableHeader(0) + Abi::TableFault] == 0u && store.result->imageTableFaults == 0u, "image table registration: a table feeding image_store was poisoned");
-    const auto* storeBinding = TableBinding(*store.result, DescriptorRole::ImageTable);
-    require(storeBinding != nullptr && storeBinding->count != 0u && storeBinding->count == storeMap[Abi::HeaderStorageElementCount] && storeMap[Abi::HeaderElementCount] == 0u, "image table registration: a table feeding image_store did not bind its entries as storage elements");
+    const auto* storeBinding = TableBinding(*store.result, DescriptorRole::ImageTableStorage);
+    const auto* sampledBinding = TableBinding(*store.result, DescriptorRole::ImageTable);
+    require(storeBinding != nullptr && storeBinding->count == 2u && storeMap[Abi::HeaderStorageElementCount] == 2u && storeMap[Abi::HeaderElementCount] == 0u && (sampledBinding == nullptr || sampledBinding->count == 0u), "image table registration: a table feeding image_store did not bind its two entries as storage elements");
     require(storeBinding->imageWritten.size() == storeBinding->count && std::all_of(storeBinding->imageWritten.begin(), storeBinding->imageWritten.end(), [](bool written) { return written; }), "image table registration: a storage element of a store table is not marked written");
+    auto gated = TableRequest(storeCode, userData);
+    gated.target.imageTableStorage = false;
+    const auto gatedStore = CompileTable(gated);
+    const auto& gatedMap = TableMap(*gatedStore.result);
+    require(gatedStore.capture->plan->info.images.size() == 1u && gatedStore.capture->plan->info.images[0].tableOperation != TableOperation::Unsupported && TableBinding(*gatedStore.result, DescriptorRole::ImageTableStorage) == nullptr && (gatedMap[Abi::TableHeader(0) + Abi::TableFault] != 0u || gatedStore.result->imageTableFaults != 0u), "image table registration: a target without the storage heap still bound a store table");
 
     const std::vector<std::uint32_t> compareCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf0fc0108u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
     auto compareRequest = TableRequest(compareCode, userData);
@@ -2063,12 +2070,12 @@ void verifyPixelRequestSerialization() {
     minimal.context.waveSize = 64;
     minimal.context.pixel = ShaderPixelStageInfo{};
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQRIAAAA=", "new requests did not use serialization version 18");
+    require(requestPrefix(encoded, 8u) == "NVNQQRMAAAA=", "new requests did not use serialization version 19");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
     for (std::size_t bytes = 0; bytes < 18u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source or alpha-to-coverage flag was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRMAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRQAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
 }
@@ -2273,7 +2280,7 @@ void verifyLegacyPixelRequests() {
         require(!pixel.orderedPixelShader, "a legacy request became a primitive-ordered pixel shader");
         require(request.shader.stage == ShaderStage::Fragment && request.shader.code.size() == 1u && request.shader.code[0] == 0xbf810000u && !request.context.vertex.has_value() && request.context.memory.empty(), "legacy guest context was misaligned");
         require(request.target.vulkanVersion == 0x00401000u && request.target.spirvVersion == 0x00010300u && request.target.subgroupSize == 64u && request.layout.firstBinding == 11u && request.layout.pushConstantSizeBytes == 128u, "legacy target or binding layout was misaligned");
-        require(request.useCache == (version == 1u) && request.target.nonConstantImageOffsets == (version >= 6u) && request.target.srgbDecodeFormats == 0u && !request.target.narrowSubgroupClock && !request.target.float64DenormPreserve, "legacy request trailer was misread");
+        require(request.useCache == (version == 1u) && request.target.nonConstantImageOffsets == (version >= 6u) && request.target.srgbDecodeFormats == 0u && !request.target.narrowSubgroupClock && !request.target.float64DenormPreserve && !request.target.imageTableStorage, "legacy request trailer was misread");
         const auto upgraded = serializer.Deserialize(serializer.Serialize(request));
         require(upgraded.request.context.pixel->targetExportMapping == pixel.targetExportMapping && RecompileCacheKey::ContextHash(upgraded.request) == RecompileCacheKey::ContextHash(request), "upgrading a legacy capture changed its pixel mapping");
     }
@@ -3822,6 +3829,9 @@ int main(int argc, char** argv) {
         auto float64Denormals = uncached;
         float64Denormals.target.float64DenormPreserve = true;
         require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(float64Denormals)).request.target.float64DenormPreserve, "f64 denormal preservation was lost in serialization");
+        auto tableStores = uncached;
+        tableStores.target.imageTableStorage = true;
+        require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tableStores)).request.target.imageTableStorage, "image table stores were lost in serialization");
         auto changedLayout = request;
         changedLayout.layout.pushConstantSizeBytes = 64;
         require(!Recompile(changedLayout).cacheHit, "binding layout change reused an incompatible variant");

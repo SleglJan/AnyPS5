@@ -424,23 +424,28 @@ void DefineDescriptors(SpirvEmitterState& state) {
             state.gdsVariable = Define(StorageBufferBlockType(state), "gds");
             break;
         case DescriptorBindingKind::ImageTable:
+        case DescriptorBindingKind::ImageTableStorage: {
             RequireTableIndexing(state);
+            const bool storageHeap = binding.kind == DescriptorBindingKind::ImageTableStorage;
+            if (storageHeap) {
+                state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
+                state.storageTableArrays = true;
+            }
             for (std::uint32_t resource = 0; resource < state.program.Info().images.size(); ++resource) {
                 const auto& image = state.program.Info().images[resource];
                 if (image.table == NoTable) continue;
                 for (const auto& mode : state.program.Info().runtimeImageModes.at(resource)) {
                     if (!TableModeEmitted(mode)) continue;
                     const auto kind = DescriptorBindingForImage(mode);
+                    if ((ImageBindingResourceClass(kind) == ImageResourceClass::Storage) != storageHeap) continue;
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
-                    const bool storageKind = ImageBindingResourceClass(kind) == ImageResourceClass::Storage;
-                    const auto variable = Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant);
-                    if (storageKind) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, RuntimeAbi::ImageTableStorageBinding);
-                    state.tableImageVariables.push_back({kind, variable});
-                    if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(storageKind ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
+                    state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(storageHeap ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
                 }
             }
             break;
+        }
         case DescriptorBindingKind::SamplerTable:
             RequireTableIndexing(state);
             state.tableSamplerVariable = Define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "table_samplers", spv::StorageClassUniformConstant);

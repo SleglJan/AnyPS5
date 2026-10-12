@@ -2069,6 +2069,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         image.mipCount = image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         if (image.table == NoTable) continue;
         tables = true;
+        if (image.resourceClass == ImageResourceClass::Storage && !resources.imageTableStorage) image.tableOperation = TableOperation::Unsupported;
         const auto modes = RuntimeImageModes(image);
         if (modes.empty() || modes.size() > ImageTableAbi::MaxModes) image.tableOperation = TableOperation::Unsupported;
     }
@@ -2164,6 +2165,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.userDataBase = source.userDataBase;
     plan.userDataCount = source.userDataCount;
     plan.srgbDecodeFormats = source.srgbDecodeFormats;
+    plan.imageTableStorage = source.imageTableStorage;
     plan.memoryInfo = source.memoryInfo;
     plan.descriptorSources = source.descriptorSources;
     plan.controlFlow = source.controlFlow;
