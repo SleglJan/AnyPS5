@@ -2062,12 +2062,12 @@ void verifyPixelRequestSerialization() {
     minimal.context.waveSize = 64;
     minimal.context.pixel = ShaderPixelStageInfo{};
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQREAAAA=", "new requests did not use serialization version 17");
+    require(requestPrefix(encoded, 8u) == "NVNQQRIAAAA=", "new requests did not use serialization version 18");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
     for (std::size_t bytes = 0; bytes < 18u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source or alpha-to-coverage flag was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRIAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRMAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
 }
@@ -2153,6 +2153,33 @@ void verifyVertexInfoVersion16() {
     const auto replay = serializer.Deserialize(encodeBase64(legacy));
     require(replay.request.context.vertex.has_value() && replay.request.context.vertex->paClVsOutCntl == 0u, "a version 16 vertex info read a PA_CL_VS_OUT_CNTL word");
     require(serializer.Serialize(replay.request) == unmarked, "a version 16 vertex info misread the fields after it");
+}
+
+void verifyMergedHullConfiguration() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
+    const RequestSerializer serializer;
+    RecompileRequest request{};
+    request.shader = {ShaderStage::TessellationControl, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
+    const auto separate = serializer.Serialize(request);
+    std::vector<std::uint64_t> separateKey;
+    RecompileCacheKey::Build(request, separateKey);
+    request.graphics->tessellation->mergedHull = true;
+    const auto merged = serializer.Serialize(request);
+    std::vector<std::uint64_t> mergedKey;
+    RecompileCacheKey::Build(request, mergedKey);
+    const auto replay = serializer.Deserialize(merged);
+    require(replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() && replay.request.graphics->tessellation->mergedHull, "a merged hull configuration was lost in serialization");
+    require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
+    auto legacy = decodeBase64(merged);
+    legacy.pop_back();
+    legacy[4] = 17u;
+    const auto upgraded = serializer.Deserialize(encodeBase64(legacy));
+    require(upgraded.request.graphics.has_value() && upgraded.request.graphics->tessellation.has_value() && !upgraded.request.graphics->tessellation->mergedHull, "a version 17 tessellation request read a merged hull flag");
+    require(mergedKey != separateKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(serializer.Deserialize(separate).request), "the cache keys ignore whether the hull program is merged");
 }
 
 void verifyLegacyPixelRequests() {
@@ -3672,6 +3699,7 @@ int main(int argc, char** argv) {
         verifyPixelInputs();
         verifyPixelRequestSerialization();
         verifyVertexInfoVersion16();
+        verifyMergedHullConfiguration();
         verifyPositionExportComponents();
         verifyLegacyPixelRequests();
         verifyPixelExportReplay();

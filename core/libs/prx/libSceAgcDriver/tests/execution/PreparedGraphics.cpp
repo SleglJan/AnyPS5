@@ -284,6 +284,85 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     Reject([&] { DecodeGraphicsPrograms(invalid, queue, registry, true, true); }, "reserved graphics program address");
 }
 
+void CheckMergedHull(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::DriverDetail;
+    using namespace ShaderRecompiler;
+    Fixture merged;
+    Fixture domain;
+    Fixture fragment;
+    merged.Initialize(3u);
+    domain.Initialize(2u);
+    fragment.Initialize(1u);
+    ShaderRegistry registry;
+    for (const auto* fixture : {&merged, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
+    AgcDriver::QueueState queue{};
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x8f] = 0xfu;
+    merged.Bind(queue, 0x148u, 0x10bu);
+    domain.Bind(queue, 0xc8u, 0x8bu);
+    fragment.Bind(queue, 0x8u, 0xbu);
+    alignas(8) const std::array<std::uint32_t, 2> pointer{};
+    const auto pointerAddress = reinterpret_cast<std::uintptr_t>(pointer.data());
+    queue.shader[0x102u] = static_cast<std::uint32_t>(pointerAddress);
+    queue.shader[0x103u] = static_cast<std::uint32_t>(pointerAddress >> 32u);
+    DrawDecode prepared{};
+    prepared.state.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+    prepared.state.stages.vertexWaveSize = 64u;
+    prepared.state.stages.fragmentWaveSize = 32u;
+    prepared.state.stages.tessellation = TessellationConfiguration{3, 4, 1, 2, 2};
+    prepared.pixel.wave32 = true;
+    prepared.pixel.targetOutputMode[0] = 9;
+    prepared.pixel.targetExportMapping.fill(0xe4u);
+    DecodeGraphicsPrograms(prepared, queue, registry, true, true);
+    DrawDecode draw{};
+    draw.state = prepared.state;
+    draw.state.stages.tessellation->mergedHull = false;
+    draw.pixel = prepared.pixel;
+    DecodeGraphicsPrograms(draw, queue, registry, false, true);
+    for (const auto* decoded : {&prepared, &draw}) {
+        Require(decoded->state.stages.tessellation->mergedHull, "a registered type-3 hull program was not decoded as a merged hull");
+        Require(decoded->roles == std::vector<ProgramRole>{ProgramRole::Local, ProgramRole::Hull, ProgramRole::Domain, ProgramRole::Fragment}, "a merged hull program did not give the local and hull roles");
+        const auto& local = decoded->programs[0];
+        const auto& hull = decoded->programs[1];
+        Require(local.snapshot == merged.snapshot && hull.snapshot == merged.snapshot && local.codeOffset == 64u && hull.codeOffset == 64u, "the local and hull stages of a merged hull program refer to another program");
+        Require(local.binary.stage == ShaderStage::Local && hull.binary.stage == ShaderStage::TessellationControl && local.firstUserSgpr == 8u && hull.firstUserSgpr == 0u && hull.userData.size() == local.userData.size() + 8u, "a merged hull program's stages lost the merged user SGPR layout");
+    }
+    const auto stages = PrepareGraphicsStages(prepared, device.Target());
+    Require(stages.size() == 4u && stages[0].entry.handle != stages[1].entry.handle, "a merged hull program was not prepared as separate local and hull stages");
+    for (const auto& stage : stages) stage.snapshot->prepared->entries.push_back(stage.entry);
+    std::vector<LinkedProgram> linked;
+    std::vector<MemoryRegion> memory;
+    for (std::size_t index = 0; index < draw.programs.size(); ++index) {
+        const auto& program = draw.programs[index];
+        linked.push_back({draw.roles[index], program.binary, program.userDataBase, program.firstUserSgpr, program.userData});
+        memory.insert(memory.end(), program.memory.begin(), program.memory.end());
+    }
+    const auto predicted = merged.snapshot->prepared->entries.size();
+    for (std::size_t index = 0; index < 2u; ++index) {
+        const auto& program = draw.programs[index];
+        const auto vertex = AgcDriver::Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true);
+        RecompileRequest request{program.binary, {64u, program.firstUserSgpr, program.userData, {}, std::nullopt, vertex, memory}, device.Target(), {0, 0, 0, 128u}, GraphicsCompileContext{program.firstUserSgpr, linked, std::nullopt, draw.state.stages.tessellation, {0, 3, 4, 1}}};
+        static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request));
+        Require(merged.snapshot->prepared->entries.size() == predicted, "a merged hull stage prepared at ABI resolution was prepared again at its draw");
+        request.graphics->tessellation->mergedHull = false;
+        Require(!MatchesPreparedShader(request, *stages[index].entry.handle), "a separate hull configuration matched a merged hull artifact");
+    }
+    Fixture front;
+    front.Initialize(5u);
+    registry.emplace(front.snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{front.snapshot});
+    Fixture back;
+    back.Initialize(7u);
+    registry.emplace(back.snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{back.snapshot});
+    auto separate = queue;
+    front.Bind(separate, 0x148u, 0x10bu);
+    back.Bind(separate, 0x108u, 0x10bu);
+    DrawDecode halves{};
+    halves.state = prepared.state;
+    halves.pixel = prepared.pixel;
+    DecodeGraphicsPrograms(halves, separate, registry, false, true);
+    Require(!halves.state.stages.tessellation->mergedHull && halves.programs[0].snapshot == front.snapshot && halves.programs[1].snapshot == back.snapshot, "separate hull halves were decoded as a merged hull program");
+}
+
 void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::DriverDetail;
     Fixture front;
@@ -334,6 +413,7 @@ int main(int argc, char** argv) {
         Check(*device, AgcDriver::Graphics::ShaderPath::Vertex, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Geometry, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Tessellation, dump);
+        CheckMergedHull(*device);
         std::cout << "prepared graphics ABI tests passed\n";
         return 0;
     } catch (const std::exception& error) {

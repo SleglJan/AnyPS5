@@ -273,6 +273,7 @@ struct TessellationConfiguration {
     std::uint32_t domain;
     std::uint32_t partitioning;
     std::uint32_t outputTopology;
+    bool mergedHull = false;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
