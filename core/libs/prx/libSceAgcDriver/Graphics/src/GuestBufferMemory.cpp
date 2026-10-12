@@ -3003,7 +3003,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     }
     uploaded = true;
     // An address-based build reads any registered address in place: completion labels kept behind
-    // write-backs land first (see SettleHeldLabels); descriptor regions are settled one by one below.
+    // write-backs land first (see SettleHeldLabels); descriptor regions are settled below.
     // Debug aid: APS5_NO_SETTLE_ADDRESS_BUILDS=1 leaves address-based builds unsettled.
     static const bool settleAddressBuilds = std::getenv("APS5_NO_SETTLE_ADDRESS_BUILDS") == nullptr;
     if (settleAddressBuilds && (!lease.empty() || space != nullptr)) SettleAllHeldLabels();
@@ -3035,6 +3035,14 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
         region.snapshot.clear();
         std::lock_guard lock(Mirrors().mutex);
         ++Mirrors().subranges;
+    }
+    // Completion labels held over the regions still to resolve land in one pass before any import
+    // is taken: a landing can refresh the import table, which would leave the import pointers of
+    // regions resolved before it dangling.
+    if (context.hostImportAlignment != 0 && Recorder::HeldCompletionLabels() != 0) {
+        for (const auto& region : regions) {
+            if (region.pending && region.mirror == nullptr) SettleHeldLabels(region.begin, static_cast<std::size_t>(region.end - region.begin));
+        }
     }
     bool importsRefreshed = false;
     static const bool joinImports = std::getenv("APS5_NO_JOINED_IMPORTS") == nullptr;
@@ -3092,7 +3100,6 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             if (bound) continue;
         }
         bool copyOnGpu = false;
-        if (context.hostImportAlignment != 0) SettleHeldLabels(region.begin, static_cast<std::size_t>(bytes));
         if (context.hostImportAlignment != 0) {
             auto& state = Imports();
             std::lock_guard lock(state.mutex);
