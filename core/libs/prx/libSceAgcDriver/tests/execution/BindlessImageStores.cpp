@@ -5,6 +5,7 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <iostream>
 #include <vector>
 
@@ -75,6 +76,10 @@ void Run(AgcDriver::VulkanDevice& device) {
 }
 
 void RunDivergent(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    if (device.Target().subgroupSize != 32u && device.Target().subgroupSize != waveSize) {
+        std::printf("bindless image stores: per-wave key case skipped, subgroup size %u holds no wave%u\n", device.Target().subgroupSize, waveSize);
+        return;
+    }
     GuestAllocations::Mutation().Add(textures.data(), sizeof(textures), true, true, true);
     data.material.fill(0u);
     data.material[129] = 1u;
