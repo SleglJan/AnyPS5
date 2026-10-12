@@ -410,6 +410,79 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
     Reject([&] { DecodeGraphicsPrograms(halvesWithout, halvesUnset, registry, false, true); }, "merged shader user-data address is null");
 }
 
+void CheckMergedHullVertexTables(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::DriverDetail;
+    using namespace ShaderRecompiler;
+    struct Header {
+        Shader shader{};
+        ShaderUserData users{};
+        std::array<std::uint16_t, 11> direct{};
+        ShaderSemantic semantic{};
+    } header;
+    alignas(256) std::array<std::uint32_t, 65> code{};
+    code.fill(0xffffffffu);
+    code.back() = 0xbf810000u;
+    header.shader.type = 3;
+    header.shader.user_data = &header.users;
+    header.direct.fill(0xffffu);
+    header.direct[8] = 10u;
+    header.direct[10] = 12u;
+    header.users.direct_resource_offset = header.direct.data();
+    header.users.direct_resource_count = static_cast<std::uint16_t>(header.direct.size());
+    header.semantic.size_in_elements = 4u;
+    header.shader.input_semantics = &header.semantic;
+    header.shader.num_input_semantics = 1u;
+    auto merged = std::make_shared<ShaderSnapshot>();
+    merged->type = 3;
+    merged->codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    merged->headerAddress = reinterpret_cast<std::uintptr_t>(&header);
+    merged->code.assign(code.begin(), code.end());
+    merged->header.resize(sizeof(header));
+    std::memcpy(merged->header.data(), &header, sizeof(header));
+    Fixture domain;
+    Fixture fragment;
+    domain.Initialize(2u);
+    fragment.Initialize(1u);
+    ShaderRegistry registry;
+    registry.emplace(merged->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{merged});
+    for (const auto* fixture : {&domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
+    AgcDriver::QueueState queue{};
+    queue.context[0x8e] = 0xfu;
+    queue.context[0x8f] = 0xfu;
+    const auto entry = merged->codeAddress + 256u;
+    queue.shader[0x148u] = static_cast<std::uint32_t>(entry >> 8u);
+    queue.shader[0x149u] = static_cast<std::uint32_t>(entry >> 40u);
+    queue.shader[0x10bu] = 16u << 1u;
+    domain.Bind(queue, 0xc8u, 0x8bu);
+    fragment.Bind(queue, 0x8u, 0xbu);
+    alignas(16) const std::array<std::uint32_t, 4> bufferTable{};
+    alignas(16) const std::array<std::uint32_t, 4> attributeTable{};
+    const auto bufferAddress = reinterpret_cast<std::uintptr_t>(bufferTable.data());
+    const auto attributeAddress = reinterpret_cast<std::uintptr_t>(attributeTable.data());
+    for (std::uint32_t slot = 2u; slot < 6u; ++slot) queue.shader[0x10cu + slot] = slot % 2u == 0u ? 0x4b7874d0u : 0x00100042u;
+    queue.shader[0x10cu + 10u] = static_cast<std::uint32_t>(bufferAddress);
+    queue.shader[0x10cu + 11u] = static_cast<std::uint32_t>(bufferAddress >> 32u);
+    queue.shader[0x10cu + 12u] = static_cast<std::uint32_t>(attributeAddress);
+    queue.shader[0x10cu + 13u] = static_cast<std::uint32_t>(attributeAddress >> 32u);
+    DrawDecode draw{};
+    draw.state.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+    draw.state.stages.vertexWaveSize = 64u;
+    draw.state.stages.fragmentWaveSize = 32u;
+    draw.state.stages.tessellation = TessellationConfiguration{3, 3, 1, 2, 2};
+    draw.pixel.wave32 = true;
+    draw.pixel.targetOutputMode[0] = 9;
+    draw.pixel.targetExportMapping.fill(0xe4u);
+    DecodeGraphicsPrograms(draw, queue, registry, false, true);
+    Require(draw.state.stages.tessellation->mergedHull && draw.programs[1].firstUserSgpr == 0u, "the merged hull draw with vertex tables was not decoded as a merged hull");
+    for (std::size_t index = 0; index < 2u; ++index) {
+        const auto& program = draw.programs[index];
+        std::vector<AgcDriver::Graphics::DecodeRead> reads;
+        const auto vertex = AgcDriver::Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &reads, false, 8u - program.firstUserSgpr);
+        Require(vertex.fetchEmbedded && vertex.fetchAttribReg == 12u && vertex.fetchBufferReg == 10u && vertex.resourcesNum == 1u, "a merged hull stage did not decode its vertex tables");
+        Require(reads.size() == 2u && reads[0].address == attributeAddress && reads[1].address == bufferAddress, "a merged hull stage read its vertex tables from user-data words other than its slots");
+    }
+}
+
 void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::DriverDetail;
     Fixture front;
@@ -461,6 +534,7 @@ int main(int argc, char** argv) {
         Check(*device, AgcDriver::Graphics::ShaderPath::Geometry, dump);
         Check(*device, AgcDriver::Graphics::ShaderPath::Tessellation, dump);
         CheckMergedHull(*device);
+        CheckMergedHullVertexTables(*device);
         std::cout << "prepared graphics ABI tests passed\n";
         return 0;
     } catch (const std::exception& error) {
