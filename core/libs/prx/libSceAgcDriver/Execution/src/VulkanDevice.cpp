@@ -52,6 +52,7 @@
 #include <limits>
 #include <list>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -470,6 +471,21 @@ struct VulkanDevice::State {
     std::map<std::uint64_t, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     // Variants whose pipeline a thread is creating (computePipeline), under computePipelinesMutex.
     std::map<std::uint64_t, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesPending;
+    // Program addresses with at least one compute pipeline, under computePipelinesMutex: the ahead
+    // scan skips their dispatches without resolving them.
+    std::set<std::uint64_t> pipelinePrograms;
+    // The ahead pool (AheadPipelineThreads): jobs in scan order, under aheadMutex.
+    struct AheadPipeline {
+        std::shared_ptr<const ShaderRecompiler::RecompileResult> shader;
+        std::shared_ptr<Graphics::ShaderResources> resources;
+        std::uint64_t programAddress = 0;
+        std::shared_ptr<const void> keepAlive;
+    };
+    std::mutex aheadMutex;
+    std::condition_variable aheadReady;
+    std::deque<AheadPipeline> ahead;
+    std::vector<std::thread> aheadThreads;
+    bool aheadStopping = false;
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
     std::unique_ptr<Graphics::Buffer> emptyBuffer;
@@ -1627,6 +1643,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
 }
 
 VulkanDevice::~VulkanDevice() {
+    stopAheadPipelines();
     VramTrack::Report("device teardown");
 }
 
@@ -3648,24 +3665,48 @@ std::span<const double, 6> VulkanDevice::PreparePhaseMs(const PreparedDispatch& 
     return std::span<const double, 6>(prepared.phaseMs);
 }
 
+namespace {
+
+// Pipelines are shared by dispatches of one compiled variant; descriptor set layouts built from the
+// same bindings are compatible, so the pipeline layout of the first dispatch serves them all.
+std::uint64_t ComputePipelineKey(const ShaderRecompiler::RecompileResult& shader) {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto pushStages = Graphics::PushConstantStages(shaders);
+    return shader.PipelineVariantId() != 0 ? (shader.PipelineVariantId() << 1u) | (pushStages != 0 ? 1u : 0u) : 0u;
+}
+
+thread_local bool onAheadPool = false;
+
+}
+
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::uint64_t programAddress, bool locked) {
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
-    // Pipelines are shared by dispatches of one compiled variant; descriptor set layouts built from the
-    // same bindings are compatible, so the pipeline layout of the first dispatch serves them all.
-    const std::uint64_t pipelineKey = shader.PipelineVariantId() != 0 ? (shader.PipelineVariantId() << 1u) | (pushStages != 0 ? 1u : 0u) : 0u;
+    const std::uint64_t pipelineKey = ComputePipelineKey(shader);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     std::promise<std::shared_ptr<ComputePipelineObjects>> creating;
-    if (pipelineKey != 0) {
+    // A creation another thread runs (the ahead pool, another queue's dispatch) is joined; when it
+    // fails, this call creates the pipeline itself.
+    while (pipelineKey != 0) {
         std::shared_future<std::shared_ptr<ComputePipelineObjects>> pending;
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
             if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
             if (const auto found = state->computePipelinesPending.find(pipelineKey); found != state->computePipelinesPending.end()) pending = found->second;
-            else state->computePipelinesPending.emplace(pipelineKey, creating.get_future().share());
+            else {
+                state->computePipelinesPending.emplace(pipelineKey, creating.get_future().share());
+                break;
+            }
         }
-        if (pending.valid()) return pending.get();
+        const auto waitStart = std::chrono::steady_clock::now();
+        try {
+            auto joined = pending.get();
+            const auto waitedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+            if (profile && waitedMs >= 100.0) std::fprintf(stderr, "[dispatch] waited %.0f ms for the pipeline of program 0x%llx another thread was creating (%zu words)\n", waitedMs, static_cast<unsigned long long>(programAddress), shader.spirv.size());
+            return joined;
+        } catch (const std::exception&) {
+        }
     }
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = std::chrono::steady_clock::now();
     auto objects = std::make_shared<ComputePipelineObjects>();
     try {
@@ -3712,16 +3753,90 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         throw;
     }
     const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    if (profile && (ms >= 1000.0 || shader.spirv.size() > 100000)) std::fprintf(stderr, "[dispatch] pipeline took %.0f ms (%zu words, program 0x%llx, %s the GPU mutex)\n", ms, shader.spirv.size(), static_cast<unsigned long long>(programAddress), locked ? "under" : "without");
-    if (pipelineKey != 0) {
-        // Find-or-insert: objects another dispatch of the variant mapped meanwhile serve this
-        // one too (this call's go with the batch that keeps them).
+    if (profile && (ms >= 1000.0 || shader.spirv.size() > 100000)) std::fprintf(stderr, "[dispatch] pipeline took %.0f ms (%zu words, program 0x%llx, %s)\n", ms, shader.spirv.size(), static_cast<unsigned long long>(programAddress), locked ? "under the GPU mutex" : onAheadPool ? "ahead, on the pool" : "without the GPU mutex");
+    {
         std::lock_guard pipelines(state->computePipelinesMutex);
-        objects = state->computePipelines.try_emplace(pipelineKey, objects).first->second;
-        state->computePipelinesPending.erase(pipelineKey);
+        if (programAddress != 0) state->pipelinePrograms.insert(programAddress);
+        if (pipelineKey != 0) {
+            // Find-or-insert: objects another dispatch of the variant mapped meanwhile serve this
+            // one too (this call's go with the batch that keeps them).
+            objects = state->computePipelines.try_emplace(pipelineKey, objects).first->second;
+            state->computePipelinesPending.erase(pipelineKey);
+        }
     }
     creating.set_value(objects);
     return objects;
+}
+
+unsigned VulkanDevice::AheadPipelineThreads() {
+    static const unsigned threads = [] {
+        const char* text = std::getenv("APS5_AHEAD_PIPELINES");
+        if (text == nullptr || *text == '\0') return 0u;
+        unsigned value = 0;
+        const auto end = text + std::strlen(text);
+        const auto parsed = std::from_chars(text, end, value);
+        require(parsed.ec == std::errc{} && parsed.ptr == end && value <= 8, "APS5_AHEAD_PIPELINES must be a thread count from 0 through 8");
+        return value;
+    }();
+    return threads;
+}
+
+bool VulkanDevice::NeedsComputePipeline(const ShaderRecompiler::RecompileResult& shader) const {
+    const auto pipelineKey = ComputePipelineKey(shader);
+    if (pipelineKey == 0) return false;
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    return !state->computePipelines.contains(pipelineKey) && !state->computePipelinesPending.contains(pipelineKey);
+}
+
+bool VulkanDevice::HasPipelineForProgram(std::uint64_t programAddress) const {
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    return state->pipelinePrograms.contains(programAddress);
+}
+
+bool VulkanDevice::CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive) {
+    const auto threads = AheadPipelineThreads();
+    if (threads == 0 || shader == nullptr || shader->spirv.size() < 5 || shader->spirv[0] != 0x07230203u || !NeedsComputePipeline(*shader)) return false;
+    ShaderRecompiler::RuntimeAbi::RequireVersion(shader->runtimeAbiVersion);
+    const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, shader.get(), 0};
+    auto resources = std::make_shared<Graphics::ShaderResources>(graphicsContext(), compute, snapshots, true, 0);
+    if (resources->Layout() == VK_NULL_HANDLE) return false;
+    std::lock_guard lock(state->aheadMutex);
+    if (state->aheadStopping) return false;
+    while (state->aheadThreads.size() < threads) state->aheadThreads.emplace_back([this] { aheadPipelineWorker(); });
+    state->ahead.push_back({std::move(shader), std::move(resources), programAddress, std::move(keepAlive)});
+    state->aheadReady.notify_one();
+    return true;
+}
+
+void VulkanDevice::aheadPipelineWorker() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    onAheadPool = true;
+    for (;;) {
+        State::AheadPipeline job;
+        {
+            std::unique_lock lock(state->aheadMutex);
+            state->aheadReady.wait(lock, [&] { return state->aheadStopping || !state->ahead.empty(); });
+            if (state->aheadStopping) return;
+            job = std::move(state->ahead.front());
+            state->ahead.pop_front();
+        }
+        try {
+            static_cast<void>(computePipeline(*job.shader, job.resources->Layout(), job.programAddress, false));
+        } catch (const std::exception& error) {
+            if (profile) std::fprintf(stderr, "[ahead] pipeline of program 0x%llx failed: %s\n", static_cast<unsigned long long>(job.programAddress), error.what());
+        }
+    }
+}
+
+void VulkanDevice::stopAheadPipelines() {
+    {
+        std::lock_guard lock(state->aheadMutex);
+        state->aheadStopping = true;
+        state->ahead.clear();
+    }
+    state->aheadReady.notify_all();
+    for (auto& thread : state->aheadThreads) thread.join();
+    state->aheadThreads.clear();
 }
 
 std::shared_ptr<RecipeHit> VulkanDevice::PrepareRecipe(const std::shared_ptr<const Recipe>& recipe, bool indirect) {

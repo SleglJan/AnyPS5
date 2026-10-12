@@ -248,6 +248,13 @@ private:
     static bool& resolvingAhead();
     static bool& gateOpened();
     void resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from);
+    // Resolves the dispatches queued behind the current one whose programs have no pipeline yet and
+    // hands them to the device's ahead pool (VulkanDevice::CreatePipelineAhead). Nothing it resolves
+    // is parked, cached or adopted: its captures read guest memory without the pending-write hooks,
+    // so a stale one costs a wasted compile, never a wrong dispatch.
+    void createPipelinesAhead(const Submission& submission, const QueueState& live, VulkanDevice& localDevice);
+    static bool& prewarmingAhead();
+    static std::size_t& pipelinesQueuedAhead();
     static void clearResolvedAhead();
     static void reportGroupCapture(std::uint32_t queue);
     static PollStats& pollStats();

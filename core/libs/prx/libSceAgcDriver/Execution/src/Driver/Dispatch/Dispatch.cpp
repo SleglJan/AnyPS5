@@ -28,6 +28,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     auto compute = Graphics::DecodeComputeStageInfo(queue.shader, snapshot.header);
     const bool resolving = resolvingAhead();
+    const bool prewarming = prewarmingAhead();
     std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
     if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
 
@@ -57,7 +58,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         resolved = ahead.packet;
         packet = resolved;
         indirectArguments = ahead.indirectArguments;
-    } else if (indirectArguments != 0 && matchesFillKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute)) {
+    } else if (indirectArguments != 0 && !prewarming && matchesFillKernel(std::span(snapshot.code).subspan(codeOffset), userData, compute)) {
 
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
@@ -236,7 +237,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         groupStats.ageMs += age;
         groupStats.ageMaxMs = std::max(groupStats.ageMaxMs, age);
         phaseTiming.Phase(PhaseLookup);
-    } else {
+    } else if (!prewarming) {
         lookupDispatch(address, submission, key, noDispatchCache, traceCache, profile, memory, phaseTiming, phaseMs, compiledResult, keepVariant, captured, liveWords, dataHit, cached, validated, missedEntry, missedDiffering);
     }
     timing.Mark("lookup_cache");
@@ -244,10 +245,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         require(keepVariant != nullptr && keepVariant->shader == registeredShader, "dispatch cache belongs to another registered shader");
         captureMs += phaseTiming.Elapsed();
     } else if (!fromAhead) {
-        shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter());
+        shaderMemory = prewarming ? std::make_shared<ShaderMemory>(memory) : std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter());
         std::uint64_t forgetAtCapture = 0;
 
-        static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
+        static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr && !prewarming;
         try {
             const auto invocation = InvocationFor(snapshot, codeOffset, request);
             timing.Mark("prepared_invocation");
@@ -287,7 +288,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
-        insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
+        if (!prewarming) insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
+    }
+    if (prewarming) {
+        std::vector<Graphics::GuestMemorySnapshot> snapshots;
+        for (const auto& region : captured) snapshots.push_back({region.guestAddress, region.bytes});
+        if (localDevice->CreatePipelineAhead(compiledResult, snapshots, address, shaderMemory)) ++pipelinesQueuedAhead();
+        return;
     }
     if (resolving) {
         auto& parked = resolvedAhead()[currentPacketOffset()];
@@ -368,6 +375,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     bool writersNoted = false;
     const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
 
+    if (VulkanDevice::AheadPipelineThreads() != 0 && localDevice->NeedsComputePipeline(compiled)) createPipelinesAhead(submission, queue, *localDevice);
     for (;;) {
 
         std::shared_ptr<PreparedDispatch> prepared;
