@@ -388,6 +388,7 @@ struct ColumnRecords {
     bool narrowed = false;
     bool outside = false;
     std::vector<RecordState> states;
+    std::vector<std::uint8_t> masked;
     std::vector<std::uint32_t> words;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     // Every record was read (no poison code): the snapshot's codes are `words` as they are.
@@ -395,6 +396,14 @@ struct ColumnRecords {
     // The memo whose skip gave this column's output whole (its codes taken as they were); null
     // when anything else made it (a whole-snapshot memo is built only from such columns).
     struct ColumnMemo* pure = nullptr;
+};
+
+struct NarrowMask {
+    std::vector<std::uint8_t> selected;
+    bool outside = false;
+    bool range = false;
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
 };
 
 bool TableMemo() {
@@ -700,14 +709,16 @@ private:
         if (found == memos.entries.end()) return false;
         auto& memo = *found;
         if (memo.layout != TableLayout()) return false;
+        std::vector<std::pair<std::uint32_t, ColumnRecords>> keyed;
         for (const auto& entry : memo.columns) {
             if (entry.memo->version != entry.version || entry.memo->generation == 0) return false;
             if (entry.source >= plan.descriptorSources.size() || !plan.descriptorSources[entry.source].tableColumn.has_value()) return false;
             const auto& column = *plan.descriptorSources[entry.source].tableColumn;
-            if ((column.keyDomain.has_value() && TableNarrowing()) || !entry.memo->SameColumn(column)) return false;
+            if (!entry.memo->SameColumn(column)) return false;
             if (entry.source < activeSources.size() && activeSources[entry.source] == 0u) return false;
             ColumnRecords inputs;
             if (!TableInputs(column, inputs) || inputs.base != entry.base || inputs.size != entry.size || inputs.records != entry.records || inputs.keys != entry.keys || inputs.outside != entry.outside) return false;
+            if (column.keyDomain.has_value() && inputs.keys != 0u && TableNarrowing()) keyed.emplace_back(entry.source, std::move(inputs));
         }
         const bool profiled = MaterializeProfiled();
         const auto started = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -717,6 +728,21 @@ private:
         auto& counters = tableCounters();
         if (profiled) counters.proofNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         tables = memo.output;
+        bool masked = false;
+        for (const auto& [source, inputs] : keyed) {
+            const auto mask = NarrowKeys(*plan.descriptorSources[source].tableColumn, inputs);
+            if (!mask.has_value()) continue;
+            for (const auto& entry : memo.layout) {
+                if (entry[2] != source) continue;
+                auto& out = tables.tables.at(entry[3]);
+                if (out.codes.size() != mask->selected.size()) continue;
+                MaskCodes(out.codes, mask->selected);
+                out.outside = mask->outside;
+                masked = true;
+            }
+            if (mask->range && std::find(tables.ranges.begin(), tables.ranges.end(), std::pair<std::uint64_t, std::uint64_t>{mask->base, mask->size}) == tables.ranges.end()) tables.ranges.emplace_back(mask->base, mask->size);
+        }
+        if (masked) tables.hash = ResultKey::TablesHash(tables);
         memo.used = ++memos.clock;
         auto& columnClock = columnMemos();
         for (const auto& entry : memo.columns) entry.memo->used = ++columnClock.clock;
@@ -756,9 +782,8 @@ private:
             const auto found = columns.find(source);
             if (found == columns.end()) return;
             const auto& records = found->second;
-            // A key-domain column (narrowed or not) is never reused whole (ReuseWhole).
-            if (records.pure == nullptr || records.fault != 0u || records.narrowed || (TableNarrowing() && plan.descriptorSources.at(source).tableColumn->keyDomain.has_value())) return;
-            memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.outside});
+            if (records.pure == nullptr || records.fault != 0u) return;
+            memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.keys < records.records});
         }
         if (memo.columns.empty()) return;
         tables.hash = ResultKey::TablesHash(tables);
@@ -766,6 +791,19 @@ private:
         memo.shaderHash = plan.shaderHash;
         memo.layout = TableLayout();
         memo.output = tables;
+        bool unmasked = false;
+        for (const auto& entry : memo.layout) {
+            const auto& records = columns.at(entry[2]);
+            if (records.masked.empty()) continue;
+            auto& out = memo.output.tables.at(entry[3]);
+            for (std::uint32_t key = 0; key < records.keys; key++) {
+                if (records.masked[key] == 0u) continue;
+                out.codes[key] = records.states[key] == RecordState::Read ? records.words[key] : ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(records.states[key] == RecordState::Unmapped ? PoisonReason::Unmapped : PoisonReason::OutsideDomain));
+            }
+            out.outside = records.keys < records.records;
+            unmasked = true;
+        }
+        if (unmasked) memo.output.hash = ResultKey::TablesHash(memo.output);
         auto& memos = snapshotMemos();
         memo.used = ++memos.clock;
         const auto same = std::find_if(memos.entries.begin(), memos.entries.end(), [&](const SnapshotMemo& entry) { return entry.plan == &plan && entry.shaderHash == plan.shaderHash && entry.output.tables.size() == count; });
@@ -820,22 +858,21 @@ private:
         return decodeBufferDescriptor(value);
     }
 
-    void Narrow(const TableColumn& column, ColumnRecords& records) {
+    std::optional<NarrowMask> NarrowKeys(const TableColumn& column, const ColumnRecords& records) {
         const auto& domain = *column.keyDomain;
         const auto skip = [&] {
             tableCounters().narrowSkipped.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
         };
         std::vector<std::uint32_t> values{0u};
-        std::uint64_t base = 0;
-        std::uint64_t size = 0;
+        NarrowMask mask;
         std::uint64_t positions = 0;
         if (domain.value) {
             DescriptorValue key;
             try {
                 walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
             } catch (const std::exception&) {
-                skip();
-                return;
+                return skip();
             }
             values.push_back(key.dwords[0]);
         } else {
@@ -843,50 +880,56 @@ private:
             try {
                 keyBuffer = EvaluateBuffer(domain.source);
             } catch (const std::exception&) {
-                skip();
-                return;
+                return skip();
             }
-            if (keyBuffer.Type() != 0u) {
-                skip();
-                return;
-            }
-            base = keyBuffer.Base48();
-            size = keyBuffer.GetSize();
+            if (keyBuffer.Type() != 0u) return skip();
+            mask.base = keyBuffer.Base48();
+            mask.size = keyBuffer.GetSize();
             const std::uint64_t stride = domain.recordStride && keyBuffer.Stride() >= 4u ? keyBuffer.Stride() & ~3u : domain.stride;
             const std::uint64_t first = domain.offset & ~3u;
-            positions = size >= first + 4u ? (size - first - 4u) / stride + 1u : 0u;
-            if (positions > TableKeyScanLimit() || first > 0xffffffffull) {
-                skip();
-                return;
-            }
-            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) {
-                skip();
-                return;
-            }
+            positions = mask.size >= first + 4u ? (mask.size - first - 4u) / stride + 1u : 0u;
+            if (positions > TableKeyScanLimit() || first > 0xffffffffull) return skip();
+            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, mask.base + first, mask.size - first)) return skip();
             for (std::uint64_t index = 0; index < positions; index++) {
-                const auto address = base + first + index * stride;
-                if (!PageAccessible(address, base, base + size)) {
-                    skip();
-                    return;
-                }
+                const auto address = mask.base + first + index * stride;
+                if (!PageAccessible(address, mask.base, mask.base + mask.size)) return skip();
                 values.push_back(((Read(address) >> domain.shift) & domain.mask) + domain.addend);
             }
         }
-        records.states.assign(records.keys, RecordState::OutsideDomain);
-        records.outside = false;
+        mask.selected.assign(records.keys, 0u);
         for (const auto value : values) {
             const std::uint32_t relative = value * column.stride;
             const bool aligned = relative % column.stride == 0u;
             const auto record = relative / column.stride;
             if (aligned && record < records.keys) {
-                records.states[record] = RecordState::Read;
+                mask.selected[record] = 1u;
                 continue;
             }
-            if (column.address || ImageTableAbi::ScalarBufferDword(relative + column.addend, column.offset, records.size).has_value()) records.outside = true;
+            if (column.address || ImageTableAbi::ScalarBufferDword(relative + column.addend, column.offset, records.size).has_value()) mask.outside = true;
         }
-        records.narrowed = true;
-        if (positions != 0u) tables.ranges.emplace_back(base, size);
+        mask.range = positions != 0u;
         tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
+        return mask;
+    }
+
+    static void MaskCodes(std::vector<std::uint32_t>& codes, const std::vector<std::uint8_t>& selected) {
+        for (std::size_t key = 0; key < codes.size(); key++) {
+            if (selected[key] == 0u) codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OutsideDomain));
+        }
+    }
+
+    void Narrow(const TableColumn& column, ColumnRecords& records) {
+        const auto mask = NarrowKeys(column, records);
+        if (!mask.has_value()) return;
+        records.masked.assign(records.keys, 0u);
+        for (std::uint32_t key = 0; key < records.keys; key++) {
+            if (mask->selected[key] != 0u) continue;
+            records.masked[key] = 1u;
+            records.allRead = false;
+        }
+        records.outside = mask->outside;
+        records.narrowed = true;
+        if (mask->range) tables.ranges.emplace_back(mask->base, mask->size);
     }
 
     // Words appended in bulk by a reused column (Reuse) enter the index on the next lookup, in
@@ -1364,12 +1407,10 @@ private:
         if (!TableInputs(column, records)) return records;
         if (!column.address && records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
         records.states.assign(records.keys, RecordState::Read);
-        if (column.keyDomain.has_value() && records.keys != 0u && TableNarrowing()) {
-            Narrow(column, records);
-        }
         records.words.assign(records.keys, 0u);
         if (MaterializeProfiled()) tableCounters().setupNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - setupStarted).count()), std::memory_order_relaxed);
         if (records.keys != 0u) WalkRecords(column, records);
+        if (column.keyDomain.has_value() && records.keys != 0u && TableNarrowing()) Narrow(column, records);
         return records;
     }
 
@@ -1393,6 +1434,11 @@ private:
         if (whole) out.codes = records.words;
         else out.codes.assign(records.keys, 0u);
         for (std::uint32_t key = whole ? records.keys : 0u; key < records.keys; key++) {
+            if (!records.masked.empty() && records.masked[key] != 0u) {
+                out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OutsideDomain));
+                trace.poison++;
+                continue;
+            }
             switch (records.states[key]) {
                 case RecordState::Read:
                     out.codes[key] = records.words[key];

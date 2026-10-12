@@ -1386,9 +1386,8 @@ void verifyPointerImageTable() {
     const std::vector<std::pair<std::uint64_t, std::uint64_t>> palette{{base + Palette, Entries * 32u}};
     const std::pair<std::uint64_t, std::uint64_t> keyRange{static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(keys.data())), sizeof(keys)};
     require(tables.ranges.size() == 2u && std::find(tables.ranges.begin(), tables.ranges.end(), palette[0]) != tables.ranges.end() && std::find(tables.ranges.begin(), tables.ranges.end(), keyRange) != tables.ranges.end(), "pointer image table: the snapshot ranges are wrong");
-    const std::vector<std::pair<std::uint64_t, std::uint64_t>> selected{{base + Palette, 5u * 32u}, {base + Palette + 255u * 32u, 32u}};
-    require(snapshot.readRanges == selected && compiled.result->imageTableReadRanges.size() == 1u && compiled.result->imageTableReadRanges[0] == selected, "pointer image table: the consumed ranges did not retain table ownership");
-    require(TableCovered(compiled.regions, root + Palette / 4u, 5u * 32u) && TableCovered(compiled.regions, root + (Palette + 255u * 32u) / 4u, 32u) && !TableTouched(compiled.regions, root + (Palette + Entries * 32u) / 4u, Committed - Palette - Entries * 32u), "pointer image table: the captured regions are wrong");
+    require(snapshot.readRanges == palette && compiled.result->imageTableReadRanges.size() == 1u && compiled.result->imageTableReadRanges[0] == palette, "pointer image table: the consumed ranges did not retain table ownership");
+    require(TableCovered(compiled.regions, root + Palette / 4u, Entries * 32u) && !TableTouched(compiled.regions, root + (Palette + Entries * 32u) / 4u, Committed - Palette - Entries * 32u), "pointer image table: the captured regions are wrong");
     const auto& map = TableMap(*compiled.result);
     const auto codes = TableCodes(map, 0);
     require(codes.size() == Entries && codes[0] == codes[1] && codes[2] == codes[255] && codes[3] == Abi::NullCode && map[Abi::HeaderElementCount] == 2u, "pointer image table: the map codes are wrong");
@@ -1455,9 +1454,8 @@ void verifyPointerImageTable() {
     const auto outsideDomain = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
     require(narrowSnapshot.keys == Abi::MaxKeys && narrowSnapshot.codes[0] == snapshot.codes[0] && narrowSnapshot.codes[2] == snapshot.codes[2] && narrowSnapshot.codes[255] == snapshot.codes[255] && (narrowSnapshot.codes[0x102] & Abi::PoisonFlag) == 0u, "pointer image table: a record in the key domain was not resolved");
     require(narrowSnapshot.codes[1] == outsideDomain && narrowSnapshot.codes[4] == outsideDomain && narrowSnapshot.codes.back() == outsideDomain, "pointer image table: a record outside the key domain is not OutsideDomain poison");
-    require(!TableTouched(narrowTable.regions, root + (Palette + 32u) / 4u, 32u) && !TableTouched(narrowTable.regions, root + Committed / 4u, Reserved - Committed), "pointer image table: a record outside the key domain was read");
-    const std::vector<std::pair<std::uint64_t, std::uint64_t>> narrowReads{{base + Palette, 32u}, {base + Palette + 2u * 32u, 32u}, {base + Palette + 255u * 32u, 32u}, {base + Palette + 0x102u * 32u, 32u}};
-    require(narrowSnapshot.readRanges == narrowReads && narrowTable.result->imageTableReadRanges.size() == 1u && narrowTable.result->imageTableReadRanges[0] == narrowReads, "pointer image table: consumed ranges include skipped keys or the key-domain buffer");
+    require(TableCovered(narrowTable.regions, root + (Palette + 32u) / 4u, 32u) && !TableTouched(narrowTable.regions, root + Committed / 4u, Reserved - Committed), "pointer image table: a narrowed snapshot did not read the mapped records or read an unmapped one");
+    require(narrowSnapshot.readRanges == wideSnapshot.readRanges && narrowTable.result->imageTableReadRanges.size() == 1u && narrowTable.result->imageTableReadRanges[0] == wideSnapshot.readRanges, "pointer image table: a narrowed snapshot's consumed ranges differ from the unbounded key's");
     keys = {};
 #ifdef _WIN32
     VirtualFree(block, 0, MEM_RELEASE);
