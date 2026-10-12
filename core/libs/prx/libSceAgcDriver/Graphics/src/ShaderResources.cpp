@@ -2955,6 +2955,11 @@ const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::spa
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
+    // A completion label held over a region (see SettleHeldLabels) lands before the proofs and before
+    // the reused set reads the region in place or copies it in; landing it can retire the region's
+    // import, which the serial check of step (2) then refuses, so the set is rebuilt against the
+    // current one.
+    for (const auto& region : directRegions) SettleHeldLabels(region.begin, static_cast<std::size_t>(region.end - region.begin));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
@@ -3145,10 +3150,6 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
     // epoch gate the flush runs only for regions one registry scan finds pending images over (none
     // while the serial is the memo's), and the serial loop only while the import table's identity
     // moved since the last proof (a retire bumps its epoch, a registry change its generation).
-    // A completion label held over a region (see SettleHeldLabels) lands before the reused set reads
-    // the region in place or copies it in; landing it can retire the region's import, which the
-    // serial check below then refuses, so the set is rebuilt against the current one.
-    for (const auto& region : directRegions) SettleHeldLabels(region.begin, static_cast<std::size_t>(region.end - region.begin));
     const auto serialLoop = [&] {
         for (const auto& region : directRegions) {
             auto serial = HostImportSerial(context, region.begin, static_cast<std::size_t>(region.end - region.begin), true);

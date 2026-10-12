@@ -761,6 +761,7 @@ struct VulkanDevice::State {
     }
 
     ~State() {
+        const Graphics::HeldLabelLanderPause landerPause;
         contextReady = false;
         if (device != VK_NULL_HANDLE) {
             const auto idle = reinterpret_cast<PFN_vkDeviceWaitIdle>(deviceProc(device, "vkDeviceWaitIdle"))(device);
