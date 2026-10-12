@@ -334,6 +334,8 @@ struct TableCounters {
     std::atomic<std::uint64_t> outputNanoseconds{0};
     std::atomic<std::uint64_t> walkNanoseconds{0};
     std::atomic<std::uint64_t> codesNanoseconds{0};
+    std::atomic<std::uint64_t> maskNanoseconds{0};
+    std::atomic<std::uint64_t> hashNanoseconds{0};
     std::atomic<std::uint64_t> outputsReused{0};
     // Snapshots reused whole (TableSnapshotter::ReuseWhole), and those checked against the full
     // path with their differences (APS5_VERIFY_TABLE_MEMO=1).
@@ -368,13 +370,13 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; whole snapshots reused %llu (verified %llu, %llu mismatches); phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; whole snapshots reused %llu (verified %llu, %llu mismatches); phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f, key masks %.1f, hashes %.1f\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
         static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.outputsReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.wholeReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeVerified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeMismatches.load(std::memory_order_relaxed)),
-        static_cast<double>(counters.setupNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.proofNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.outputNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.walkNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.codesNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
+        static_cast<double>(counters.setupNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.proofNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.outputNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.walkNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.codesNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.maskNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6, static_cast<double>(counters.hashNanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
 }
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped };
@@ -739,6 +741,7 @@ private:
         if (profiled) counters.proofNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         tables = memo.output;
         bool masked = false;
+        const auto maskStarted = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         for (const auto& [source, inputs] : keyed) {
             const auto mask = NarrowKeys(*plan.descriptorSources[source].tableColumn, inputs);
             if (!mask.has_value()) continue;
@@ -754,7 +757,12 @@ private:
                 if (std::find(tables.ranges.begin(), tables.ranges.end(), range) == tables.ranges.end()) tables.ranges.push_back(range);
             }
         }
-        if (masked) tables.hash = ResultKey::TablesHash(tables);
+        if (profiled) counters.maskNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - maskStarted).count()), std::memory_order_relaxed);
+        if (masked) {
+            const auto hashStarted = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            tables.hash = ResultKey::TablesHash(tables);
+            if (profiled) counters.hashNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - hashStarted).count()), std::memory_order_relaxed);
+        }
         memo.used = ++memos.clock;
         auto& columnClock = columnMemos();
         for (const auto& entry : memo.columns) entry.memo->used = ++columnClock.clock;
@@ -798,6 +806,8 @@ private:
             memo.columns.push_back({source, records.pure, records.pure->version, records.base, records.size, records.records, records.keys, records.keys < records.records});
         }
         if (memo.columns.empty()) return;
+        const bool profiled = MaterializeProfiled();
+        const auto hashStarted = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         tables.hash = ResultKey::TablesHash(tables);
         memo.plan = &plan;
         memo.shaderHash = plan.shaderHash;
@@ -816,6 +826,7 @@ private:
             unmasked = true;
         }
         if (unmasked) memo.output.hash = ResultKey::TablesHash(memo.output);
+        if (profiled) tableCounters().hashNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - hashStarted).count()), std::memory_order_relaxed);
         auto& memos = snapshotMemos();
         memo.used = ++memos.clock;
         const auto same = std::find_if(memos.entries.begin(), memos.entries.end(), [&](const SnapshotMemo& entry) { return entry.plan == &plan && entry.shaderHash == plan.shaderHash && entry.output.tables.size() == count; });
@@ -1433,7 +1444,11 @@ private:
         records.words.assign(records.keys, 0u);
         if (MaterializeProfiled()) tableCounters().setupNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - setupStarted).count()), std::memory_order_relaxed);
         if (records.keys != 0u) WalkRecords(column, records);
-        if (!column.keyDomains.empty() && records.keys != 0u && TableNarrowing()) Narrow(column, records);
+        if (!column.keyDomains.empty() && records.keys != 0u && TableNarrowing()) {
+            const auto maskStarted = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            Narrow(column, records);
+            if (MaterializeProfiled()) tableCounters().maskNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - maskStarted).count()), std::memory_order_relaxed);
+        }
         return records;
     }
 
