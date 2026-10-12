@@ -63,6 +63,7 @@ public:
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory depth target");
+            allocationBytes = requirements.size;
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory depth");
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image;
@@ -237,6 +238,7 @@ public:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize allocationBytes = 0;
 
 private:
     std::map<std::array<std::uint32_t, 12>, std::shared_ptr<Texture>> textures;
@@ -422,17 +424,40 @@ std::mutex& surfacesMutex() {
     return mutex;
 }
 
-std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
-    static auto* list = new std::vector<std::unique_ptr<DepthSurface>>();
+std::atomic<std::uint64_t> surfacesSerial{0};
+
+std::vector<std::shared_ptr<DepthSurface>>& surfaces() {
+    static auto* list = new std::vector<std::shared_ptr<DepthSurface>>();
     return *list;
+}
+
+bool destroysRetired() {
+    static const bool kept = std::getenv("APS5_NO_DEPTH_SURFACE_DESTROY") != nullptr;
+    return !kept;
+}
+
+void releaseRetired(const Context& context) {
+    if (!destroysRetired()) return;
+    auto* recorder = RecorderFor(context);
+    auto& list = surfaces();
+    for (auto it = list.begin(); it != list.end();) {
+        if (!(*it)->retired || (*it)->context.device != context.device) {
+            ++it;
+            continue;
+        }
+        if (recorder != nullptr) {
+            const auto bytes = static_cast<std::size_t>((*it)->allocationBytes);
+            recorder->Keep(std::move(*it), bytes);
+        }
+        it = list.erase(it);
+        surfacesSerial.fetch_add(1, std::memory_order_release);
+    }
 }
 
 std::set<std::uint64_t>& clearedHtiles() {
     static auto* cleared = new std::set<std::uint64_t>();
     return *cleared;
 }
-
-std::atomic<std::uint64_t> surfacesSerial{0};
 
 }
 
@@ -448,7 +473,7 @@ std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
     return width * height * bytesPerTexel;
 }
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) {
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, std::shared_ptr<void>* owner) {
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
     const bool cleared = target.htileAddress != 0 && clearedHtiles().erase(target.htileAddress) != 0;
@@ -467,15 +492,19 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
         }
     }
     if (bound == nullptr) {
-        surfaces().push_back(std::make_unique<DepthSurface>(context, target));
+        surfaces().push_back(std::make_shared<DepthSurface>(context, target));
         bound = surfaces().back().get();
         bound->clearDepth = target.clearDepth;
         bound->clearStencil = target.clearStencil;
     }
+    std::shared_ptr<DepthSurface> held;
     for (const auto& surface : surfaces()) {
-        if (surface.get() != bound && surface->context.device == context.device && surface->Overlaps(*bound)) surface->retired = true;
+        if (surface.get() == bound) held = surface;
+        else if (surface->context.device == context.device && surface->Overlaps(*bound)) surface->retired = true;
     }
     bound->NoteWritten();
+    releaseRetired(context);
+    if (owner != nullptr) *owner = std::move(held);
     return bound->view;
 }
 

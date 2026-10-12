@@ -12,7 +12,7 @@ namespace AgcDriver::Graphics {
 
 class Texture;
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target);
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, std::shared_ptr<void>* owner = nullptr);
 std::uint64_t DepthSurfacesSerial();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
 void ClearDepthSurfaces(VkDevice device);
