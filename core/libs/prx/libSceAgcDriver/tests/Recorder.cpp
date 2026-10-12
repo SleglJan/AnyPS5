@@ -950,7 +950,6 @@ void remappedImportTests(const Device& device) {
 
 void hostImportRetirementTests(const Device& device) {
     const auto& context = device.GetContext();
-    Require(context.hostImportAlignment != 0 && context.hostImportAlignment <= 65536, "host import retirement requires host imports aligned within 64 KiB");
     constexpr std::size_t UnitBytes = 65536;
     constexpr std::size_t AllocationBytes = 4 * UnitBytes;
     constexpr std::size_t CopyBytes = 256;
@@ -5249,6 +5248,11 @@ int main(int argc, char** argv) {
         }
         Device& device = *created;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
+            const auto alignment = device.GetContext().hostImportAlignment;
+            if (alignment == 0 || alignment > 65536) {
+                std::cout << "skipped, host import retirement requires host imports aligned within 64 KiB; alignment=" << alignment << '\n';
+                return 77;
+            }
             hostImportRetirementTests(device);
             return 0;
         }
