@@ -74,7 +74,7 @@ int main() {
         Require(Done == 1, "the submission did not finish");
         Require(First[0] == 1, "the first dispatch did not store 1 (" + std::to_string(First[0]) + ")");
         Require(Second[0] == 2, "the dispatch whose pipeline was created ahead did not store 2 (" + std::to_string(Second[0]) + ")");
-        Require(AgcDriver::VulkanDevice::AheadPipelinesQueued() > queuedBefore, "the second program's pipeline was not queued ahead while the first one's was created");
+        Require(AgcDriver::VulkanDevice::AheadPipelinesQueued() >= queuedBefore + 2, "the first program's pipeline and the second's were not both queued on the pool (" + std::to_string(AgcDriver::VulkanDevice::AheadPipelinesQueued() - queuedBefore) + ")");
         std::cout << "pipelines created ahead test passed\n";
         AgcDriverShutdown_nid_postfix();
         return 0;

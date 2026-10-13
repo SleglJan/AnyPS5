@@ -388,7 +388,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     bool writersNoted = false;
     const bool noteWrites = writeEvidenceEnabled() || traceCapSync();
 
-    if (VulkanDevice::AheadPipelineThreads() != 0 && localDevice->NeedsComputePipeline(compiled)) createPipelinesAhead(submission, queue, *localDevice);
+    if (VulkanDevice::AheadPipelineThreads() != 0 && localDevice->NeedsComputePipeline(compiled)) {
+        static_cast<void>(localDevice->CreatePipelineAhead(compiledResult, snapshots, address, shaderMemory != nullptr ? std::shared_ptr<const void>(shaderMemory) : std::shared_ptr<const void>(keepVariant), true));
+        createPipelinesAhead(submission, queue, *localDevice);
+    }
     for (;;) {
 
         std::shared_ptr<PreparedDispatch> prepared;

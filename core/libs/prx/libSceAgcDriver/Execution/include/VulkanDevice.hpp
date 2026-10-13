@@ -254,7 +254,10 @@ public:
     static std::uint64_t AheadPipelinesQueued();
     bool NeedsComputePipeline(const ShaderRecompiler::RecompileResult& shader) const;
     bool HasPipelineForProgram(std::uint64_t programAddress) const;
-    bool CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive);
+    // `urgent`: the pipeline of the dispatch that triggered the scan, created on its own pool thread
+    // while the worker resolves the later ones (whose captures take seconds), so the scan neither
+    // delays it nor takes a thread from the ahead jobs.
+    bool CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive, bool urgent = false);
     // `recipe`, when given, receives the Recipe a successful call built for its dispatch-cache
     // variant (design_cpu_final M4): only when the resource cache served or took the object
     // (reusable, cacheable) and recipes are on (APS5_NO_DISPATCH_RECIPE=1 builds none); else null.
@@ -338,7 +341,7 @@ private:
     // this call, or those another thread is creating, waited for (a pipeline is compiled once).
     // `locked` says whether the caller holds the GPU mutex (the [dispatch] pipeline line).
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, const Graphics::ShaderResources& resources, std::uint64_t programAddress, bool locked);
-    void aheadPipelineWorker();
+    void aheadPipelineWorker(bool urgent);
     void stopAheadPipelines();
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
