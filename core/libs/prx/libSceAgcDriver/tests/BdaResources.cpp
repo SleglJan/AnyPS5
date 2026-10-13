@@ -303,6 +303,10 @@ void importJoinTests(const Context& context) {
     const auto piecesBuffer = bind(heapBase, 2 * piece);
     const auto* pieces = HostImportFor(importing, heapBase, 2 * piece);
     Require(pieces != nullptr && pieces->base == heapBase && pieces->bytes == 2 * piece && piecesBuffer == pieces->buffer, "a buffer bound exactly over two pieces no larger than the import window was not imported as one");
+    change(heap + 2 * piece, piece, true);
+    const auto acrossBuffer = bind(heapBase + 2 * piece - 16);
+    const auto* across = HostImportFor(importing, heapBase + 2 * piece - 16, 32);
+    Require(across != nullptr && across->base <= heapBase + 2 * piece - 16 && heapBase + 2 * piece + 16 <= across->base + across->bytes && acrossBuffer == across->buffer, "a buffer bound across the end of an exact join was bound in an import that does not cover it");
     const auto* kept = HostImportFor(importing, first, 16);
     Require(kept != nullptr && kept->buffer == joinedBuffer && kept->bytes == 2 * large, "a registry change elsewhere re-imported the joined ranges");
     change(guest + 2 * large, large, true);
@@ -313,6 +317,7 @@ void importJoinTests(const Context& context) {
     Require(bind(second - 16) == grownBuffer && HostImportFor(importing, first, 16)->buffer == grownBuffer, "two joins sharing a range retired each other");
     change(heap, piece, false);
     change(heap + piece, piece, false);
+    change(heap + 2 * piece, piece, false);
     change(guest + large, large, false);
     const auto* alone = HostImportFor(importing, first, 16);
     Require(alone != nullptr && alone->base == first && alone->bytes == large, "the joined import outlived one of its ranges");
