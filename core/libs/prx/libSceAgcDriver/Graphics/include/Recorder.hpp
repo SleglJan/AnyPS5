@@ -139,6 +139,7 @@ public:
     // place. A hit in an in-flight batch whose fence signaled meanwhile is a miss (one status
     // query per hit). `ignoreSignaled` false: every in-flight batch counts, whatever its fence.
     bool PendingReadOverlaps(std::uint64_t address, std::size_t bytes, bool ignoreSignaled = true) const;
+    bool PendingReadKindOverlaps(std::uint64_t address, std::size_t bytes, ReadKind kind) const;
     // The newest batch whose noted read overlaps the range (for the [copyhle] trace and the verify
     // switch): its serial (the open batch reports the serial it will get), recording queue, reader
     // kind, and whether its fence has signaled. Nullopt: no overlap.

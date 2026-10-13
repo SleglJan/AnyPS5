@@ -1195,6 +1195,29 @@ struct PendingWrites {
     std::vector<StorageTexture*> flushing;
 };
 
+struct RecentFlush {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint64_t image = 0;
+    std::uint64_t imageBytes = 0;
+    const char* reason = "";
+    std::uint64_t serial = 0;
+};
+
+struct RecentFlushRing {
+    std::mutex mutex;
+    std::array<RecentFlush, 48> entries{};
+    std::size_t next = 0;
+    std::uint64_t serial = 0;
+};
+
+RecentFlushRing& RecentFlushes() {
+    static RecentFlushRing ring;
+    return ring;
+}
+
+std::atomic<std::uint64_t> flushedBehindWriter{0};
+
 PendingWrites& Pending() {
     static PendingWrites pending;
     return pending;
@@ -3165,6 +3188,21 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (published != nullptr) *published = units;
         return false;
     }
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
+        if (recorder->PendingWriteOverlaps(address, bytes) || recorder->PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased)) {
+            flushedBehindWriter.fetch_add(1, std::memory_order_relaxed);
+            Recorder::CountSync(1);
+            recorder->Sync();
+        }
+    }
+    {
+        auto& recent = RecentFlushes();
+        std::lock_guard lock(recent.mutex);
+        for (const auto& texture : flush) {
+            recent.entries[recent.next % recent.entries.size()] = {address, bytes, texture->descriptor.baseAddress, texture->guestBytes, reason, ++recent.serial};
+            ++recent.next;
+        }
+    }
     struct Unregister {
         const std::vector<std::shared_ptr<StorageTexture>>& flush;
         ~Unregister() {
@@ -3200,6 +3238,25 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (published != nullptr) *published = units != 0;
     }
     return true;
+}
+
+std::uint64_t StorageTexture::FlushesBehindWriters() {
+    return flushedBehindWriter.load(std::memory_order_relaxed);
+}
+
+void StorageTexture::DumpRecentFlushes(std::uint64_t address, std::size_t bytes) {
+    auto& recent = RecentFlushes();
+    std::lock_guard lock(recent.mutex);
+    const auto count = std::min(recent.next, recent.entries.size());
+    std::size_t shown = 0;
+    for (std::size_t back = 0; back < count; ++back) {
+        const auto& entry = recent.entries[(recent.next - 1 - back) % recent.entries.size()];
+        const bool over = entry.address < address + bytes && address < entry.address + entry.bytes;
+        if (!over && back >= 8) continue;
+        std::fprintf(stderr, "[gpu]   flush %llu%s: image 0x%llx+0x%llx stored for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(entry.serial), over ? " (over the range)" : "", static_cast<unsigned long long>(entry.image), static_cast<unsigned long long>(entry.imageBytes), entry.reason, static_cast<unsigned long long>(entry.address), entry.bytes);
+        ++shown;
+    }
+    std::fprintf(stderr, "[gpu]   %zu of the last %zu forced stores shown, %llu stores waited for a newer recorded writer so far\n", shown, count, static_cast<unsigned long long>(flushedBehindWriter.load(std::memory_order_relaxed)));
 }
 
 bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason) {
