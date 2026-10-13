@@ -74,7 +74,7 @@ PFN_vkDeviceWaitIdle RawDeviceWaitIdle() {
 #endif
 }
 
-RecompileRequest Request(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const SpirvTarget& target) {
+auto Compile(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const SpirvTarget& target) {
     const std::array<MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
     RecompileRequest request{
@@ -84,7 +84,7 @@ RecompileRequest Request(std::span<const std::uint32_t> code, std::span<const st
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    return request;
+    return Recompile(request);
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -101,8 +101,8 @@ void Run(AgcDriver::VulkanDevice& device) {
     globalUser[8] = static_cast<std::uint32_t>(base);
     globalUser[9] = static_cast<std::uint32_t>(base >> 32u);
     const auto target = device.Target();
-    const auto storeImage = Recompile(Request(StoreImageCode, imageUser, target));
-    const auto storeGlobal = Recompile(Request(StoreGlobalCode, globalUser, target));
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto storeGlobal = Compile(StoreGlobalCode, globalUser, target);
     device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
     device.Dispatch(storeGlobal, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreGlobalCode.data()));
     const auto rawWait = RawDeviceWaitIdle();
