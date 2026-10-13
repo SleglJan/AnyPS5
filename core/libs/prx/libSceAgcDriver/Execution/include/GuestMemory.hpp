@@ -87,7 +87,8 @@ struct WriteMarkerScope {
 };
 WriteMarker BlockWriteMarker(std::uint64_t address);
 std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
-bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+enum class RangeKnowledge : std::uint8_t { Exact, WholeBlock, Dropped, Unknown, Untracked };
+bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, RangeKnowledge* knowledge = nullptr);
 const char* WriteMarkerName(WriteMarker marker);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);

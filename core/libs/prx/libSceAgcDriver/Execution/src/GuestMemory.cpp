@@ -1540,13 +1540,17 @@ std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::ui
     return tracker.generation;
 }
 
-bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, RangeKnowledge* knowledge) {
+    const auto tell = [&](RangeKnowledge what) {
+        if (knowledge != nullptr) *knowledge = what;
+        return what == RangeKnowledge::Exact;
+    };
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
-    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return false;
+    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return tell(RangeKnowledge::Untracked);
 #ifdef _WIN32
-    if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(address, bytes)) return false;
+    if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(address, bytes)) return tell(RangeKnowledge::Untracked);
 #endif
     const auto end = address + bytes;
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
@@ -1562,20 +1566,21 @@ bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
                 explained = true;
             }
         } else if (tracker.cpuStampOf(block) > generation) {
-            return false;
+            return tell(RangeKnowledge::Unknown);
         }
         if (const auto pieces = tracker.driverPieces.find(block); pieces != tracker.driverPieces.end()) {
             const auto& entry = pieces->second;
-            if (entry.whole > generation || entry.dropped > generation) return false;
+            if (entry.whole > generation) return tell(RangeKnowledge::WholeBlock);
+            if (entry.dropped > generation) return tell(RangeKnowledge::Dropped);
             for (const auto& piece : entry.pieces) {
                 if (piece.generation <= generation || piece.begin >= to || from >= piece.end) continue;
                 ranges.emplace_back(begin + piece.begin, begin + piece.end);
                 explained = true;
             }
         }
-        if (!explained) return false;
+        if (!explained) return tell(RangeKnowledge::Unknown);
     }
-    return true;
+    return tell(RangeKnowledge::Exact);
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {

@@ -1239,6 +1239,9 @@ std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
 std::atomic<std::uint64_t> keptByGpu{0};
 std::atomic<std::uint64_t> keptPartial{0};
+std::atomic<std::uint64_t> keptWholeDeclared{0};
+std::atomic<std::uint64_t> keptDroppedPieces{0};
+std::atomic<std::uint64_t> keptUnknownWriter{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
 
 void ReportFlushWaits() {
@@ -1259,6 +1262,9 @@ void ReportFlushWaits() {
     static std::uint64_t lastKeptSmallByGpu = 0;
     static std::uint64_t lastKeptByGpu = 0;
     static std::uint64_t lastKeptPartial = 0;
+    static std::uint64_t lastWholeDeclared = 0;
+    static std::uint64_t lastDroppedPieces = 0;
+    static std::uint64_t lastUnknownWriter = 0;
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     auto last = reported.load(std::memory_order_relaxed);
     if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
@@ -1277,13 +1283,19 @@ void ReportFlushWaits() {
     const auto keptSmallGpu = keptSmallByGpu.load(std::memory_order_relaxed);
     const auto keptGpu = keptByGpu.load(std::memory_order_relaxed);
     const auto partial = keptPartial.load(std::memory_order_relaxed);
+    const auto wholeDeclared = keptWholeDeclared.load(std::memory_order_relaxed);
+    const auto droppedPieces = keptDroppedPieces.load(std::memory_order_relaxed);
+    const auto unknownWriter = keptUnknownWriter.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
     lastKeptByGpu = keptGpu;
     lastKeptPartial = partial;
+    lastWholeDeclared = wholeDeclared;
+    lastDroppedPieces = droppedPieces;
+    lastUnknownWriter = unknownWriter;
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
@@ -4510,6 +4522,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::size_t skippedCpu = 0;
     std::array<std::size_t, GuestMemory::WriteMarkerCount> skippedMarkers{};
     std::size_t skippedPartial = 0;
+    std::size_t skippedWholeDeclared = 0;
+    std::size_t skippedDroppedPieces = 0;
+    std::size_t skippedUnknownWriter = 0;
     static const bool rangeKeeps = std::getenv("APS5_NO_RANGE_KEEPS") == nullptr;
     const auto addKeep = [&](std::uint64_t from, std::uint64_t to) {
         if (!keep.empty() && keep.back().second == from) keep.back().second = to;
@@ -4553,7 +4568,12 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                 if (cpuBlocks[static_cast<std::size_t>((at - spanBegin) / block)] != 0) ++skippedCpu;
                 ++skippedMarkers[static_cast<std::size_t>(GuestMemory::BlockWriteMarker(at))];
                 std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
-                if (rangeKeeps && tracked && !compared[layer] && GuestMemory::WrittenRangesSince(from, static_cast<std::size_t>(to - from), layerGeneration[layer], written)) {
+                auto knowledge = GuestMemory::RangeKnowledge::Untracked;
+                const bool exact = rangeKeeps && tracked && !compared[layer] && GuestMemory::WrittenRangesSince(from, static_cast<std::size_t>(to - from), layerGeneration[layer], written, &knowledge);
+                if (knowledge == GuestMemory::RangeKnowledge::WholeBlock) ++skippedWholeDeclared;
+                else if (knowledge == GuestMemory::RangeKnowledge::Dropped) ++skippedDroppedPieces;
+                else if (knowledge == GuestMemory::RangeKnowledge::Unknown) ++skippedUnknownWriter;
+                if (exact) {
                     std::sort(written.begin(), written.end());
                     auto cursor = from;
                     for (const auto& [writtenFrom, writtenTo] : written) {
@@ -4579,6 +4599,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (guestBytes <= SmallImageBytes && skippedCpu == 0) keptSmallByGpu.fetch_add(1, std::memory_order_relaxed);
         if (skippedCpu == 0) keptByGpu.fetch_add(1, std::memory_order_relaxed);
         if (skippedPartial != 0) keptPartial.fetch_add(1, std::memory_order_relaxed);
+        keptWholeDeclared.fetch_add(skippedWholeDeclared, std::memory_order_relaxed);
+        keptDroppedPieces.fetch_add(skippedDroppedPieces, std::memory_order_relaxed);
+        keptUnknownWriter.fetch_add(skippedUnknownWriter, std::memory_order_relaxed);
     }
     std::string markerSummary;
     for (std::size_t kind = 0; kind < skippedMarkers.size(); ++kind) {
