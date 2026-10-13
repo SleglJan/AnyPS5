@@ -6,9 +6,37 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+// DIAG: APS5_TRACE_DRAW_PATHS=1 counts the draws by the path they take, every 10 s as [draw-paths]:
+// enqueued for the committer, or recorded on the worker for an indirect draw (its arguments read on
+// the CPU or by the GPU), for deferred labels still pending, or because the worker does not pipeline
+// draws (a queue other than 0, or pipelined draws off).
+enum class DrawPath { Pipelined, CpuIndirect, GpuIndirect, Labels, Unpipelined, Count };
+
+void noteDrawPath(DrawPath path) {
+    static const bool trace = std::getenv("APS5_TRACE_DRAW_PATHS") != nullptr;
+    if (!trace) return;
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrawPath::Count)> counts{};
+    static std::atomic<std::int64_t> reported{std::chrono::steady_clock::now().time_since_epoch().count()};
+    counts[static_cast<std::size_t>(path)].fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (now - last < std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(10)).count() || !reported.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
+    std::array<std::uint64_t, static_cast<std::size_t>(DrawPath::Count)> taken{};
+    for (std::size_t index = 0; index < taken.size(); ++index) taken[index] = counts[index].exchange(0, std::memory_order_relaxed);
+    std::fprintf(stderr, "[draw-paths] (10 s): %llu pipelined; on the worker: %llu CPU-side indirect, %llu GPU-side indirect, %llu behind pending deferred labels, %llu not pipelined\n", static_cast<unsigned long long>(taken[0]), static_cast<unsigned long long>(taken[1]), static_cast<unsigned long long>(taken[2]), static_cast<unsigned long long>(taken[3]), static_cast<unsigned long long>(taken[4]));
+}
+
+}
 
 DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::string& rejected) {
     PerformanceTimer timing("Driver.Draw");
@@ -363,6 +391,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             phaseTiming.Phase(DrawRowGraphics);
         }
         timing.Mark("draw_and_resource_release");
+        noteDrawPath(pipelined ? DrawPath::CpuIndirect : DrawPath::Unpipelined);
         return drawn();
     }
 
@@ -415,8 +444,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
+        noteDrawPath(DrawPath::Pipelined);
         return drawn();
     }
+    noteDrawPath(!pipelined ? DrawPath::Unpipelined : drawParameters.indirect ? DrawPath::GpuIndirect : DrawPath::Labels);
     phaseTiming.Phase(DrawRowVectors);
     const auto preparedKey = prepareDrawKey();
     phaseTiming.Phase(DrawRowKeyLookupValidate);
