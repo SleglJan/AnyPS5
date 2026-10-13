@@ -29,6 +29,21 @@ void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVis
     }
 }
 
+template<typename TVisit>
+void visitWrittenStorageImages(const ShaderRecompiler::RecompileResult& compiled, bool tables, TVisit&& visit) {
+    for (const auto& binding : compiled.bindings) {
+        const bool storage = binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage;
+        if (!storage && !(tables && binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage)) continue;
+        for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
+            if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
+            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+            if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
+            visit(Graphics::DecodeTextureResource(words));
+        }
+    }
+}
+
 }
 
 template<typename TVisit>
@@ -38,19 +53,12 @@ void Driver::forEachWrittenBuffer(const ShaderRecompiler::RecompileResult& compi
 
 void Driver::appendWrittenRanges(const ShaderRecompiler::RecompileResult& compiled, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
     forEachWrittenBuffer(compiled, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
-    for (const auto& binding : compiled.bindings) {
-        if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
-        for (std::uint32_t element = 0; element < binding.count; ++element) {
-            if (element < binding.imageWritten.size() && !binding.imageWritten[element]) continue;
-            if (binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
-            if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
-            const auto resource = Graphics::DecodeTextureResource(words);
-            const auto bytes = Graphics::DescribeSurface(resource).guestBytes;
-            if (resource.baseAddress != 0 && bytes != 0) ranges.emplace_back(resource.baseAddress, resource.baseAddress + bytes);
-            if (resource.dccAddress != 0 && bytes != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (bytes + 255) / 256);
-        }
-    }
+    visitWrittenStorageImages(compiled, false, [&](const Graphics::GuestTextureResource& resource) {
+        const auto bytes = Graphics::DescribeSurface(resource).guestBytes;
+        if (bytes == 0) return;
+        ranges.emplace_back(resource.baseAddress, resource.baseAddress + bytes);
+        if (resource.dccAddress != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (bytes + 255) / 256);
+    });
 }
 
 void Driver::noteWrittenBuffers(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled) {
@@ -90,19 +98,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;
         visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
-        for (const auto& binding : stage.program->bindings) {
-            const bool storageHeap = (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) || binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage;
-            if (!storageHeap) continue;
-            for (std::uint32_t element = 0; element < binding.count; ++element) {
-                const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
-                if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
-                const auto resource = Graphics::DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8));
-                if (resource.baseAddress == 0) continue;
-                const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
-                add(resource.baseAddress, surfaceBytes != 0 ? surfaceBytes : UnknownBytes);
-                add(resource.dccAddress, surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownBytes);
-            }
-        }
+        visitWrittenStorageImages(*stage.program, true, [&](const Graphics::GuestTextureResource& resource) {
+            const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
+            add(resource.baseAddress, surfaceBytes != 0 ? surfaceBytes : UnknownBytes);
+            add(resource.dccAddress, surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownBytes);
+        });
     }
     const auto addColor = [&](const Graphics::ColorTarget& color) {
         if (exact && color.bytes != 0) {

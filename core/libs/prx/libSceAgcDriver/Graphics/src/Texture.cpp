@@ -1267,6 +1267,7 @@ void ReportFlushWaits() {
     static std::uint64_t lastDroppedPieces = 0;
     static std::uint64_t lastUnknownWriter = 0;
     static std::uint64_t lastWindowPath = 0;
+    static std::uint64_t lastNullSlots = 0;
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     auto last = reported.load(std::memory_order_relaxed);
     if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
@@ -1289,8 +1290,9 @@ void ReportFlushWaits() {
     const auto droppedPieces = keptDroppedPieces.load(std::memory_order_relaxed);
     const auto unknownWriter = keptUnknownWriter.load(std::memory_order_relaxed);
     const auto windowKept = keptWindowPath.load(std::memory_order_relaxed);
+    const auto nullSlots = NullStorageSlots();
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown, %llu on the tile-window path)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter), static_cast<unsigned long long>(windowKept - lastWindowPath));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown, %llu on the tile-window path), %llu null storage slots\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter), static_cast<unsigned long long>(windowKept - lastWindowPath), static_cast<unsigned long long>(nullSlots - lastNullSlots));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
@@ -1300,6 +1302,7 @@ void ReportFlushWaits() {
     lastDroppedPieces = droppedPieces;
     lastUnknownWriter = unknownWriter;
     lastWindowPath = windowKept;
+    lastNullSlots = nullSlots;
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;

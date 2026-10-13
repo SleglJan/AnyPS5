@@ -1201,6 +1201,12 @@ TextureCacheUse TextureCacheUsage() {
     return use;
 }
 
+std::atomic<std::uint64_t> nullStorageSlots{0};
+
+std::uint64_t NullStorageSlots() {
+    return nullStorageSlots.load(std::memory_order_relaxed);
+}
+
 std::uint64_t SampledTextureCacheBudget(const Context& context) {
     auto& cache = Textures();
     std::lock_guard lock(cache.mutex);
@@ -4340,6 +4346,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         const auto* record = nextRecord();
         if (words[0] == 0u && (words[1] & 0xffu) == 0u) {
             item.imageAllocations.push_back(std::numeric_limits<std::size_t>::max());
+            nullStorageSlots.fetch_add(1, std::memory_order_relaxed);
             --plannedStorageImages;
             continue;
         }
