@@ -3069,6 +3069,17 @@ std::uint64_t StorageTexture::PendingSerial() {
     return pendingSerial.load(std::memory_order_acquire);
 }
 
+std::pair<std::size_t, std::uint64_t> StorageTexture::PendingVolume() {
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    std::pair<std::size_t, std::uint64_t> volume{0, 0};
+    for (auto* texture : pending.textures) {
+        ++volume.first;
+        volume.second += texture->GuestBytes();
+    }
+    return volume;
+}
+
 void StorageTexture::NoteProved() const {
     provedPresent.store(Recorder::Presents(), std::memory_order_relaxed);
 }

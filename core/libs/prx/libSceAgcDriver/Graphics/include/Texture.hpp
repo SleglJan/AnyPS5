@@ -193,6 +193,8 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
+    // DIAG ([storage-cache]): the images in the pending registry and their guest bytes.
+    static std::pair<std::size_t, std::uint64_t> PendingVolume();
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);

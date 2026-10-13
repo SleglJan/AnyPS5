@@ -1171,9 +1171,10 @@ std::shared_ptr<StorageTexture> lookupStorageTexture(const Context& context, std
                 evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
             }
             if (trace && now - cache.reported >= std::chrono::seconds(10)) {
-                std::fprintf(stderr, "[storage-cache] (%.0f s): %llu created, %llu hits; %llu evicted by the budget (%.0f MiB), %llu made again within 2 s of that (%.0f MiB); %.0f MiB in %zu entries, budget %llu MiB\n",
+                const auto [pendingImages, pendingBytes] = StorageTexture::PendingVolume();
+                std::fprintf(stderr, "[storage-cache] (%.0f s): %llu created, %llu hits; %llu evicted by the budget (%.0f MiB), %llu made again within 2 s of that (%.0f MiB); %.0f MiB in %zu entries, budget %llu MiB; %zu images with pending results (%.0f MiB of guest memory)\n",
                              std::chrono::duration<double>(now - cache.reported).count(), static_cast<unsigned long long>(cache.created), static_cast<unsigned long long>(cache.hits), static_cast<unsigned long long>(cache.evictedByBudget), static_cast<double>(cache.evictedBytes) / (1024.0 * 1024.0),
-                             static_cast<unsigned long long>(cache.recreatedSoon), static_cast<double>(cache.recreatedBytes) / (1024.0 * 1024.0), static_cast<double>(cache.bytes.load()) / (1024.0 * 1024.0), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u));
+                             static_cast<unsigned long long>(cache.recreatedSoon), static_cast<double>(cache.recreatedBytes) / (1024.0 * 1024.0), static_cast<double>(cache.bytes.load()) / (1024.0 * 1024.0), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u), pendingImages, static_cast<double>(pendingBytes) / (1024.0 * 1024.0));
                 cache.reported = now;
                 cache.created = cache.hits = cache.evictedByBudget = cache.evictedBytes = cache.recreatedSoon = cache.recreatedBytes = 0;
             }
