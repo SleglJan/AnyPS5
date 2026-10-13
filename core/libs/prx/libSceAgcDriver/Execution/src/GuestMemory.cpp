@@ -872,7 +872,7 @@ struct WriteTracker {
         std::uint32_t whole = 0;
         std::uint32_t dropped = 0;
         std::uint32_t next = 0;
-        std::array<DriverPiece, 4> pieces{};
+        std::array<DriverPiece, 16> pieces{};
     };
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
 
