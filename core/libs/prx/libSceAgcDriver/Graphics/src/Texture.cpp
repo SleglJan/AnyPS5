@@ -2212,6 +2212,15 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
     CaptureTrace::Log("upload image=%llx bytes=%llu generation=%llu reason=%s partial=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), uploadReason, layers != nullptr);
+    if (TraceFlushSmall() && guestBytes <= 256) {
+        std::array<std::byte, 4> head{};
+        GuestMemory::ReadCommitted(descriptor.baseAddress, head);
+        std::uint32_t word = 0;
+        std::memcpy(&word, head.data(), sizeof(word));
+        float value = 0.0f;
+        std::memcpy(&value, head.data(), sizeof(value));
+        std::fprintf(stderr, "[flush] upload image 0x%llx+0x%llx (%s): first dword 0x%08x %g\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), uploadReason, word, static_cast<double>(value));
+    }
     const auto elementBytes = BytesPerElement(descriptor.format);
     const auto linearBytes = sliceLinearBytes * arrayLayers;
     // A layer selection applies to the direct path alone (the others upload everything); it names
