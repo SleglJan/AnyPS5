@@ -59,7 +59,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     };
     auto drawParameters = Pm4::ResolveDraw(packet, queue);
     const bool pipelined = DrawPipeline::Active();
-    if (pipelined && drawParameters.indirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
+    const bool pipelineIndirect = pipelined && drawParameters.indirect && DrawPipeline::PipelineIndirect();
+    if (pipelined && drawParameters.indirect && !pipelineIndirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
     bool traceIndirect = false;
     if (const auto verdict = precheckDraw(queue, submission, packet, drawParameters, rejected, traceIndirect)) return *verdict;
     phaseTiming.Phase(DrawRowPrecheck);
@@ -264,6 +265,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         for (const auto& read : reads) memory.push_back({read.address, std::as_bytes(std::span(read.bytes))});
     }
 
+    // An indirect draw no longer drained before its capture: one whose captured ranges a pending
+    // commit still writes drains now and is translated again over the stored bytes.
+    const auto regionBounds = [](const ShaderRecompiler::MemoryRegion& region) { return DrawPipeline::Range{region.guestAddress, region.guestAddress + region.bytes.size()}; };
+    if (pipelineIndirect && DrawPipeline::Queue0().DrainIfOverlaps(memory, regionBounds, DrawPipeline::DrainReason::Capture)) return draw(queue, packet, submission, rejected);
     if (pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
     if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(queue, packet, submission, rejected);
 
@@ -319,6 +324,8 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowLabels);
     };
     if (drawParameters.indirect && indirectCpu) {
+        // Arguments read on the CPU: the pipeline drains before the read, as without APS5_PIPELINE_INDIRECT.
+        if (pipelineIndirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
 
         const auto indirect = *drawParameters.indirect;
         if (drawHit) {
@@ -426,7 +433,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         return localDevice->PrepareDrawKey(graphics, stages, owners);
     };
-    if (pipelined && !drawParameters.indirect && deferredLabels().labels.empty()) {
+    if (pipelined && (!drawParameters.indirect || pipelineIndirect) && deferredLabels().labels.empty()) {
         phaseTiming.Phase(DrawRowVectors);
         auto preparedKey = prepareDrawKey();
         phaseTiming.Phase(DrawRowKeyLookupValidate);

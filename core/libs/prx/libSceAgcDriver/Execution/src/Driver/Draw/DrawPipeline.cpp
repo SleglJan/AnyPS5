@@ -31,9 +31,18 @@ std::size_t DrawPipeline::Depth() {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (text == nullptr || std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
         const auto value = std::strtoull(text, nullptr, 10);
-        return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
+        const std::size_t standard = PipelineIndirect() ? 64 : 8;
+        return value == 0 ? std::size_t{0} : value == 1 ? standard : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
     return depth;
+}
+
+bool DrawPipeline::PipelineIndirect() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_PIPELINE_INDIRECT");
+        return text != nullptr && std::strcmp(text, "0") != 0;
+    }();
+    return enabled;
 }
 
 bool& DrawPipeline::Active() {
