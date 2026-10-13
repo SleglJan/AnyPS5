@@ -555,6 +555,15 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     }
 }
 
+namespace {
+
+bool TraceFlushSmall() {
+    static const bool small = std::getenv("APS5_TRACE_FLUSH_SMALL") != nullptr;
+    return small;
+}
+
+}
+
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DepthCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
     try {
         Require(source != nullptr && CanDepthCopyFrom(*source, descriptor), "storage image cannot serve a depth copy of the sampled texture");
@@ -754,6 +763,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         const auto vkFormat = SampledTextureFormat(context, descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
         APS5_LOG_OUT("Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
+        if (TraceFlushSmall() && source->GuestBytes() <= 4096) std::fprintf(stderr, "[flush] view image 0x%llx+0x%llx %ux%u: pending %d, last upload %s\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(source->GuestBytes()), descriptor.width, descriptor.height, source->AnyPending() ? 1 : 0, source->LastUploadReason());
         // Storage images stay in the general layout; the view samples them there.
         layout = VK_IMAGE_LAYOUT_GENERAL;
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
@@ -1232,11 +1242,6 @@ std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
-
-bool TraceFlushSmall() {
-    static const bool small = std::getenv("APS5_TRACE_FLUSH_SMALL") != nullptr;
-    return small;
-}
 
 void ReportFlushWaits() {
     static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
@@ -2222,7 +2227,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
     CaptureTrace::Log("upload image=%llx bytes=%llu generation=%llu reason=%s partial=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), uploadReason, layers != nullptr);
-    if (TraceFlushSmall() && guestBytes <= 256) {
+    lastUploadReason = uploadReason;
+    if (TraceFlushSmall() && guestBytes <= 4096) {
         std::array<std::byte, 4> head{};
         GuestMemory::ReadCommitted(descriptor.baseAddress, head);
         std::uint32_t word = 0;
@@ -3347,6 +3353,10 @@ std::uint64_t StorageTexture::FlushesBehindWriters() {
 
 std::uint64_t StorageTexture::FlushesStoredAhead() {
     return flushesStoredAhead.load(std::memory_order_relaxed);
+}
+
+bool StorageTexture::AnyPending() const {
+    return std::any_of(layerPending.begin(), layerPending.end(), [](bool pending) { return pending; });
 }
 
 void StorageTexture::DumpRecentFlushes(std::uint64_t address, std::size_t bytes) {
