@@ -1232,6 +1232,8 @@ std::atomic<std::uint64_t> flushWaits{0};
 std::atomic<std::uint64_t> flushWaitNanoseconds{0};
 std::atomic<std::uint64_t> flushWaitsOpen{0};
 std::atomic<std::uint64_t> uploadWaits{0};
+std::atomic<std::uint64_t> uploadWaitsOpen{0};
+std::atomic<std::uint64_t> uploadWaitNanoseconds{0};
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
@@ -1247,6 +1249,8 @@ void ReportFlushWaits() {
     static std::uint64_t lastWaits = 0;
     static std::uint64_t lastWaitsOpen = 0;
     static std::uint64_t lastUploadWaits = 0;
+    static std::uint64_t lastUploadWaitsOpen = 0;
+    static std::uint64_t lastUploadNanoseconds = 0;
     static std::uint64_t lastNanoseconds = 0;
     static std::uint64_t lastKeyWaits = 0;
     static std::uint64_t lastKeyNanoseconds = 0;
@@ -1264,6 +1268,8 @@ void ReportFlushWaits() {
     const auto waits = flushWaits.load(std::memory_order_relaxed);
     const auto waitsOpen = flushWaitsOpen.load(std::memory_order_relaxed);
     const auto uploads = uploadWaits.load(std::memory_order_relaxed);
+    const auto uploadsOpen = uploadWaitsOpen.load(std::memory_order_relaxed);
+    const auto uploadNanoseconds = uploadWaitNanoseconds.load(std::memory_order_relaxed);
     const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
     const auto key = DccKeyWriterWaits();
     const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
@@ -1272,7 +1278,7 @@ void ReportFlushWaits() {
     const auto keptGpu = keptByGpu.load(std::memory_order_relaxed);
     const auto partial = keptPartial.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer; %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
@@ -1282,6 +1288,8 @@ void ReportFlushWaits() {
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
     lastUploadWaits = uploads;
+    lastUploadWaitsOpen = uploadsOpen;
+    lastUploadNanoseconds = uploadNanoseconds;
     lastNanoseconds = nanoseconds;
     lastKeyWaits = key.waits;
     lastKeyNanoseconds = key.nanoseconds;
@@ -2230,9 +2238,12 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         const auto inFlightWriter = recorder->PendingWriteSerial(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         if (openWriter || inFlightWriter != 0) {
             uploadWaits.fetch_add(1, std::memory_order_relaxed);
+            if (openWriter) uploadWaitsOpen.fetch_add(1, std::memory_order_relaxed);
+            const auto started = std::chrono::steady_clock::now();
             Recorder::CountSync(1);
             if (openWriter) recorder->Sync();
             else recorder->FinishUpTo(inFlightWriter);
+            uploadWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         }
     }
     const bool profile = LookupOutcomes::Profiled();
