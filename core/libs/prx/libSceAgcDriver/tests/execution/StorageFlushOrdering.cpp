@@ -21,7 +21,7 @@ namespace {
 using namespace ShaderRecompiler;
 using AgcDriver::Graphics::Require;
 
-constexpr std::size_t BlockBytes = 1u << 20u;
+constexpr std::size_t BlockBytes = 4u << 20u;
 constexpr std::uint32_t Width = 256;
 constexpr std::uint32_t Height = 128;
 constexpr std::size_t ImageBytes = Width * Height * 4u;
@@ -30,6 +30,10 @@ constexpr std::uint32_t Stored = 0x11111111u;
 constexpr std::uint32_t Overwritten = 0x22222222u;
 constexpr std::size_t OverwrittenDword = 256u / 4u;
 constexpr std::size_t FarDword = 100u * Width;
+constexpr std::uint32_t LargeWidth = 1024;
+constexpr std::uint32_t LargeHeight = 512;
+constexpr std::size_t LargeImageBytes = LargeWidth * LargeHeight * 4u;
+constexpr std::size_t LargeFarDword = 100u * LargeWidth;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, 0x11111111u, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageAgainCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, 0x33333333u, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
@@ -156,12 +160,44 @@ void RunRefresh(AgcDriver::VulkanDevice& device) {
     Require(words[0] == StoredAgain, "storage flush ordering: the image's texel written after the buffer write was dropped with its block");
 }
 
+void RunRefreshLarge(AgcDriver::VulkanDevice& device) {
+    GuestBlock guest;
+    auto* words = guest.Words();
+    std::fill(words, words + LargeImageBytes / 4u, Initial);
+    const auto base = guest.Address();
+    std::vector<std::uint32_t> imageUser(12, 0u);
+    imageUser[4] = static_cast<std::uint32_t>(base >> 8u);
+    imageUser[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (20u << 20u) | (((LargeWidth - 1u) & 3u) << 30u);
+    imageUser[6] = ((LargeWidth - 1u) >> 2u) | ((LargeHeight - 1u) << 14u);
+    imageUser[7] = 0x90000facu;
+    std::vector<std::uint32_t> bufferUser(8, 0u);
+    bufferUser[4] = static_cast<std::uint32_t>(base);
+    bufferUser[5] = static_cast<std::uint32_t>(base >> 32u);
+    bufferUser[6] = static_cast<std::uint32_t>(LargeImageBytes);
+    bufferUser[7] = 0x31016facu;
+    const auto target = device.Target();
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto storeBuffer = Compile(StoreBufferCode, bufferUser, target);
+    const auto storeImageAgain = Compile(StoreImageAgainCode, imageUser, target);
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    device.Dispatch(storeBuffer, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreBufferCode.data()));
+    device.Dispatch(storeImageAgain, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageAgainCode.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, LargeImageBytes, nullptr, "test");
+    device.WaitIdle();
+    std::printf("storage flush ordering (large): dword 0 = 0x%08x, dword %zu = 0x%08x, far = 0x%08x\n", words[0], OverwrittenDword, words[OverwrittenDword], words[LargeFarDword]);
+    Require(words[OverwrittenDword] == Overwritten, "storage flush ordering: the buffer write between two writes of a 2 MiB image was lost");
+    Require(words[LargeFarDword] == StoredAgain, "storage flush ordering: the 2 MiB image's far texel from the second write was not stored");
+    Require(words[0] == StoredAgain, "storage flush ordering: the 2 MiB image's texel written after the buffer write was dropped with its block");
+}
+
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
         RunRefresh(*device);
+        RunRefreshLarge(*device);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -3933,7 +3933,9 @@ void GuestBufferMemory::WriteBack() {
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
             const GuestMemory::WriteMarkerScope late{GuestMemory::WriteMarker::DirectLate};
-            GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
+            static const bool recordStamps = std::getenv("APS5_NO_RECORD_STAMPS") == nullptr;
+            if (recordStamps) GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
+            else GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
             continue;
         }
         if (region.mirror != nullptr) {
@@ -3964,7 +3966,9 @@ void GuestBufferMemory::WriteBack() {
                 // The GPU copied the written sub-range back into the import; page write watching
                 // did not see it.
                 const GuestMemory::WriteMarkerScope gpu{GuestMemory::WriteMarker::CopyBackGpu};
-                GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
+                static const bool recordStamps = std::getenv("APS5_NO_RECORD_STAMPS") == nullptr;
+                if (recordStamps) GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
+                else GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
                 continue;
             }
             static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
