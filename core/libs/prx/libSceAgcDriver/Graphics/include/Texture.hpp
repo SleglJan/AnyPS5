@@ -193,6 +193,7 @@ public:
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr);
     static void DumpRecentFlushes(std::uint64_t address, std::size_t bytes);
     static std::uint64_t FlushesBehindWriters();
+    static std::uint64_t FlushesStoredAhead();
     static void FlushAllPending(const char* reason);
     static bool AnyPending();
     static void FlushDumpSelected(const char* reason);
@@ -524,6 +525,7 @@ private:
     std::uint32_t trackedLayers = 1;
     std::uint64_t trackedLayerBytes = 0;
     std::vector<std::uint64_t> layerGeneration;
+    std::uint64_t producerSerial = 0;
     std::vector<bool> layerPending;
     bool blockUnits = false;
     // Write-back hysteresis (block units, see writeBack): partial stores in the current window of

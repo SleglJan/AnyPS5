@@ -120,6 +120,33 @@ void Run(AgcDriver::VulkanDevice& device) {
     Require(words[OverwrittenDword] == Overwritten, "storage flush ordering: the pending image's store put its older texels over a newer address-based store");
 }
 
+void RunAhead(AgcDriver::VulkanDevice& device) {
+    GuestBlock guest;
+    auto* words = guest.Words();
+    std::fill(words, words + ImageBytes / 4u, Initial);
+    const auto base = guest.Address();
+    std::vector<std::uint32_t> imageUser(12, 0u);
+    imageUser[4] = static_cast<std::uint32_t>(base >> 8u);
+    imageUser[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (20u << 20u) | (((Width - 1u) & 3u) << 30u);
+    imageUser[6] = ((Width - 1u) >> 2u) | ((Height - 1u) << 14u);
+    imageUser[7] = 0x90000facu;
+    std::vector<std::uint32_t> globalUser(10, 0u);
+    globalUser[8] = static_cast<std::uint32_t>(base);
+    globalUser[9] = static_cast<std::uint32_t>(base >> 32u);
+    const auto target = device.Target();
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto storeGlobal = Compile(StoreGlobalCode, globalUser, target);
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    device.WaitIdle();
+    device.Dispatch(storeGlobal, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreGlobalCode.data()));
+    const auto aheadBefore = AgcDriver::Graphics::StorageTexture::FlushesStoredAhead();
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, ImageBytes, nullptr, "test");
+    Require(AgcDriver::Graphics::StorageTexture::FlushesStoredAhead() == aheadBefore + 1u, "storage flush ordering: the store behind a writer in the open batch was not submitted ahead of it");
+    device.WaitIdle();
+    Require(words[FarDword] == Stored, "storage flush ordering: the image's texel away from the open batch's write was not stored");
+    Require(words[OverwrittenDword] == Overwritten, "storage flush ordering: the store submitted ahead of the open batch did not land before its writer");
+}
+
 }
 
 int main() {
@@ -127,6 +154,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
+        if (std::getenv("APS5_FLUSH_STORE_AHEAD") != nullptr) RunAhead(*device);
+        else std::puts("storage flush ordering: APS5_FLUSH_STORE_AHEAD is not set, the store-ahead case is skipped");
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -1221,6 +1221,13 @@ std::atomic<std::uint64_t> flushedBehindWriter{0};
 std::atomic<std::uint64_t> flushWaits{0};
 std::atomic<std::uint64_t> flushWaitNanoseconds{0};
 std::atomic<std::uint64_t> flushWaitsOpen{0};
+std::atomic<std::uint64_t> flushesStoredAhead{0};
+thread_local bool storeAhead = false;
+
+bool StoreAheadEnabled() {
+    static const bool enabled = std::getenv("APS5_FLUSH_STORE_AHEAD") != nullptr;
+    return enabled;
+}
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
@@ -1238,6 +1245,7 @@ void ReportFlushWaits() {
     static std::uint64_t lastBehind = 0;
     static std::uint64_t lastWaits = 0;
     static std::uint64_t lastWaitsOpen = 0;
+    static std::uint64_t lastAhead = 0;
     static std::uint64_t lastNanoseconds = 0;
     static std::uint64_t lastKeyWaits = 0;
     static std::uint64_t lastKeyNanoseconds = 0;
@@ -1252,19 +1260,21 @@ void ReportFlushWaits() {
     const auto behind = flushedBehindWriter.load(std::memory_order_relaxed);
     const auto waits = flushWaits.load(std::memory_order_relaxed);
     const auto waitsOpen = flushWaitsOpen.load(std::memory_order_relaxed);
+    const auto ahead = flushesStoredAhead.load(std::memory_order_relaxed);
     const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
     const auto key = DccKeyWriterWaits();
     const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
     const auto keptSmall = keptSmallWriteBacks.load(std::memory_order_relaxed);
     const auto keptSmallGpu = keptSmallByGpu.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch, %llu stored ahead of it); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(ahead - lastAhead), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
+    lastAhead = ahead;
     lastNanoseconds = nanoseconds;
     lastKeyWaits = key.waits;
     lastKeyNanoseconds = key.nanoseconds;
@@ -3123,6 +3133,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     for (std::uint32_t layer = first; layer < first + count; ++layer) layerPending[layer] = true;
+    if (auto* recorder = Recorder::Active(); recorder != nullptr) producerSerial = recorder->OpenSerial();
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
@@ -3258,15 +3269,32 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             static const bool wait = std::getenv("APS5_NO_FLUSH_WAIT_NEWER") == nullptr;
             recorder->Reap();
             if (wait && behind()) {
-                if (recorder->OpenWriteOverlaps(address, bytes) || recorder->OpenReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased)) flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
+                const bool openWriter = recorder->OpenWriteOverlaps(address, bytes) || recorder->OpenReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased);
+                const auto inFlightWriter = recorder->PendingWriterSerial(address, bytes);
+                const bool producerOpen = !StoreAheadEnabled() || std::any_of(flush.begin(), flush.end(), [&](const std::shared_ptr<StorageTexture>& texture) { return texture->producerSerial == recorder->OpenSerial(); });
                 const auto started = std::chrono::steady_clock::now();
-                Recorder::CountSync(1);
-                recorder->Sync();
-                flushWaits.fetch_add(1, std::memory_order_relaxed);
-                flushWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+                if (openWriter && producerOpen) {
+                    flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
+                    Recorder::CountSync(1);
+                    recorder->Sync();
+                } else if (inFlightWriter != 0) {
+                    Recorder::CountSync(1);
+                    recorder->FinishUpTo(inFlightWriter);
+                }
+                if (openWriter && !producerOpen) {
+                    storeAhead = true;
+                    flushesStoredAhead.fetch_add(1, std::memory_order_relaxed);
+                }
+                if ((openWriter && producerOpen) || inFlightWriter != 0) {
+                    flushWaits.fetch_add(1, std::memory_order_relaxed);
+                    flushWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+                }
             }
         }
     }
+    struct AheadScope {
+        ~AheadScope() { storeAhead = false; }
+    } aheadScope;
     ReportFlushWaits();
     {
         auto& recent = RecentFlushes();
@@ -3315,6 +3343,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
 
 std::uint64_t StorageTexture::FlushesBehindWriters() {
     return flushedBehindWriter.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::FlushesStoredAhead() {
+    return flushesStoredAhead.load(std::memory_order_relaxed);
 }
 
 void StorageTexture::DumpRecentFlushes(std::uint64_t address, std::size_t bytes) {
@@ -4547,7 +4579,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         for (const auto& [from, to] : keep) copied.push_back({from - descriptor.baseAddress, to - descriptor.baseAddress, from - descriptor.baseAddress});
         const auto padding = paddingSeeds(*import, std::move(copied));
         detiler.BeginBatch();
-        auto* recorder = Recorder::Active();
+        auto* recorder = storeAhead ? nullptr : Recorder::Active();
         std::unique_ptr<CommandBatch> batch;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         auto timing = Recorder::NoTiming;
