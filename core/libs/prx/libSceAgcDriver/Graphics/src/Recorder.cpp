@@ -2944,6 +2944,16 @@ bool Recorder::OpenReadKindOverlaps(std::uint64_t address, std::size_t bytes, Re
     return false;
 }
 
+std::uint64_t Recorder::PendingWriteSerial(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return 0;
+    const auto end = address + bytes;
+    std::uint64_t newest = 0;
+    for (const auto& batch : inFlight) {
+        if (overlaps(*batch, address, end)) newest = std::max(newest, batch->serial);
+    }
+    return newest;
+}
+
 std::uint64_t Recorder::PendingWriterSerial(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return 0;
     const auto end = address + bytes;

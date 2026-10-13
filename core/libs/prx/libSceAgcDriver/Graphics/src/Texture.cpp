@@ -1231,6 +1231,7 @@ std::atomic<std::uint64_t> flushedBehindWriter{0};
 std::atomic<std::uint64_t> flushWaits{0};
 std::atomic<std::uint64_t> flushWaitNanoseconds{0};
 std::atomic<std::uint64_t> flushWaitsOpen{0};
+std::atomic<std::uint64_t> uploadWaits{0};
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
@@ -1244,6 +1245,7 @@ void ReportFlushWaits() {
     static std::uint64_t lastBehind = 0;
     static std::uint64_t lastWaits = 0;
     static std::uint64_t lastWaitsOpen = 0;
+    static std::uint64_t lastUploadWaits = 0;
     static std::uint64_t lastNanoseconds = 0;
     static std::uint64_t lastKeyWaits = 0;
     static std::uint64_t lastKeyNanoseconds = 0;
@@ -1259,6 +1261,7 @@ void ReportFlushWaits() {
     const auto behind = flushedBehindWriter.load(std::memory_order_relaxed);
     const auto waits = flushWaits.load(std::memory_order_relaxed);
     const auto waitsOpen = flushWaitsOpen.load(std::memory_order_relaxed);
+    const auto uploads = uploadWaits.load(std::memory_order_relaxed);
     const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
     const auto key = DccKeyWriterWaits();
     const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
@@ -1266,7 +1269,7 @@ void ReportFlushWaits() {
     const auto keptSmallGpu = keptSmallByGpu.load(std::memory_order_relaxed);
     const auto keptGpu = keptByGpu.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer; %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
@@ -1274,6 +1277,7 @@ void ReportFlushWaits() {
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
+    lastUploadWaits = uploads;
     lastNanoseconds = nanoseconds;
     lastKeyWaits = key.waits;
     lastKeyNanoseconds = key.nanoseconds;
@@ -2216,6 +2220,17 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
 void StorageTexture::upload(const std::vector<bool>* layers) {
+    static const bool waitForWriters = std::getenv("APS5_NO_UPLOAD_WAIT") == nullptr;
+    if (auto* recorder = Recorder::Active(); waitForWriters && recorder != nullptr && !Recorder::InCompletion()) {
+        const bool openWriter = recorder->OpenWriteOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        const auto inFlightWriter = recorder->PendingWriteSerial(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        if (openWriter || inFlightWriter != 0) {
+            uploadWaits.fetch_add(1, std::memory_order_relaxed);
+            Recorder::CountSync(1);
+            if (openWriter) recorder->Sync();
+            else recorder->FinishUpTo(inFlightWriter);
+        }
+    }
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));

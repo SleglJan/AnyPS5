@@ -32,6 +32,7 @@ constexpr std::size_t OverwrittenDword = 256u / 4u;
 constexpr std::size_t FarDword = 100u * Width;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, 0x11111111u, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 5> StoreBufferCode{0x7e0402ffu, 0x22222222u, 0xe0700100u, 0x80010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreGlobalCode{0x7e000208u, 0x7e020209u, 0x7e0402ffu, 0x22222222u, 0xdc708100u, 0x007d0200u, 0xbf810000u};
 
 class GuestBlock {
@@ -122,11 +123,42 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 }
 
+void RunRefresh(AgcDriver::VulkanDevice& device) {
+    GuestBlock guest;
+    auto* words = guest.Words();
+    std::fill(words, words + ImageBytes / 4u, Initial);
+    const auto base = guest.Address();
+    std::vector<std::uint32_t> imageUser(12, 0u);
+    imageUser[4] = static_cast<std::uint32_t>(base >> 8u);
+    imageUser[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (20u << 20u) | (((Width - 1u) & 3u) << 30u);
+    imageUser[6] = ((Width - 1u) >> 2u) | ((Height - 1u) << 14u);
+    imageUser[7] = 0x90000facu;
+    std::vector<std::uint32_t> bufferUser(8, 0u);
+    bufferUser[4] = static_cast<std::uint32_t>(base);
+    bufferUser[5] = static_cast<std::uint32_t>(base >> 32u);
+    bufferUser[6] = static_cast<std::uint32_t>(ImageBytes);
+    bufferUser[7] = 0x31016facu;
+    const auto target = device.Target();
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto storeBuffer = Compile(StoreBufferCode, bufferUser, target);
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    device.Dispatch(storeBuffer, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreBufferCode.data()));
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    device.WaitIdle();
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, ImageBytes, nullptr, "test");
+    device.WaitIdle();
+    std::printf("storage flush ordering (refresh): dword 0 = 0x%08x, dword %zu = 0x%08x, far = 0x%08x\n", words[0], OverwrittenDword, words[OverwrittenDword], words[FarDword]);
+    Require(words[OverwrittenDword] == Overwritten, "storage flush ordering: the buffer write between two image writes was lost");
+    Require(words[FarDword] == Stored, "storage flush ordering: the image's far texel was not stored after a buffer write in its range");
+    Require(words[0] == Stored, "storage flush ordering: the image's texel written after the buffer write was dropped with its block");
+}
+
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
+        RunRefresh(*device);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
