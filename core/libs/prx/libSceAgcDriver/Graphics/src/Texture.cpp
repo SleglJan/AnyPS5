@@ -1234,6 +1234,7 @@ std::atomic<std::uint64_t> flushWaitsOpen{0};
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallByGpu{0};
+std::atomic<std::uint64_t> keptByGpu{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
 
 void ReportFlushWaits() {
@@ -1249,6 +1250,7 @@ void ReportFlushWaits() {
     static std::uint64_t lastKept = 0;
     static std::uint64_t lastKeptSmall = 0;
     static std::uint64_t lastKeptSmallByGpu = 0;
+    static std::uint64_t lastKeptByGpu = 0;
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     auto last = reported.load(std::memory_order_relaxed);
     if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
@@ -1262,11 +1264,13 @@ void ReportFlushWaits() {
     const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
     const auto keptSmall = keptSmallWriteBacks.load(std::memory_order_relaxed);
     const auto keptSmallGpu = keptSmallByGpu.load(std::memory_order_relaxed);
+    const auto keptGpu = keptByGpu.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
+    lastKeptByGpu = keptGpu;
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
@@ -4489,8 +4493,9 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         keptWriteBacks.fetch_add(1, std::memory_order_relaxed);
         if (guestBytes <= SmallImageBytes) keptSmallWriteBacks.fetch_add(1, std::memory_order_relaxed);
         if (guestBytes <= SmallImageBytes && skippedCpu == 0) keptSmallByGpu.fetch_add(1, std::memory_order_relaxed);
+        if (skippedCpu == 0) keptByGpu.fetch_add(1, std::memory_order_relaxed);
     }
-    if (skippedAny && (traceKept || (TraceFlushSmall() && guestBytes <= SmallImageBytes))) {
+    if (skippedAny && (traceKept || TraceFlushSmall())) {
         const auto first = keep.empty() ? descriptor.baseAddress + guestBytes : keep.front().first;
         std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu written 64 KiB blocks (%zu stamped by the CPU; first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, skippedCpu, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
