@@ -3233,10 +3233,14 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         return false;
     }
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
-        if (recorder->PendingWriteOverlaps(address, bytes) || recorder->PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased)) {
+        const auto behind = [&] {
+            return recorder->PendingWriteOverlaps(address, bytes) || recorder->PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased);
+        };
+        if (behind()) {
             flushedBehindWriter.fetch_add(1, std::memory_order_relaxed);
             static const bool wait = std::getenv("APS5_NO_FLUSH_WAIT_NEWER") == nullptr;
-            if (wait) {
+            recorder->Reap();
+            if (wait && behind()) {
                 const auto started = std::chrono::steady_clock::now();
                 Recorder::CountSync(1);
                 recorder->Sync();
