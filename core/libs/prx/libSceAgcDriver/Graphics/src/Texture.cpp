@@ -4640,9 +4640,25 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<ShadowedRange> shadowed;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imported;
     const HostImport* shadowImport = nullptr;
+    static const bool stickySettle = std::getenv("APS5_NO_KEPT_UNIT_SETTLE") != nullptr;
     const auto settle = [&](bool memoizedCollect) {
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (layers[layer]) layerPending[layer] = false;
+        }
+        if (stickySettle) {
+            const bool allKept = std::none_of(skippedLayer.begin(), skippedLayer.end(), [](bool kept) { return kept; });
+            if (allKept || !adjacent.empty()) {
+        const auto now = memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+                for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+                    if (layers[layer] && !skippedLayer[layer]) layerGeneration[layer] = now;
+                }
+                refreshGeneration();
+                advanceAdjacent(adjacent, now, firstBlock, lastBlock);
+                if (!shadowed.empty()) MarkShadowed(*shadowImport, shadowed, now);
+            } else if (!shadowed.empty()) {
+                MarkShadowed(*shadowImport, shadowed, GuestMemory::TrackerGeneration());
+            }
+            return;
         }
         bool advances = false;
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) advances = advances || (layers[layer] && !skippedLayer[layer]);
