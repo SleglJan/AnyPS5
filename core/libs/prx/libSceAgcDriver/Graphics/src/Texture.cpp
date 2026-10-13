@@ -2244,7 +2244,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
 void StorageTexture::upload(const std::vector<bool>* layers) {
-    static const bool waitForWriters = std::getenv("APS5_NO_UPLOAD_WAIT") == nullptr;
+    static const bool waitForWriters = std::getenv("APS5_UPLOAD_WAIT") != nullptr;
     if (auto* recorder = Recorder::Active(); waitForWriters && recorder != nullptr && !Recorder::InCompletion()) {
         const bool openWriter = recorder->OpenWriteOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         const auto inFlightWriter = recorder->PendingWriteSerial(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
