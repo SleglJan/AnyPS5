@@ -386,6 +386,31 @@ bool outOfMemoryTests(Context context, const std::string& mode) {
             Require(throwsOutOfMemory(3), "a second failure within the second released the caches again");
             Require(!again.expired() && !againImage.expired() && cache.Size() == 1, "a second failure within the second dropped the cached descriptor set");
             std::puts(storage ? "out-of-memory storage image release passed" : "out-of-memory sampled texture release passed");
+            // The release of the unreferenced entries frees too little: its retry fails as well, and
+            // the recovery goes on to the cached holders and builds once more.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            cache.Clear();
+            ClearCachedTextures(context.device);
+            const auto [held, heldImage] = cachedSet(4, 3);
+            static_cast<void>(lookup(5));
+            ImageAllocationFailuresForTest().store(4);
+            const auto escalated = lookup(6);
+            Require(escalated != nullptr && ImageAllocationFailuresForTest().load() == 0, "a retry that failed after the release of unreferenced entries did not go on to the cached holders");
+            Require(held.expired() && heldImage.expired() && cache.Size() == 0, "the recovery that went on to the holders kept the cached descriptor set");
+            std::puts(storage ? "out-of-memory storage image escalation passed" : "out-of-memory sampled texture escalation passed");
+            if (storage) {
+                // Only sampled textures are unreferenced: the storage image's recovery frees them (and
+                // the storage images their views held) and builds without dropping the holders.
+                cache.Clear();
+                ClearCachedTextures(context.device);
+                const auto [kept, keptImage] = cachedSet(7, 4);
+                static_cast<void>(Sampled(context, block.Surface(8)));
+                ImageAllocationFailuresForTest().store(2);
+                const auto made = lookup(9);
+                Require(made != nullptr && ImageAllocationFailuresForTest().load() == 0, "a storage image was not built after the release of unreferenced sampled textures");
+                Require(!kept.expired() && !keptImage.expired() && cache.Size() == 1, "a storage image's recovery dropped the cached holders although unreferenced sampled textures freed memory");
+                std::puts("out-of-memory storage image freed by sampled textures passed");
+            }
         }
     } catch (...) {
         ImageAllocationFailuresForTest().store(0);
