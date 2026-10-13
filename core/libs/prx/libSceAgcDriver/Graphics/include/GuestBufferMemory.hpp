@@ -419,6 +419,7 @@ private:
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;
+    std::uint64_t recordGeneration = 0;
     bool committed = false;
 };
 

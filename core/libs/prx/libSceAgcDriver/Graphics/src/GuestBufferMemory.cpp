@@ -3285,6 +3285,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             if (region.buffer != nullptr && region.end - region.begin >= (1u << 20u)) std::fprintf(stderr, "[bigbuf] upload 0x%llx+0x%llx writable=%d hostBacked=%d sparse=%d addressable=%d\n", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end - region.begin), region.writable ? 1 : 0, region.hostBacked ? 1 : 0, region.sparse ? 1 : 0, addressable ? 1 : 0);
         }
     }
+    recordGeneration = GuestMemory::TrackerGeneration();
 }
 
 namespace {
@@ -3931,7 +3932,8 @@ void GuestBufferMemory::WriteBack() {
         if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
-            GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+            const GuestMemory::WriteMarkerScope late{GuestMemory::WriteMarker::DirectLate};
+            GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
             continue;
         }
         if (region.mirror != nullptr) {
@@ -3961,7 +3963,8 @@ void GuestBufferMemory::WriteBack() {
             if (region.copiedBack) {
                 // The GPU copied the written sub-range back into the import; page write watching
                 // did not see it.
-                GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+                const GuestMemory::WriteMarkerScope gpu{GuestMemory::WriteMarker::CopyBackGpu};
+                GuestMemory::MarkWrittenSince(begin, static_cast<std::size_t>(end - begin), recordGeneration);
                 continue;
             }
             static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

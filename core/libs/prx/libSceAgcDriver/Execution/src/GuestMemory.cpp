@@ -1463,6 +1463,8 @@ const char* WriteMarkerName(WriteMarker marker) {
     case WriteMarker::Cmask: return "cmask";
     case WriteMarker::WriteBack: return "write-back";
     case WriteMarker::Other: return "other";
+    case WriteMarker::DirectLate: return "direct-late";
+    case WriteMarker::CopyBackGpu: return "copy-back-gpu";
     }
     return "?";
 }
@@ -1500,6 +1502,80 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
         tracker.noteDriverStore(block, address, address + bytes, tracker.generation);
     }
     return tracker.generation;
+}
+
+std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (bytes == 0) return 0;
+    ++tracker.generation;
+    if (!tracker.watched || !tracker.covers(address, bytes)) {
+        tracker.noteUnstampedStore(address, address + bytes);
+        return 0;
+    }
+    {
+        const auto blockFirst = address & ~(std::uint64_t{WriteBlockBytes} - 1);
+        const auto blockStop = (address + bytes + WriteBlockBytes - 1) & ~(std::uint64_t{WriteBlockBytes} - 1);
+        StampRuns runs{tracker, StampKind::Fresh};
+#ifdef _WIN32
+        const bool complete = collectWindowsWrites(runs, blockFirst, blockStop, false);
+#else
+        const bool complete = GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix(static_cast<std::uintptr_t>(blockFirst), static_cast<std::size_t>(blockStop - blockFirst), &stampWrittenRun, &runs);
+#endif
+        if (!complete) {
+            unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
+            tracker.noteUnstampedStore(address, address + bytes);
+            return 0;
+        }
+        if (runs.stamped != 0) ++tracker.generation;
+    }
+    const auto first = tracker.blockOf(address);
+    const auto last = tracker.blockOf(address + bytes - 1);
+    for (auto block = first; block <= last; ++block) {
+        const auto use = static_cast<std::uint32_t>(std::max<std::uint64_t>(tracker.stampOf(block), generation));
+        tracker.stamp(block, use, StampKind::Driver);
+        tracker.noteDriverStore(block, address, address + bytes, use);
+    }
+    return tracker.generation;
+}
+
+bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return false;
+#ifdef _WIN32
+    if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(address, bytes)) return false;
+#endif
+    const auto end = address + bytes;
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1); ++block) {
+        if (tracker.stampOf(block) <= generation) continue;
+        const auto begin = tracker.blockBegin(block);
+        const auto from = std::max(address, begin) - begin;
+        const auto to = std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin;
+        bool explained = false;
+        if (const auto pages = tracker.cpuPages.find(block); pages != tracker.cpuPages.end()) {
+            for (auto page = from / WritePageBytes; page <= (to - 1) / WritePageBytes; ++page) {
+                if (pages->second.pages[page] <= generation) continue;
+                ranges.emplace_back(begin + page * WritePageBytes, begin + (page + 1) * WritePageBytes);
+                explained = true;
+            }
+        } else if (tracker.cpuStampOf(block) > generation) {
+            return false;
+        }
+        if (const auto pieces = tracker.driverPieces.find(block); pieces != tracker.driverPieces.end()) {
+            const auto& entry = pieces->second;
+            if (entry.whole > generation || entry.dropped > generation) return false;
+            for (const auto& piece : entry.pieces) {
+                if (piece.generation <= generation || piece.begin >= to || from >= piece.end) continue;
+                ranges.emplace_back(begin + piece.begin, begin + piece.end);
+                explained = true;
+            }
+        }
+        if (!explained) return false;
+    }
+    return true;
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
