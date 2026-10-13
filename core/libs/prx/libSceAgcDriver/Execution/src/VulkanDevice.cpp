@@ -484,7 +484,9 @@ struct VulkanDevice::State {
     std::mutex aheadMutex;
     std::condition_variable aheadReady;
     std::deque<AheadPipeline> ahead;
+    std::deque<AheadPipeline> aheadUrgent;
     std::vector<std::thread> aheadThreads;
+    bool aheadUrgentThread = false;
     std::size_t aheadRunning = 0;
     bool aheadStopping = false;
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
@@ -3795,7 +3797,7 @@ bool VulkanDevice::HasPipelineForProgram(std::uint64_t programAddress) const {
     return state->pipelinePrograms.contains(programAddress);
 }
 
-bool VulkanDevice::CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive) {
+bool VulkanDevice::CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<const void> keepAlive, bool urgent) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto declined = [&](const char* reason) {
         if (profile) std::fprintf(stderr, "[ahead] program 0x%llx not queued: %s\n", static_cast<unsigned long long>(programAddress), reason);
@@ -3811,9 +3813,13 @@ bool VulkanDevice::CreatePipelineAhead(std::shared_ptr<const ShaderRecompiler::R
     if (resources->Layout() == VK_NULL_HANDLE) return declined("its build needs the device lock (address tables)");
     std::lock_guard lock(state->aheadMutex);
     if (state->aheadStopping) return false;
-    while (state->aheadThreads.size() < threads) state->aheadThreads.emplace_back([this] { aheadPipelineWorker(); });
-    state->ahead.push_back({std::move(shader), std::move(resources), programAddress, std::move(keepAlive)});
-    state->aheadReady.notify_one();
+    if (urgent && !state->aheadUrgentThread) {
+        state->aheadThreads.emplace_back([this] { aheadPipelineWorker(true); });
+        state->aheadUrgentThread = true;
+    }
+    while (!urgent && state->aheadThreads.size() < threads + (state->aheadUrgentThread ? 1u : 0u)) state->aheadThreads.emplace_back([this] { aheadPipelineWorker(false); });
+    (urgent ? state->aheadUrgent : state->ahead).push_back({std::move(shader), std::move(resources), programAddress, std::move(keepAlive)});
+    state->aheadReady.notify_all();
     aheadQueued.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -3822,17 +3828,18 @@ std::uint64_t VulkanDevice::AheadPipelinesQueued() {
     return aheadQueued.load(std::memory_order_relaxed);
 }
 
-void VulkanDevice::aheadPipelineWorker() {
+void VulkanDevice::aheadPipelineWorker(bool urgent) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     onAheadPool = true;
+    auto& queue = urgent ? state->aheadUrgent : state->ahead;
     for (;;) {
         State::AheadPipeline job;
         {
             std::unique_lock lock(state->aheadMutex);
-            state->aheadReady.wait(lock, [&] { return state->aheadStopping || !state->ahead.empty(); });
+            state->aheadReady.wait(lock, [&] { return state->aheadStopping || !queue.empty(); });
             if (state->aheadStopping) return;
-            job = std::move(state->ahead.front());
-            state->ahead.pop_front();
+            job = std::move(queue.front());
+            queue.pop_front();
             ++state->aheadRunning;
         }
         try {
@@ -3855,6 +3862,7 @@ void VulkanDevice::stopAheadPipelines() {
         std::lock_guard lock(state->aheadMutex);
         state->aheadStopping = true;
         state->ahead.clear();
+        state->aheadUrgent.clear();
         running = state->aheadRunning;
     }
     state->aheadReady.notify_all();
