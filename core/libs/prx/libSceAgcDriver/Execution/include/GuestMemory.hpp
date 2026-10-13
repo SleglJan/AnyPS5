@@ -97,6 +97,17 @@ struct DriverPieceCounts {
 };
 DriverPieceCounts DriverPieceStats();
 std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+std::uint64_t SetStoreGeneration(std::uint64_t generation);
+class StoreGenerationScope {
+public:
+    explicit StoreGenerationScope(std::uint64_t generation) : previous(SetStoreGeneration(generation)) {}
+    ~StoreGenerationScope() { SetStoreGeneration(previous); }
+    StoreGenerationScope(const StoreGenerationScope&) = delete;
+    StoreGenerationScope& operator=(const StoreGenerationScope&) = delete;
+
+private:
+    std::uint64_t previous;
+};
 enum class RangeKnowledge : std::uint8_t { Exact, WholeBlock, Dropped, Unknown, Untracked };
 bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, RangeKnowledge* knowledge = nullptr);
 const char* WriteMarkerName(WriteMarker marker);

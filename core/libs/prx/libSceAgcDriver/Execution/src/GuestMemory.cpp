@@ -11,6 +11,7 @@
 #include <chrono>
 #include <atomic>
 #include <algorithm>
+#include <utility>
 #include <bit>
 #include <emmintrin.h>
 #include <functional>
@@ -767,6 +768,7 @@ struct WindowCopy {
 };
 
 thread_local WriteMarker currentWriteMarker = WriteMarker::Other;
+thread_local std::uint64_t storeGeneration = 0;
 std::atomic<std::uint64_t> driverPiecesDeduped{0};
 std::atomic<std::uint64_t> driverPiecesInserted{0};
 std::atomic<std::uint64_t> driverPiecesEvicted{0};
@@ -1007,6 +1009,7 @@ struct WriteTracker {
     }
 
     void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
+        if (kind == StampKind::Driver && storeGeneration != 0) stampGeneration = static_cast<std::uint32_t>(std::max<std::uint64_t>(stampOf(block), storeGeneration));
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
         const auto marker = static_cast<std::uint8_t>(cpu ? WriteMarker::Cpu : currentWriteMarker);
@@ -1429,8 +1432,9 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::func
             return 0;
         }
         for (auto block = tracker.blockOf(stored.first); block <= tracker.blockOf(stored.second - 1); ++block) {
-            tracker.stamp(block, tracker.generation, StampKind::Driver);
-            tracker.noteDriverStore(block, stored.first, stored.second, tracker.generation);
+            const auto use = static_cast<std::uint32_t>(storeGeneration != 0 ? std::max<std::uint64_t>(tracker.stampOf(block), storeGeneration) : static_cast<std::uint64_t>(tracker.generation.load(std::memory_order_relaxed)));
+            tracker.stamp(block, use, StampKind::Driver);
+            tracker.noteDriverStore(block, stored.first, stored.second, use);
         }
         return tracker.generation;
     };
@@ -1461,6 +1465,10 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 #endif
         std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
     });
+}
+
+std::uint64_t SetStoreGeneration(std::uint64_t generation) {
+    return std::exchange(storeGeneration, generation);
 }
 
 WriteMarker SetWriteMarker(WriteMarker marker) {

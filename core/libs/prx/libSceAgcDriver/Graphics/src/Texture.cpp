@@ -557,6 +557,11 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
 
 namespace {
 
+bool StoreStampsNow() {
+    static const bool now = std::getenv("APS5_STORE_STAMPS_NOW") != nullptr;
+    return now;
+}
+
 bool TraceFlushSmall() {
     static const bool small = std::getenv("APS5_TRACE_FLUSH_SMALL") != nullptr;
     return small;
@@ -1115,6 +1120,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         trackedLayerBytes = blockUnits ? 65536 : guestBytes / trackedLayers;
         layerGeneration.assign(trackedLayers, 0);
         layerPending.assign(trackedLayers, false);
+        pendingGeneration.assign(trackedLayers, 0);
         layerOriginal.assign(trackedLayers, true);
         sliceLinearBytes = geometry.sliceLinearBytes;
         const auto linearBytes = sliceLinearBytes * arrayLayers;
@@ -2032,6 +2038,8 @@ bool StorageTexture::Refresh() {
         const auto begin = layerBegin(unit);
         const auto bytes = layerBytes(unit);
         const bool edge = begin % 65536 != 0 || bytes != 65536;
+        const bool cpu = unit < cpuBlocks.size() && cpuBlocks[unit] != 0;
+        if (!cpu && !StoreStampsNow()) return GuestMemory::StoredOver(begin, static_cast<std::size_t>(bytes), std::max(layerGeneration[unit], pendingGeneration[unit]));
         return !edge || GuestMemory::StoredOver(begin, static_cast<std::size_t>(bytes), layerGeneration[unit]);
     };
     // A clear code -> uncompressed flip on an image with results pending: an unstamped pending
@@ -2063,6 +2071,7 @@ bool StorageTexture::Refresh() {
             pendingResults = true;
             if (blockUnits && droppable(layer)) {
                 CaptureTrace::Log("drop-unit image=%llx unit=%u generation=%llu stamped=%d keys=%d", static_cast<unsigned long long>(descriptor.baseAddress), layer, static_cast<unsigned long long>(layerGeneration[layer]), layer < stampedBlocks.size() && stampedBlocks[layer] != 0, static_cast<int>(keys));
+                if (TraceFlushSmall()) std::fprintf(stderr, "[flush] drop unit image 0x%llx+0x%llx unit %u: generation %llu, produced %llu, mark %s\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), layer, static_cast<unsigned long long>(layerGeneration[layer]), static_cast<unsigned long long>(pendingGeneration[layer]), GuestMemory::WriteMarkerName(GuestMemory::BlockWriteMarker(layerBegin(layer))));
                 layerPending[layer] = false;
                 dropped = true;
                 continue;
@@ -3185,7 +3194,11 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     static const bool eagerSmall = std::getenv("APS5_EAGER_WRITEBACK_SMALL") != nullptr;
-    for (std::uint32_t layer = first; layer < first + count; ++layer) layerPending[layer] = true;
+    const auto produced = GuestMemory::TrackerGeneration();
+    for (std::uint32_t layer = first; layer < first + count; ++layer) {
+        layerPending[layer] = true;
+        pendingGeneration[layer] = produced;
+    }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
@@ -4905,6 +4918,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // Store only the kept ranges' blocks that changed, so concurrent CPU writes to untouched texels
     // survive; `original` follows for the stored layers (the others' guest bytes are unchanged).
     const auto current = host.Bytes();
+    std::uint64_t produced = 0;
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (layers[layer]) produced = std::max(produced, pendingGeneration[layer]);
+    }
+    const GuestMemory::StoreGenerationScope stampScope(StoreStampsNow() ? 0 : produced);
     for (const auto& [from, to] : keep) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
         const auto length = static_cast<std::size_t>(to - from);

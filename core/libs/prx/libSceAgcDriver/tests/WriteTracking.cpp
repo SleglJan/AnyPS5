@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #endif
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -97,6 +98,23 @@ void CheckSharedBlock() {
     const auto repeated = TrackerGeneration();
     for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(base + Block + 0x200, 4);
     Require(!StoredOver(boundary, static_cast<std::size_t>(sharedSecond), repeated), "repeated identical driver stores evict held pieces");
+    const auto before = TrackerGeneration();
+    MarkWritten(base + Block, 4);
+    const auto later = CollectWrites(base, 3 * Block);
+    Require(later > before, "the collect did not advance past the earlier generation");
+    std::array<std::byte, 16> current{};
+    std::array<std::byte, 16> previous{};
+    current.fill(std::byte{0x22});
+    previous.fill(std::byte{0x11});
+    {
+        const StoreGenerationScope scope(before);
+        WriteChangedCommitted(base + 2 * Block + 0x100, current, previous);
+    }
+    Require(static_cast<const std::uint8_t*>(memory)[2 * Block + 0x100] == 0x22, "the store at an older generation did not land");
+    Require(UnchangedSince(base + 2 * Block, Block, later), "a store stamped at an older generation reads as newer than a later collect");
+    Require(StoredOver(base + 2 * Block + 0x100, 16, before - 1), "a store stamped at an older generation is not seen from before it");
+    WriteChangedCommitted(base + 2 * Block + 0x200, current, previous);
+    Require(!UnchangedSince(base + 2 * Block, Block, later), "a store stamped now reads as older than the collect before it");
 
     const auto beforeCpu = CollectWrites(base, 3 * Block);
     static_cast<volatile std::uint8_t*>(memory)[Block + 8] = 0x22;
