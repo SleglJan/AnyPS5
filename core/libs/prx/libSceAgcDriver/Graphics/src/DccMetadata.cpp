@@ -23,6 +23,9 @@
 namespace AgcDriver::Graphics {
 namespace {
 
+std::atomic<std::uint64_t> keyWriterWaits{0};
+std::atomic<std::uint64_t> keyWriterWaitNanoseconds{0};
+
 constexpr std::uint64_t KeyBytes = 256;
 
 // Whether every key in [keys, keys + count) equals `first`. Eight keys per compare: the scan runs
@@ -738,9 +741,16 @@ std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, s
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, count) || PendingStoreKeys(*recorder, metaAddress, count).has_value()) return std::nullopt;
     if (PendingFillsLeaveUncompressed(*recorder, resource, count)) return DccKeys::Uncompressed;
+    const auto started = std::chrono::steady_clock::now();
     Recorder::CountSync(2);
     recorder->SyncThrough(metaAddress, count);
+    keyWriterWaits.fetch_add(1, std::memory_order_relaxed);
+    keyWriterWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     return std::nullopt;
+}
+
+DccKeyWriterWaitCounts DccKeyWriterWaits() {
+    return {keyWriterWaits.load(std::memory_order_relaxed), keyWriterWaitNanoseconds.load(std::memory_order_relaxed)};
 }
 
 }

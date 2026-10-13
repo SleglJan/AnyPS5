@@ -42,6 +42,12 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, st
 // for recorded GPU work that writes the keys first).
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes);
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes, std::size_t keyCount);
+
+struct DccKeyWriterWaitCounts {
+    std::uint64_t waits;
+    std::uint64_t nanoseconds;
+};
+DccKeyWriterWaitCounts DccKeyWriterWaits();
 // The same after a write-back recorded under GuestMemory::GpuMutex: when the keys are in host-imported
 // memory and a recorder is active, the store is a fill recorded into the open batch (ordered behind
 // the title's key-writing kernels like the write-back itself, nothing waits on the CPU) and the range

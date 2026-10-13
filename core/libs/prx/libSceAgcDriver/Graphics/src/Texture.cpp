@@ -5,6 +5,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 // For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -1217,6 +1218,35 @@ RecentFlushRing& RecentFlushes() {
 }
 
 std::atomic<std::uint64_t> flushedBehindWriter{0};
+std::atomic<std::uint64_t> flushWaits{0};
+std::atomic<std::uint64_t> flushWaitNanoseconds{0};
+
+void ReportFlushWaits() {
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
+    if (!report) return;
+    static std::atomic<std::int64_t> reported{0};
+    static std::uint64_t lastBehind = 0;
+    static std::uint64_t lastWaits = 0;
+    static std::uint64_t lastNanoseconds = 0;
+    static std::uint64_t lastKeyWaits = 0;
+    static std::uint64_t lastKeyNanoseconds = 0;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto last = reported.load(std::memory_order_relaxed);
+    if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
+    if (!reported.compare_exchange_strong(last, now)) return;
+    if (last == 0) return;
+    const auto behind = flushedBehindWriter.load(std::memory_order_relaxed);
+    const auto waits = flushWaits.load(std::memory_order_relaxed);
+    const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
+    const auto key = DccKeyWriterWaits();
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s; %llu DCC-key writer waits, %.3f s\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9);
+    lastBehind = behind;
+    lastWaits = waits;
+    lastNanoseconds = nanoseconds;
+    lastKeyWaits = key.waits;
+    lastKeyNanoseconds = key.nanoseconds;
+}
 
 PendingWrites& Pending() {
     static PendingWrites pending;
@@ -3191,10 +3221,17 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
         if (recorder->PendingWriteOverlaps(address, bytes) || recorder->PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased)) {
             flushedBehindWriter.fetch_add(1, std::memory_order_relaxed);
-            Recorder::CountSync(1);
-            recorder->Sync();
+            static const bool wait = std::getenv("APS5_NO_FLUSH_WAIT_NEWER") == nullptr;
+            if (wait) {
+                const auto started = std::chrono::steady_clock::now();
+                Recorder::CountSync(1);
+                recorder->Sync();
+                flushWaits.fetch_add(1, std::memory_order_relaxed);
+                flushWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+            }
         }
     }
+    ReportFlushWaits();
     {
         auto& recent = RecentFlushes();
         std::lock_guard lock(recent.mutex);
