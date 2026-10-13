@@ -336,6 +336,11 @@ struct TableCounters {
     std::atomic<std::uint64_t> codesNanoseconds{0};
     std::atomic<std::uint64_t> maskNanoseconds{0};
     std::atomic<std::uint64_t> hashNanoseconds{0};
+    std::atomic<std::uint64_t> skippedEvaluation{0};
+    std::atomic<std::uint64_t> skippedPending{0};
+    std::atomic<std::uint64_t> skippedLimit{0};
+    std::atomic<std::uint64_t> skippedPages{0};
+    std::atomic<std::uint64_t> skippedLanes{0};
     std::atomic<std::uint64_t> outputsReused{0};
     // Snapshots reused whole (TableSnapshotter::ReuseWhole), and those checked against the full
     // path with their differences (APS5_VERIFY_TABLE_MEMO=1).
@@ -370,9 +375,9 @@ void reportTables() {
         if (count == 0) continue;
         poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
     }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; whole snapshots reused %llu (verified %llu, %llu mismatches); phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f, key masks %.1f, hashes %.1f\n",
+    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped (evaluation %llu, pending writes %llu, scan limit %llu, pages %llu, lane keys off %llu), %.1f ms; column memo %llu hits (%llu skipped the reads, %llu armed, %llu outputs reused), %llu changed words, %llu planned; verified %llu columns, %llu mismatches; whole snapshots reused %llu (verified %llu, %llu mismatches); phases ms: setup %.1f, skip proof+replay %.1f, skip output %.1f, full walks %.1f, codes %.1f, key masks %.1f, hashes %.1f\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
-        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
+        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.skippedEvaluation.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.skippedPending.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.skippedLimit.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.skippedPages.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.skippedLanes.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6,
         static_cast<unsigned long long>(counters.memoHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoSkipped.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoArmed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.outputsReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoChanged.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.memoPlanned.exchange(0, std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.verified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.verifyMismatches.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(counters.wholeReused.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeVerified.load(std::memory_order_relaxed)), static_cast<unsigned long long>(counters.wholeMismatches.load(std::memory_order_relaxed)),
@@ -888,14 +893,15 @@ private:
     }
 
     std::optional<NarrowMask> NarrowKeys(const TableColumn& column, const ColumnRecords& records) {
-        const auto skip = [&] {
+        const auto skip = [&](std::atomic<std::uint64_t>& reason) {
             tableCounters().narrowSkipped.fetch_add(1, std::memory_order_relaxed);
+            reason.fetch_add(1, std::memory_order_relaxed);
             return std::nullopt;
         };
         std::vector<std::uint32_t> values{0u};
         NarrowMask mask;
         for (const auto& domain : column.keyDomains) {
-            if (domain.lane && !TableLaneKeys()) return skip();
+            if (domain.lane && !TableLaneKeys()) return skip(tableCounters().skippedLanes);
             if (domain.value) {
                 DescriptorValue key;
                 SrtReadTrace reads;
@@ -904,13 +910,13 @@ private:
                 try {
                     walker.EvaluateDescriptorSource(plan, domain.source, traced, key);
                 } catch (const std::exception&) {
-                    return skip();
+                    return skip(tableCounters().skippedEvaluation);
                 }
                 if (runtime.readTrace != nullptr) runtime.readTrace->otherReads.insert(runtime.readTrace->otherReads.end(), reads.otherReads.begin(), reads.otherReads.end());
                 std::sort(reads.otherReads.begin(), reads.otherReads.end());
                 reads.otherReads.erase(std::unique(reads.otherReads.begin(), reads.otherReads.end()), reads.otherReads.end());
                 for (const auto address : reads.otherReads) {
-                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) return skip();
+                    if (runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, address, sizeof(std::uint32_t))) return skip(tableCounters().skippedPending);
                     if (!mask.ranges.empty() && mask.ranges.back().first + mask.ranges.back().second == address) mask.ranges.back().second += sizeof(std::uint32_t);
                     else mask.ranges.emplace_back(address, static_cast<std::uint64_t>(sizeof(std::uint32_t)));
                 }
@@ -921,19 +927,19 @@ private:
             try {
                 keyBuffer = EvaluateBuffer(domain.source);
             } catch (const std::exception&) {
-                return skip();
+                return skip(tableCounters().skippedEvaluation);
             }
-            if (keyBuffer.Type() != 0u) return skip();
+            if (keyBuffer.Type() != 0u) return skip(tableCounters().skippedEvaluation);
             const std::uint64_t base = keyBuffer.Base48();
             const std::uint64_t size = keyBuffer.GetSize();
             const std::uint64_t stride = domain.recordStride && keyBuffer.Stride() >= 4u ? keyBuffer.Stride() & ~3u : domain.stride;
             const std::uint64_t first = (domain.offset & ~3u) + static_cast<std::uint64_t>(domain.recordAddend) * stride;
             const std::uint64_t positions = size >= first + 4u ? (size - first - 4u) / stride + 1u : 0u;
-            if (positions > TableKeyScanLimit() || first > 0xffffffffull) return skip();
-            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) return skip();
+            if (positions > TableKeyScanLimit() || first > 0xffffffffull) return skip(tableCounters().skippedLimit);
+            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) return skip(tableCounters().skippedPending);
             for (std::uint64_t index = 0; index < positions; index++) {
                 const auto address = base + first + index * stride;
-                if (!PageAccessible(address, base, base + size)) return skip();
+                if (!PageAccessible(address, base, base + size)) return skip(tableCounters().skippedPages);
                 values.push_back(((Read(address) >> domain.shift) & domain.mask) + domain.addend);
             }
             if (positions != 0u) mask.ranges.emplace_back(base, size);
