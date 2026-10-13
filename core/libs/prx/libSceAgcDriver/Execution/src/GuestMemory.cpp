@@ -874,7 +874,12 @@ struct WriteTracker {
     struct DriverPieces {
         std::uint32_t whole = 0;
         std::uint32_t dropped = 0;
+        std::uint32_t droppedBegin = static_cast<std::uint32_t>(WriteBlockBytes);
+        std::uint32_t droppedEnd = 0;
         std::uint32_t next = 0;
+        [[nodiscard]] bool DroppedOver(std::uint32_t generation, std::uint32_t from, std::uint32_t to) const {
+            return dropped > generation && droppedBegin < to && from < droppedEnd;
+        }
         std::array<DriverPiece, DriverPieceSlots> pieces{};
     };
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
@@ -916,8 +921,13 @@ struct WriteTracker {
             return;
         }
         auto& slot = entry.pieces[entry.next++ % entry.pieces.size()];
-        if (slot.generation != 0) driverPiecesEvicted.fetch_add(1, std::memory_order_relaxed);
-        else driverPiecesInserted.fetch_add(1, std::memory_order_relaxed);
+        if (slot.generation != 0) {
+            driverPiecesEvicted.fetch_add(1, std::memory_order_relaxed);
+            entry.droppedBegin = std::min(entry.droppedBegin, slot.begin);
+            entry.droppedEnd = std::max(entry.droppedEnd, slot.end);
+        } else {
+            driverPiecesInserted.fetch_add(1, std::memory_order_relaxed);
+        }
         entry.dropped = std::max(entry.dropped, slot.generation);
         slot = {stampGeneration, from, to};
     }
@@ -1586,7 +1596,7 @@ bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
         if (const auto pieces = tracker.driverPieces.find(block); pieces != tracker.driverPieces.end()) {
             const auto& entry = pieces->second;
             if (entry.whole > generation) return tell(RangeKnowledge::WholeBlock);
-            if (entry.dropped > generation) return tell(RangeKnowledge::Dropped);
+            if (entry.DroppedOver(static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to))) return tell(RangeKnowledge::Dropped);
             for (const auto& piece : entry.pieces) {
                 if (piece.generation <= generation || piece.begin >= to || from >= piece.end) continue;
                 ranges.emplace_back(begin + piece.begin, begin + piece.end);
@@ -1624,10 +1634,10 @@ bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generati
         const auto found = tracker.driverPieces.find(block);
         if (found == tracker.driverPieces.end()) return true;
         const auto& entry = found->second;
-        if (entry.whole > generation || entry.dropped > generation) return true;
         const auto begin = tracker.blockBegin(block);
         const auto from = std::max(address, begin) - begin;
         const auto to = std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin;
+        if (entry.whole > generation || entry.DroppedOver(static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to))) return true;
         for (const auto& piece : entry.pieces) {
             if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
         }

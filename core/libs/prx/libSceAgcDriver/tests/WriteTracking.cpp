@@ -89,7 +89,11 @@ void CheckSharedBlock() {
 
     const auto many = TrackerGeneration();
     for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(base + Block + static_cast<std::uint64_t>(store) * 64, 4);
-    Require(StoredOver(boundary, static_cast<std::size_t>(sharedSecond), many), "forgotten driver stores are taken as missing the range");
+    Require(!StoredOver(boundary, static_cast<std::size_t>(sharedSecond), many), "forgotten driver stores outside the range are taken as missing it");
+    const auto crossing = TrackerGeneration();
+    for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(boundary + static_cast<std::uint64_t>(store) * 64, 4);
+    Require(StoredOver(boundary, 64, crossing), "a forgotten driver store inside the range is not taken as missing it");
+    Require(!StoredOver(boundary + 0x1000, 0x100, crossing), "a range past the forgotten driver stores reads as stored over");
     const auto repeated = TrackerGeneration();
     for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(base + Block + 0x200, 4);
     Require(!StoredOver(boundary, static_cast<std::size_t>(sharedSecond), repeated), "repeated identical driver stores evict held pieces");
