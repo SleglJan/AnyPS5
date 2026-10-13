@@ -2935,6 +2935,15 @@ bool Recorder::PendingReadKindOverlaps(std::uint64_t address, std::size_t bytes,
     return false;
 }
 
+bool Recorder::OpenReadKindOverlaps(std::uint64_t address, std::size_t bytes, ReadKind kind) const {
+    if (bytes == 0 || open == nullptr) return false;
+    const auto end = address + bytes;
+    for (const auto& read : open->reads) {
+        if (read.kind == kind && address < read.end && read.begin < end) return true;
+    }
+    return false;
+}
+
 std::optional<Recorder::PendingReadInfo> Recorder::DescribePendingRead(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return std::nullopt;
     const auto end = address + bytes;

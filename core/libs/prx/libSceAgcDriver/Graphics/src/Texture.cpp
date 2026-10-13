@@ -1220,6 +1220,7 @@ RecentFlushRing& RecentFlushes() {
 std::atomic<std::uint64_t> flushedBehindWriter{0};
 std::atomic<std::uint64_t> flushWaits{0};
 std::atomic<std::uint64_t> flushWaitNanoseconds{0};
+std::atomic<std::uint64_t> flushWaitsOpen{0};
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
@@ -1235,6 +1236,7 @@ void ReportFlushWaits() {
     static std::atomic<std::int64_t> reported{0};
     static std::uint64_t lastBehind = 0;
     static std::uint64_t lastWaits = 0;
+    static std::uint64_t lastWaitsOpen = 0;
     static std::uint64_t lastNanoseconds = 0;
     static std::uint64_t lastKeyWaits = 0;
     static std::uint64_t lastKeyNanoseconds = 0;
@@ -1247,16 +1249,18 @@ void ReportFlushWaits() {
     if (last == 0) return;
     const auto behind = flushedBehindWriter.load(std::memory_order_relaxed);
     const auto waits = flushWaits.load(std::memory_order_relaxed);
+    const auto waitsOpen = flushWaitsOpen.load(std::memory_order_relaxed);
     const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
     const auto key = DccKeyWriterWaits();
     const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
     const auto keptSmall = keptSmallWriteBacks.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s; %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall));
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastBehind = behind;
     lastWaits = waits;
+    lastWaitsOpen = waitsOpen;
     lastNanoseconds = nanoseconds;
     lastKeyWaits = key.waits;
     lastKeyNanoseconds = key.nanoseconds;
@@ -3241,6 +3245,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             static const bool wait = std::getenv("APS5_NO_FLUSH_WAIT_NEWER") == nullptr;
             recorder->Reap();
             if (wait && behind()) {
+                if (recorder->OpenWriteOverlaps(address, bytes) || recorder->OpenReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased)) flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
                 const auto started = std::chrono::steady_clock::now();
                 Recorder::CountSync(1);
                 recorder->Sync();
