@@ -766,6 +766,8 @@ struct WindowCopy {
     }
 };
 
+thread_local WriteMarker currentWriteMarker = WriteMarker::Other;
+
 #ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation);
 #endif
@@ -783,6 +785,7 @@ struct WriteTracker {
     // late label rule asks whether the CPU touched a label's block, and the driver's own GPU label
     // records in the same block (the title's per-job slots are 0x20 apart) must not count.
     std::vector<std::uint32_t> cpuBlocks;
+    std::vector<std::uint8_t> markers;
     WriteWatchCoverage coverage;
 #else
     static constexpr std::size_t LeafBlocks = std::size_t{1} << 16;
@@ -790,6 +793,7 @@ struct WriteTracker {
     struct Leaf {
         std::array<std::uint32_t, LeafBlocks> blocks{};
         std::array<std::uint32_t, LeafBlocks> cpuBlocks{};
+        std::array<std::uint8_t, LeafBlocks> markers{};
     };
     std::vector<std::unique_ptr<Leaf>> leaves;
 #endif
@@ -825,6 +829,7 @@ struct WriteTracker {
         if (!watched) return;
         blocks.assign(size / WriteBlockBytes + 1, 0);
         cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
+        markers.assign(size / WriteBlockBytes + 1, 0);
         coverage.Initialize(base, size);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
@@ -980,14 +985,26 @@ struct WriteTracker {
     void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
+        const auto marker = static_cast<std::uint8_t>(cpu ? WriteMarker::Cpu : currentWriteMarker);
 #ifdef _WIN32
         if (stored) blocks[block] = stampGeneration;
         if (cpu) cpuBlocks[block] = stampGeneration;
+        if (stored) markers[block] = marker;
 #else
         auto& leaf = leaves[block / LeafBlocks];
         if (leaf == nullptr) leaf = std::make_unique<Leaf>();
         if (stored) leaf->blocks[block % LeafBlocks] = stampGeneration;
         if (cpu) leaf->cpuBlocks[block % LeafBlocks] = stampGeneration;
+        if (stored) leaf->markers[block % LeafBlocks] = marker;
+#endif
+    }
+
+    std::uint8_t markerOf(std::uint64_t block) const {
+#ifdef _WIN32
+        return block < markers.size() ? markers[block] : 0;
+#else
+        const auto& leaf = leaves[block / LeafBlocks];
+        return leaf != nullptr ? leaf->markers[block % LeafBlocks] : 0;
 #endif
     }
 };
@@ -1420,6 +1437,34 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 #endif
         std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
     });
+}
+
+WriteMarker SetWriteMarker(WriteMarker marker) {
+    const auto previous = currentWriteMarker;
+    currentWriteMarker = marker;
+    return previous;
+}
+
+WriteMarker BlockWriteMarker(std::uint64_t address) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    if (!tracker.watched || !tracker.covers(address, 1)) return WriteMarker::None;
+    return static_cast<WriteMarker>(tracker.markerOf(tracker.blockOf(address)));
+}
+
+const char* WriteMarkerName(WriteMarker marker) {
+    switch (marker) {
+    case WriteMarker::None: return "none";
+    case WriteMarker::Cpu: return "cpu";
+    case WriteMarker::AddressBased: return "address-based";
+    case WriteMarker::DirectWrite: return "direct";
+    case WriteMarker::CopyBack: return "copy-back";
+    case WriteMarker::DccKeys: return "dcc";
+    case WriteMarker::Cmask: return "cmask";
+    case WriteMarker::WriteBack: return "write-back";
+    case WriteMarker::Other: return "other";
+    }
+    return "?";
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {

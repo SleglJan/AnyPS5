@@ -75,6 +75,17 @@ bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 // Returns the generation the blocks were stamped with (0 when the arena is not write-watched):
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
+enum class WriteMarker : std::uint8_t { None, Cpu, AddressBased, DirectWrite, CopyBack, DccKeys, Cmask, WriteBack, Other };
+WriteMarker SetWriteMarker(WriteMarker marker);
+struct WriteMarkerScope {
+    WriteMarker previous;
+    explicit WriteMarkerScope(WriteMarker marker) : previous(SetWriteMarker(marker)) {}
+    ~WriteMarkerScope() { SetWriteMarker(previous); }
+    WriteMarkerScope(const WriteMarkerScope&) = delete;
+    WriteMarkerScope& operator=(const WriteMarkerScope&) = delete;
+};
+WriteMarker BlockWriteMarker(std::uint64_t address);
+const char* WriteMarkerName(WriteMarker marker);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);

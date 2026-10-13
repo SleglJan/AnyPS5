@@ -301,6 +301,7 @@ void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vec
 }
 
 void BdaResources::markWrittenPages() const {
+    GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::AddressBased};
     namespace Abi = ShaderRecompiler::BdaAbi;
     auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");

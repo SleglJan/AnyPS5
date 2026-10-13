@@ -235,6 +235,7 @@ void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
 // buffer of 0xff instead. Under GuestMemory::GpuMutex (it records). False when the keys cannot be
 // stored this way (memory the GPU has no view of): the caller stores them on the CPU.
 bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uint64_t begin, std::size_t count) {
+    GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::DccKeys};
     const auto* import = HostImportFor(context, begin, count);
     if (import == nullptr) return false;
     const VkDeviceSize first = begin - import->base;

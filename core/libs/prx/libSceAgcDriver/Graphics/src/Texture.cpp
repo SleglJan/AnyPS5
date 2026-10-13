@@ -4429,6 +4429,7 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
+    const GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::WriteBack};
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -4477,6 +4478,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<std::uint8_t> cpuBlocks(spanBlocks);
     const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
     std::size_t skippedCpu = 0;
+    std::array<std::size_t, 9> skippedMarkers{};
     std::vector<bool> compared(trackedLayers, false);
     if (!tracked) {
         std::vector<bool> saved(trackedLayers, false);
@@ -4513,6 +4515,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                 skippedLayer[layer] = true;
                 ++skipped;
                 if (cpuBlocks[static_cast<std::size_t>((at - spanBegin) / block)] != 0) ++skippedCpu;
+                ++skippedMarkers[static_cast<std::size_t>(GuestMemory::BlockWriteMarker(at))];
                 continue;
             }
             if (!keep.empty() && keep.back().second == from) keep.back().second = to;
@@ -4527,9 +4530,17 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (guestBytes <= SmallImageBytes && skippedCpu == 0) keptSmallByGpu.fetch_add(1, std::memory_order_relaxed);
         if (skippedCpu == 0) keptByGpu.fetch_add(1, std::memory_order_relaxed);
     }
+    std::string markerSummary;
+    for (std::size_t kind = 0; kind < skippedMarkers.size(); ++kind) {
+        if (skippedMarkers[kind] == 0) continue;
+        markerSummary += ' ';
+        markerSummary += GuestMemory::WriteMarkerName(static_cast<GuestMemory::WriteMarker>(kind));
+        markerSummary += ' ';
+        markerSummary += std::to_string(skippedMarkers[kind]);
+    }
     if (skippedAny && (traceKept || TraceFlushSmall())) {
         const auto first = keep.empty() ? descriptor.baseAddress + guestBytes : keep.front().first;
-        std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu written 64 KiB blocks (%zu stamped by the CPU; first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, skippedCpu, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
+        std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu written 64 KiB blocks (%zu stamped by the CPU, newest marks:%s; first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, skippedCpu, markerSummary.c_str(), static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
     // Taken before this write-back stamps anything (see advanceAdjacent), with the 64 KiB block span
     // its stamps cover.

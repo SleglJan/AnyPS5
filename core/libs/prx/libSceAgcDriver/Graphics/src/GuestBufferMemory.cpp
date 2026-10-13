@@ -3837,6 +3837,7 @@ bool GuestBufferMemory::CopiedWritesOverlap(std::uint64_t address, std::size_t b
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {
+    GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::DirectWrite};
     for (const auto& [begin, end] : writes) {
         const auto* found = owner(begin);
         if (found == nullptr) continue;
@@ -3917,6 +3918,7 @@ void GuestBufferMemory::takeHeapReferences() {
 }
 
 void GuestBufferMemory::WriteBack() {
+    GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::CopyBack};
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
