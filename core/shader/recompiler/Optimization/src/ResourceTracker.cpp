@@ -151,7 +151,7 @@ public:
             }
             const auto& column = *m_sources[plan.source].tableColumn;
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
-            if (plan.keyDomain.has_value() && std::find(column.keyDomains.begin(), column.keyDomains.end(), *plan.keyDomain) != column.keyDomains.end()) {
+            if (plan.keyDomain.has_value()) {
                 KeepSourceAlive(plan.keyRead != nullptr ? *plan.keyRead : *plan.handle, m_sources[plan.keyDomain->source], referenced);
             }
         }
