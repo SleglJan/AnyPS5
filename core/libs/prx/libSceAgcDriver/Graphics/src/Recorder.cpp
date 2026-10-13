@@ -2848,6 +2848,22 @@ bool Recorder::PendingReadOverlaps(std::uint64_t address, std::size_t bytes, boo
     return false;
 }
 
+bool Recorder::PendingReadKindOverlaps(std::uint64_t address, std::size_t bytes, ReadKind kind) const {
+    if (bytes == 0) return false;
+    const auto end = address + bytes;
+    const auto overlapsKind = [&](const Batch& batch) {
+        for (const auto& read : batch.reads) {
+            if (read.kind == kind && address < read.end && read.begin < end) return true;
+        }
+        return false;
+    };
+    if (open != nullptr && overlapsKind(*open)) return true;
+    for (const auto& batch : inFlight) {
+        if (overlapsKind(*batch)) return true;
+    }
+    return false;
+}
+
 std::optional<Recorder::PendingReadInfo> Recorder::DescribePendingRead(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return std::nullopt;
     const auto end = address + bytes;

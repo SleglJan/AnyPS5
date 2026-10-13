@@ -3977,6 +3977,7 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     record.z = groups[2];
     if (const auto* limit = state->properties.limits.maxComputeWorkGroupCount; record.x > limit[0] || record.y > limit[1] || record.z > limit[2]) {
         std::fprintf(stderr, "[gpu] indirect dispatch arguments at 0x%llx read %ux%ux%u for shader 0x%llx (cpu reason %u: 1 pending storage flush, 2 pending writer or label, 3 no host import, 8 workgroup memory)\n", static_cast<unsigned long long>(arguments), record.x, record.y, record.z, static_cast<unsigned long long>(record.programAddress), static_cast<unsigned>(outcome.cpuReason));
+        Graphics::StorageTexture::DumpRecentFlushes(arguments, 12);
     }
     // Timed before `arguments` is cleared, so the read counts as an indirect phase.
     timer.phase(PhaseArgumentRead);
