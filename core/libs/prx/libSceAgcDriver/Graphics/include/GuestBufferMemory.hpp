@@ -306,6 +306,8 @@ private:
         // memory; the rest reads as zeros and is never stored.
         bool sparse = false;
         bool sparseHeap = false;
+        // DIAG (APS5_TRACE_IMPORT_MISS): why bindSparseMirror left a sparse heap to the CPU copy.
+        const char* sparseRefusal = nullptr;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> backed {};
         std::uint64_t lastView = 0;
         std::uint64_t bufferEnd = 0;

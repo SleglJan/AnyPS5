@@ -2519,7 +2519,10 @@ bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations:
     const auto backedEnd = region.backed.empty() ? region.begin : region.backed.back().second;
     const auto neededEnd = std::min(region.end, std::max(backedEnd, std::max(region.lastView, region.begin) + 4u));
     const auto* range = containingRange(lease, region.begin, neededEnd);
-    if (range == nullptr || !range->releasable) return false;
+    if (range == nullptr || !range->releasable) {
+        region.sparseRefusal = range == nullptr ? "no registered range holds the needed extent" : "its registered range is not releasable";
+        return false;
+    }
     std::vector<RefreshBlock> blocks;
     std::shared_ptr<ImageMirror> mirror;
     try {
@@ -2527,6 +2530,7 @@ bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations:
     } catch (const std::runtime_error& error) {
         static std::atomic<int> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[gpu] %s; copying the sparse heap instead\n", error.what());
+        region.sparseRefusal = "mirror acquisition threw";
         return false;
     }
     if (mirror != nullptr && mirror->heap && !mirror->sparse) {
@@ -2534,10 +2538,14 @@ bool GuestBufferMemory::bindSparseMirror(Region& region, const GuestAllocations:
         refreshHeapMirrors(whole, blocks);
     }
     compareBlocks(blocks);
-    if (mirror == nullptr || !mirror->heap || region.begin < mirror->base || (region.begin - mirror->base) % context.limits.minStorageBufferOffsetAlignment != 0) return false;
+    if (mirror == nullptr || !mirror->heap || region.begin < mirror->base || (region.begin - mirror->base) % context.limits.minStorageBufferOffsetAlignment != 0) {
+        region.sparseRefusal = mirror == nullptr ? "no mirror for the range" : !mirror->heap ? "the mirror is not a heap mirror" : region.begin < mirror->base ? "the region starts before the mirror" : "the region is misaligned in the mirror";
+        return false;
+    }
     region.mirror = std::move(mirror);
     if (!servesView(region, std::max(region.lastView, region.begin))) {
         region.mirror = nullptr;
+        region.sparseRefusal = "the mirror does not reach the last view";
         return false;
     }
     if (region.mirror->sparse) region.backed = clipPieces(region.mirror->committed, region.begin, region.end);
@@ -3202,9 +3210,148 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     }
 }
 
+namespace {
+
+// DIAG: APS5_TRACE_IMPORT_MISS=1 says why a region of 1 MiB or more is copied on the CPU instead of
+// bound from an import: whether a registered range holds it, whether one import run covers it (then
+// its alignment, a remembered failure or the budget), or why the registered ranges it crosses do not
+// join (a gap, other access flags, a joined run's alignment, failure or budget). Classified once per
+// 256 MiB granule every 10 s (the lease copies the registry), counted per reason and granule, and
+// reported every 10 s with an example of each.
+bool TraceImportMiss() {
+    static const bool trace = std::getenv("APS5_TRACE_IMPORT_MISS") != nullptr;
+    return trace;
+}
+
+void noteImportMiss(const Context& context, std::uint64_t begin, std::uint64_t end, const char* sparseRefusal) {
+    struct Miss {
+        std::uint64_t regions = 0;
+        std::uint64_t bytes = 0;
+        std::string example;
+    };
+    struct Granule {
+        std::string reason;
+        std::chrono::steady_clock::time_point classified{};
+    };
+    static std::mutex mutex;
+    static std::map<std::pair<std::string, std::uint64_t>, Miss> misses;
+    static std::map<std::uint64_t, Granule> granules;
+    static auto reported = std::chrono::steady_clock::now();
+    const auto granule = begin >> 28u;
+    const auto now = std::chrono::steady_clock::now();
+    std::string reason;
+    std::string example;
+    const auto slot = granule << 1u | (sparseRefusal != nullptr ? 1u : 0u);
+    bool classify = true;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = granules.find(slot); found != granules.end() && now - found->second.classified < std::chrono::seconds(10)) {
+            classify = false;
+            reason = found->second.reason;
+        }
+    }
+    if (sparseRefusal != nullptr) reason = std::string("sparse heap: ") + sparseRefusal;
+    if (classify && sparseRefusal != nullptr) {
+        // The registered ranges the heap crosses: how many, how many readable (committed), and in
+        // how many address-contiguous runs of equal access a mirror or import could span.
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        const auto first = std::upper_bound(lease.begin(), lease.end(), begin, [](std::uint64_t value, const auto& range) { return value < range->address; });
+        std::size_t ranges = 0;
+        std::size_t readable = 0;
+        std::size_t runs = 0;
+        std::uint64_t readableBytes = 0;
+        std::uint64_t largest = 0;
+        std::uint64_t allocation = 0;
+        std::uint64_t allocationBytes = 0;
+        bool oneAllocation = true;
+        const GuestAllocations::Range* previous = nullptr;
+        for (auto at = first == lease.begin() ? first : std::prev(first); at != lease.end() && (*at)->address < end; ++at) {
+            const auto& range = **at;
+            if (range.address + range.bytes <= begin) continue;
+            if (ranges++ == 0) {
+                allocation = range.allocationAddress;
+                allocationBytes = range.allocationBytes;
+            } else if (range.allocationAddress != allocation) {
+                oneAllocation = false;
+            }
+            if (range.readable) {
+                ++readable;
+                readableBytes += range.bytes;
+                largest = std::max<std::uint64_t>(largest, range.bytes);
+                if (previous == nullptr || !continuesRun(*previous, range)) ++runs;
+                previous = &range;
+            } else {
+                previous = nullptr;
+            }
+        }
+        char text[240];
+        std::snprintf(text, sizeof(text), "%zu registered ranges, %zu readable (%.1f MiB, largest %.1f MiB) in %zu runs, %s 0x%llx+0x%llx", ranges, readable, static_cast<double>(readableBytes) / 1048576.0, static_cast<double>(largest) / 1048576.0, runs, oneAllocation ? "one allocation" : "several allocations, first", static_cast<unsigned long long>(allocation), static_cast<unsigned long long>(allocationBytes));
+        example = text;
+    } else if (classify) {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        const auto alignment = context.hostImportAlignment;
+        char text[160];
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        const auto index = leasedIndexContaining(lease, begin);
+        if (alignment == 0) {
+            reason = "no host import support";
+        } else if (index == lease.size()) {
+            reason = "not in a registered range";
+        } else if (findImport(state, begin, end) != nullptr) {
+            reason = "an import covers it";
+        } else if (runCovers(lease, begin, end)) {
+            const auto run = importRun(lease, begin);
+            if (run.base % alignment != 0 || run.bytes % alignment != 0) reason = "run misaligned";
+            else if (state.failed.contains(run.base)) reason = "run import failed before";
+            else if (state.liveBytes + run.bytes > importBudget()) reason = "run over the budget";
+            else reason = "run importable, not imported";
+            std::snprintf(text, sizeof(text), "run 0x%llx+0x%llx", static_cast<unsigned long long>(run.base), static_cast<unsigned long long>(run.bytes));
+            example = text;
+        } else {
+            std::size_t ranges = 0;
+            bool gap = false;
+            bool flags = false;
+            for (auto at = index; at < lease.size() && lease[at]->address < end; ++at) {
+                ++ranges;
+                if (at == index) continue;
+                const auto& before = *lease[at - 1];
+                const auto& after = *lease[at];
+                if (before.address + before.bytes != after.address) gap = true;
+                else if (!continuesRun(before, after)) flags = true;
+            }
+            const auto joined = joinedRun(lease, begin, end);
+            if (joined.ranges.empty()) reason = gap ? "crosses a gap between registered ranges" : flags ? "crosses registered ranges with other access flags" : "crosses registered ranges that do not join";
+            else if (joined.base % alignment != 0 || joined.bytes % alignment != 0) reason = "joined run misaligned";
+            else if (state.failedJoins.contains(joined.base)) reason = "joined import failed before";
+            else if (state.liveBytes - overlappedImportBytes(state, joined.base, joined.bytes) + joined.bytes > importBudget()) reason = "joined run over the budget";
+            else reason = "joined run importable, not imported";
+            std::snprintf(text, sizeof(text), "%zu registered ranges, first 0x%llx+0x%llx", ranges, static_cast<unsigned long long>(lease[index]->address), static_cast<unsigned long long>(lease[index]->bytes));
+            example = text;
+        }
+    }
+    std::lock_guard lock(mutex);
+    if (classify) granules[slot] = {reason, now};
+    auto& miss = misses[{reason, granule}];
+    ++miss.regions;
+    miss.bytes += end - begin;
+    if (!example.empty()) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "0x%llx+0x%llx: ", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin));
+        miss.example = text + example;
+    }
+    if (now - reported < std::chrono::seconds(10)) return;
+    reported = now;
+    for (const auto& [key, counted] : misses) std::fprintf(stderr, "[import-miss] (10 s) 0x%llx0000000 %s: %llu regions, %.0f MiB copied on the CPU%s%s\n", static_cast<unsigned long long>(key.second), key.first.c_str(), static_cast<unsigned long long>(counted.regions), static_cast<double>(counted.bytes) / (1024.0 * 1024.0), counted.example.empty() ? "" : "; e.g. ", counted.example.c_str());
+    misses.clear();
+}
+
+}
+
 void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto bytes = region.end - region.begin;
+    if (TraceImportMiss() && bytes >= (1u << 20u)) noteImportMiss(context, region.begin, region.end, region.sparseHeap ? (region.sparseRefusal != nullptr ? region.sparseRefusal : "sparse heap, mirror not tried") : nullptr);
     const auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (addressable ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     std::uint64_t readBytes = 0;
     bool inImport = false;
