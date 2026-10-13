@@ -1966,7 +1966,10 @@ bool OpportunisticReap() {
 }
 
 void VulkanDevice::StoreIdleResults(bool reapFirst) {
-    if (!Graphics::StorageTexture::AnyPending()) return;
+    static const bool disabled = std::getenv("APS5_NO_IDLE_STORE") != nullptr;
+    if (disabled || !Graphics::StorageTexture::AnyPending()) return;
+    static const bool trace = std::getenv("APS5_TRACE_FLUSH_SMALL") != nullptr;
+    if (trace) std::fprintf(stderr, "[flush] idle store\n");
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     Graphics::StorageTexture::FlushAllPending("idle");
