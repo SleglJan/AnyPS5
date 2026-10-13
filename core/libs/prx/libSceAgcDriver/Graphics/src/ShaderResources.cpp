@@ -557,6 +557,80 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
 std::optional<std::uint64_t> releaseTextureHolders();
 
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
+// DIAG: APS5_TRACE_TEXTURE_REMAKES=<seconds> counts, per surface, why a sampled lookup made a texture (no entry,
+// an uncached snapshot nothing held any more, pending storage results replacing a snapshot, a view that
+// ended, size, DCC keys, or the bytes written since), whether the cache admitted it, and for a snapshot
+// why it could not be a storage view; reported every <seconds> (0, or a value that does not parse, reports
+// at every texture made) with the eight surfaces made most often.
+struct TextureRemakes {
+    enum Reason : std::size_t { NoEntry, UncachedGone, PendingResults, ViewEnded, Size, Keys, Written, ReasonCount };
+    enum Snapshot : std::size_t { NotSnapshot, BlockCompressed, NoStorageFormat, NotImported, ClearKeys, Eligible, SnapshotCount };
+    struct Surface {
+        std::array<std::uint64_t, ReasonCount> reasons{};
+        std::array<std::uint64_t, SnapshotCount> snapshots{};
+        std::uint64_t made = 0, views = 0, notAdmitted = 0, bytes = 0;
+        std::uint32_t width = 0, height = 0, format = 0, mips = 0;
+    };
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, Surface> surfaces;
+    Surface totals;
+    std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
+};
+
+bool TraceTextureRemakes() {
+    static const bool trace = std::getenv("APS5_TRACE_TEXTURE_REMAKES") != nullptr;
+    return trace;
+}
+
+void NoteTextureMade(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes, TextureRemakes::Reason reason, bool view, DccKeys keys, bool admitted) {
+    static TextureRemakes remakes;
+    auto snapshot = TextureRemakes::NotSnapshot;
+    if (!view) {
+        if (IsBlockCompressed(resource.format)) snapshot = TextureRemakes::BlockCompressed;
+        else if (!StorageFormatAvailable(context, resource.format)) snapshot = TextureRemakes::NoStorageFormat;
+        else if (!HostImportCovers(context, resource.baseAddress, static_cast<std::size_t>(guestBytes))) snapshot = TextureRemakes::NotImported;
+        else if (keys != DccKeys::Uncompressed) snapshot = TextureRemakes::ClearKeys;
+        else snapshot = TextureRemakes::Eligible;
+    }
+    std::lock_guard lock(remakes.mutex);
+    for (auto* surface : {&remakes.totals, &remakes.surfaces[resource.baseAddress]}) {
+        ++surface->made;
+        surface->views += view ? 1u : 0u;
+        surface->notAdmitted += admitted ? 0u : 1u;
+        surface->bytes += guestBytes;
+        ++surface->reasons[reason];
+        ++surface->snapshots[snapshot];
+        surface->width = resource.width;
+        surface->height = resource.height;
+        surface->format = resource.format;
+        surface->mips = resource.mipCount;
+    }
+    static const auto interval = std::chrono::seconds(std::strtoul(std::getenv("APS5_TRACE_TEXTURE_REMAKES"), nullptr, 10));
+    const auto now = std::chrono::steady_clock::now();
+    if (now - remakes.reported < interval) return;
+    remakes.reported = now;
+    const auto describe = [](const TextureRemakes::Surface& surface) {
+        char text[512];
+        std::snprintf(text, sizeof(text), "made %llu (%llu views, %llu not admitted, %.1f MiB); because: no entry %llu, uncached gone %llu, pending results %llu, view ended %llu, size %llu, keys %llu, written %llu; snapshots: block-compressed %llu, no storage format %llu, not imported %llu, clear keys %llu, view-eligible %llu",
+                      static_cast<unsigned long long>(surface.made), static_cast<unsigned long long>(surface.views), static_cast<unsigned long long>(surface.notAdmitted), static_cast<double>(surface.bytes) / (1024.0 * 1024.0),
+                      static_cast<unsigned long long>(surface.reasons[TextureRemakes::NoEntry]), static_cast<unsigned long long>(surface.reasons[TextureRemakes::UncachedGone]), static_cast<unsigned long long>(surface.reasons[TextureRemakes::PendingResults]),
+                      static_cast<unsigned long long>(surface.reasons[TextureRemakes::ViewEnded]), static_cast<unsigned long long>(surface.reasons[TextureRemakes::Size]), static_cast<unsigned long long>(surface.reasons[TextureRemakes::Keys]),
+                      static_cast<unsigned long long>(surface.reasons[TextureRemakes::Written]), static_cast<unsigned long long>(surface.snapshots[TextureRemakes::BlockCompressed]), static_cast<unsigned long long>(surface.snapshots[TextureRemakes::NoStorageFormat]),
+                      static_cast<unsigned long long>(surface.snapshots[TextureRemakes::NotImported]), static_cast<unsigned long long>(surface.snapshots[TextureRemakes::ClearKeys]), static_cast<unsigned long long>(surface.snapshots[TextureRemakes::Eligible]));
+        return std::string(text);
+    };
+    std::fprintf(stderr, "[texremake] %llu s: %s\n", static_cast<unsigned long long>(interval.count()), describe(remakes.totals).c_str());
+    std::vector<std::pair<std::uint64_t, const TextureRemakes::Surface*>> top;
+    for (const auto& [address, surface] : remakes.surfaces) top.emplace_back(address, &surface);
+    std::partial_sort(top.begin(), top.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(8, top.size())), top.end(), [](const auto& a, const auto& b) { return a.second->made > b.second->made; });
+    for (std::size_t i = 0; i < std::min<std::size_t>(8, top.size()); ++i) {
+        const auto& surface = *top[i].second;
+        std::fprintf(stderr, "[texremake]   0x%llx %ux%u format %u mips %u: %s\n", static_cast<unsigned long long>(top[i].first), surface.width, surface.height, surface.format, surface.mips, describe(surface).c_str());
+    }
+    remakes.surfaces.clear();
+    remakes.totals = {};
+}
+
 std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, std::uint64_t guestBytes = 0, bool depthCompare = false) {
     CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
     if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->BoundKeptBytes();
@@ -674,6 +748,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
     std::unique_lock lock(cache.mutex);
     dropUncachedViews(cache);
+    auto remakeReason = TextureRemakes::NoEntry;
     if (auto it = findTexture(cache, key); it != cache.entries.end()) {
         if (it->source != nullptr) {
             // The view follows the storage image, whatever the GPU wrote to it since; guest memory
@@ -707,12 +782,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 return it->texture;
             }
         }
+        remakeReason = it->source != nullptr ? TextureRemakes::ViewEnded : source != nullptr ? TextureRemakes::PendingResults : it->bytes.size() != guestBytes ? TextureRemakes::Size : it->keys != *keys ? TextureRemakes::Keys : TextureRemakes::Written;
         eraseTexture(cache, it);
         ++cache.counts.stale;
     }
     if (source == nullptr) {
         if (const auto found = cache.uncachedSnapshots.find(key); found != cache.uncachedSnapshots.end()) {
             const auto& held = found->second;
+            if (remakeReason == TextureRemakes::NoEntry) remakeReason = held.texture.expired() ? TextureRemakes::UncachedGone : held.bytes != guestBytes ? TextureRemakes::Size : held.keys != *keys ? TextureRemakes::Keys : TextureRemakes::Written;
             if (auto live = held.texture.lock(); live != nullptr && held.bytes == guestBytes && held.keys == *keys && (*keys != DccKeys::Uncompressed || GuestMemory::UnchangedSince(address, bytes, held.generation))) {
                 ++cache.counts.uncachedReused;
                 logLookup({live.get(), resource, guestBytes, *keys, held.generation, nullptr});
@@ -775,6 +852,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
+        if (TraceTextureRemakes()) NoteTextureMade(context, resource, guestBytes, remakeReason, source != nullptr, *keys, false);
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
         return texture;
     }
@@ -788,6 +866,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (source != nullptr) cache.views.emplace(source.get(), cache.entries.begin());
     reportCacheCounts(cache, budget);
     reportTextureCounters();
+    if (TraceTextureRemakes()) NoteTextureMade(context, resource, guestBytes, remakeReason, source != nullptr, *keys, true);
     if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
     return texture;
 }
