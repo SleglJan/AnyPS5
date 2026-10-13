@@ -763,7 +763,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         const auto vkFormat = SampledTextureFormat(context, descriptor.format);
         const auto geometry = DescribeSurface(descriptor);
         APS5_LOG_OUT("Texture address=0x%llx %ux%u mips=%u viewed from storage image (vk=%d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, static_cast<int>(vkFormat));
-        if (TraceFlushSmall() && source->GuestBytes() <= 4096) std::fprintf(stderr, "[flush] view image 0x%llx+0x%llx %ux%u: pending %d, last upload %s\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(source->GuestBytes()), descriptor.width, descriptor.height, source->AnyPending() ? 1 : 0, source->LastUploadReason());
+        if (TraceFlushSmall() && source->GuestBytes() <= 4096) std::fprintf(stderr, "[flush] view image 0x%llx+0x%llx %ux%u: pending %d, last upload %s\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(source->GuestBytes()), descriptor.width, descriptor.height, source->HasPendingResults() ? 1 : 0, source->LastUploadReason());
         // Storage images stay in the general layout; the view samples them there.
         layout = VK_IMAGE_LAYOUT_GENERAL;
         const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
@@ -3335,7 +3335,7 @@ std::uint64_t StorageTexture::FlushesBehindWriters() {
     return flushedBehindWriter.load(std::memory_order_relaxed);
 }
 
-bool StorageTexture::AnyPending() const {
+bool StorageTexture::HasPendingResults() const {
     return std::any_of(layerPending.begin(), layerPending.end(), [](bool pending) { return pending; });
 }
 
