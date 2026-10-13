@@ -88,8 +88,11 @@ void CheckSharedBlock() {
     Require(!StoredOver(boundary, static_cast<std::size_t>(sharedSecond), afterWhole), "a partial store after a whole-block store is taken for the whole block");
 
     const auto many = TrackerGeneration();
-    for (int store = 0; store < 6; ++store) MarkWritten(base + Block + static_cast<std::uint64_t>(store) * 64, 4);
+    for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(base + Block + static_cast<std::uint64_t>(store) * 64, 4);
     Require(StoredOver(boundary, static_cast<std::size_t>(sharedSecond), many), "forgotten driver stores are taken as missing the range");
+    const auto repeated = TrackerGeneration();
+    for (std::size_t store = 0; store < DriverPieceSlots + 2; ++store) MarkWritten(base + Block + 0x200, 4);
+    Require(!StoredOver(boundary, static_cast<std::size_t>(sharedSecond), repeated), "repeated identical driver stores evict held pieces");
 
     const auto beforeCpu = CollectWrites(base, 3 * Block);
     static_cast<volatile std::uint8_t*>(memory)[Block + 8] = 0x22;

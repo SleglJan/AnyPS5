@@ -767,6 +767,9 @@ struct WindowCopy {
 };
 
 thread_local WriteMarker currentWriteMarker = WriteMarker::Other;
+std::atomic<std::uint64_t> driverPiecesDeduped{0};
+std::atomic<std::uint64_t> driverPiecesInserted{0};
+std::atomic<std::uint64_t> driverPiecesEvicted{0};
 
 #ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation);
@@ -872,7 +875,7 @@ struct WriteTracker {
         std::uint32_t whole = 0;
         std::uint32_t dropped = 0;
         std::uint32_t next = 0;
-        std::array<DriverPiece, 16> pieces{};
+        std::array<DriverPiece, DriverPieceSlots> pieces{};
     };
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
 
@@ -906,7 +909,15 @@ struct WriteTracker {
             return;
         }
         auto& entry = driverPieces[block];
+        for (auto& piece : entry.pieces) {
+            if (piece.generation == 0 || from > piece.begin || to < piece.end) continue;
+            piece = {std::max(piece.generation, stampGeneration), from, to};
+            driverPiecesDeduped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         auto& slot = entry.pieces[entry.next++ % entry.pieces.size()];
+        if (slot.generation != 0) driverPiecesEvicted.fetch_add(1, std::memory_order_relaxed);
+        else driverPiecesInserted.fetch_add(1, std::memory_order_relaxed);
         entry.dropped = std::max(entry.dropped, slot.generation);
         slot = {stampGeneration, from, to};
     }
@@ -1443,6 +1454,10 @@ WriteMarker SetWriteMarker(WriteMarker marker) {
     const auto previous = currentWriteMarker;
     currentWriteMarker = marker;
     return previous;
+}
+
+DriverPieceCounts DriverPieceStats() {
+    return {driverPiecesDeduped.load(std::memory_order_relaxed), driverPiecesInserted.load(std::memory_order_relaxed), driverPiecesEvicted.load(std::memory_order_relaxed)};
 }
 
 WriteMarker BlockWriteMarker(std::uint64_t address) {

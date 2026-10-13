@@ -77,6 +77,7 @@ bool UnchangedSinceAll(std::span<const UnchangedQuery> queries);
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
 enum class WriteMarker : std::uint8_t { None, Cpu, AddressBased, DirectWrite, CopyBack, DccKeys, Cmask, WriteBack, Other, DirectLate, CopyBackGpu };
 constexpr std::size_t WriteMarkerCount = 11;
+constexpr std::size_t DriverPieceSlots = 16;
 WriteMarker SetWriteMarker(WriteMarker marker);
 struct WriteMarkerScope {
     WriteMarker previous;
@@ -86,6 +87,12 @@ struct WriteMarkerScope {
     WriteMarkerScope& operator=(const WriteMarkerScope&) = delete;
 };
 WriteMarker BlockWriteMarker(std::uint64_t address);
+struct DriverPieceCounts {
+    std::uint64_t deduped = 0;
+    std::uint64_t inserted = 0;
+    std::uint64_t evicted = 0;
+};
+DriverPieceCounts DriverPieceStats();
 std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 enum class RangeKnowledge : std::uint8_t { Exact, WholeBlock, Dropped, Unknown, Untracked };
 bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, RangeKnowledge* knowledge = nullptr);
