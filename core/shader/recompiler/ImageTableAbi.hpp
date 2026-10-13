@@ -53,7 +53,7 @@ inline constexpr std::uint32_t FirstEntryPoison = 2;
 inline constexpr std::uint32_t MaxKeys = 65536;
 inline constexpr std::uint32_t MaxModes = 256;
 inline constexpr std::uint32_t ImageElementBudget = 65536;
-inline constexpr std::uint32_t StorageElementBudget = 1024;
+inline constexpr std::uint32_t StorageElementBudget = 8192;
 inline constexpr std::uint32_t SamplerElementBudget = 1024;
 
 enum class PoisonReason : std::uint32_t {
