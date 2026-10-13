@@ -523,7 +523,16 @@ std::uint64_t forcedCacheBudget() {
     return forced;
 }
 
+// APS5_STORAGE_CACHE_MIB sizes the storage-image cache apart from the sampled one: 007's menu touches
+// more storage images per frame (render targets sub-allocated from one region, a few surfaces per
+// address) than the 1024 MiB both caches get from APS5_TEXTURE_CACHE_MIB, so each frame evicted and
+// recreated them in LRU order. Unset, the storage budget follows APS5_TEXTURE_CACHE_MIB as before.
 std::uint64_t storageBudget(const Context& context) {
+    static const std::uint64_t storage = [] {
+        const char* text = std::getenv("APS5_STORAGE_CACHE_MIB");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) << 20u : 0u;
+    }();
+    if (storage != 0) return storage;
     const auto forced = forcedCacheBudget();
     return forced != 0 ? forced : TextureCacheBudget(context.memory);
 }
@@ -899,7 +908,17 @@ struct StorageTextureCache {
     std::unordered_map<StorageKey, std::list<CachedStorageTexture>::iterator, StorageKeyHash> index;
     std::unordered_map<const StorageTexture*, std::list<CachedStorageTexture>::iterator> byImage;
     std::atomic<std::uint64_t> bytes{0};
+    // DIAG (APS5_PROFILE_DRAW or APS5_TRACE_STORAGE_CACHE): budget evictions, and the keys made again
+    // within 2 s of their budget eviction (a working set larger than the budget), under the mutex.
+    std::unordered_map<StorageKey, std::chrono::steady_clock::time_point, StorageKeyHash> budgetEvicted;
+    std::uint64_t created = 0, hits = 0, evictedByBudget = 0, evictedBytes = 0, recreatedSoon = 0, recreatedBytes = 0;
+    std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
 };
+
+bool TraceStorageCache() {
+    static const bool trace = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
+    return trace;
+}
 
 StorageTextureCache& StorageTextures() {
     static StorageTextureCache cache;
@@ -1101,6 +1120,7 @@ std::shared_ptr<StorageTexture> lookupStorageTexture(const Context& context, std
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
             texture = it->texture;
             counters.storageHits.fetch_add(1, std::memory_order_relaxed);
+            ++cache.hits;
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
         } else {
             if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
@@ -1128,7 +1148,35 @@ std::shared_ptr<StorageTexture> lookupStorageTexture(const Context& context, std
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
             const auto budget = storageBudget(context);
-            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+            const bool trace = TraceStorageCache();
+            const auto now = trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            if (trace) {
+                ++cache.created;
+                if (const auto found = cache.budgetEvicted.find(key); found != cache.budgetEvicted.end()) {
+                    if (now - found->second < std::chrono::seconds(2)) {
+                        ++cache.recreatedSoon;
+                        cache.recreatedBytes += entry.accounted;
+                    }
+                    cache.budgetEvicted.erase(found);
+                }
+            }
+            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) {
+                if (trace) {
+                    const auto& last = cache.entries.back();
+                    ++cache.evictedByBudget;
+                    cache.evictedBytes += last.accounted;
+                    if (cache.budgetEvicted.size() >= 65536) std::erase_if(cache.budgetEvicted, [&](const auto& held) { return now - held.second >= std::chrono::seconds(2); });
+                    cache.budgetEvicted[last.key] = now;
+                }
+                evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+            }
+            if (trace && now - cache.reported >= std::chrono::seconds(10)) {
+                std::fprintf(stderr, "[storage-cache] (%.0f s): %llu created, %llu hits; %llu evicted by the budget (%.0f MiB), %llu made again within 2 s of that (%.0f MiB); %.0f MiB in %zu entries, budget %llu MiB\n",
+                             std::chrono::duration<double>(now - cache.reported).count(), static_cast<unsigned long long>(cache.created), static_cast<unsigned long long>(cache.hits), static_cast<unsigned long long>(cache.evictedByBudget), static_cast<double>(cache.evictedBytes) / (1024.0 * 1024.0),
+                             static_cast<unsigned long long>(cache.recreatedSoon), static_cast<double>(cache.recreatedBytes) / (1024.0 * 1024.0), static_cast<double>(cache.bytes.load()) / (1024.0 * 1024.0), cache.entries.size(), static_cast<unsigned long long>(budget >> 20u));
+                cache.reported = now;
+                cache.created = cache.hits = cache.evictedByBudget = cache.evictedBytes = cache.recreatedSoon = cache.recreatedBytes = 0;
+            }
             cache.bytes += entry.accounted;
             texture = entry.texture;
             cache.entries.push_front(std::move(entry));
