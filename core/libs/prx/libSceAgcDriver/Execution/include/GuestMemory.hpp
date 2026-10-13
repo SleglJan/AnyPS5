@@ -91,6 +91,9 @@ struct DriverPieceCounts {
     std::uint64_t deduped = 0;
     std::uint64_t inserted = 0;
     std::uint64_t evicted = 0;
+    std::uint64_t droppedWithin64 = 0;
+    std::uint64_t droppedWithin256 = 0;
+    std::uint64_t droppedBeyond256 = 0;
 };
 DriverPieceCounts DriverPieceStats();
 std::uint64_t MarkWrittenSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);

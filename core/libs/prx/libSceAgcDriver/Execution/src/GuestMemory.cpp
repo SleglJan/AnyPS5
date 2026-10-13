@@ -770,6 +770,9 @@ thread_local WriteMarker currentWriteMarker = WriteMarker::Other;
 std::atomic<std::uint64_t> driverPiecesDeduped{0};
 std::atomic<std::uint64_t> driverPiecesInserted{0};
 std::atomic<std::uint64_t> driverPiecesEvicted{0};
+std::atomic<std::uint64_t> droppedWithin64{0};
+std::atomic<std::uint64_t> droppedWithin256{0};
+std::atomic<std::uint64_t> droppedBeyond256{0};
 
 #ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation);
@@ -1467,7 +1470,7 @@ WriteMarker SetWriteMarker(WriteMarker marker) {
 }
 
 DriverPieceCounts DriverPieceStats() {
-    return {driverPiecesDeduped.load(std::memory_order_relaxed), driverPiecesInserted.load(std::memory_order_relaxed), driverPiecesEvicted.load(std::memory_order_relaxed)};
+    return {driverPiecesDeduped.load(std::memory_order_relaxed), driverPiecesInserted.load(std::memory_order_relaxed), driverPiecesEvicted.load(std::memory_order_relaxed), droppedWithin64.load(std::memory_order_relaxed), droppedWithin256.load(std::memory_order_relaxed), droppedBeyond256.load(std::memory_order_relaxed)};
 }
 
 WriteMarker BlockWriteMarker(std::uint64_t address) {
@@ -1596,7 +1599,10 @@ bool WrittenRangesSince(std::uint64_t address, std::size_t bytes, std::uint64_t 
         if (const auto pieces = tracker.driverPieces.find(block); pieces != tracker.driverPieces.end()) {
             const auto& entry = pieces->second;
             if (entry.whole > generation) return tell(RangeKnowledge::WholeBlock);
-            if (entry.DroppedOver(static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to))) return tell(RangeKnowledge::Dropped);
+            if (entry.DroppedOver(static_cast<std::uint32_t>(generation), static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to))) {
+                (entry.next <= 64u ? droppedWithin64 : entry.next <= 256u ? droppedWithin256 : droppedBeyond256).fetch_add(1, std::memory_order_relaxed);
+                return tell(RangeKnowledge::Dropped);
+            }
             for (const auto& piece : entry.pieces) {
                 if (piece.generation <= generation || piece.begin >= to || from >= piece.end) continue;
                 ranges.emplace_back(begin + piece.begin, begin + piece.end);
