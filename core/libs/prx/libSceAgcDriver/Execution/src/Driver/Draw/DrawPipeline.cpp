@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -108,10 +110,15 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 }
 
 void DrawPipeline::run() {
+    // DIAG: under APS5_TRACE_FRAMES / APS5_TRACE_SECONDS the committer is a traced thread: its wait for
+    // a draw and each commit are slices, and the timers inside the commit (the GPU lock wait, the
+    // resource builds and proofs, recorder syncs) nest under them.
+    if (PerformanceTrace::Configured()) PerformanceTrace::BindThread("draw committer");
     for (;;) {
         Commit* commit = nullptr;
         std::uint64_t epoch = 0;
         {
+            PerformanceTimer waiting("Committer.WaitDraw");
             std::unique_lock lock(mutex);
             committerWaiting = true;
             wake.wait(lock, [&] { return !items.empty(); });
@@ -119,6 +126,7 @@ void DrawPipeline::run() {
             commit = &items.front().commit;
             epoch = items.front().epoch;
         }
+        PerformanceTimer committing("Committer.Commit");
         const auto start = std::chrono::steady_clock::now();
         std::exception_ptr fatal;
         bool failed = false;
@@ -133,6 +141,7 @@ void DrawPipeline::run() {
             fatal = std::current_exception();
         }
         const auto spent = elapsedNs(start);
+        committing.Finish();
         std::lock_guard lock(mutex);
         items.pop_front();
         ++commits;

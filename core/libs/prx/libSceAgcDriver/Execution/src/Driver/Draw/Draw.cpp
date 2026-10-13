@@ -402,6 +402,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         auto preparedKey = prepareDrawKey();
         phaseTiming.Phase(DrawRowKeyLookupValidate);
         auto writes = drawWriteRanges(graphics, stages);
+        timing.Mark("draw_key_prepared");
         const auto commitQueue = submission.queue;
         const auto commitPacket = (packet[0] >> 8u) & 0xffu;
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
@@ -441,7 +442,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
 
 void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const Graphics::ResourceCache::Key& preparedKey) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+    std::optional<PerformanceTimer> lockWait;
+    if (PerformanceTrace::Recording()) lockWait.emplace("Committer.GpuLockWait");
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    lockWait.reset();
     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
     struct SubmitDue {
         Driver& driver;
