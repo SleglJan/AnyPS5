@@ -43,7 +43,9 @@ void Driver::appendWrittenRanges(const ShaderRecompiler::RecompileResult& compil
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             if (element < binding.imageWritten.size() && !binding.imageWritten[element]) continue;
             if (binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
-            const auto resource = Graphics::DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8));
+            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+            if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
+            const auto resource = Graphics::DecodeTextureResource(words);
             const auto bytes = Graphics::DescribeSurface(resource).guestBytes;
             if (resource.baseAddress != 0 && bytes != 0) ranges.emplace_back(resource.baseAddress, resource.baseAddress + bytes);
             if (resource.dccAddress != 0 && bytes != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (bytes + 255) / 256);

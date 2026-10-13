@@ -29,7 +29,7 @@ void Require(bool condition, const std::string& message) {
 }
 
 constexpr std::size_t SurfaceBytes = 65536;
-alignas(256) std::array<std::uint32_t, 5> StoreCode{0x7e020280u, 0x7e04020cu, 0xf0201108u, 0x00010200u, 0xbf810000u};
+alignas(256) std::array<std::uint32_t, 7> StoreCode{0x7e020280u, 0x7e04020cu, 0xf0201108u, 0x00000200u, 0xf0201108u, 0x00010200u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
 alignas(256) std::array<std::uint32_t, 4> Counter{};
 alignas(256) std::array<std::uint32_t, 4> CounterDescriptor{};
