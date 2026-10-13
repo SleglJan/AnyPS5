@@ -1220,6 +1220,14 @@ RecentFlushRing& RecentFlushes() {
 std::atomic<std::uint64_t> flushedBehindWriter{0};
 std::atomic<std::uint64_t> flushWaits{0};
 std::atomic<std::uint64_t> flushWaitNanoseconds{0};
+std::atomic<std::uint64_t> keptWriteBacks{0};
+std::atomic<std::uint64_t> keptSmallWriteBacks{0};
+constexpr std::uint64_t SmallImageBytes = 65536;
+
+bool TraceFlushSmall() {
+    static const bool small = std::getenv("APS5_TRACE_FLUSH_SMALL") != nullptr;
+    return small;
+}
 
 void ReportFlushWaits() {
     static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
@@ -1230,6 +1238,8 @@ void ReportFlushWaits() {
     static std::uint64_t lastNanoseconds = 0;
     static std::uint64_t lastKeyWaits = 0;
     static std::uint64_t lastKeyNanoseconds = 0;
+    static std::uint64_t lastKept = 0;
+    static std::uint64_t lastKeptSmall = 0;
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     auto last = reported.load(std::memory_order_relaxed);
     if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
@@ -1239,8 +1249,12 @@ void ReportFlushWaits() {
     const auto waits = flushWaits.load(std::memory_order_relaxed);
     const auto nanoseconds = flushWaitNanoseconds.load(std::memory_order_relaxed);
     const auto key = DccKeyWriterWaits();
+    const auto kept = keptWriteBacks.load(std::memory_order_relaxed);
+    const auto keptSmall = keptSmallWriteBacks.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s; %llu DCC-key writer waits, %.3f s\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9);
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s; %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu on images <= 64 KiB)\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptSmall - lastKeptSmall));
+    lastKept = kept;
+    lastKeptSmall = keptSmall;
     lastBehind = behind;
     lastWaits = waits;
     lastNanoseconds = nanoseconds;
@@ -3251,8 +3265,8 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     } unregister{flush};
     // Debug aid: APS5_TRACE_FLUSH names what forces pending results to guest memory.
     static const bool trace = std::getenv("APS5_TRACE_FLUSH") != nullptr;
-    if (trace) {
-        for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
+    if (trace || TraceFlushSmall()) {
+        for (const auto& texture : flush) if (trace || texture->guestBytes <= SmallImageBytes) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     std::exception_ptr failure;
@@ -4429,7 +4443,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     // Debug aid: APS5_TRACE_FLUSH also names the blocks a write-back leaves to the CPU.
     static const bool traceKept = std::getenv("APS5_TRACE_FLUSH") != nullptr;
-    if (traceKept && skippedAny) {
+    if (skippedAny) {
+        keptWriteBacks.fetch_add(1, std::memory_order_relaxed);
+        if (guestBytes <= SmallImageBytes) keptSmallWriteBacks.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (skippedAny && (traceKept || (TraceFlushSmall() && guestBytes <= SmallImageBytes))) {
         const auto first = keep.empty() ? descriptor.baseAddress + guestBytes : keep.front().first;
         std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu CPU-written 64 KiB blocks (first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
