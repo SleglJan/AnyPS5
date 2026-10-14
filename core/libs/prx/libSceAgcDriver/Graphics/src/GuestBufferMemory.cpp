@@ -3257,6 +3257,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     }
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     takeHeapReferences();
+    recordGeneration = GuestMemory::TrackerGeneration();
     if (!profile) return;
     const auto loopUs = microsecondsSince(loopStart);
     readUs.fetch_add(refreshUs, std::memory_order_relaxed);
@@ -3285,7 +3286,6 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             if (region.buffer != nullptr && region.end - region.begin >= (1u << 20u)) std::fprintf(stderr, "[bigbuf] upload 0x%llx+0x%llx writable=%d hostBacked=%d sparse=%d addressable=%d\n", static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end - region.begin), region.writable ? 1 : 0, region.hostBacked ? 1 : 0, region.sparse ? 1 : 0, addressable ? 1 : 0);
         }
     }
-    recordGeneration = GuestMemory::TrackerGeneration();
 }
 
 namespace {
