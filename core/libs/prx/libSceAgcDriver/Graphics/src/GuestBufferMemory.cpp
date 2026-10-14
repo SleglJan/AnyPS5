@@ -1300,6 +1300,31 @@ bool sparseRunImportsEnabled() {
     return !disabled;
 }
 
+// DIAG (APS5_SPARSE_RUN_IMPORT=1): sparse heap regions bound in place from the import of their
+// committed run, and the ones left to a copy by reason, every 10 s as [sparse-run-import].
+void noteSparseRun(const char* outcome, std::uint64_t runBytes) {
+    static const bool enabled = std::getenv("APS5_SPARSE_RUN_IMPORT") != nullptr;
+    if (!enabled) return;
+    static std::mutex mutex;
+    static std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> outcomes;
+    static auto reported = std::chrono::steady_clock::now();
+    std::lock_guard lock(mutex);
+    auto& counted = outcomes[outcome];
+    ++counted.first;
+    counted.second += runBytes;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - reported < std::chrono::seconds(10)) return;
+    reported = now;
+    std::string text;
+    for (const auto& [name, count] : outcomes) {
+        char item[160];
+        std::snprintf(item, sizeof(item), "%s%s %llu (%.0f MiB)", text.empty() ? "" : "; ", name.c_str(), static_cast<unsigned long long>(count.first), static_cast<double>(count.second) / 1048576.0);
+        text += item;
+    }
+    std::fprintf(stderr, "[sparse-run-import] (10 s): %s\n", text.c_str());
+    outcomes.clear();
+}
+
 using Pieces = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 
 std::uint64_t sparseExtent(std::uint64_t base, std::uint64_t reserved, const Pieces& pieces) {
@@ -3145,7 +3170,9 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 if (entry != nullptr && (region.begin < entry->base || region.end > entry->base + entry->bytes)) entry = nullptr;
             }
             bool runImport = false;
+            if (entry == nullptr && sparseRun && (region.backed.empty() || region.backed.front().first != region.begin) && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) noteSparseRun("no run from the start", region.end - region.begin);
             if (entry == nullptr && sparseRun && !region.backed.empty() && region.backed.front().first == region.begin && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) {
+                const char* outcome = nullptr;
                 const auto committedEnd = region.backed.back().second;
                 const auto neededEnd = std::min(region.end, std::max(committedEnd, std::max(region.lastView, region.begin) + 4u));
                 const auto covers = [&](const HostImport* candidate) { return candidate != nullptr && candidate->base <= region.begin && candidate->base + candidate->bytes >= neededEnd; };
@@ -3160,7 +3187,10 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                     const auto joins = state.sparseRunJoins.find(joinBase);
                     const auto made = joins == state.sparseRunJoins.end() ? 0u : joins->second;
                     const auto seen = state.sparseRunEnds.find(region.begin);
-                    if (seen != state.sparseRunEnds.end() && seen->second == committedEnd && made < MaxSparseRunJoins) {
+                    const bool unchanged = seen != state.sparseRunEnds.end() && seen->second == committedEnd;
+                    if (!unchanged) outcome = "waiting for an unchanged run";
+                    else if (made >= MaxSparseRunJoins) outcome = "join cap reached";
+                    if (unchanged && made < MaxSparseRunJoins) {
                         entry = importJoined(context, state, region.begin, neededEnd, lease);
                         if (covers(entry) && ++state.sparseRunJoins[entry->base] == MaxSparseRunJoins) std::fprintf(stderr, "[gpu] the sparse heap at 0x%llx was joined into one import %u times; it is not joined again and is copied once its run outgrows the import\n", static_cast<unsigned long long>(entry->base), MaxSparseRunJoins);
                     }
@@ -3168,6 +3198,9 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 }
                 if (!covers(entry)) entry = nullptr;
                 runImport = entry != nullptr;
+                if (entry != nullptr) outcome = bindableInPlace(region.begin - entry->base, addressable) ? "bound in place" : "copied out of the run's import";
+                else if (outcome == nullptr) outcome = runCovers(importRanges(), region.begin, neededEnd) || joinedCovers(importRanges(), region.begin, neededEnd) ? "run not imported" : "the needed extent is not one run";
+                noteSparseRun(outcome, entry != nullptr ? std::min(region.end, entry->base + entry->bytes) - region.begin : neededEnd - region.begin);
             }
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
