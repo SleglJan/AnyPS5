@@ -1534,8 +1534,9 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
     const auto first = tracker.blockOf(address);
     const auto last = tracker.blockOf(address + bytes - 1);
     for (auto block = first; block <= last; ++block) {
-        tracker.stamp(block, tracker.generation, StampKind::Driver);
-        tracker.noteDriverStore(block, address, address + bytes, tracker.generation);
+        const auto use = static_cast<std::uint32_t>(storeGeneration != 0 ? std::max<std::uint64_t>(tracker.stampOf(block), storeGeneration) : static_cast<std::uint64_t>(tracker.generation.load(std::memory_order_relaxed)));
+        tracker.stamp(block, use, StampKind::Driver);
+        tracker.noteDriverStore(block, address, address + bytes, use);
     }
     return tracker.generation;
 }

@@ -4696,6 +4696,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         settle(true);
         return;
     }
+    std::uint64_t produced = 0;
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (layers[layer]) produced = std::max(produced, pendingGeneration[layer]);
+    }
     if (const auto* import = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
         Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
         if (blockUnits) {
@@ -4708,7 +4712,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             traceKeyStore("block write-back", descriptor, guestBytes);
             if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
             uploadedKeys = DccKeys::Uncompressed;
-            for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+            {
+                const GuestMemory::StoreGenerationScope stampScope(StoreStampsNow() ? 0 : produced);
+                for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+            }
             settle(true);
             ++Profile().storageDirectWriteBacks;
             return;
@@ -4816,7 +4823,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         traceKeyStore("layer write-back", descriptor, guestBytes);
         if (!IsDccClear(filledKeys) && uploadedKeys != DccKeys::Uncompressed) MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
         uploadedKeys = DccKeys::Uncompressed;
-        for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+        {
+            const GuestMemory::StoreGenerationScope stampScope(StoreStampsNow() ? 0 : produced);
+            for (const auto& [from, to] : keep) GuestMemory::MarkWritten(from, static_cast<std::size_t>(to - from));
+        }
         // The walk covers this surface's pages only: an adjacent image's later CPU write is stamped
         // newer than this value when its own range is collected. No CPU wrote the pages here
         // (MarkWritten made the only stamps), so the memoized collect is exact.
@@ -4918,10 +4928,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // Store only the kept ranges' blocks that changed, so concurrent CPU writes to untouched texels
     // survive; `original` follows for the stored layers (the others' guest bytes are unchanged).
     const auto current = host.Bytes();
-    std::uint64_t produced = 0;
-    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
-        if (layers[layer]) produced = std::max(produced, pendingGeneration[layer]);
-    }
     const GuestMemory::StoreGenerationScope stampScope(StoreStampsNow() ? 0 : produced);
     for (const auto& [from, to] : keep) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);

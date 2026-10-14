@@ -115,6 +115,18 @@ void CheckSharedBlock() {
     Require(StoredOver(base + 2 * Block + 0x100, 16, before - 1), "a store stamped at an older generation is not seen from before it");
     WriteChangedCommitted(base + 2 * Block + 0x200, current, previous);
     Require(!UnchangedSince(base + 2 * Block, Block, later), "a store stamped now reads as older than the collect before it");
+    const auto marked = TrackerGeneration();
+    MarkWritten(base + Block, 4);
+    const auto afterMark = CollectWrites(base, 3 * Block);
+    Require(afterMark > marked, "the collect did not advance past the earlier generation");
+    {
+        const StoreGenerationScope scope(marked);
+        MarkWritten(base + 2 * Block + 0x400, 64);
+    }
+    Require(UnchangedSince(base + 2 * Block, Block, afterMark), "a driver store marked at an older generation reads as newer than a later collect");
+    Require(StoredOver(base + 2 * Block + 0x400, 64, marked - 1), "a driver store marked at an older generation is not seen from before it");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
+    Require(WrittenRangesSince(base + 2 * Block + 0x400, 64, marked - 1, pieces, nullptr) && pieces.size() == 1 && pieces.front().first == base + 2 * Block + 0x400 && pieces.front().second == base + 2 * Block + 0x440, "the older-generation store's piece is not exact from before it");
 
     const auto beforeCpu = CollectWrites(base, 3 * Block);
     static_cast<volatile std::uint8_t*>(memory)[Block + 8] = 0x22;
