@@ -160,6 +160,34 @@ void RunRefresh(AgcDriver::VulkanDevice& device) {
     Require(words[0] == StoredAgain, "storage flush ordering: the image's texel written after the buffer write was dropped with its block");
 }
 
+void RunMarkedStore(AgcDriver::VulkanDevice& device) {
+    GuestBlock guest;
+    auto* words = guest.Words();
+    std::fill(words, words + ImageBytes / 4u, Initial);
+    const auto base = guest.Address();
+    std::vector<std::uint32_t> imageUser(12, 0u);
+    imageUser[4] = static_cast<std::uint32_t>(base >> 8u);
+    imageUser[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (20u << 20u) | (((Width - 1u) & 3u) << 30u);
+    imageUser[6] = ((Width - 1u) >> 2u) | ((Height - 1u) << 14u);
+    imageUser[7] = 0x90000facu;
+    const auto target = device.Target();
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto storeImageAgain = Compile(StoreImageAgainCode, imageUser, target);
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, ImageBytes, nullptr, "test");
+    device.Dispatch(storeImageAgain, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageAgainCode.data()));
+    const auto behindBefore = AgcDriver::Graphics::StorageTexture::FlushesBehindWriters();
+    const auto skippedBefore = AgcDriver::Graphics::StorageTexture::FlushWaitsSkippedMarked();
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, ImageBytes, nullptr, "test");
+    const auto behind = AgcDriver::Graphics::StorageTexture::FlushesBehindWriters() - behindBefore;
+    const auto skipped = AgcDriver::Graphics::StorageTexture::FlushWaitsSkippedMarked() - skippedBefore;
+    device.WaitIdle();
+    std::printf("storage flush ordering (recorded store): dword 0 = 0x%08x, far = 0x%08x, behind %llu, skipped %llu\n", words[0], words[FarDword], static_cast<unsigned long long>(behind), static_cast<unsigned long long>(skipped));
+    Require(words[0] == StoredAgain && words[FarDword] == StoredAgain, "storage flush ordering: the newer results did not replace a recorded store of the same memory");
+    Require(skipped <= behind, "storage flush ordering: a flush that was not behind a writer counted a skipped wait");
+    if (std::getenv("APS5_FLUSH_SKIP_MARKED") == nullptr) Require(skipped == 0, "storage flush ordering: a wait was skipped without APS5_FLUSH_SKIP_MARKED");
+}
+
 void RunRefreshLarge(AgcDriver::VulkanDevice& device) {
     GuestBlock guest;
     auto* words = guest.Words();
@@ -198,6 +226,7 @@ int main() {
         Run(*device);
         RunRefresh(*device);
         RunRefreshLarge(*device);
+        RunMarkedStore(*device);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

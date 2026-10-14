@@ -1178,6 +1178,11 @@ endforeach()
 
 target_link_libraries(agc_driver_gpu_map_on_fiber_tests PRIVATE libSceFiber)
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_storage_flush_ordering_skip_marked COMMAND agc_driver_storage_flush_ordering_tests)
+    set_tests_properties(agc_driver_storage_flush_ordering_skip_marked PROPERTIES ENVIRONMENT "APS5_FLUSH_SKIP_MARKED=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_storage_flush_ordering_skip_marked PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_image_indirect_arguments_written_ahead_thread_dimensions
             COMMAND agc_driver_image_indirect_arguments_written_ahead_tests --thread-dimensions)
     set_tests_properties(agc_driver_image_indirect_arguments_written_ahead_thread_dimensions PROPERTIES

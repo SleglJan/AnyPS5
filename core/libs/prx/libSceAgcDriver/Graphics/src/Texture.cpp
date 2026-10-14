@@ -1251,6 +1251,20 @@ std::atomic<std::uint64_t> keptUnknownWriter{0};
 std::atomic<std::uint64_t> keptWindowPath{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
 
+bool FlushSkipMarked() {
+    static const bool skip = std::getenv("APS5_FLUSH_SKIP_MARKED") != nullptr;
+    return skip;
+}
+
+bool MarkedAtRecord(Recorder::WriteSource source) {
+    return source == Recorder::WriteSource::WriteBack || source == Recorder::WriteSource::UnitShadow;
+}
+
+std::atomic<std::uint64_t> flushWaitsSkippedMarked{0};
+std::atomic<std::uint64_t> skippedMarkedTotal{0};
+std::atomic<std::uint64_t> skippedMarkedCpuSyncs{0};
+thread_local bool skippedMarkedWait = false;
+
 bool FlushWaitReport() {
     static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
     return report;
@@ -1347,6 +1361,7 @@ void ReportFlushWaitClasses(double seconds) {
         top += ' ';
         top += std::to_string(reasons[i].first);
     }
+    if (FlushSkipMarked()) std::fprintf(stderr, "[storage-flush] skipped behind record-marked writes (%.0f s): %llu waits not taken, %llu CPU-branch stores synced first\n", seconds, count(flushWaitsSkippedMarked.exchange(0, std::memory_order_relaxed)), count(skippedMarkedCpuSyncs.exchange(0, std::memory_order_relaxed)));
     std::fprintf(stderr, "[storage-flush] wait classes (%.0f s): %llu waits (%llu for the open batch): %llu address-based lease only, %llu recorded writes only, %llu both; store branch: %llu GPU block windows, %llu GPU whole layers, %llu CPU; writers vs the results: %llu newer, %llu older, %llu mixed; %llu with every write already marked (%llu of them newer only); newest writer:%s; reasons:%s\n", seconds, count(classes.total), count(classes.open), count(classes.leaseOnly), count(classes.writesOnly), count(classes.both), count(classes.blockWindows), count(classes.wholeLayers), count(classes.cpuStores), count(classes.newer), count(classes.older), count(classes.mixed), count(classes.marked), count(classes.newerMarked), sources.c_str(), top.c_str());
     const auto reset = classes.sources.size();
     classes.total = classes.leaseOnly = classes.writesOnly = classes.both = classes.open = classes.blockWindows = classes.wholeLayers = classes.cpuStores = 0;
@@ -3429,6 +3444,11 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (published != nullptr) *published = units;
         return false;
     }
+    struct SkipScope {
+        bool outer = skippedMarkedWait;
+        SkipScope() { skippedMarkedWait = false; }
+        ~SkipScope() { skippedMarkedWait = outer; }
+    } skipScope;
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
         const auto behind = [&] {
             return recorder->PendingWriteOverlaps(address, bytes) || recorder->PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased);
@@ -3456,17 +3476,39 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                     }
                     NoteFlushWaitClass(*recorder, address, bytes, produced, branch, openWriter, reason);
                 }
-                const auto started = std::chrono::steady_clock::now();
-                if (openWriter) {
-                    flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
-                    Recorder::CountSync(1);
-                    recorder->Sync();
-                } else if (inFlightWriter != 0) {
-                    Recorder::CountSync(1);
-                    recorder->FinishUpTo(inFlightWriter);
+                const auto markedWritesOnly = [&] {
+                    bool any = false;
+                    const auto marked = [&](std::uint64_t base, std::size_t span) {
+                        if (recorder->PendingReadKindOverlaps(base, span, Recorder::ReadKind::AddressBased)) return false;
+                        for (const auto& write : recorder->PendingWritesOver(base, span)) {
+                            if (!MarkedAtRecord(write.source)) return false;
+                            any = true;
+                        }
+                        return true;
+                    };
+                    for (const auto& texture : flush) {
+                        if (HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr) return false;
+                        if (!marked(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes))) return false;
+                    }
+                    return marked(address, bytes) && any;
+                };
+                if (FlushSkipMarked() && markedWritesOnly()) {
+                    flushWaitsSkippedMarked.fetch_add(1, std::memory_order_relaxed);
+                    skippedMarkedTotal.fetch_add(1, std::memory_order_relaxed);
+                    skippedMarkedWait = true;
+                } else {
+                    const auto started = std::chrono::steady_clock::now();
+                    if (openWriter) {
+                        flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
+                        Recorder::CountSync(1);
+                        recorder->Sync();
+                    } else if (inFlightWriter != 0) {
+                        Recorder::CountSync(1);
+                        recorder->FinishUpTo(inFlightWriter);
+                    }
+                    flushWaits.fetch_add(1, std::memory_order_relaxed);
+                    flushWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
                 }
-                flushWaits.fetch_add(1, std::memory_order_relaxed);
-                flushWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
             }
         }
     }
@@ -3514,6 +3556,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (published != nullptr) *published = units != 0;
     }
     return true;
+}
+
+std::uint64_t StorageTexture::FlushWaitsSkippedMarked() {
+    return skippedMarkedTotal.load(std::memory_order_relaxed);
 }
 
 std::uint64_t StorageTexture::FlushesBehindWriters() {
@@ -4968,6 +5014,12 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (layers[layer]) layerPending[layer] = false;
         }
         return;
+    }
+    if (skippedMarkedWait) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
+            skippedMarkedCpuSyncs.fetch_add(1, std::memory_order_relaxed);
+            recorder->Sync();
+        }
     }
     original.resize(static_cast<std::size_t>(guestBytes));
     // The store below compares against the guest bytes, read now when `original` does not hold
