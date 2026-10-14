@@ -129,6 +129,34 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 }
 
+void RunUploadOrder(AgcDriver::VulkanDevice& device) {
+    GuestBlock guest;
+    auto* words = guest.Words();
+    std::fill(words, words + ImageBytes / 4u, Initial);
+    const auto base = guest.Address();
+    std::vector<std::uint32_t> imageUser(12, 0u);
+    imageUser[4] = static_cast<std::uint32_t>(base >> 8u);
+    imageUser[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (20u << 20u) | (((Width - 1u) & 3u) << 30u);
+    imageUser[6] = ((Width - 1u) >> 2u) | ((Height - 1u) << 14u);
+    imageUser[7] = 0x90000facu;
+    std::vector<std::uint32_t> bufferUser(8, 0u);
+    bufferUser[4] = static_cast<std::uint32_t>(base);
+    bufferUser[5] = static_cast<std::uint32_t>(base >> 32u);
+    bufferUser[6] = static_cast<std::uint32_t>(ImageBytes);
+    bufferUser[7] = 0x31016facu;
+    const auto target = device.Target();
+    const auto storeBuffer = Compile(StoreBufferCode, bufferUser, target);
+    const auto storeImage = Compile(StoreImageCode, imageUser, target);
+    const auto waitedBefore = AgcDriver::Graphics::StorageTexture::UploadWaits();
+    device.Dispatch(storeBuffer, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreBufferCode.data()));
+    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    Require(AgcDriver::Graphics::StorageTexture::UploadWaits() == waitedBefore + 1u, "storage upload order: the upload did not wait for the recorded buffer writer of its memory");
+    AgcDriver::Graphics::StorageTexture::FlushPending(base, ImageBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(words[OverwrittenDword] == Overwritten, "storage upload order: the image's write-back put its upload-era texel over the buffer write recorded before its upload");
+    Require(words[FarDword] == Stored, "storage upload order: the image's far texel was not stored");
+}
+
 void RunRefresh(AgcDriver::VulkanDevice& device) {
     GuestBlock guest;
     auto* words = guest.Words();
@@ -224,6 +252,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device);
+        RunUploadOrder(*device);
         RunRefresh(*device);
         RunRefreshLarge(*device);
         RunMarkedStore(*device);
