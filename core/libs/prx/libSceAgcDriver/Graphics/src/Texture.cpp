@@ -2440,6 +2440,20 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         refreshGeneration();
     };
     uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && !waitForAllWriters && !noLateWait && !IsDccClear(uploadedKeys)) {
+        const bool cpuRead = uploadedKeys != DccKeys::Uncompressed || HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) == nullptr;
+        const bool openWriter = cpuRead && recorder->OpenWriteOverlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        const auto inFlightWriter = cpuRead ? recorder->PendingWriteSerial(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : 0u;
+        if (openWriter || inFlightWriter != 0) {
+            uploadWaits.fetch_add(1, std::memory_order_relaxed);
+            if (openWriter) uploadWaitsOpen.fetch_add(1, std::memory_order_relaxed);
+            const auto started = std::chrono::steady_clock::now();
+            Recorder::CountSync(1);
+            if (openWriter) recorder->Sync();
+            else recorder->FinishUpTo(inFlightWriter);
+            uploadWaitNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        }
+    }
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
     if (IsDccClear(uploadedKeys) && ClearColorFor(storageFormat, uploadedKeys, clearValue)) {
