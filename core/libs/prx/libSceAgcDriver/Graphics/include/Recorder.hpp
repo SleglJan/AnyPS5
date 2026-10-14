@@ -105,7 +105,7 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest);
     void OnComplete(std::function<void()> action);
-    enum class WriteSource : std::uint8_t { Other, WriteBack, Import, UnitShadow, Resources, Draw, DccFill, Device, Count };
+    enum class WriteSource : std::uint8_t { Other, WriteBack, UnitShadow, Resources, Draw, DccFill, Device, Count };
     static const char* WriteSourceName(WriteSource source);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes, WriteSource source = WriteSource::Other);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value, WriteSource source = WriteSource::Other);

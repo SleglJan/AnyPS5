@@ -2859,7 +2859,6 @@ std::uint64_t Recorder::NewestWriteNote(std::uint64_t address, std::size_t bytes
 const char* Recorder::WriteSourceName(WriteSource source) {
     switch (source) {
         case WriteSource::WriteBack: return "write-back";
-        case WriteSource::Import: return "import";
         case WriteSource::UnitShadow: return "unit shadow";
         case WriteSource::Resources: return "resources";
         case WriteSource::Draw: return "draw";

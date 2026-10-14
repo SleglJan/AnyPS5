@@ -1305,7 +1305,7 @@ void NoteFlushWaitClass(const Recorder& recorder, std::uint64_t address, std::si
     for (const auto& write : writes) {
         (write.generation > produced ? newer : older) = true;
         if (newest == nullptr || write.note > newest->note) newest = &write;
-        if (marked) marked = WriteMarked(std::max(write.begin, address), std::min(write.end, address + bytes), write.generation);
+        if (marked) marked = write.source == Recorder::WriteSource::WriteBack || WriteMarked(std::max(write.begin, address), std::min(write.end, address + bytes), write.generation);
     }
     auto& classes = WaitClasses();
     std::lock_guard lock(classes.mutex);
@@ -3231,7 +3231,7 @@ std::uint64_t StorageTexture::writeBackWindows(const HostImport& import, std::sp
         recorder->MarkCovered(storedAccess);
         // Only the pieces written into the import are stores a CPU reader must wait for; the
         // shadowed ones reach it through a publish, which notes its own.
-        if (!imported.empty()) recorder->NotePendingWrites(imported, Recorder::WriteSource::Import);
+        if (!imported.empty()) recorder->NotePendingWrites(imported, Recorder::WriteSource::WriteBack);
     }
     partialWriteBacks.fetch_add(1, std::memory_order_relaxed);
     partialWriteBackBytes.fetch_add(storedBytes, std::memory_order_relaxed);
