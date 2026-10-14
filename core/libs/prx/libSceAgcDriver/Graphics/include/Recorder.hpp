@@ -105,10 +105,12 @@ public:
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest);
     void OnComplete(std::function<void()> action);
-    void NotePendingWrite(std::uint64_t address, std::size_t bytes);
-    void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
+    enum class WriteSource : std::uint8_t { Other, WriteBack, Import, UnitShadow, Resources, Draw, DccFill, Device, Count };
+    static const char* WriteSourceName(WriteSource source);
+    void NotePendingWrite(std::uint64_t address, std::size_t bytes, WriteSource source = WriteSource::Other);
+    void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value, WriteSource source = WriteSource::Other);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
-    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, WriteSource source = WriteSource::Other);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host
@@ -121,6 +123,8 @@ public:
         std::uint64_t end;
         std::uint64_t note;
         int value;
+        std::uint64_t generation;
+        WriteSource source;
     };
     std::vector<PendingWrite> PendingWritesOver(std::uint64_t address, std::size_t bytes) const;
     // Batch read tracking: the guest ranges the recorded work reads IN PLACE through a host import
@@ -543,6 +547,8 @@ private:
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
         std::vector<std::int16_t> writeValues;
+        std::vector<std::uint64_t> writeGenerations;
+        std::vector<WriteSource> writeSources;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
         struct Read {
             std::uint64_t begin;
@@ -767,7 +773,7 @@ private:
     // Appends one range to the open batch; returns whether the snapshot must be rebuilt for it.
     // `ownLabel`: the range is a label's own store (NoteLabel, AfterCompletions), which does not
     // overwrite the table entries it covers; any other range flags them (table mutex, briefly).
-    bool noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel = false, int value = -1);
+    bool noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel = false, int value = -1, WriteSource source = WriteSource::Other);
     // Appends one range to `batch` (open or in flight) and publishes the snapshot if needed.
     void noteWriteOn(Batch& batch, std::uint64_t address, std::size_t bytes, bool ownLabel = false);
     void noteLabelOn(Batch& batch, std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool behindCompletion = false);

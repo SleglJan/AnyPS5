@@ -257,7 +257,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
     // Queued on the open batch and recorded with the batch's other key stores as one run (or before
     // a later command writing the keys; see Recorder::QueueKeyStore).
     recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
-    recorder.NotePendingFill(begin, count, 0xff);
+    recorder.NotePendingFill(begin, count, 0xff, Recorder::WriteSource::DccFill);
     GuestMemory::MarkWritten(begin, count);
     // After the note: an unlocked memo lookup drops an entry the snapshot does not cover yet. The
     // entry is kept only for the active recorder (the one the flush hook and the lookups consult).

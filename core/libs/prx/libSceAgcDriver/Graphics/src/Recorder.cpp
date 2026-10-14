@@ -2704,7 +2704,7 @@ void Recorder::OnComplete(std::function<void()> action) {
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 
-bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value) {
+bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, WriteSource source) {
     CaptureTrace::Log("buffer-write batch=%llu address=%llx bytes=%zu label=%d", static_cast<unsigned long long>(submissions + 1), static_cast<unsigned long long>(address), bytes, ownLabel);
     if (bytes == 0) return false;
     ensureOpen();
@@ -2712,6 +2712,8 @@ bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel
     open->writes.emplace_back(address, end);
     open->writeNotes.push_back(++writeNoteCount);
     open->writeValues.push_back(static_cast<std::int16_t>(value));
+    open->writeGenerations.push_back(GuestMemory::TrackerGeneration());
+    open->writeSources.push_back(source);
     if (!ownLabel) markOverwritten(address, end);
     // A poller waiting on this range learns that the open batch may now hold its producer.
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
@@ -2738,6 +2740,8 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
     batch.writes.emplace_back(address, address + bytes);
     batch.writeNotes.push_back(++writeNoteCount);
     batch.writeValues.push_back(-1);
+    batch.writeGenerations.push_back(GuestMemory::TrackerGeneration());
+    batch.writeSources.push_back(WriteSource::Other);
     if (!ownLabel) markOverwritten(address, address + bytes);
     if (activeRecorder == this) writeGeneration.fetch_add(1, std::memory_order_release);
     if (!SnapshotCovers(address, address + bytes)) publishPendingWrites();
@@ -2751,24 +2755,24 @@ void Recorder::markOverwritten(std::uint64_t address, std::uint64_t end) {
     for (auto it = labels.lower_bound(address >= 3 ? address - 3 : 0); it != labels.end() && it->first < end; ++it) it->second.overwritten = true;
 }
 
-void Recorder::NotePendingWrite(std::uint64_t address, std::size_t bytes) {
-    if (!noteWrite(address, bytes)) return;
+void Recorder::NotePendingWrite(std::uint64_t address, std::size_t bytes, WriteSource source) {
+    if (!noteWrite(address, bytes, false, -1, source)) return;
     publishPendingWrites();
     // The note precedes this thread's vkQueueSubmit and the label another queue polls for; the
     // fence makes that order hold without relying on x86 store ordering.
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
-void Recorder::NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value) {
-    if (!noteWrite(address, bytes, false, value)) return;
+void Recorder::NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value, WriteSource source) {
+    if (!noteWrite(address, bytes, false, value, source)) return;
     publishPendingWrites();
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
-void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, WriteSource source) {
     bool publish = false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin))) publish = true;
+        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin), false, -1, source)) publish = true;
     }
     if (!publish) return;
     publishPendingWrites();
@@ -2852,13 +2856,29 @@ std::uint64_t Recorder::NewestWriteNote(std::uint64_t address, std::size_t bytes
     return newest;
 }
 
+const char* Recorder::WriteSourceName(WriteSource source) {
+    switch (source) {
+        case WriteSource::WriteBack: return "write-back";
+        case WriteSource::Import: return "import";
+        case WriteSource::UnitShadow: return "unit shadow";
+        case WriteSource::Resources: return "resources";
+        case WriteSource::Draw: return "draw";
+        case WriteSource::DccFill: return "DCC fill";
+        case WriteSource::Device: return "device";
+        default: return "other";
+    }
+}
+
 std::vector<Recorder::PendingWrite> Recorder::PendingWritesOver(std::uint64_t address, std::size_t bytes) const {
     std::vector<PendingWrite> found;
     if (bytes == 0) return found;
     const auto end = address + bytes;
     const auto scan = [&](const Batch& batch) {
         for (std::size_t i = 0; i < batch.writes.size(); ++i) {
-            if (address < batch.writes[i].second && batch.writes[i].first < end) found.push_back({batch.writes[i].first, batch.writes[i].second, batch.writeNotes[i], batch.writeValues[i]});
+            if (!(address < batch.writes[i].second && batch.writes[i].first < end)) continue;
+            const auto generation = i < batch.writeGenerations.size() ? batch.writeGenerations[i] : 0;
+            const auto source = i < batch.writeSources.size() ? batch.writeSources[i] : WriteSource::Other;
+            found.push_back({batch.writes[i].first, batch.writes[i].second, batch.writeNotes[i], batch.writeValues[i], generation, source});
         }
     };
     if (open != nullptr) scan(*open);

@@ -257,7 +257,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     const auto commands = recorder.Commands();
     recorder.Keep(resident);
     context.detiler->DispatchCmaskClear(commands, import.buffer, address - import.base, bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
-    recorder.NotePendingWrite(address, bytes);
+    recorder.NotePendingWrite(address, bytes, Recorder::WriteSource::Draw);
     const GuestMemory::WriteMarkerScope marker{GuestMemory::WriteMarker::Cmask};
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }

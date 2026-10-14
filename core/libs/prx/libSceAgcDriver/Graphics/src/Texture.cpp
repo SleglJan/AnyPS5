@@ -1251,9 +1251,112 @@ std::atomic<std::uint64_t> keptUnknownWriter{0};
 std::atomic<std::uint64_t> keptWindowPath{0};
 constexpr std::uint64_t SmallImageBytes = 65536;
 
-void ReportFlushWaits() {
+bool FlushWaitReport() {
     static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr || std::getenv("APS5_TRACE_STORAGE_CACHE") != nullptr;
-    if (!report) return;
+    return report;
+}
+
+struct FlushWaitClasses {
+    std::mutex mutex;
+    std::uint64_t total = 0;
+    std::uint64_t leaseOnly = 0;
+    std::uint64_t writesOnly = 0;
+    std::uint64_t both = 0;
+    std::uint64_t open = 0;
+    std::uint64_t blockWindows = 0;
+    std::uint64_t wholeLayers = 0;
+    std::uint64_t cpuStores = 0;
+    std::uint64_t newer = 0;
+    std::uint64_t older = 0;
+    std::uint64_t mixed = 0;
+    std::uint64_t marked = 0;
+    std::uint64_t newerMarked = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(Recorder::WriteSource::Count)> sources{};
+    std::map<std::string, std::uint64_t> reasons;
+};
+
+FlushWaitClasses& WaitClasses() {
+    static FlushWaitClasses classes;
+    return classes;
+}
+
+bool WriteMarked(std::uint64_t from, std::uint64_t to, std::uint64_t generation) {
+    if (generation == 0 || to <= from) return false;
+    constexpr std::uint64_t block = 65536;
+    const auto spanBegin = from & ~(block - 1);
+    const auto blocks = static_cast<std::size_t>((to - spanBegin + block - 1) / block);
+    GuestMemory::CollectWritesUncached(from, static_cast<std::size_t>(to - from));
+    std::vector<std::uint64_t> generations(blocks, generation - 1);
+    std::vector<std::uint8_t> changed(blocks);
+    std::vector<std::uint8_t> cpu(blocks);
+    if (!GuestMemory::ChangedBlocks(from, static_cast<std::size_t>(to - from), generations, changed, cpu)) return false;
+    return std::all_of(changed.begin(), changed.end(), [](std::uint8_t state) { return state == GuestMemory::BlockWritten; });
+}
+
+enum class WriteBackBranch { CpuStore, BlockWindows, WholeLayer };
+
+void NoteFlushWaitClass(const Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint64_t produced, WriteBackBranch branch, bool open, const char* reason) {
+    const bool lease = recorder.PendingReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased);
+    const auto writes = recorder.PendingWritesOver(address, bytes);
+    bool newer = false;
+    bool older = false;
+    bool marked = !writes.empty();
+    const Recorder::PendingWrite* newest = nullptr;
+    for (const auto& write : writes) {
+        (write.generation > produced ? newer : older) = true;
+        if (newest == nullptr || write.note > newest->note) newest = &write;
+        if (marked) marked = WriteMarked(std::max(write.begin, address), std::min(write.end, address + bytes), write.generation);
+    }
+    auto& classes = WaitClasses();
+    std::lock_guard lock(classes.mutex);
+    ++classes.total;
+    if (lease && writes.empty()) ++classes.leaseOnly;
+    else if (!lease) ++classes.writesOnly;
+    else ++classes.both;
+    if (open) ++classes.open;
+    ++(branch == WriteBackBranch::BlockWindows ? classes.blockWindows : branch == WriteBackBranch::WholeLayer ? classes.wholeLayers : classes.cpuStores);
+    if (!writes.empty()) {
+        ++(newer && older ? classes.mixed : newer ? classes.newer : classes.older);
+        if (marked) ++classes.marked;
+        if (marked && newer && !older) ++classes.newerMarked;
+        ++classes.sources[static_cast<std::size_t>(newest->source)];
+    }
+    ++classes.reasons[reason != nullptr ? reason : "?"];
+}
+
+void ReportFlushWaitClasses(double seconds) {
+    auto& classes = WaitClasses();
+    std::lock_guard lock(classes.mutex);
+    if (classes.total == 0) return;
+    const auto count = [](std::uint64_t value) { return static_cast<unsigned long long>(value); };
+    std::string sources;
+    for (std::size_t source = 0; source < classes.sources.size(); ++source) {
+        if (classes.sources[source] == 0) continue;
+        sources += sources.empty() ? " " : ", ";
+        sources += Recorder::WriteSourceName(static_cast<Recorder::WriteSource>(source));
+        sources += ' ';
+        sources += std::to_string(classes.sources[source]);
+    }
+    std::vector<std::pair<std::uint64_t, std::string>> reasons;
+    for (const auto& [reason, waits] : classes.reasons) reasons.emplace_back(waits, reason);
+    std::sort(reasons.rbegin(), reasons.rend());
+    std::string top;
+    for (std::size_t i = 0; i < reasons.size() && i < 6; ++i) {
+        top += top.empty() ? " " : ", ";
+        top += reasons[i].second;
+        top += ' ';
+        top += std::to_string(reasons[i].first);
+    }
+    std::fprintf(stderr, "[storage-flush] wait classes (%.0f s): %llu waits (%llu for the open batch): %llu address-based lease only, %llu recorded writes only, %llu both; store branch: %llu GPU block windows, %llu GPU whole layers, %llu CPU; writers vs the results: %llu newer, %llu older, %llu mixed; %llu with every write already marked (%llu of them newer only); newest writer:%s; reasons:%s\n", seconds, count(classes.total), count(classes.open), count(classes.leaseOnly), count(classes.writesOnly), count(classes.both), count(classes.blockWindows), count(classes.wholeLayers), count(classes.cpuStores), count(classes.newer), count(classes.older), count(classes.mixed), count(classes.marked), count(classes.newerMarked), sources.c_str(), top.c_str());
+    const auto reset = classes.sources.size();
+    classes.total = classes.leaseOnly = classes.writesOnly = classes.both = classes.open = classes.blockWindows = classes.wholeLayers = classes.cpuStores = 0;
+    classes.newer = classes.older = classes.mixed = classes.marked = classes.newerMarked = 0;
+    for (std::size_t source = 0; source < reset; ++source) classes.sources[source] = 0;
+    classes.reasons.clear();
+}
+
+void ReportFlushWaits() {
+    if (!FlushWaitReport()) return;
     static std::atomic<std::int64_t> reported{0};
     static std::uint64_t lastBehind = 0;
     static std::uint64_t lastWaits = 0;
@@ -1301,6 +1404,7 @@ void ReportFlushWaits() {
     const auto pieces = GuestMemory::DriverPieceStats();
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
     std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown, %llu on the tile-window path), %llu null storage slots; driver pieces: %llu deduped, %llu inserted, %llu evicted; dropped verdicts by pieces taken since the ring reset: %llu within 64, %llu within 256, %llu beyond\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter), static_cast<unsigned long long>(windowKept - lastWindowPath), static_cast<unsigned long long>(nullSlots - lastNullSlots), static_cast<unsigned long long>(pieces.deduped - lastPieces.deduped), static_cast<unsigned long long>(pieces.inserted - lastPieces.inserted), static_cast<unsigned long long>(pieces.evicted - lastPieces.evicted), static_cast<unsigned long long>(pieces.droppedWithin64 - lastPieces.droppedWithin64), static_cast<unsigned long long>(pieces.droppedWithin256 - lastPieces.droppedWithin256), static_cast<unsigned long long>(pieces.droppedBeyond256 - lastPieces.droppedBeyond256));
+    ReportFlushWaitClasses(seconds);
     lastKept = kept;
     lastKeptSmall = keptSmall;
     lastKeptSmallByGpu = keptSmallGpu;
@@ -3127,7 +3231,7 @@ std::uint64_t StorageTexture::writeBackWindows(const HostImport& import, std::sp
         recorder->MarkCovered(storedAccess);
         // Only the pieces written into the import are stores a CPU reader must wait for; the
         // shadowed ones reach it through a publish, which notes its own.
-        if (!imported.empty()) recorder->NotePendingWrites(imported);
+        if (!imported.empty()) recorder->NotePendingWrites(imported, Recorder::WriteSource::Import);
     }
     partialWriteBacks.fetch_add(1, std::memory_order_relaxed);
     partialWriteBackBytes.fetch_add(storedBytes, std::memory_order_relaxed);
@@ -3336,6 +3440,22 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             if (wait && behind()) {
                 const bool openWriter = recorder->OpenWriteOverlaps(address, bytes) || recorder->OpenReadKindOverlaps(address, bytes, Recorder::ReadKind::AddressBased);
                 const auto inFlightWriter = recorder->PendingWriterSerial(address, bytes);
+                if (FlushWaitReport()) {
+                    std::uint64_t produced = 0;
+                    auto branch = WriteBackBranch::CpuStore;
+                    for (const auto& texture : flush) {
+                        for (std::uint32_t layer = 0; layer < texture->trackedLayers; ++layer) {
+                            if (!texture->layerPending[layer] || layer >= texture->pendingGeneration.size()) continue;
+                            const auto begin = texture->layerBegin(layer);
+                            if (address < begin + texture->layerBytes(layer) && begin < address + bytes) produced = std::max(produced, texture->pendingGeneration[layer]);
+                        }
+                        if (HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) != nullptr) {
+                            const auto own = texture->blockUnits ? WriteBackBranch::BlockWindows : WriteBackBranch::WholeLayer;
+                            if (branch != WriteBackBranch::BlockWindows) branch = own;
+                        }
+                    }
+                    NoteFlushWaitClass(*recorder, address, bytes, produced, branch, openWriter, reason);
+                }
                 const auto started = std::chrono::steady_clock::now();
                 if (openWriter) {
                     flushWaitsOpen.fetch_add(1, std::memory_order_relaxed);
@@ -4811,7 +4931,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         } else {
             recorder->EndGpuTiming(timing, storedBytes);
             recorder->MarkShaderReadsCovered();
-            recorder->NotePendingWrite(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+            recorder->NotePendingWrite(firstStored, static_cast<std::size_t>(lastStored - firstStored), Recorder::WriteSource::WriteBack);
         }
         countStorageWriteBack(storedBytes, true);
         if (profile) Profile().storageGpu += timer.lap();
