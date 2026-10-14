@@ -1239,6 +1239,7 @@ std::atomic<std::uint64_t> flushWaitNanoseconds{0};
 std::atomic<std::uint64_t> flushWaitsOpen{0};
 std::atomic<std::uint64_t> uploadWaits{0};
 std::atomic<std::uint64_t> uploadWaitsOpen{0};
+std::atomic<std::uint64_t> generationClamps{0};
 std::atomic<std::uint64_t> uploadWaitNanoseconds{0};
 std::atomic<std::uint64_t> keptWriteBacks{0};
 std::atomic<std::uint64_t> keptSmallWriteBacks{0};
@@ -1258,6 +1259,20 @@ bool FlushSkipMarked() {
 
 bool MarkedAtRecord(Recorder::WriteSource source) {
     return source == Recorder::WriteSource::WriteBack || source == Recorder::WriteSource::UnitShadow;
+}
+
+std::uint64_t ClampToUnlandedWriters(std::uint64_t generation, std::uint64_t address, std::size_t bytes) {
+    static const bool off = std::getenv("APS5_NO_GENERATION_CLAMP") != nullptr;
+    if (off || generation == 0 || bytes == 0) return generation;
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || Recorder::InCompletion()) return generation;
+    auto clamped = generation;
+    for (const auto& write : recorder->PendingWritesOver(address, bytes)) {
+        if (MarkedAtRecord(write.source) || write.generation == 0) continue;
+        clamped = std::min(clamped, write.generation - 1);
+    }
+    if (clamped != generation) generationClamps.fetch_add(1, std::memory_order_relaxed);
+    return std::max<std::uint64_t>(clamped, 1);
 }
 
 std::atomic<std::uint64_t> flushWaitsSkippedMarked{0};
@@ -1393,6 +1408,7 @@ void ReportFlushWaits() {
     static std::uint64_t lastWindowPath = 0;
     static std::uint64_t lastNullSlots = 0;
     static GuestMemory::DriverPieceCounts lastPieces{};
+    static std::uint64_t lastClamps = 0;
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     auto last = reported.load(std::memory_order_relaxed);
     if (last != 0 && now - last < std::chrono::steady_clock::duration(std::chrono::seconds(10)).count()) return;
@@ -1417,8 +1433,9 @@ void ReportFlushWaits() {
     const auto windowKept = keptWindowPath.load(std::memory_order_relaxed);
     const auto nullSlots = NullStorageSlots();
     const auto pieces = GuestMemory::DriverPieceStats();
+    const auto clamps = generationClamps.load(std::memory_order_relaxed);
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::duration(now - last)).count();
-    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown, %llu on the tile-window path), %llu null storage slots; driver pieces: %llu deduped, %llu inserted, %llu evicted; dropped verdicts by pieces taken since the ring reset: %llu within 64, %llu within 256, %llu beyond\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter), static_cast<unsigned long long>(windowKept - lastWindowPath), static_cast<unsigned long long>(nullSlots - lastNullSlots), static_cast<unsigned long long>(pieces.deduped - lastPieces.deduped), static_cast<unsigned long long>(pieces.inserted - lastPieces.inserted), static_cast<unsigned long long>(pieces.evicted - lastPieces.evicted), static_cast<unsigned long long>(pieces.droppedWithin64 - lastPieces.droppedWithin64), static_cast<unsigned long long>(pieces.droppedWithin256 - lastPieces.droppedWithin256), static_cast<unsigned long long>(pieces.droppedBeyond256 - lastPieces.droppedBeyond256));
+    std::fprintf(stderr, "[storage-flush] (%.0f s): %llu stores behind a newer recorded writer, %llu waited %.3f s (%llu for the open batch); %llu uploads waited for a recorded writer, %.3f s (%llu for the open batch); %llu DCC-key writer waits, %.3f s; %llu write-backs kept written blocks (%llu without a CPU stamp; %llu on images <= 64 KiB, %llu of those without a CPU stamp; %llu stored around the writer's bytes; kept blocks: %llu whole by declaration, %llu pieces dropped, %llu writer unknown, %llu on the tile-window path), %llu null storage slots; driver pieces: %llu deduped, %llu inserted, %llu evicted; dropped verdicts by pieces taken since the ring reset: %llu within 64, %llu within 256, %llu beyond; %llu generation clamps\n", seconds, static_cast<unsigned long long>(behind - lastBehind), static_cast<unsigned long long>(waits - lastWaits), static_cast<double>(nanoseconds - lastNanoseconds) / 1e9, static_cast<unsigned long long>(waitsOpen - lastWaitsOpen), static_cast<unsigned long long>(uploads - lastUploadWaits), static_cast<double>(uploadNanoseconds - lastUploadNanoseconds) / 1e9, static_cast<unsigned long long>(uploadsOpen - lastUploadWaitsOpen), static_cast<unsigned long long>(key.waits - lastKeyWaits), static_cast<double>(key.nanoseconds - lastKeyNanoseconds) / 1e9, static_cast<unsigned long long>(kept - lastKept), static_cast<unsigned long long>(keptGpu - lastKeptByGpu), static_cast<unsigned long long>(keptSmall - lastKeptSmall), static_cast<unsigned long long>(keptSmallGpu - lastKeptSmallByGpu), static_cast<unsigned long long>(partial - lastKeptPartial), static_cast<unsigned long long>(wholeDeclared - lastWholeDeclared), static_cast<unsigned long long>(droppedPieces - lastDroppedPieces), static_cast<unsigned long long>(unknownWriter - lastUnknownWriter), static_cast<unsigned long long>(windowKept - lastWindowPath), static_cast<unsigned long long>(nullSlots - lastNullSlots), static_cast<unsigned long long>(pieces.deduped - lastPieces.deduped), static_cast<unsigned long long>(pieces.inserted - lastPieces.inserted), static_cast<unsigned long long>(pieces.evicted - lastPieces.evicted), static_cast<unsigned long long>(pieces.droppedWithin64 - lastPieces.droppedWithin64), static_cast<unsigned long long>(pieces.droppedWithin256 - lastPieces.droppedWithin256), static_cast<unsigned long long>(pieces.droppedBeyond256 - lastPieces.droppedBeyond256), static_cast<unsigned long long>(clamps - lastClamps));
     ReportFlushWaitClasses(seconds);
     lastKept = kept;
     lastKeptSmall = keptSmall;
@@ -1431,6 +1448,7 @@ void ReportFlushWaits() {
     lastWindowPath = windowKept;
     lastNullSlots = nullSlots;
     lastPieces = pieces;
+    lastClamps = clamps;
     lastBehind = behind;
     lastWaits = waits;
     lastWaitsOpen = waitsOpen;
@@ -2006,7 +2024,7 @@ bool StorageTexture::Refresh() {
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
     // since `generation` need no comparison.
-    const auto current = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    const auto current = ClampToUnlandedWriters(GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     // Per tracked layer: changed since its generation (a keys change makes every layer stale).
     std::vector<bool> changed(trackedLayers, false);
     // Per 64 KiB block of the surface (blockGenerations): stamped since its layer's generation, and
@@ -2422,7 +2440,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     // A layer selection applies to the direct path alone (the others upload everything); it names
     // array layers, which the tracked layers are when there are several.
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
-    const auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    const auto now = ClampToUnlandedWriters(GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto stampLayers = [&](bool selectedOnly) {
         const bool whole = !selectedOnly || layers == nullptr;
         if (guestBytes > GenerationBaselineBytes || !guestBytesSettled()) generationBaseline.clear();
@@ -4176,7 +4194,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     filledKeys = DccKeys::Uncompressed;
     keyProof = {};
     forgetBorrowed(0, trackedLayers);
-    layerGeneration.assign(trackedLayers, GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
+    layerGeneration.assign(trackedLayers, ClampToUnlandedWriters(GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
     refreshGeneration();
     ++version;
     if (traceKeys) std::fprintf(stderr, "[dcc-keys] key fill %s clears 0x%llx+0x%llx at once (keys 0x%llx, %zu pending units dropped, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(descriptor.dccAddress), droppedUnits, wasDirty ? 1 : 0);
@@ -4326,7 +4344,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
             std::fill_n(filled.begin() + first, count, true);
             captureGuestBytes(&filled);
         }
-        const auto now = GuestMemory::CollectWritesUncached(begin, bytes);
+        const auto now = ClampToUnlandedWriters(GuestMemory::CollectWritesUncached(begin, bytes), begin, bytes);
         for (auto unit = first; unit < first + count; ++unit) layerGeneration[unit] = now;
         refreshGeneration();
         forgetBorrowed(first, count);
@@ -4334,7 +4352,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
         return true;
     }
     if (!watched) captureGuestBytes(nullptr);
-    layerGeneration.assign(trackedLayers, GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
+    layerGeneration.assign(trackedLayers, ClampToUnlandedWriters(GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
     refreshGeneration();
     forgetBorrowed(0, trackedLayers);
     MarkDirty();
@@ -4452,7 +4470,7 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
     if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) layerOriginal.assign(trackedLayers, false);
     else captureGuestBytes(nullptr);
     uploadedKeys = DccKeys::Uncompressed;
-    layerGeneration.assign(trackedLayers, GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
+    layerGeneration.assign(trackedLayers, ClampToUnlandedWriters(GuestMemory::CollectWritesUncached(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
     refreshGeneration();
     forgetBorrowed(0, trackedLayers);
     MarkDirty();
@@ -4854,7 +4872,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (stickySettle) {
             const bool allKept = std::none_of(skippedLayer.begin(), skippedLayer.end(), [](bool kept) { return kept; });
             if (allKept || !adjacent.empty()) {
-        const auto now = memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+        const auto now = ClampToUnlandedWriters(memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored)), firstStored, static_cast<std::size_t>(lastStored - firstStored));
                 for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
                     if (layers[layer] && !skippedLayer[layer]) layerGeneration[layer] = now;
                 }
@@ -4869,7 +4887,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         bool advances = false;
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) advances = advances || (layers[layer] && !skippedLayer[layer]);
         if (!advances && adjacent.empty() && shadowed.empty()) return;
-        const auto now = memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+        const auto now = ClampToUnlandedWriters(memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored)), firstStored, static_cast<std::size_t>(lastStored - firstStored));
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (layers[layer] && !skippedLayer[layer]) layerGeneration[layer] = now;
         }
