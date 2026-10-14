@@ -144,6 +144,34 @@ bool Replay(const char* path) {
             for (const auto& binding : result.bindings) {
                 if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage || binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                     std::printf("  %s: %u elements bound\n", binding.role == ShaderRecompiler::DescriptorRole::ImageTable ? "image table" : binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage ? "storage table" : "sampler table", binding.count);
+                    if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage) {
+                        const bool storage = binding.role == ShaderRecompiler::DescriptorRole::ImageTableStorage;
+                        for (std::uint32_t element = 0; element < binding.count; ++element) {
+                            if (binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) break;
+                            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+                            const auto base = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1] & 0xffu) << 32u)) << 8u;
+                            const auto width = (((words[1] >> 30u) & 0x3u) | ((words[2] & 0xfffu) << 2u)) + 1u;
+                            const auto height = ((words[2] >> 14u) & 0x3fffu) + 1u;
+                            std::printf("  %s element %u: 0x%llx width %u height %u depthOrLastArray %u baseArray %u levels %u-%u type %u format %u tile %u\n", storage ? "storage table" : "table", element, static_cast<unsigned long long>(base), width, height, words[4] & 0x1fffu, (words[4] >> 16u) & 0x1fffu, (words[3] >> 12u) & 0xfu, (words[3] >> 16u) & 0xfu, (words[3] >> 28u) & 0xfu, (words[1] >> 20u) & 0x1ffu, (words[3] >> 20u) & 0x1fu);
+                        }
+                    }
+                    continue;
+                }
+                if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) {
+                    for (std::uint32_t element = 0; element < binding.count; ++element) {
+                        if (binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) break;
+                        const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+                        const bool storage = binding.kind == ShaderRecompiler::DescriptorKind::StorageImage;
+                        if (words[0] == 0u && (words[1] & 0xffu) == 0u) {
+                            std::printf("  image %u: %s unbound\n", element, storage ? "storage" : "sampled");
+                            continue;
+                        }
+                        const auto base = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1] & 0xffu) << 32u)) << 8u;
+                        const auto width = (((words[1] >> 30u) & 0x3u) | ((words[2] & 0xfffu) << 2u)) + 1u;
+                        const auto height = ((words[2] >> 14u) & 0x3fffu) + 1u;
+                        const bool written = storage && (element >= binding.imageWritten.size() || binding.imageWritten[element]);
+                        std::printf("  image %u: %s 0x%llx width %u height %u depthOrLastArray %u baseArray %u levels %u-%u type %u format %u tile %u%s\n", element, storage ? "storage" : "sampled", static_cast<unsigned long long>(base), width, height, words[4] & 0x1fffu, (words[4] >> 16u) & 0x1fffu, (words[3] >> 12u) & 0xfu, (words[3] >> 16u) & 0xfu, (words[3] >> 28u) & 0xfu, (words[1] >> 20u) & 0x1ffu, (words[3] >> 20u) & 0x1fu, written ? " written" : "");
+                    }
                     continue;
                 }
                 if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
