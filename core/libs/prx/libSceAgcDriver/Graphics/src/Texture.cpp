@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -3625,6 +3626,53 @@ void StorageTexture::DumpRecentFlushes(std::uint64_t address, std::size_t bytes)
         ++shown;
     }
     std::fprintf(stderr, "[gpu]   %zu of the last %zu forced stores shown, %llu stores waited for a newer recorded writer so far\n", shown, count, static_cast<unsigned long long>(flushedBehindWriter.load(std::memory_order_relaxed)));
+}
+
+namespace {
+
+void describeBlockForFault(std::uint64_t address, char* text, std::size_t textBytes, std::size_t& used) {
+    const auto append = [&](const char* format, auto... arguments) {
+        if (used >= textBytes) return;
+        const auto written = std::snprintf(text + used, textBytes - used, format, arguments...);
+        if (written > 0) used += static_cast<std::size_t>(written);
+    };
+    const auto stamps = GuestMemory::DescribeBlockStamps(address);
+    if (stamps.busy) append("block 0x%llx tracker busy", static_cast<unsigned long long>(address & ~0xffffull));
+    else if (!stamps.tracked) append("block 0x%llx untracked", static_cast<unsigned long long>(address & ~0xffffull));
+    else append("block 0x%llx stamp %llu (cpu %llu) mark %s", static_cast<unsigned long long>(address & ~0xffffull), static_cast<unsigned long long>(stamps.stamp), static_cast<unsigned long long>(stamps.cpuStamp), GuestMemory::WriteMarkerName(GuestMemory::BlockWriteMarker(address)));
+}
+
+void annotateGuestFault(std::uintptr_t address, std::size_t bytes, char* text, std::size_t textBytes) {
+    std::size_t used = 0;
+    describeBlockForFault(address, text, textBytes, used);
+    const auto last = address + (bytes == 0 ? 0 : bytes - 1);
+    if ((last & ~0xffffull) != (address & ~0xffffull)) {
+        if (used < textBytes) used += static_cast<std::size_t>(std::max(0, std::snprintf(text + used, textBytes - used, "; ")));
+        describeBlockForFault(last, text, textBytes, used);
+    }
+    auto& recent = RecentFlushes();
+    std::unique_lock lock(recent.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        if (used < textBytes) std::snprintf(text + used, textBytes - used, "; flush ring busy");
+        return;
+    }
+    const auto count = std::min(recent.next, recent.entries.size());
+    std::size_t shown = 0;
+    for (std::size_t back = 0; back < count && shown < 4; ++back) {
+        const auto& entry = recent.entries[(recent.next - 1 - back) % recent.entries.size()];
+        if (!(entry.address < address + bytes && address < entry.address + entry.bytes)) continue;
+        if (used >= textBytes) break;
+        const auto written = std::snprintf(text + used, textBytes - used, "; flush %llu image 0x%llx+0x%llx for %s", static_cast<unsigned long long>(entry.serial), static_cast<unsigned long long>(entry.image), static_cast<unsigned long long>(entry.imageBytes), entry.reason);
+        if (written > 0) used += static_cast<std::size_t>(written);
+        ++shown;
+    }
+    if (shown == 0 && used < textBytes) std::snprintf(text + used, textBytes - used, "; no recent flush over the range (%zu held)", count);
+}
+
+}
+
+void StorageTexture::InstallFaultAnnotator() {
+    GuestWriteWatch::GuestWriteWatchSetFaultAnnotator_nid_postfix(&annotateGuestFault);
 }
 
 bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason) {

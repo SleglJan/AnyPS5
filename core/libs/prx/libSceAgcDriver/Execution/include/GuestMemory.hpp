@@ -87,6 +87,13 @@ struct WriteMarkerScope {
     WriteMarkerScope& operator=(const WriteMarkerScope&) = delete;
 };
 WriteMarker BlockWriteMarker(std::uint64_t address);
+struct BlockStamps {
+    std::uint64_t stamp = 0;
+    std::uint64_t cpuStamp = 0;
+    bool tracked = false;
+    bool busy = false;
+};
+BlockStamps DescribeBlockStamps(std::uint64_t address);
 struct DriverPieceCounts {
     std::uint64_t deduped = 0;
     std::uint64_t inserted = 0;

@@ -1,4 +1,8 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
+
+namespace {
+GuestWriteWatch::GuestFaultAnnotator faultAnnotator = nullptr;
+}
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -624,6 +628,10 @@ bool GuestWriteWatchAvailable_nid_postfix() {
 #endif
 }
 
+void GuestWriteWatchSetFaultAnnotator_nid_postfix(GuestFaultAnnotator annotator) {
+    faultAnnotator = annotator;
+}
+
 void GuestWriteWatchRegister_nid_postfix(const void* pointer, std::size_t bytes) {
 #ifdef APS5_GUEST_WRITE_WATCH
     const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
@@ -798,6 +806,11 @@ private:
 
     static void dump(const char* label, std::uintptr_t address, std::size_t bytes) {
         bytes = std::min<std::size_t>(bytes, 0x40000);
+        if (faultAnnotator != nullptr) {
+            char text[768] = {};
+            faultAnnotator(address, bytes, text, sizeof(text));
+            if (text[0] != '\0') print("[guest-fault] %s %#lx tracker: %s\n", label, static_cast<unsigned long>(address), text);
+        }
         for (std::size_t offset = 0; offset < bytes; offset += 32) {
             std::uint64_t words[4] = {};
             if (!read(address + offset, words, 32)) {

@@ -192,6 +192,7 @@ public:
     // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr);
     static void DumpRecentFlushes(std::uint64_t address, std::size_t bytes);
+    static void InstallFaultAnnotator();
     static std::uint64_t FlushesBehindWriters();
     static std::uint64_t UploadWaits();
     static std::uint64_t FlushWaitsSkippedMarked();

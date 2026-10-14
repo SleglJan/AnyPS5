@@ -1481,6 +1481,22 @@ DriverPieceCounts DriverPieceStats() {
     return {driverPiecesDeduped.load(std::memory_order_relaxed), driverPiecesInserted.load(std::memory_order_relaxed), driverPiecesEvicted.load(std::memory_order_relaxed), droppedWithin64.load(std::memory_order_relaxed), droppedWithin256.load(std::memory_order_relaxed), droppedBeyond256.load(std::memory_order_relaxed)};
 }
 
+BlockStamps DescribeBlockStamps(std::uint64_t address) {
+    BlockStamps out;
+    auto& tracker = Tracker();
+    std::unique_lock lock(tracker.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        out.busy = true;
+        return out;
+    }
+    if (!tracker.watched || !tracker.covers(address, 1)) return out;
+    const auto block = tracker.blockOf(address);
+    out.tracked = true;
+    out.stamp = tracker.stampOf(block);
+    out.cpuStamp = tracker.cpuStampOf(block);
+    return out;
+}
+
 WriteMarker BlockWriteMarker(std::uint64_t address) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
