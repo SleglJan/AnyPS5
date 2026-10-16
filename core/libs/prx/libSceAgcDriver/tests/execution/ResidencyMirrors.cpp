@@ -418,8 +418,8 @@ public:
     ResidencyToken Current() override { return stream.Current(); }
 
     ResidencyImport Import(std::uint64_t page) override {
-        if (page < BasePage || page >= BasePage + GuestPages) return {};
-        return {true, true, true};
+        if (page < BasePage || page >= BasePage + GuestPages || unmapped.contains(page)) return {};
+        return {true, true, true, false, 1, (page - BasePage) << ResidencyPageShift};
     }
 
     std::vector<ResidencyRange> Aliases(std::uint64_t, std::uint64_t) override { return {}; }
@@ -459,15 +459,24 @@ public:
         }
     }
 
-    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+    bool GuardAccess(std::uint64_t page, ResidencyMask mask) override {
+        accessGuards[page] = static_cast<ResidencyMask>(accessGuards[page] | mask);
+        return true;
+    }
 
-    void UnguardAccess(std::uint64_t) override {}
+    void UnguardAccess(std::uint64_t page) override { accessGuards.erase(page); }
 
     void Stamp(std::uint64_t page) { stamps[page] = ++generation; }
+
+    ResidencyMask AccessGuard(std::uint64_t page) const {
+        const auto found = accessGuards.find(page);
+        return found == accessGuards.end() ? ResidencyMask{0} : found->second;
+    }
 
     Stream& stream;
     GuestRange& guest;
     ResidencyMirrors mirrors;
+    std::set<std::uint64_t> unmapped;
 
 private:
     ResidencyImportLocator locator() {
@@ -476,6 +485,7 @@ private:
 
     std::uint64_t generation = 1;
     std::map<std::uint64_t, std::uint64_t> stamps;
+    std::map<std::uint64_t, ResidencyMask> accessGuards;
 };
 
 struct ReadPush {
@@ -705,15 +715,75 @@ void GuardedStores(Fixture& fixture) {
     Expect(fixture.manager.Slot(BasePage + 2).has_value() && fixture.manager.Counts().hot == 0, "faults two epochs apart keep the page resident");
 }
 
+void ImportWritesRefreshMirrors(Fixture& fixture) {
+    Expect(fixture.manager.Slot(BasePage + 3).has_value(), "page 3 is resident before the store");
+    const auto copied = fixture.manager.Counts().copiedInBytes;
+    const auto writtenBack = fixture.manager.Counts().writtenBackBytes;
+    fixture.FillImport(BasePage + 3, 4, 0x3c3c3c3cu, false);
+    fixture.manager.FlushForCpuRead(Fixture::Address(BasePage + 3, 4), 4);
+    const auto* words = fixture.guest.Words(BasePage + 3);
+    Expect(words[4 * WordsPerSubpage] == 0x3c3c3c3cu && words[5 * WordsPerSubpage - 1] == 0x3c3c3c3cu, "a driver store into the import reaches guest memory with no copy out of the mirror");
+    Expect(words[3 * WordsPerSubpage] == Fixture::Pattern(BasePage + 3, 3 * WordsPerSubpage) && words[5 * WordsPerSubpage] == Fixture::Pattern(BasePage + 3, 5 * WordsPerSubpage), "subpages the store did not write are unchanged");
+    Expect(fixture.manager.Counts().copiedInBytes == copied && fixture.manager.Counts().writtenBackBytes == writtenBack, "the store and the flush recorded no copy");
+    const auto stale = fixture.Read(BasePage + 3, 1, ResidencySubpageBytes, ResidencySubpages, false);
+    Expect(stale[4] == Fixture::Pattern(BasePage + 3, 4 * WordsPerSubpage), "the mirror keeps its bytes until it is refreshed");
+    fixture.device.Stamp(BasePage + 3);
+    fixture.CheckRead(BasePage + 3, 1, "the next use of the changed page refreshes its mirror");
+}
+
 void WriteBackOut(Fixture& fixture) {
+    const auto writtenBack = fixture.manager.Counts().writtenBackBytes;
     fixture.FillMirror(BasePage + 3, 1, 0x5a5a5a5au);
     Expect(fixture.manager.Dirty(BasePage + 3) == 0x0002, "the GPU write into the mirror marks subpage 1 dirty");
+    Expect(fixture.device.AccessGuard(BasePage + 3) == 0x0002, "the dirty subpage, and only it, is access-guarded from the moment it is dirty");
     Expect(fixture.guest.Words(BasePage + 3)[WordsPerSubpage] == Fixture::Pattern(BasePage + 3, WordsPerSubpage), "guest memory does not have the GPU's bytes yet");
+    fixture.CheckRead(BasePage + 3, 1, "a later dispatch reads the GPU's bytes from the mirror");
+    Expect(fixture.manager.Counts().writtenBackBytes == writtenBack && fixture.manager.Dirty(BasePage + 3) == 0x0002, "the later dispatch's read wrote nothing back and left the page dirty");
     fixture.manager.FlushForCpuRead(Fixture::Address(BasePage + 3, 1), 4);
     const auto* words = fixture.guest.Words(BasePage + 3);
     Expect(words[WordsPerSubpage] == 0x5a5a5a5au && words[2 * WordsPerSubpage - 1] == 0x5a5a5a5au, "the write-back brought the GPU's bytes to guest memory");
     Expect(words[0] == Fixture::Pattern(BasePage + 3, 0) && words[2 * WordsPerSubpage] == Fixture::Pattern(BasePage + 3, 2 * WordsPerSubpage), "subpages the GPU did not write are unchanged");
+    Expect(fixture.manager.Counts().writtenBackBytes == writtenBack + ResidencySubpageBytes, "the CPU read wrote back the one dirty subpage");
     Expect(fixture.manager.Dirty(BasePage + 3) == 0, "the page is clean after the flush");
+    Expect(fixture.device.AccessGuard(BasePage + 3) == 0, "the flush drops the access guard");
+}
+
+void CpuAndGpuSubpages(Fixture& fixture) {
+    const auto writtenBack = fixture.manager.Counts().writtenBackBytes;
+    fixture.FillMirror(BasePage + 1, 9, 0x99999999u);
+    const auto faults = faultLog.count.load();
+    fixture.Store(BasePage + 1, 13 * WordsPerSubpage, 0x13131313u);
+    Expect(faultLog.count.load() == faults + 1, "the CPU store into a clean subpage of the dirty page faults on the write guard");
+    fixture.Ordering();
+    Expect(fixture.manager.Dirty(BasePage + 1) == 0x0200, "the refresh after the CPU store leaves the GPU's subpage dirty");
+    fixture.CheckRead(BasePage + 1, 1, "a dispatch reads the GPU's subpage and the CPU's store from one mirror page");
+    fixture.manager.FlushForCpuRead(Fixture::Address(BasePage + 1), ResidencyPageBytes);
+    const auto* words = fixture.guest.Words(BasePage + 1);
+    Expect(words[9 * WordsPerSubpage] == 0x99999999u && words[10 * WordsPerSubpage - 1] == 0x99999999u, "the GPU's subpage reaches guest memory");
+    Expect(words[13 * WordsPerSubpage] == 0x13131313u, "the CPU's store in another subpage of the page survives the write-back");
+    Expect(fixture.manager.Counts().writtenBackBytes == writtenBack + ResidencySubpageBytes, "only the dirty subpage was written back");
+    Expect(fixture.manager.Dirty(BasePage + 1) == 0 && fixture.device.AccessGuard(BasePage + 1) == 0, "the page is clean and unguarded after the flush");
+}
+
+void UnmapDropsDirty(Fixture& fixture) {
+    const auto page = BasePage + 4;
+    fixture.manager.Use(Fixture::Address(page), ResidencyPageBytes, ResidencyAccess::Read);
+    Expect(fixture.manager.Slot(page).has_value(), "page 4 is resident before the unmap");
+    fixture.FillMirror(page, 2, 0x22222222u);
+    const auto before = fixture.manager.Counts();
+    fixture.device.unmapped.insert(page);
+    const std::array<std::uint64_t, 1> unmappedPage{page};
+    fixture.device.Unguard(unmappedPage);
+    fixture.manager.DropRange(Fixture::Address(page), ResidencyPageBytes);
+    fixture.manager.Prepare();
+    fixture.stream.Submit();
+    fixture.stream.WaitAll();
+    const auto after = fixture.manager.Counts();
+    Expect(!fixture.manager.Slot(page) && after.dropped == before.dropped + 1, "the unmapped page leaves residency");
+    Expect(after.writtenBackBytes == before.writtenBackBytes && fixture.guest.Words(page)[2 * WordsPerSubpage] == Fixture::Pattern(page, 2 * WordsPerSubpage), "an unmap drops the dirty mirror without a write-back");
+    Expect(fixture.device.AccessGuard(page) == 0, "an unmap drops the access guard");
+    for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) fixture.expected.erase({page, 2 * WordsPerSubpage + word});
+    fixture.device.unmapped.erase(page);
 }
 
 void PinsHoldInFlightWork(Fixture& fixture) {
@@ -778,7 +848,7 @@ void Frames(Fixture& fixture) {
     std::printf("frames: %llu faults in %u frames, %llu pages turned hot, page 4 %s, page 5 %s, %.2f us per faulting store (%llu timed)\n", static_cast<unsigned long long>(faultTotal), FrameCount,
         static_cast<unsigned long long>(counts.hot - hotBefore), fixture.manager.Slot(BasePage + 4) ? "resident" : "not resident", fixture.manager.Slot(BasePage + 5) ? "resident" : "not resident",
         fixture.faultsTimed == 0 ? 0.0 : fixture.faultMicroseconds / static_cast<double>(fixture.faultsTimed), static_cast<unsigned long long>(fixture.faultsTimed));
-    Expect(counts.hot - hotBefore == 1 && !fixture.manager.Slot(BasePage + 5) && fixture.manager.Hot(BasePage + 5), "the vertex ring faults in consecutive epochs and leaves residency");
+    Expect(counts.hot - hotBefore == 1 && fixture.manager.Slot(BasePage + 5).has_value() && !fixture.manager.Hot(BasePage + 5) && !faultLog.guarded[5].load() && counts.hotResident == 1, "the vertex ring faults in consecutive epochs, turns hot and stays resident without a write guard");
     Expect(fixture.manager.Slot(BasePage + 4).has_value(), "the constant buffer, one fault per frame, stays resident");
     Expect(faultTotal == FrameCount + 2, "one fault per frame for the constant buffer plus the vertex ring's two before it turned hot");
 }
@@ -824,10 +894,13 @@ int main() {
             Fixture fixture(device->Get(), std::uint64_t{ChunkSlots} << ResidencyPageShift);
             CopyInAndPublishedReads(fixture);
             GuardedStores(fixture);
+            ImportWritesRefreshMirrors(fixture);
             WriteBackOut(fixture);
+            CpuAndGpuSubpages(fixture);
             PinsHoldInFlightWork(fixture);
             EvictionUnderSmallBudget(fixture);
             Frames(fixture);
+            UnmapDropsDirty(fixture);
             Release(fixture);
         }
         BackingCommit(device->Get());
