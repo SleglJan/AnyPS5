@@ -1804,9 +1804,7 @@ void ShaderResources::buildComplete() {
                 residency->BeforeDispatch();
                 residency->UseForRead(readRanges);
             }
-            if (computeBuild && pageTableStores) planWriteStaging();
-            if (residency != nullptr && staging != nullptr) PrepareImportWrite(stagedRange.first, stagedRange.second - stagedRange.first);
-            if (residency != nullptr && pageTableStores && (storesUnbounded || (staging == nullptr && !storeRanges.empty()))) {
+            if (residency != nullptr && pageTableStores && (storesUnbounded || !storeRanges.empty())) {
                 std::vector<ResidencyRange> grants;
                 if (!storesUnbounded) {
                     for (const auto& [begin, end] : storeRanges) grants.push_back({begin, end - begin});
@@ -1814,7 +1812,6 @@ void ShaderResources::buildComplete() {
                 residency->BeforeWritingDispatch(grants, storesUnbounded);
             }
             bda = std::make_unique<BdaResources>(context, guestMemory, std::span<const ShaderRecompiler::BdaAbi::Range>{}, batchFaultRecord());
-            if (staging != nullptr) bda->NoteExactWrites({stagedRange});
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }
@@ -3101,33 +3098,6 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::linearSt
     const auto bytes = elements * linear.stride + (linear.elementBytes > linear.stride ? linear.elementBytes - linear.stride : 0u);
     if (linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return std::nullopt;
     return std::pair{linear.base, linear.base + bytes};
-}
-
-void ShaderResources::planWriteStaging() {
-    constexpr VkDeviceSize maximum = 64u * 1024u * 1024u;
-    if (!linearStore.has_value()) return;
-    const auto& linear = *linearStore;
-    if (linearThreads == 0 || linear.stride == 0 || linear.stride != linear.elementBytes) return;
-    const auto elements = std::min<std::uint64_t>(linearThreads, linear.records);
-    const auto bytes = elements * linear.stride;
-    if (bytes == 0 || bytes > maximum || linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return;
-    const auto end = linear.base + bytes;
-    if (accessesUnbounded || std::any_of(readRanges.begin(), readRanges.end(), [&](const auto& range) { return range.first < end && linear.base < range.second; })) return;
-    auto segments = guestMemory.WritableImportSegments(linear.base, end);
-    VkDeviceSize total = 0;
-    for (const auto& segment : segments) total += segment.end - segment.begin;
-    if (total != bytes) return;
-    for (const auto& segment : segments) {
-        for (const auto& shadowed : guestMemory.ShadowOverrides()) {
-            if (shadowed.begin < segment.end && segment.begin < shadowed.end) return;
-        }
-    }
-    staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    stagedOffsets.clear();
-    for (const auto& segment : segments) stagedOffsets.push_back(segment.begin - linear.base);
-    stagedSegments = std::move(segments);
-    stagedRange = {linear.base, end};
-    stagedWriteBuilds.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
