@@ -1,5 +1,7 @@
 #include "DeviceTableFixture.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <span>
 #include <map>
 
 namespace {
@@ -74,6 +76,28 @@ MainCalls CallsFromMain(std::span<const std::uint32_t> words) {
     return calls;
 }
 
+std::size_t LookupVectorLoads(std::span<const std::uint32_t> words) {
+    std::map<std::uint32_t, std::string> names;
+    std::set<std::uint32_t> vectors;
+    std::uint32_t u32 = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+        if (op == spv::OpTypeInt && words[cursor + 2] == 32u && words[cursor + 3] == 0u) u32 = words[cursor + 1];
+        if (op == spv::OpTypeVector && words[cursor + 2] == u32 && words[cursor + 3] == 4u) vectors.insert(words[cursor + 1]);
+    }
+    std::size_t loads = 0;
+    std::string function;
+    std::set<std::uint32_t> addresses;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpFunction) function = names[words[cursor + 2]];
+        if (op == spv::OpConvertUToPtr) addresses.insert(words[cursor + 2]);
+        if (op == spv::OpLoad && function == "device_image_lookup" && vectors.contains(words[cursor + 1]) && addresses.contains(words[cursor + 3])) ++loads;
+    }
+    return loads;
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) Texels[y * Width + x] = Texel(x, y);
@@ -88,6 +112,8 @@ void Run(AgcDriver::VulkanDevice& device) {
     ExpectRouted(compiled, "same texture");
     const auto calls = CallsFromMain(compiled.result->spirv.Words());
     Expect(calls.lookups == 1u && calls.misses == 2u, "same texture: main calls device_image_lookup " + std::to_string(calls.lookups) + " times and device_image_record_miss " + std::to_string(calls.misses) + " times, expected one lookup where the descriptor is loaded and each sample recording its own miss");
+    const auto bucketLoads = LookupVectorLoads(compiled.result->spirv.Words());
+    Expect(bucketLoads == ShaderRecompiler::DeviceImageTableAbi::BucketWords / 4u, "same texture: the device image lookup loads " + std::to_string(bucketLoads) + " 16-byte vectors per probed bucket, expected its " + std::to_string(ShaderRecompiler::DeviceImageTableAbi::BucketWords) + " words in " + std::to_string(ShaderRecompiler::DeviceImageTableAbi::BucketWords / 4u) + " vector loads");
     Expect(calls.tables == 0u, "same texture: main calls table image functions " + std::to_string(calls.tables) + " times, expected each sample to switch over its image modes where it reads");
     const auto missed = Run(device, compiled, Height);
     const auto read = ExpectFirstUse(missed, twice, 2, "same texture: first dispatch, both samples recording their misses");

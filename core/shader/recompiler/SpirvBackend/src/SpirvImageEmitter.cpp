@@ -2404,7 +2404,16 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpBranchConditional, searching, body, merge);
     EmitLabel(state, body);
     const auto first = binary(spv::OpIMul, u32, binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, home, step), mask), constant(Abi::BucketWords));
-    const auto at = [&](std::uint32_t word) { return LoadDeviceWord(state, table, binary(spv::OpIAdd, u32, first, constant(word))); };
+    static_assert(Abi::BucketWords % 4u == 0u && Abi::BucketBytes % 16u == 0u);
+    std::array<std::uint32_t, Abi::BucketWords> bucket{};
+    for (std::uint32_t quad = 0; quad < Abi::BucketWords / 4u; ++quad) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, uvec4), pointer, binary(spv::OpIAdd, u64, table, binary(spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, binary(spv::OpIAdd, u32, first, constant(quad * 4u))), BdaConstant(state, 2u))));
+        const auto loaded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, uvec4, loaded, pointer, spv::MemoryAccessAlignedMask, 16u);
+        for (std::uint32_t word = 0; word < 4u; ++word) bucket[quad * 4u + word] = extract(loaded, word);
+    }
+    const auto at = [&](std::uint32_t word) { return bucket[word]; };
     const auto live = binary(spv::OpIEqual, boolean, at(Abi::StateWord), constant(Abi::LiveState));
     auto same = live;
     for (std::uint32_t word = 0; word < Abi::KeyWords; ++word) same = binary(spv::OpLogicalAnd, boolean, same, binary(spv::OpIEqual, boolean, at(word), key[word]));
