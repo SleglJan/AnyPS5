@@ -431,6 +431,7 @@ private:
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
+    bool keptByCpu(std::uint64_t from, std::uint64_t to, std::uint64_t generation) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;

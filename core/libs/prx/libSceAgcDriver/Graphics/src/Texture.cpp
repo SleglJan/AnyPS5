@@ -4158,6 +4158,14 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     return overlapping;
 }
 
+bool StorageTexture::keptByCpu(std::uint64_t from, std::uint64_t to, std::uint64_t generation) const {
+    constexpr std::uint64_t block = 65536;
+    const auto bytes = static_cast<std::size_t>(to - from);
+    if (!GuestMemory::WrittenSince(from, bytes, generation)) return false;
+    const bool edge = (from & (block - 1)) != 0 || to - from != block;
+    return (!edge || GuestMemory::StoredOver(from, bytes, generation)) && !unchangedSinceBaseline(from, to);
+}
+
 bool StorageTexture::blocksKept(std::span<const std::shared_ptr<StorageTexture>> images, std::uint64_t address, std::size_t bytes) {
     // The stamps are read outside the registry mutex (the tracker lock is never taken under it);
     // per pending layer, as the keep decision of writeBackLayers reads them.
@@ -4173,7 +4181,7 @@ bool StorageTexture::blocksKept(std::span<const std::shared_ptr<StorageTexture>>
             for (auto at = begin & ~(block - 1); at < end; at += block) {
                 const auto from = std::max(at, begin);
                 const auto to = std::min(at + block, end);
-                if (!GuestMemory::WrittenSince(from, static_cast<std::size_t>(to - from), texture->layerGeneration[layer])) return false;
+                if (!texture->keptByCpu(from, to, texture->layerGeneration[layer])) return false;
             }
         }
     }
@@ -4269,7 +4277,7 @@ bool StorageTexture::evictStale(std::uint64_t address, std::size_t bytes, std::s
         const auto end = begin + layerBytes(layer);
         for (auto at = begin & ~(block - 1); at < end; at += block) {
             const auto from = std::max(at, begin);
-            if (!GuestMemory::WrittenSince(from, static_cast<std::size_t>(std::min(at + block, end) - from), layerGeneration[layer])) return false;
+            if (!keptByCpu(from, std::min(at + block, end), layerGeneration[layer])) return false;
         }
     }
     // As the empty write-back leaves the layers: no results pending, the generation unchanged (the
