@@ -26,6 +26,16 @@ struct SpirvDeferredPhi {
     std::size_t wordOffset = 0;
 };
 
+struct SpirvLocalMemoryUsers {
+    std::uint32_t total = 0;
+    std::uint32_t dynamicallyIndexed = 0;
+    std::uint32_t passedToCalls = 0;
+    std::uint32_t volatileAccess = 0;
+    std::uint32_t sharedPrivate = 0;
+};
+
+[[nodiscard]] SpirvLocalMemoryUsers CountLocalMemoryUsers(std::span<const std::uint32_t> module);
+
 class SpirvModule {
 private:
     template<typename TOperand>

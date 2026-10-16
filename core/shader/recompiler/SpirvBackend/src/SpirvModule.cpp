@@ -214,6 +214,105 @@ std::vector<std::size_t> CallsToSpill(std::span<const std::uint32_t> function, c
 
 }
 
+SpirvLocalMemoryUsers CountLocalMemoryUsers(std::span<const std::uint32_t> module) {
+    struct Variable {
+        std::uint32_t storage = 0;
+        bool dynamic = false;
+        bool passed = false;
+        bool volatileAccess = false;
+        std::set<std::uint32_t> functions;
+    };
+    std::set<std::uint32_t> constants;
+    std::unordered_map<std::uint32_t, Variable> variables;
+    std::unordered_map<std::uint32_t, std::uint32_t> roots;
+    const auto rootOf = [&](std::uint32_t id) -> Variable* {
+        if (const auto found = variables.find(id); found != variables.end()) return &found->second;
+        if (const auto found = roots.find(id); found != roots.end()) return &variables.at(found->second);
+        return nullptr;
+    };
+    std::uint32_t function = 0;
+    for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> spv::WordCountShift) {
+        const auto count = module[offset] >> spv::WordCountShift;
+        if (count == 0u || offset + count > module.size()) throw std::runtime_error("CountLocalMemoryUsers found a truncated instruction");
+        const auto op = module.subspan(offset, count);
+        const auto opcode = op[0] & spv::OpCodeMask;
+        switch (opcode) {
+        case spv::OpConstant:
+        case spv::OpConstantNull:
+        case spv::OpConstantTrue:
+        case spv::OpConstantFalse:
+        case spv::OpConstantComposite:
+        case spv::OpSpecConstant:
+        case spv::OpSpecConstantTrue:
+        case spv::OpSpecConstantFalse:
+        case spv::OpSpecConstantComposite:
+        case spv::OpSpecConstantOp:
+            if (count > 2u) constants.insert(op[2]);
+            continue;
+        case spv::OpFunction:
+            function = op[2];
+            continue;
+        case spv::OpFunctionEnd:
+            function = 0;
+            continue;
+        case spv::OpVariable:
+            if (count > 3u && (op[3] == spv::StorageClassFunction || op[3] == spv::StorageClassPrivate)) variables[op[2]].storage = op[3];
+            continue;
+        default:
+            break;
+        }
+        if (function == 0u) continue;
+        if (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain || opcode == spv::OpPtrAccessChain || opcode == spv::OpInBoundsPtrAccessChain || opcode == spv::OpCopyObject) {
+            if (count > 3u) {
+                if (auto* root = rootOf(op[3]); root != nullptr) {
+                    roots[op[2]] = variables.contains(op[3]) ? op[3] : roots.at(op[3]);
+                    for (std::size_t index = 4; index < count; ++index) {
+                        if (!constants.contains(op[index])) root->dynamic = true;
+                    }
+                    root->functions.insert(function);
+                }
+            }
+            continue;
+        }
+        if (opcode == spv::OpFunctionCall) {
+            for (std::size_t index = 4; index < count; ++index) {
+                if (auto* root = rootOf(op[index]); root != nullptr) {
+                    root->passed = true;
+                    root->functions.insert(function);
+                }
+            }
+            continue;
+        }
+        if (opcode == spv::OpLoad && count > 3u) {
+            if (auto* root = rootOf(op[3]); root != nullptr) {
+                root->functions.insert(function);
+                if (count > 4u && (op[4] & spv::MemoryAccessVolatileMask) != 0u) root->volatileAccess = true;
+            }
+            continue;
+        }
+        if (opcode == spv::OpStore && count > 2u) {
+            if (auto* root = rootOf(op[1]); root != nullptr) {
+                root->functions.insert(function);
+                if (count > 3u && (op[3] & spv::MemoryAccessVolatileMask) != 0u) root->volatileAccess = true;
+            }
+            continue;
+        }
+        for (std::size_t index = 1; index < count; ++index) {
+            if (auto* root = rootOf(op[index]); root != nullptr) root->functions.insert(function);
+        }
+    }
+    SpirvLocalMemoryUsers users;
+    for (const auto& [id, variable] : variables) {
+        const bool shared = variable.storage == spv::StorageClassPrivate && variable.functions.size() > 1u;
+        users.dynamicallyIndexed += variable.dynamic ? 1u : 0u;
+        users.passedToCalls += variable.passed ? 1u : 0u;
+        users.volatileAccess += variable.volatileAccess ? 1u : 0u;
+        users.sharedPrivate += shared ? 1u : 0u;
+        users.total += variable.dynamic || variable.passed || variable.volatileAccess || shared ? 1u : 0u;
+    }
+    return users;
+}
+
 SpirvModule::SpirvModule(std::uint32_t version) : version(version) {
     debug.reserve(InitialSpirvSectionReserve);
     annotations.reserve(InitialSpirvSectionReserve);
