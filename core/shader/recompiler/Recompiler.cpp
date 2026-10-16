@@ -620,7 +620,7 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> BufferStoreExtent(const D
     const auto word3 = value.dwords[3];
     const auto base = static_cast<std::uint64_t>(value.dwords[0]) | (static_cast<std::uint64_t>(word1 & 0xffffu) << 32u);
     const std::pair<std::uint64_t, std::uint64_t> none{0u, 0u};
-    if ((word3 >> 30u) != 0u || base == 0u || records == 0u) return none;
+    if ((!site.scalar && (word3 >> 30u) != 0u) || base == 0u || records == 0u) return none;
     const auto stride = (word1 >> 16u) & 0x3fffu;
     if (site.scalar) return std::pair<std::uint64_t, std::uint64_t>{base & ~std::uint64_t{3u}, base + (stride == 0u ? records : static_cast<std::uint64_t>(records) * stride)};
     if (stride != 0u && (word1 >> 31u) != 0u) return std::nullopt;
