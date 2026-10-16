@@ -375,21 +375,31 @@ std::vector<std::uint32_t> DepthFragmentShader() {
     return module.Finalize();
 }
 
-std::vector<std::uint32_t> DepthFeedbackFragmentShader(std::uint32_t binding, bool sampling) {
+std::vector<std::uint32_t> DepthFeedbackFragmentShader(std::uint32_t pushOffset, std::uint32_t slotDword, bool sampling) {
     ShaderRecompiler::SpirvModule module;
     module.EmitCapability(spv::CapabilityShader);
+    if (sampling) {
+        module.EmitExtension("SPV_EXT_descriptor_indexing");
+        module.EmitCapability(spv::CapabilityRuntimeDescriptorArray);
+        module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+    }
     module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
     const auto f32 = module.Type(spv::OpTypeFloat, 32u);
     const auto i32 = module.Type(spv::OpTypeInt, 32u, 1u);
+    const auto u32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto v4 = module.Type(spv::OpTypeVector, f32, 4u);
     const auto v2 = module.Type(spv::OpTypeVector, i32, 2u);
     const auto voidType = module.Type(spv::OpTypeVoid);
     const auto imageType = module.Type(spv::OpTypeImage, f32, spv::Dim2D, 0u, 0u, 1u, 1u, spv::ImageFormatUnknown);
-    const auto imageArray = module.Type(spv::OpTypeArray, imageType, module.Constant(spv::OpConstant, i32, 1u));
-    const auto image = sampling ? module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageArray), spv::StorageClassUniformConstant) : 0u;
+    const auto heapType = module.Type(spv::OpTypeRuntimeArray, imageType);
+    const auto image = sampling ? module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, heapType), spv::StorageClassUniformConstant) : 0u;
+    std::uint32_t push = 0u;
     if (sampling) {
-        module.AddAnnotation(spv::OpDecorate, image, spv::DecorationDescriptorSet, ShaderRecompiler::RuntimeAbi::DescriptorSet);
-        module.AddAnnotation(spv::OpDecorate, image, spv::DecorationBinding, binding);
+        module.AddAnnotation(spv::OpDecorate, image, spv::DecorationDescriptorSet, ShaderRecompiler::RuntimeAbi::HeapDescriptorSet);
+        module.AddAnnotation(spv::OpDecorate, image, spv::DecorationBinding, ShaderRecompiler::RuntimeAbi::HeapSampledImageBinding);
+        const auto pushArray = module.DecoratedType(spv::OpTypeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, static_cast<std::uint32_t>(sizeof(std::uint32_t))}}}, u32, module.Constant(spv::OpConstant, u32, ShaderRecompiler::RuntimeAbi::PushConstantDwords));
+        const auto pushBlock = module.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationOffset, pushOffset}}, {spv::OpDecorate, {spv::DecorationBlock}}}, pushArray);
+        push = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, pushBlock), spv::StorageClassPushConstant);
     }
     const auto depth = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassOutput, f32), spv::StorageClassOutput);
     module.AddAnnotation(spv::OpDecorate, depth, spv::DecorationBuiltIn, spv::BuiltInFragDepth);
@@ -400,9 +410,12 @@ std::vector<std::uint32_t> DepthFeedbackFragmentShader(std::uint32_t binding, bo
     module.AddFunction(spv::OpLabel, module.AllocateId());
     auto value = module.Constant(spv::OpConstant, f32, 0u);
     if (sampling) {
+        const auto slotPointer = module.AllocateId(), slot = module.AllocateId();
+        module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassPushConstant, u32), slotPointer, push, module.Constant(spv::OpConstant, u32, 0u), module.Constant(spv::OpConstant, u32, slotDword));
+        module.AddFunction(spv::OpLoad, u32, slot, slotPointer);
         const auto element = module.AllocateId(), object = module.AllocateId(), fetched = module.AllocateId();
         value = module.AllocateId();
-        module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType), element, image, zero);
+        module.AddFunction(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType), element, image, slot);
         module.AddFunction(spv::OpLoad, imageType, object, element);
         module.AddFunction(spv::OpImageFetch, v4, fetched, object, coordinate, spv::ImageOperandsSampleMask, zero);
         module.AddFunction(spv::OpCompositeExtract, f32, value, fetched, 0u);
@@ -574,14 +587,15 @@ void CheckDrawFeedback() {
     vertex.spirv = DepthVertexShader();
     vertex.variantId = 1u;
     constexpr auto binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
-    producer.spirv = DepthFeedbackFragmentShader(binding, false);
-    producer.variantId = 2u;
+    constexpr std::uint32_t slotDword = 0u;
     const auto pixelOffset = PixelPushOffset(0u, device->Target());
+    producer.spirv = DepthFeedbackFragmentShader(pixelOffset, slotDword, false);
+    producer.variantId = 2u;
     const AgcDriver::Pm4::DrawParameters draw{0u, 3u, 0u, 1u, 0u, false};
     const std::array<CompiledShader, 2> initial{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &producer, pixelOffset}}};
     device->Draw(state, draw, initial);
     device->WaitIdle();
-    reader.spirv = DepthFeedbackFragmentShader(binding, true);
+    reader.spirv = DepthFeedbackFragmentShader(pixelOffset, slotDword, true);
     reader.variantId = 3u;
     const auto words = DepthSampleWords(depth);
     ShaderRecompiler::DescriptorBinding image{};
@@ -592,8 +606,10 @@ void CheckDrawFeedback() {
     image.count = 1u;
     image.guestDescriptor.assign(words.begin(), words.end());
     image.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
-    image.imageSamplers = {{0u}};
+    image.imageSamplers = {{}};
+    image.imageSlotDwords = {slotDword};
     reader.bindings.push_back(std::move(image));
+    reader.pushConstants.assign(ShaderRecompiler::RuntimeAbi::PushConstantDwords * sizeof(std::uint32_t), std::byte{0});
     const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &reader, pixelOffset}}};
     TargetRefuses([&] { device->Draw(state, draw, shaders); }, "sampling a native multisampled depth target the draw attaches");
     device->WaitIdle();
