@@ -778,7 +778,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(32u);
+    writer.WriteU32(33u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -805,6 +805,23 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32Span(request.shader.linkedLiterals);
     writer.WriteU32Span(request.context.linkedWords);
     if (request.context.compute.has_value()) writer.WriteBool(request.context.compute->threadsFromMemory);
+    writer.WriteBool(request.context.continuation.has_value());
+    if (request.context.continuation.has_value()) {
+        const auto& continuation = *request.context.continuation;
+        writer.WriteU32(static_cast<std::uint32_t>(continuation.role));
+        std::vector<std::uint32_t> sites;
+        for (const auto& site : continuation.sites) {
+            sites.insert(sites.end(), {site.programCounter, site.callProgramCounter, site.keyMask});
+            sites.insert(sites.end(), site.keyDwords.begin(), site.keyDwords.end());
+            sites.insert(sites.end(), site.recordRegisters.begin(), site.recordRegisters.end());
+        }
+        writer.WriteU32Span(sites);
+        writer.WriteU32Span(continuation.scalarRegisters);
+        writer.WriteU32Span(continuation.vectorRegisters);
+        writer.WriteU32(continuation.ldsDwords);
+        writer.WriteU32Span(continuation.userDataScalars);
+        writer.WriteU32(continuation.entrySite);
+    }
     return base64Encode(buffer);
 }
 
@@ -813,7 +830,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 32u || (version > 26u && version < 32u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 33u || (version > 26u && version < 32u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -852,6 +869,34 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.context.linkedWords = result.linkedWords;
     }
     if (version >= 26u && result.request.context.compute.has_value()) result.request.context.compute->threadsFromMemory = reader.ReadBool();
+    if (version >= 33u && reader.ReadBool()) {
+        ContinuationAbi::Shape continuation;
+        continuation.role = static_cast<ContinuationAbi::Role>(reader.ReadU32());
+        if (continuation.role != ContinuationAbi::Role::Head && continuation.role != ContinuationAbi::Role::Continuation) throw std::runtime_error("RequestSerializer: invalid continuation role");
+        const auto sites = reader.ReadU32Vector();
+        constexpr std::size_t siteWords = 3u + ContinuationAbi::KeyWords + ContinuationAbi::RecordRegisters;
+        if (sites.size() % siteWords != 0u) throw std::runtime_error("RequestSerializer: truncated continuation sites");
+        for (std::size_t index = 0; index < sites.size(); index += siteWords) {
+            ContinuationAbi::BinSite site;
+            site.programCounter = sites[index];
+            site.callProgramCounter = sites[index + 1u];
+            site.keyMask = sites[index + 2u];
+            std::copy_n(sites.begin() + static_cast<std::ptrdiff_t>(index + 3u), ContinuationAbi::KeyWords, site.keyDwords.begin());
+            std::copy_n(sites.begin() + static_cast<std::ptrdiff_t>(index + 3u + ContinuationAbi::KeyWords), ContinuationAbi::RecordRegisters, site.recordRegisters.begin());
+            result.continuationSites.push_back(site);
+        }
+        result.continuationScalars = reader.ReadU32Vector();
+        result.continuationVectors = reader.ReadU32Vector();
+        continuation.ldsDwords = reader.ReadU32();
+        result.continuationUserDataScalars = reader.ReadU32Vector();
+        continuation.entrySite = reader.ReadU32();
+        if (continuation.entrySite != 0u && continuation.entrySite >= result.continuationSites.size()) throw std::runtime_error("RequestSerializer: invalid continuation entry site");
+        continuation.sites = result.continuationSites;
+        continuation.scalarRegisters = result.continuationScalars;
+        continuation.vectorRegisters = result.continuationVectors;
+        continuation.userDataScalars = result.continuationUserDataScalars;
+        result.request.context.continuation = continuation;
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

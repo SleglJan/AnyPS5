@@ -42,6 +42,10 @@ namespace ShaderRecompiler {
         std::optional<TessellationTargetLimits> tessellation;
         std::unique_ptr<DeserializedGraphicsCompileContext> graphicsStorage;
         RecompileRequest request{};
+        std::vector<ContinuationAbi::BinSite> continuationSites;
+        std::vector<std::uint32_t> continuationScalars;
+        std::vector<std::uint32_t> continuationVectors;
+        std::vector<std::uint32_t> continuationUserDataScalars;
     };
 
     class RequestSerializer {

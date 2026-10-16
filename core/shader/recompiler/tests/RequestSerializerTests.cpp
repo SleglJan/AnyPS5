@@ -206,11 +206,11 @@ int main() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 32u;
+            upgraded[4] = 33u;
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, 0u);
             if (fixture.pixel) InsertPixelDefaultsAfterLayer(upgraded);
             if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 5u, 0u);
-            upgraded.insert(upgraded.end(), 2u * sizeof(std::uint64_t), 0u);
+            upgraded.insert(upgraded.end(), 2u * sizeof(std::uint64_t) + 1u, 0u);
             Require(serializer.Serialize(request) == EncodeBase64(upgraded));
             auto truncated = bytes;
             truncated.pop_back();
@@ -245,10 +245,10 @@ int main() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 32u;
+                layered[4] = 33u;
                 InsertPixelDefaultsAfterLayer(layered);
                 if (fixture.tessellation) layered.insert(layered.end() - 35u, 5u, 0u);
-                layered.insert(layered.end(), 2u * sizeof(std::uint64_t), 0u);
+                layered.insert(layered.end(), 2u * sizeof(std::uint64_t) + 1u, 0u);
                 Require(serializer.Serialize(layerReplay.request) == EncodeBase64(layered));
             }
         }
@@ -269,9 +269,9 @@ int main() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 32u;
+            bytes[4] = 33u;
             InsertPixelDefaultsAfterLayer(bytes);
-            bytes.insert(bytes.end(), 2u * sizeof(std::uint64_t), 0u);
+            bytes.insert(bytes.end(), 2u * sizeof(std::uint64_t) + 1u, 0u);
             Require(serializer.Serialize(replay.request) == EncodeBase64(bytes));
 
             auto truncated23 = DecodeBase64(encoded23);
@@ -323,8 +323,8 @@ int main() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 32u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
-        for (const std::uint8_t refusedVersion : {27u, 28u, 29u, 30u, 31u, 33u}) {
+        Require(bytes.size() >= 8u && bytes[4] == 33u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        for (const std::uint8_t refusedVersion : {27u, 28u, 29u, 30u, 31u, 34u}) {
             auto refused = bytes;
             refused[4] = refusedVersion;
             bool versionRejected = false;
@@ -344,6 +344,35 @@ int main() {
         }
         Require(rejected);
     }
+
+    ShaderRecompiler::RecompileRequest split{};
+    const std::array<std::uint32_t, 4> code{0xbf820001u, 0xbe8e210eu, 0xbf810000u, 0xbf9f0000u};
+    split.shader.stage = ShaderRecompiler::ShaderStage::Compute;
+    split.shader.code = code;
+    split.context.waveSize = 32u;
+    split.context.compute = ShaderRecompiler::ShaderComputeStageInfo{{32u, 1u, 1u}, 1152u, {true, false, false}, false, 1u, {}};
+    const std::array<ShaderRecompiler::ContinuationAbi::BinSite, 2> sites{{{4u, 0x1fe0u}, {0x40u, 0x2400u}}};
+    const std::array<std::uint32_t, 3> scalars{0u, 1u, 16u};
+    const std::array<std::uint32_t, 2> vectors{0u, 143u};
+    const std::array<std::uint32_t, 2> userDataScalars{0u, 1u};
+    split.context.continuation = ShaderRecompiler::ContinuationAbi::Shape{ShaderRecompiler::ContinuationAbi::Role::Continuation, sites, scalars, vectors, 1152u, userDataScalars, 1u};
+    const auto splitEncoded = serializer.Serialize(split);
+    const auto splitBack = serializer.Deserialize(splitEncoded);
+    Require(splitBack.request.context.continuation.has_value());
+    const auto& shape = *splitBack.request.context.continuation;
+    Require(shape.role == ShaderRecompiler::ContinuationAbi::Role::Continuation && shape.ldsDwords == 1152u);
+    Require(std::ranges::equal(shape.sites, sites) && std::ranges::equal(shape.scalarRegisters, scalars) && std::ranges::equal(shape.vectorRegisters, vectors));
+    Require(std::ranges::equal(shape.userDataScalars, userDataScalars) && shape.entrySite == 1u);
+    Require(serializer.Serialize(splitBack.request) == splitEncoded);
+    auto splitBytes = DecodeBase64(splitEncoded);
+    splitBytes[splitBytes.size() - 4u - (8u + 2u * 4u) - 4u - (8u + 2u * 4u) - (8u + 3u * 4u) - (8u + 2u * 15u * 4u) - 4u] = 7u;
+    bool roleRejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(splitBytes)));
+    } catch (const std::runtime_error& error) {
+        roleRejected = std::string_view(error.what()) == "RequestSerializer: invalid continuation role";
+    }
+    Require(roleRejected);
 
     return 0;
 }
