@@ -556,24 +556,21 @@ std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::Reco
 
 struct CalleeReads {
     const ShaderRecompiler::RecompileRequest& request;
+    std::vector<GuestMemory::UnchangedQuery>* ranges = nullptr;
 };
 
-bool ReadCalleeCode(void*, std::uint64_t address, std::span<std::uint32_t> words) {
+bool ReadCalleeWords(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
     const auto bytes = words.size() * sizeof(std::uint32_t);
+    auto* reads = static_cast<CalleeReads*>(context);
+    if (reads->ranges != nullptr) reads->ranges->push_back({address, bytes, GuestMemory::CollectWrites(address, bytes)});
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), bytes)) return false;
     GuestMemory::Read(address, std::as_writable_bytes(words));
     return true;
 }
 
-bool ReadCalleeData(void*, std::uint64_t address, std::span<std::uint32_t> words) {
-    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * sizeof(std::uint32_t))) return false;
-    GuestMemory::Read(address, std::as_writable_bytes(words));
-    return true;
-}
-
-ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
-    CalleeReads reads{request};
-    const ShaderRecompiler::CalleeMemory callees{&reads, &ReadCalleeCode, &ReadCalleeData, nullptr};
+ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* ranges) {
+    CalleeReads reads{request, ranges};
+    const ShaderRecompiler::CalleeMemory callees{&reads, &ReadCalleeWords, &ReadCalleeWords, nullptr};
     try {
         return ShaderRecompiler::LinkCallees(request, callees);
     } catch (const std::runtime_error& error) {
@@ -583,11 +580,11 @@ ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::Recompi
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse) {
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse, std::vector<GuestMemory::UnchangedQuery>* linkReads) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    auto linked = LinkUserDataCallees(request);
+    auto linked = LinkUserDataCallees(request, linkReads);
     if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
     auto source = request;
     if (!linked.code.empty()) {

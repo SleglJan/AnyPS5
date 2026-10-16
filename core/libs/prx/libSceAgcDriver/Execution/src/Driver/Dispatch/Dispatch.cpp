@@ -63,14 +63,21 @@ bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value
     return true;
 }
 
-std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey) {
+bool Driver::linkCurrent(const LinkedDispatch& linked, std::span<const std::uint32_t> userData) {
+    if (!std::ranges::equal(linked.userData, userData)) return false;
+    for (const auto& read : linked.reads) static_cast<void>(GuestMemory::CollectWrites(read.address, read.bytes));
+    return GuestMemory::UnchangedSinceAll(linked.reads);
+}
+
+Driver::DispatchProgram Driver::runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey, std::span<const std::uint32_t> userData) {
     bool preparedAtUse = false;
-    const auto invocation = InvocationFor(snapshot, codeOffset, request, &preparedAtUse);
+    std::vector<GuestMemory::UnchangedQuery> linkReads;
+    const auto invocation = InvocationFor(snapshot, codeOffset, request, &preparedAtUse, &linkReads);
     const auto& prepared = invocation.Request();
     if (preparedAtUse) RecordPreparedProgram(device, snapshot, codeOffset, prepared);
     static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
     if (dumpShaders) static_cast<void>(dumpRequest(request.shader.codeAddress, request));
-    require(prepared.shader.code.size() == request.shader.code.size() && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a compute program that calls code through its user data or a call table is not implemented");
+    const bool linked = prepared.shader.code.size() != request.shader.code.size() || !prepared.shader.linkedLiterals.empty() || !prepared.context.linkedWords.empty();
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a compute program that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
     require(CacheableResult(*compiled), "a compute program whose compile poisoned an SRT read or an image table entry is not implemented");
@@ -80,12 +87,19 @@ std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDispatch(const Shad
     std::lock_guard cacheLock(dispatchCacheMutex);
     ++dataIndependentHits;
     ++runTimeCompiles;
-    return runTimeDispatches.try_emplace(programKey, std::move(entry)).first->second;
+    if (!linked) return {runTimeDispatches.try_emplace(programKey, std::move(entry)).first->second, nullptr};
+    constexpr std::size_t LinkedVariants = 8;
+    auto variant = std::make_shared<const LinkedDispatch>(LinkedDispatch{std::move(entry), {prepared.context.linkedWords.begin(), prepared.context.linkedWords.end()}, {userData.begin(), userData.end()}, std::move(linkReads)});
+    auto& variants = linkedDispatches[programKey];
+    if (variants.size() == LinkedVariants) variants.erase(variants.begin());
+    variants.push_back(variant);
+    return {variant->program, variant};
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(const RunTimeProgram& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(const RunTimeProgram& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase, std::span<const std::uint32_t> linkedWords) {
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
+    runtime.linkedWords = linkedWords;
     runtime.shaderBase = shaderBase;
     runtime.readMemory = &readPrePassWord;
     bool waitForWrites = true;
@@ -195,12 +209,21 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     phaseTiming.Phase(PhaseKey);
     timing.Mark("decode_key_device_setup");
     std::shared_ptr<const RunTimeProgram> program;
+    std::shared_ptr<const LinkedDispatch> linked;
+    std::vector<std::shared_ptr<const LinkedDispatch>> variants;
     {
         std::lock_guard cacheLock(dispatchCacheMutex);
         if (const auto found = runTimeDispatches.find(programKey); found != runTimeDispatches.end()) {
             program = found->second;
             ++dataIndependentHits;
+        } else if (const auto links = linkedDispatches.find(programKey); links != linkedDispatches.end()) {
+            variants = links->second;
         }
+    }
+    for (auto variant = variants.rbegin(); program == nullptr && variant != variants.rend(); ++variant) {
+        if (!linkCurrent(**variant, userData)) continue;
+        linked = *variant;
+        program = linked->program;
     }
     const auto rethrow = [&](const std::exception& error) {
         std::string reason = error.what();
@@ -211,18 +234,21 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     if (program == nullptr) {
         try {
-            program = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
+            const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey, userData);
+            program = made.program;
+            linked = made.linked;
         } catch (const std::exception& error) {
             rethrow(error);
         }
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
     }
+    const std::span<const std::uint32_t> linkedWords = linked != nullptr ? std::span<const std::uint32_t>(linked->linkedWords) : std::span<const std::uint32_t>{};
     prePassReads().clear();
-    auto compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
+    auto compiledResult = runTimeResult(*program, userData, request.shader.codeAddress, linkedWords);
     if (recordQueuedLabelsAfterPrePass(submission.queue)) {
         prePassReads().clear();
-        compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
+        compiledResult = runTimeResult(*program, userData, request.shader.codeAddress, linkedWords);
     }
     phaseTiming.Phase(PhaseLookup);
     const auto& compiled = *compiledResult;
