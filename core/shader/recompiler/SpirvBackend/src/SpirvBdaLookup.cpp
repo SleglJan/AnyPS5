@@ -672,7 +672,7 @@ void EmitInvalidFormatStop(SpirvValueEmitContext& ctx, const IrValue& inst, cons
         if (between && IrOpcodeHasSideEffects(other->Opcode())) return;
     }
     if (!between) return;
-    std::vector<std::uint64_t> key{FormatCheckTag};
+    std::vector<std::uint64_t> key{FormatCheckTag, state.laneHalf};
     for (const auto* input : inputs) {
         const auto* resolved = input->Resolve();
         key.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
@@ -720,12 +720,12 @@ const IrValue* ResolvedBufferHandle(const SpirvEmitterState& state, const IrValu
     if (index >= infos.size()) return nullptr;
     const auto& memory = infos[index];
     if (!memory.gpuDescriptor || memory.planningOnly) return nullptr;
-    if (raw) return memory.kind == ResourceKind::Buffer && !memory.formatted && memory.dataBits == 32u ? handle : nullptr;
+    if (raw) return memory.kind == ResourceKind::Buffer && (memory.formatted || memory.dataBits == 32u) ? handle : nullptr;
     return memory.kind == ResourceKind::ScalarBuffer ? handle : nullptr;
 }
 
-std::vector<std::uint64_t> ResolvedBufferKey(const IrValue& handle) {
-    std::vector<std::uint64_t> key{ResolvedBufferTag};
+std::vector<std::uint64_t> ResolvedBufferKey(const SpirvEmitterState& state, const IrValue& handle) {
+    std::vector<std::uint64_t> key{ResolvedBufferTag, state.laneHalf};
     for (std::uint32_t word = 0; word < 2u; ++word) {
         const auto* resolved = handle.Argument(word)->Resolve();
         key.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
@@ -767,7 +767,7 @@ void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst) 
         const auto* resolved = word->Resolve();
         if (!resolved->HasImmediate() && !ctx.definitions.contains(resolved)) return;
     }
-    auto key = ResolvedBufferKey(*handle);
+    auto key = ResolvedBufferKey(state, *handle);
     if (state.deviceImageLookups.contains(key)) return;
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
@@ -795,7 +795,7 @@ std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx
     auto& state = ctx.state;
     const auto* handle = ResolvedBufferHandle(state, inst);
     if (handle == nullptr || state.module.InHelperFunction()) return std::nullopt;
-    const auto found = state.deviceImageLookups.find(ResolvedBufferKey(*handle));
+    const auto found = state.deviceImageLookups.find(ResolvedBufferKey(state, *handle));
     if (found == state.deviceImageLookups.end()) return std::nullopt;
     const auto u64 = TypeScalarU64(state);
     return BdaSegmentValues{Extract(state, u64, found->second, 0u), Extract(state, u64, found->second, 1u), Extract(state, u64, found->second, 2u)};

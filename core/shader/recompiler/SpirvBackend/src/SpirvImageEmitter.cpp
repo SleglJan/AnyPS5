@@ -2128,7 +2128,9 @@ std::vector<const IrValue*> DescriptorInputs(const SpirvEmitterState& state, con
     const auto plan = PlanDeviceImage(state, inst);
     if (plan) return DeviceImageWords(*plan);
     auto inputs = InvalidFormatInputs(state, inst);
-    return inputs.empty() ? ResolvedBufferInputs(state, inst) : inputs;
+    const auto buffer = ResolvedBufferInputs(state, inst);
+    inputs.insert(inputs.end(), buffer.begin(), buffer.end());
+    return inputs;
 }
 
 bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImagePlan& plan) {
@@ -2265,7 +2267,6 @@ void EmitImageStoreRecord(SpirvValueEmitContext& ctx, const IrValue& inst, const
 
 void PlanDeviceImageAnchors(SpirvEmitterState& state) {
     state.deviceImageAnchors.clear();
-    if (state.laneCount != 1u) return;
     std::unordered_map<const IrValue*, std::pair<std::size_t, std::size_t>> positions;
     const auto& blocks = state.program.BlockOrder();
     for (std::size_t block = 0; block < blocks.size(); ++block) {
