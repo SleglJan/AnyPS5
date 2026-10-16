@@ -570,6 +570,19 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
         else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
         return value;
     };
+    const auto& segment = state.bdaAccessSegment;
+    if (segment[0] != 0u) {
+        const auto resolved = ProbeBdaSegment(state, {segment[0], segment[1], segment[2]}, address, BdaConstant(state, 4u));
+        const auto direct = [&] {
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, resolved.device);
+            const auto value = state.module.AllocateId();
+            if (BdaCoherent(state, inst)) state.module.AddFunction(spv::OpAtomicLoad, u32, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+            else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(false), 4u);
+            return value;
+        };
+        return EmitValueIfElse(state, both(enabled, resolved.hit), u32, direct, uncached);
+    }
     const auto hit = both(enabled, within(load(cache[0]), load(cache[1])));
     if (!refill) return EmitValueIfElse(state, hit, u32, fast, uncached);
     return EmitValueIfElse(state, hit, u32, fast, [&] { return EmitValueIfElse(state, RefreshBdaReadCache(state, address, end, enabled, true), u32, fast, uncached); });
@@ -921,7 +934,27 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
         return loaded;
     };
     auto read = 0u;
-    if (BdaVectorCacheAvailable(state) && (state.module.InHelperFunction() || ScalarAddressLoad(state, inst))) {
+    if (state.bdaAccessSegment[0] != 0u) {
+        const auto u64 = TypeScalarU64(state);
+        const auto boolean = TypeBool(state);
+        const auto start = static_cast<std::int32_t>(offset + first * 4u);
+        const auto magnitude = BdaConstant(state, start < 0 ? static_cast<std::uint64_t>(-static_cast<std::int64_t>(start)) : static_cast<std::uint64_t>(start));
+        const auto firstAddress = Binary(state, start < 0 ? spv::OpISub : spv::OpIAdd, u64, address, magnitude);
+        const auto unwrapped = Binary(state, spv::OpUGreaterThanEqual, boolean, start < 0 ? address : firstAddress, start < 0 ? magnitude : address);
+        const auto& segment = state.bdaAccessSegment;
+        const auto resolved = ProbeBdaSegment(state, {segment[0], segment[1], segment[2]}, firstAddress, BdaConstant(state, (last - first + 1u) * 4u));
+        read = EmitValueIfElse(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, resolved.hit), vector, [&] {
+            std::array<std::uint32_t, 4> loaded{};
+            for (std::uint32_t dword = 0; dword < 4u; ++dword) {
+                loaded[dword] = ConstantU32(state, 0u);
+                if (dword < first || dword > last || !isUsed(dword)) continue;
+                loaded[dword] = LoadBdaDevice(state, inst, dword == first ? resolved.device : Binary(state, spv::OpIAdd, u64, resolved.device, BdaConstant(state, (dword - first) * 4u)));
+            }
+            const auto composite = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, vector, composite, loaded[0], loaded[1], loaded[2], loaded[3]);
+            return composite;
+        }, span);
+    } else if (BdaVectorCacheAvailable(state) && (state.module.InHelperFunction() || ScalarAddressLoad(state, inst))) {
         const auto u64 = TypeScalarU64(state);
         const auto boolean = TypeBool(state);
         const auto start = static_cast<std::int32_t>(offset + first * 4u);

@@ -2126,7 +2126,9 @@ std::vector<const IrValue*> DeviceImageWords(const DeviceImagePlan& plan) {
 
 std::vector<const IrValue*> DescriptorInputs(const SpirvEmitterState& state, const IrValue& inst) {
     const auto plan = PlanDeviceImage(state, inst);
-    return plan ? DeviceImageWords(*plan) : InvalidFormatInputs(state, inst);
+    if (plan) return DeviceImageWords(*plan);
+    auto inputs = InvalidFormatInputs(state, inst);
+    return inputs.empty() ? ResolvedBufferInputs(state, inst) : inputs;
 }
 
 bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImagePlan& plan) {
@@ -2305,6 +2307,7 @@ void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& a
         const auto plan = PlanDeviceImage(state, *inst);
         if (!plan) {
             EmitInvalidFormatStop(ctx, *inst, anchor);
+            EmitResolvedBufferSegment(ctx, *inst);
             continue;
         }
         if (state.deviceImageLookupFunction == 0u || state.tableMapVariable == 0u || !DeviceImageInputsDefined(ctx, *plan)) continue;

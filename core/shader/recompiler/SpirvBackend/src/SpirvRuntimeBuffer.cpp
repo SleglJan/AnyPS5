@@ -1153,25 +1153,52 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
     };
     const Faults faults{state, state.bdaStopsInvocations};
     state.bdaStopsInvocations = false;
+    struct Segment {
+        SpirvEmitterState& state;
+        std::array<std::uint32_t, 3> saved;
+        ~Segment() { state.bdaAccessSegment = saved; }
+    };
+    const Segment segmentScope{state, state.bdaAccessSegment};
+    std::array<std::uint32_t, 3> segment{};
+    if (!missPath && (request.kind == AccessKind::RawLoad || request.kind == AccessKind::ScalarLoad)) {
+        if (const auto resolved = ResolvedBufferSegment(context, instruction)) segment = {resolved->begin, resolved->end, resolved->delta};
+    }
     const auto operands = instructionValues(context, instruction, request.kind == AccessKind::ScalarLoad);
-    const auto shape = accessShape(state, instruction, memory, request);
+    auto shape = accessShape(state, instruction, memory, request);
+    const bool segmentParameters = segment[0] != 0u && request.kind == AccessKind::RawLoad;
     std::vector<std::uint32_t> values;
     for (const auto& argument : extra) values.push_back(argument.value);
-    if (inlineOnly || shape.constantDescriptor || (!outOfLine && accessEmissions(state, shape.key) < 2u)) return body(operands, active, std::span<const std::uint32_t>(values));
+    if (inlineOnly || shape.constantDescriptor || (!outOfLine && accessEmissions(state, shape.key) < 2u)) {
+        state.bdaAccessSegment = segment;
+        return body(operands, active, std::span<const std::uint32_t>(values));
+    }
+    if (segmentParameters) shape.key.push_back(0x5e9u);
     const bool gated = request.kind != AccessKind::ScalarLoad;
     const auto call = [&] {
         auto arguments = accessArguments(context, instruction, shape, request.kind, operands);
         if (gated) arguments.push_back({TypeBool(state), active});
+        if (segmentParameters) {
+            for (const auto value : segment) arguments.push_back({TypeScalarU64(state), value});
+        }
         arguments.insert(arguments.end(), extra.begin(), extra.end());
+        state.bdaAccessSegment = {};
         const auto result = callAccessHelper(state, shape.key, helperName(request, memory), valueType == 0u ? TypeVoid(state) : valueType, arguments, [&](std::span<const std::uint32_t> parameters) {
             const auto helper = helperValues(state, shape, request.kind, operands, memory.gpuDescriptor, parameters);
             const auto enabled = gated ? parameters[helper.next] : ConstantBool(state, true);
-            return body(helper.values, enabled, parameters.subspan(helper.next + (gated ? 1u : 0u)));
+            auto next = helper.next + (gated ? 1u : 0u);
+            if (segmentParameters) {
+                state.bdaAccessSegment = {parameters[next], parameters[next + 1u], parameters[next + 2u]};
+                next += 3u;
+            }
+            const auto value = body(helper.values, enabled, parameters.subspan(next));
+            state.bdaAccessSegment = {};
+            return value;
         });
         return valueType == 0u ? 0u : result;
     };
     if (!missPath && request.kind == AccessKind::ScalarLoad && memory.gpuDescriptor && BdaReadCacheAvailable(state)) {
         const auto access = scalarAccess(context, instruction, operands);
+        state.bdaAccessSegment = segment;
         return EmitBdaCachedDword(context, instruction, scalarGuestAddress(state, access), access.inBounds, call, false);
     }
     return call();
