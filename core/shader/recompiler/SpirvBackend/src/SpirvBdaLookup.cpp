@@ -196,6 +196,85 @@ void NoteBdaTouch(SpirvEmitterState& state, std::uint32_t touch, std::uint32_t a
     state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), touch, address);
 }
 
+struct BdaTable {
+    std::uint32_t pages = 0;
+    std::uint32_t count = 0;
+    std::uint32_t grants = 0;
+    std::uint32_t grantsFirst = 0;
+};
+
+struct ReturnTableHeader {
+    std::function<void(std::uint32_t, BdaAbi::FaultReason)> fail;
+};
+
+std::uint32_t BdaHeaderInvalid(SpirvEmitterState& state, std::uint32_t length, const std::array<std::uint32_t, BdaAbi::HeaderWords>& fields) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto differs = [&](std::uint32_t value, std::uint32_t expected) { return binary(spv::OpINotEqual, boolean, value, expected); };
+    const auto either = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalOr, boolean, left, right); };
+    const auto count = fields[BdaAbi::CountWord];
+    const auto grants = fields[BdaAbi::GrantsWord];
+    const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
+    const auto reserved = fields[3];
+    const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
+    const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
+    const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
+    const auto sized = either(exceeds, differs(binary(spv::OpIAdd, u32, rangeWords, binary(spv::OpIMul, u32, grants, constant(BdaAbi::GrantWords))), available));
+    const auto listed = state.bdaRangeList ? ConstantBool(state, false) : differs(count, constant(0));
+    return either(either(layout, sized), listed);
+}
+
+std::uint32_t BdaPair(SpirvEmitterState& state, std::uint32_t low, std::uint32_t high) {
+    const auto u64 = TypeScalarU64(state);
+    return Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, low), Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, high), BdaConstant(state, 32u)));
+}
+
+BdaTable BdaTableHeader(SpirvEmitterState& state, const ReturnTableHeader& header) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto load = [&](std::uint32_t type, std::uint32_t pointer) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, type, value, pointer);
+        return value;
+    };
+    BdaTable table;
+    if (state.bdaTableVariables[0] != 0u) {
+        header.fail(Binary(state, spv::OpIEqual, boolean, load(u32, state.bdaTableVariables[0]), constant(0u)), BdaAbi::FaultReason::InvalidTable);
+        table.pages = load(u64, state.bdaTableVariables[1]);
+        table.grants = load(u32, state.bdaTableVariables[2]);
+        table.count = constant(0u);
+        table.grantsFirst = constant(BdaAbi::HeaderWords);
+        return table;
+    }
+    const auto length = state.module.AllocateId();
+    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
+    header.fail(Binary(state, spv::OpULessThan, boolean, length, constant(BdaAbi::HeaderWords)), BdaAbi::FaultReason::InvalidTable);
+    std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
+    for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, constant(word));
+    header.fail(BdaHeaderInvalid(state, length, fields), BdaAbi::FaultReason::InvalidTable);
+    table.count = fields[BdaAbi::CountWord];
+    table.grants = fields[BdaAbi::GrantsWord];
+    table.grantsFirst = Binary(state, spv::OpIAdd, u32, constant(BdaAbi::HeaderWords), Binary(state, spv::OpIMul, u32, table.count, constant(BdaAbi::RangeWords)));
+    table.pages = BdaPair(state, fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]);
+    return table;
+}
+
+void DeclareBdaTable(SpirvEmitterState& state) {
+    state.bdaTableVariables = {};
+    if (state.bdaRangeList) return;
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> variables{{{u32, ConstantU32(state, 0u)}, {u64, BdaConstant(state, 0u)}, {u32, ConstantU32(state, 0u)}}};
+    for (std::size_t index = 0; index < variables.size(); ++index) {
+        state.bdaTableVariables[index] = state.module.AllocateId();
+        state.module.EmitGlobalVariable({spv::OpVariable, TypePointer(state, spv::StorageClassPrivate, variables[index].first), state.bdaTableVariables[index], spv::StorageClassPrivate, variables[index].second});
+    }
+}
+
 std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uint32_t touch) {
     const auto grantedFunction = writes ? DefineBdaWriteGranted(state) : 0u;
     const auto u32 = TypeU32(state);
@@ -251,25 +330,12 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uin
     const auto high = variable(u32);
     const auto entry = variable(entryType);
     const auto shift = variable(u32);
-    const auto length = state.module.AllocateId();
-    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
-    fail(binary(spv::OpULessThan, boolean, length, constant(BdaAbi::HeaderWords)), BdaAbi::FaultReason::InvalidTable);
-    std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
-    for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, constant(word));
-    const auto differs = [&](std::uint32_t value, std::uint32_t expected) { return binary(spv::OpINotEqual, boolean, value, expected); };
-    const auto either = [&](std::uint32_t left, std::uint32_t right) { return binary(spv::OpLogicalOr, boolean, left, right); };
-    const auto count = fields[BdaAbi::CountWord];
-    const auto grants = fields[BdaAbi::GrantsWord];
-    const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
-    const auto reserved = fields[3];
-    const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
-    const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
-    const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
-    const auto sized = either(exceeds, differs(binary(spv::OpIAdd, u32, rangeWords, binary(spv::OpIMul, u32, grants, constant(BdaAbi::GrantWords))), available));
-    fail(either(layout, sized), BdaAbi::FaultReason::InvalidTable);
+    const auto table = BdaTableHeader(state, ReturnTableHeader{fail});
+    const auto count = table.count;
+    const auto grants = table.grants;
     const auto end = binary(spv::OpIAdd, u64, address, widen(bytes));
     fail(binary(spv::OpULessThanEqual, boolean, end, address), BdaAbi::FaultReason::Overflow);
-    const auto grantsFirst = binary(spv::OpIAdd, u32, constant(BdaAbi::HeaderWords), rangeWords);
+    const auto grantsFirst = table.grantsFirst;
     const auto permitted = [&](std::uint32_t permissions, std::uint32_t when) {
         const auto own = binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, permission), permission);
         if (!writes) return own;
@@ -282,7 +348,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uin
             return granted;
         });
     };
-    const auto pages = pair(fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]);
+    const auto pages = table.pages;
     const auto walk = binary(spv::OpLogicalAnd, boolean, binary(spv::OpINotEqual, boolean, pages, BdaConstant(state, 0u)), binary(spv::OpULessThan, boolean, address, BdaConstant(state, BdaAbi::PageTableEnd)));
     EmitIfCondition(state, walk, [&] {
         const auto window = binary(spv::OpShiftLeftLogical, u64, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WindowShift)), BdaConstant(state, 3u));
@@ -331,6 +397,11 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uin
             ReturnValueIf(state, held, translation(binary(spv::OpIAdd, u64, address, pair(component(found, 0u), component(found, 1u))), constant(0)));
         });
     });
+    if (!state.bdaRangeList) {
+        state.module.AddFunction(spv::OpReturnValue, state.module.Constant(spv::OpConstantComposite, result, BdaConstant(state, 0u), constant(static_cast<std::uint32_t>(BdaAbi::FaultReason::Unmapped))));
+        state.module.AddFunction(spv::OpFunctionEnd);
+        return function;
+    }
     const auto index = EmitBdaBisection(state, low, high, address, constant(BdaAbi::HeaderWords), count, BdaAbi::RangeWords);
     fail(binary(spv::OpIEqual, boolean, index, constant(0)), BdaAbi::FaultReason::Unmapped);
     const auto selected = binary(spv::OpIAdd, u32, constant(BdaAbi::HeaderWords), binary(spv::OpIMul, u32, binary(spv::OpISub, u32, index, constant(1)), constant(BdaAbi::RangeWords)));
@@ -413,21 +484,9 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
     const auto high = variable(u32);
     const auto entry = variable(entryType);
     const auto shift = variable(u32);
-    const auto length = state.module.AllocateId();
-    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
-    none(binary(spv::OpULessThan, boolean, length, constant(BdaAbi::HeaderWords)));
-    std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
-    for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, constant(word));
-    const auto count = fields[BdaAbi::CountWord];
-    const auto grants = fields[BdaAbi::GrantsWord];
-    const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
-    const auto reserved = fields[3];
-    const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
-    const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
-    const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
-    const auto sized = either(exceeds, differs(binary(spv::OpIAdd, u32, rangeWords, binary(spv::OpIMul, u32, grants, constant(BdaAbi::GrantWords))), available));
-    none(either(layout, sized));
-    const auto pages = pair(fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]);
+    const auto table = BdaTableHeader(state, ReturnTableHeader{[&](std::uint32_t condition, BdaAbi::FaultReason) { none(condition); }});
+    const auto count = table.count;
+    const auto pages = table.pages;
     const auto walk = both(binary(spv::OpINotEqual, boolean, pages, zero), binary(spv::OpULessThan, boolean, address, BdaConstant(state, BdaAbi::PageTableEnd)));
     EmitIfCondition(state, walk, [&] {
         const auto window = binary(spv::OpShiftLeftLogical, u64, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, BdaAbi::WindowShift)), BdaConstant(state, 3u));
@@ -475,6 +534,11 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
             ReturnValueIf(state, held, segment(binary(spv::OpIAdd, u64, start, first), binary(spv::OpIAdd, u64, start, limit), pair(component(found, 0u), component(found, 1u))));
         });
     });
+    if (!state.bdaRangeList) {
+        state.module.AddFunction(spv::OpReturnValue, empty);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        return function;
+    }
     const auto index = EmitBdaBisection(state, low, high, address, constant(BdaAbi::HeaderWords), count, BdaAbi::RangeWords);
     none(binary(spv::OpIEqual, boolean, index, constant(0)));
     const auto selected = binary(spv::OpIAdd, u32, constant(BdaAbi::HeaderWords), binary(spv::OpIMul, u32, binary(spv::OpISub, u32, index, constant(1)), constant(BdaAbi::RangeWords)));
@@ -644,6 +708,20 @@ void DeclareBdaReadCache(SpirvEmitterState& state) {
         variable = state.module.AllocateId();
         state.module.EmitGlobalVariable({spv::OpVariable, pointer, variable, spv::StorageClassPrivate, zero});
     }
+}
+
+void InitializeBdaTable(SpirvEmitterState& state) {
+    if (state.bdaTableVariables[0] == 0u) return;
+    const auto u32 = TypeU32(state);
+    const auto length = state.module.AllocateId();
+    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
+    EmitIfCondition(state, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), length, ConstantU32(state, BdaAbi::HeaderWords)), [&] {
+        std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
+        for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, ConstantU32(state, word));
+        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[0], Select(state, u32, BdaHeaderInvalid(state, length, fields), ConstantU32(state, 0u), ConstantU32(state, 1u)));
+        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[1], BdaPair(state, fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]));
+        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[2], fields[BdaAbi::GrantsWord]);
+    });
 }
 
 bool BdaReadCacheAvailable(const SpirvEmitterState& state) {
@@ -910,6 +988,7 @@ std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;
+    DeclareBdaTable(state);
     const auto touch = DefineBdaTouch(state);
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites, touch);
     if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state, touch);

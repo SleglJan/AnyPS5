@@ -1183,6 +1183,7 @@ CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgra
             state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), lane->scratchU32Variable, spv::StorageClassFunction);
         }
     }
+    InitializeBdaTable(state);
     EmitMemoryOffsets(state);
     EmitEntryInvocationIds(state);
     EmitLdsBufferBase(state);

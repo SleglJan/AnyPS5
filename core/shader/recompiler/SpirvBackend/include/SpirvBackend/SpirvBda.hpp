@@ -8,6 +8,7 @@
 #include <vector>
 #include <array>
 #include <functional>
+#include <span>
 
 namespace ShaderRecompiler {
 
@@ -17,6 +18,7 @@ std::uint32_t BdaLoadWord(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index);
 void DefineBdaFaultFunction(SpirvEmitterState& state);
 void DeclareBdaReadCache(SpirvEmitterState& state);
+void InitializeBdaTable(SpirvEmitterState& state);
 bool BdaReadCacheAvailable(const SpirvEmitterState& state);
 void DeclareBdaVectorCache(SpirvEmitterState& state);
 bool BdaVectorCacheAvailable(const SpirvEmitterState& state);
