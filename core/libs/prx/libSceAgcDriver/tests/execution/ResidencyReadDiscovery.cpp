@@ -14,7 +14,8 @@ using namespace ResidencyRules;
 constexpr std::uint32_t OutputHandle = 9;
 constexpr std::uint32_t AllocationPages = 12;
 constexpr std::uint32_t ReadPages = 4;
-constexpr std::uint64_t BudgetPages = 32;
+constexpr std::uint32_t GuestChunks = 3;
+constexpr std::uint32_t BudgetChunks = 1;
 
 class Request final : public AgcDriver::IFlipRequest {
 public:
@@ -49,11 +50,22 @@ void ReadInOneFrameAdmittedForTheNext(MirrorReader& reader) {
     const std::string what = "pages a dispatch read in one frame";
     auto output = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(OutputHandle, output);
-    Locked([] { Residency().Manager().SetBudget(BudgetPages * PageBytes); });
     {
-        SharedPages pages(AllocationPages);
+        std::uint64_t chunkBytes = 0;
+        Locked([&] { chunkBytes = std::uint64_t{Residency().Manager().ChunkSlots()} * PageBytes; });
+        SharedPages pages(static_cast<std::uint32_t>(GuestChunks * chunkBytes / PageBytes));
         Fill(pages.Words(), AllocationPages, 9);
-        AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+        AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), std::uint64_t{AllocationPages} * PageBytes);
+        const auto budget = BudgetChunks * chunkBytes;
+        std::uint64_t guestBytes = 0;
+        bool full = true;
+        Locked([&] {
+            auto& residency = Residency();
+            residency.Manager().SetBudget(budget);
+            guestBytes = residency.GuestBytes();
+            full = residency.Manager().FullResidency();
+        });
+        Expect(guestBytes > budget && !full, what + ": the budget of " + std::to_string(BudgetChunks) + " mirror chunks (" + std::to_string(budget) + " bytes) is not below the process's " + std::to_string(guestBytes) + " guest bytes, so read discovery is not what admits");
         PrivatePages other(1);
         Commands frame;
         reader.Record(frame, pages.Address(), ReadPages);
@@ -69,12 +81,13 @@ void ReadInOneFrameAdmittedForTheNext(MirrorReader& reader) {
         Expect(AwaitFlips(*output, 2), what + ": the flip ending frame N+1 never completed");
         std::uint32_t admitted = 0;
         for (std::uint32_t page = 0; page < ReadPages; ++page) admitted += Resident(pages.Address(page)) ? 1u : 0u;
-        Expect(admitted == ReadPages, what + ": " + std::to_string(admitted) + " of the " + std::to_string(ReadPages) + " pages read in frame N were admitted for frame N+1 under a budget of " + std::to_string(BudgetPages) + " pages");
+        Expect(admitted == ReadPages, what + ": " + std::to_string(admitted) + " of the " + std::to_string(ReadPages) + " pages read in frame N were admitted for frame N+1 under a budget of " + std::to_string(BudgetChunks) + " mirror chunk(s)");
         std::uint32_t unread = 0;
         for (std::uint32_t page = ReadPages; page < AllocationPages; ++page) unread += Resident(pages.Address(page)) ? 1u : 0u;
         Expect(unread == 0u, what + ": " + std::to_string(unread) + " pages of the allocation no dispatch read became resident under a budget below the guest size");
         ExpectRead(reader.Read(pages.Address(), ReadPages), ReadPages, [](std::uint64_t page, std::uint32_t subpage) { return Pattern(9, page, subpage * WordsPerSubpage); }, what + ": the read from the admitted pages");
         Settle();
+        Locked([] { Residency().Manager().SetBudget(AgcDriver::Graphics::ResidencyMeasuredBudget); });
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(OutputHandle, output);
 }
