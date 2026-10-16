@@ -1325,10 +1325,19 @@ struct RecordedDraw {
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
 };
 
+void requireNoMultisampleFeedback(const Context& context, const State& state, std::span<const std::shared_ptr<Texture>> sampled) {
+    for (const auto& color : state.colors) {
+        if (color.samples <= 1 || sampled.empty()) continue;
+        const auto image = MultisampleTargetImage(context, color);
+        Require(std::none_of(sampled.begin(), sampled.end(), [&](const auto& texture) { return texture != nullptr && texture->SampledImage() == image; }), "sampling a multisampled color target the draw renders to is not implemented");
+    }
+}
+
 void requireNoTableDepthFeedback(const Context& context, const State& state, Recorder& recorder) {
-    if (!state.depth) return;
     try {
-        RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, context.deviceImages->DispatchTextures());
+        const auto sampled = context.deviceImages->DispatchTextures();
+        requireNoMultisampleFeedback(context, state, sampled);
+        if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, sampled);
     } catch (...) {
         context.deviceImages->AfterDispatch(context, recorder);
         throw;
@@ -1990,6 +1999,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     const bool lean = recorded && !drawTransitions;
     const bool multisampled = std::any_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.multisampled; });
     Require(lean || !multisampled, "multisampled draws are only rendered as recorded draws");
+    requireNoMultisampleFeedback(context, state, resources->SampledTextures());
     if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
     APS5_LOG_CHARS_OUT_DEBUG("Creating Pipeline");
     // The state is copied only when a mask must change.

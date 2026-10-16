@@ -465,6 +465,11 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     return acquire(context, target).view;
 }
 
+VkImage MultisampleTargetImage(const Context& context, const ColorTarget& target) {
+    std::lock_guard lock(targetsMutex());
+    return acquire(context, target).image;
+}
+
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
     std::lock_guard lock(targetsMutex());
     const auto format = ResolveTextureFormat(resource.format);
