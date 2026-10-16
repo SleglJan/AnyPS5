@@ -1161,12 +1161,12 @@ std::uint32_t emitAccess(SpirvValueEmitContext& context, const IrValue& instruct
     };
     const Segment segmentScope{state, state.bdaAccessSegment};
     std::array<std::uint32_t, 3> segment{};
-    if (!missPath && (request.kind == AccessKind::RawLoad || request.kind == AccessKind::ScalarLoad)) {
+    if (!missPath && (request.kind == AccessKind::RawLoad || request.kind == AccessKind::ScalarLoad || request.kind == AccessKind::FormattedLoad)) {
         if (const auto resolved = ResolvedBufferSegment(context, instruction)) segment = {resolved->begin, resolved->end, resolved->delta};
     }
     const auto operands = instructionValues(context, instruction, request.kind == AccessKind::ScalarLoad);
     auto shape = accessShape(state, instruction, memory, request);
-    const bool segmentParameters = segment[0] != 0u && request.kind == AccessKind::RawLoad;
+    const bool segmentParameters = segment[0] != 0u && (request.kind == AccessKind::RawLoad || request.kind == AccessKind::FormattedLoad);
     std::vector<std::uint32_t> values;
     for (const auto& argument : extra) values.push_back(argument.value);
     if (inlineOnly || shape.constantDescriptor || (!outOfLine && accessEmissions(state, shape.key) < 2u)) {
