@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -16,8 +17,8 @@
 namespace {
 
 using AgcDriver::Graphics::Require;
-alignas(256) std::array<std::byte, 1024> Pixels{};
-alignas(256) std::array<std::uint32_t, 64> Source{};
+TestGuest::Array<std::byte, 1024> Pixels;
+TestGuest::Array<std::uint32_t, 64> Source;
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
@@ -75,7 +76,7 @@ void Draw(const std::array<std::uint32_t, 4>& descriptor) {
 
 void NamesShaderAndDescriptor() {
     const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
-    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), decltype(Source)::ByteSize, 0xa1b00facu};
     try {
         Draw(descriptor);
     } catch (const std::exception& error) {
