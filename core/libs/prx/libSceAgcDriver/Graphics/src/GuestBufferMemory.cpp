@@ -1308,7 +1308,7 @@ struct PinReleaseQueue {
 };
 
 PinReleaseQueue& PinReleases() {
-    static PinReleaseQueue queue;
+    static auto& queue = *new PinReleaseQueue();
     return queue;
 }
 
