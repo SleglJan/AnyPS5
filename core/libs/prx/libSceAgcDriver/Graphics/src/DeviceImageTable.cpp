@@ -306,6 +306,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     const auto match = ShaderRecompiler::ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
     const auto& mode = interface->modes.at(*match.mode);
+    if (interface->image.directRuntime && interface->image.read && !interface->image.written && !interface->image.atomic && ((descriptor.dwords[3] >> 28u) & 0xfu) <= 1u) return {0u, *match.mode, 0u, 0u};
     if (mode.constantSwizzle) return {0u, *match.mode, 0u, 0u};
     if (interface->image.singleMipPlaneBiasCompatible && interface->image.dimension == ShaderRecompiler::RdnaImageDimension::Dim2D && mode.dimension == ShaderRecompiler::RdnaImageDimension::Dim3D && (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u) {
         const auto first = key[Abi::SamplerWord];
