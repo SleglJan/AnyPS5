@@ -1372,7 +1372,9 @@ std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, boo
     });
     const auto result = state.module.AllocateId();
     EmitSubgroupShuffle(state, TypeU32(state), result, atomic, EmitHostSubgroupLane(state, sourceLane));
-    return result;
+    if (!state.waveExchange) return result;
+    const auto halves = EmitWaveExchange(state, result, ConstantU32(state, 0u));
+    return Select(state, TypeU32(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), sourceLane, ConstantU32(state, 32u)), halves[2], halves[0]);
 }
 
 template<typename TUpdate>
