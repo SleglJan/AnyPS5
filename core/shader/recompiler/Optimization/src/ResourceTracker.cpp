@@ -1343,6 +1343,64 @@ private:
         return RuntimeSource(source) || (source < m_deviceSources.size() && m_deviceSources[source] != 0u);
     }
 
+    bool FixedSlotWord(const IrValue* value, std::unordered_map<const IrValue*, bool>& known, std::uint32_t depth) const {
+        const auto* resolved = value->Resolve();
+        if (resolved == nullptr) return false;
+        if (resolved->HasImmediate()) return true;
+        if (depth > 32u || resolved->IsPhi() || IrOpcodeHasSideEffects(resolved->Opcode())) return false;
+        if (const auto found = known.find(resolved); found != known.end()) return found->second;
+        bool fixed = false;
+        switch (resolved->Opcode()) {
+            case IrOpcode::GetUserData:
+            case IrOpcode::GetSrtResource:
+            case IrOpcode::GetShaderBase:
+                fixed = true;
+                break;
+            case IrOpcode::GetBuiltin:
+            case IrOpcode::LaneId:
+            case IrOpcode::GetAttribute:
+            case IrOpcode::GetInterpolationParameter:
+            case IrOpcode::GetInterpolationParameterF16:
+            case IrOpcode::GetTessellationAttribute:
+            case IrOpcode::DppMoveU32:
+            case IrOpcode::DppUpdateU32:
+            case IrOpcode::Permlane16U32:
+            case IrOpcode::PermuteU32:
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::SwizzleU32:
+            case IrOpcode::WriteLane:
+            case IrOpcode::DataAppend:
+            case IrOpcode::DataConsume:
+            case IrOpcode::LoadVectorWindow:
+            case IrOpcode::DataOrderedCount:
+                fixed = false;
+                break;
+            case IrOpcode::LoadAddressU32:
+            case IrOpcode::LoadAddressU32x2:
+            case IrOpcode::LoadAddressU32x3:
+            case IrOpcode::LoadAddressU32x4:
+            case IrOpcode::ReadConstBuffer:
+                fixed = resolved->ArgumentCount() >= 2u && resolved->Argument(1)->Resolve()->HasImmediate() && FixedSlotWord(resolved->Argument(0), known, depth + 1u);
+                break;
+            default:
+                fixed = resolved->ArgumentCount() != 0u;
+                for (std::size_t index = 0; fixed && index < resolved->ArgumentCount(); ++index) fixed = resolved->Argument(index) == nullptr || FixedSlotWord(resolved->Argument(index), known, depth + 1u);
+                break;
+        }
+        known[resolved] = fixed;
+        return fixed;
+    }
+
+    bool FixedSlotSource(std::uint32_t source) const {
+        if (source >= m_sources.size()) return false;
+        const auto& descriptor = m_sources[source];
+        std::unordered_map<const IrValue*, bool> known;
+        for (std::uint32_t word = 0; word < descriptor.dwordCount; ++word) {
+            if (descriptor.dwords[word] == nullptr || !FixedSlotWord(descriptor.dwords[word], known, 0u)) return false;
+        }
+        return descriptor.dwordCount != 0u;
+    }
+
     bool RuntimeSource(std::uint32_t source) const {
         return source < m_sources.size() && m_sources[source].runtime;
     }
@@ -1437,7 +1495,7 @@ private:
             }
             image.table = next++;
             image.deviceTable = DeviceSource(image.source);
-            image.directRuntime = RuntimeSource(image.source) && !TableSource(image.source);
+            image.directRuntime = RuntimeSource(image.source) && !TableSource(image.source) && FixedSlotSource(image.source);
             const bool storage = image.resourceClass == ImageResourceClass::Storage || image.written || image.atomic;
             if ((storage && !(image.deviceTable && RuntimeSource(image.source))) || image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;
