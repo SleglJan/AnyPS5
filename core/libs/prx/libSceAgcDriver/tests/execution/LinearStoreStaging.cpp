@@ -1,5 +1,4 @@
-#include "NewPathFixture.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "MirrorChecks.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <chrono>
@@ -13,6 +12,7 @@
 namespace {
 
 using namespace NewPath;
+using MirrorChecks::Kind;
 using Clock = std::chrono::steady_clock;
 
 constexpr std::uint32_t Lanes = 64;
@@ -108,7 +108,7 @@ constexpr Value Second{{0x55555555u, 0x66666666u, 0x77777777u, 0x88888888u}};
 
 class Target {
 public:
-    explicit Target(std::uint32_t records) : records(records), pages(static_cast<std::uint32_t>((Guard + std::uint64_t{records} * ElementBytes + Guard + PageBytes - 1u) / PageBytes)), values(1) {
+    Target(Kind kind, std::uint32_t records) : records(records), pages(kind, static_cast<std::uint32_t>((Guard + std::uint64_t{records} * ElementBytes + Guard + PageBytes - 1u) / PageBytes)), values(1) {
         for (std::uint64_t word = 0; word < pages.Bytes() / 4u; ++word) pages.Words()[word] = Previous(word);
         for (std::uint32_t word = 0; word < 4u; ++word) {
             values.Words()[word] = First.words[word];
@@ -117,10 +117,18 @@ public:
         expected.resize(static_cast<std::size_t>(pages.Bytes() / 4u));
         for (std::size_t word = 0; word < expected.size(); ++word) expected[word] = Previous(word);
         AgcDriver::GuestMemory::BumpCollectEpoch();
+        Settle();
     }
 
     std::uint64_t Base() const { return pages.Address(Guard); }
     std::uint32_t Records() const { return records; }
+    Kind MemoryKind() const { return pages.MemoryKind(); }
+
+    void ExpectHeld(std::uint64_t elements, const AgcDriver::Graphics::ResidencyCounts& before, const std::string& what) const {
+        const std::array<MirrorChecks::Range, 1> stored{{{Base(), Base() + elements * ElementBytes}}};
+        const auto failure = MirrorChecks::StoresHeld(MemoryKind(), {pages.Address(), pages.Address() + pages.Bytes()}, stored, stored, before);
+        Expect(failure.empty(), what + ": " + failure);
+    }
 
     void Dispatch(Commands& commands, std::uint32_t groups, const Value& value) {
         const auto buffer = BufferResource(Base(), records, ElementBytes);
@@ -158,7 +166,7 @@ public:
 
 private:
     std::uint32_t records;
-    PrivatePages pages;
+    MirrorChecks::Pages pages;
     PrivatePages values;
     PrivatePages scratch{1};
     std::vector<std::uint32_t> expected;
@@ -207,54 +215,52 @@ bool LabelPending(std::uint64_t address) {
     return recorder != nullptr && recorder->LabelPendingAt(address);
 }
 
-void ExpectStaged(std::uint64_t before, std::uint64_t dispatches, const std::string& what) {
-    const auto staged = AgcDriver::Graphics::StagedWriteBuilds() - before;
-    Expect(staged == dispatches, what + ": " + std::to_string(staged) + " of the " + std::to_string(dispatches) + " dispatches staged their linear stores in device memory");
-}
-
-void Exact(std::uint32_t groups, std::uint32_t fewer, std::uint32_t tail) {
-    Target target(groups * Lanes + tail);
-    const std::string shape = std::to_string(groups) + " groups of 64 lanes storing 16-byte elements by global thread id through a V# of " + std::to_string(target.Records()) + " records into host-imported memory";
+void Exact(Kind kind, std::uint32_t groups, std::uint32_t fewer, std::uint32_t tail) {
+    Target target(kind, groups * Lanes + tail);
+    const std::string shape = std::to_string(groups) + " groups of 64 lanes storing 16-byte elements by global thread id through a V# of " + std::to_string(target.Records()) + " records into " + MirrorChecks::NameOf(kind);
     {
-        const auto before = AgcDriver::Graphics::StagedWriteBuilds();
+        const auto before = MirrorChecks::Counts();
         Commands commands;
         target.Dispatch(commands, groups, First);
         const auto failure = Submitted(commands);
         Expect(failure.empty(), shape + ": the dispatch failed: " + failure);
+        target.ExpectHeld(std::uint64_t{groups} * Lanes, before, shape);
         target.Check(shape);
-        ExpectStaged(before, 1u, shape);
     }
     {
-        const auto before = AgcDriver::Graphics::StagedWriteBuilds();
+        const auto before = MirrorChecks::Counts();
         Commands commands;
         target.Dispatch(commands, fewer, Second);
         const auto failure = Submitted(commands);
         const std::string what = shape + ", then " + std::to_string(fewer) + " groups storing another value";
         Expect(failure.empty(), what + ": the dispatch failed: " + failure);
+        target.ExpectHeld(std::uint64_t{fewer} * Lanes, before, what);
         target.Check(what);
-        ExpectStaged(before, 1u, what);
     }
     {
-        const auto before = AgcDriver::Graphics::StagedWriteBuilds();
+        const auto before = MirrorChecks::Counts();
         Commands commands;
         for (std::uint32_t repeat = 0; repeat < Repeats; ++repeat) target.Dispatch(commands, groups, repeat % 2u == 0u ? First : Second);
         const auto failure = Submitted(commands);
         const std::string what = shape + ", then " + std::to_string(Repeats) + " such dispatches in one submission storing alternating values";
         Expect(failure.empty(), what + ": the submission failed: " + failure);
+        target.ExpectHeld(std::uint64_t{groups} * Lanes, before, what);
         target.Check(what);
-        ExpectStaged(before, Repeats, what);
     }
 }
 
-void TailWrittenBehindSpin(std::uint32_t rounds, std::uint32_t groups, std::uint32_t tail) {
-    Target target(groups * Lanes + tail);
+void TailWrittenBehindSpin(Kind kind, std::uint32_t rounds, std::uint32_t groups, std::uint32_t tail) {
+    Target target(kind, groups * Lanes + tail);
     auto& scratch = target.Scratch();
     scratch.Words()[SpinLabelWord] = 0u;
     scratch.Words()[StoreLabelWord] = 0u;
     const auto spinLabel = scratch.Address(SpinLabelWord * 4u);
     const auto storeLabel = scratch.Address(StoreLabelWord * 4u);
-    const std::string what = std::to_string(groups) + " groups storing 16-byte elements by global thread id through a V# of " + std::to_string(target.Records()) + " records behind a GPU spin, while the CPU writes the " + std::to_string(tail) + " records past them";
-    const auto staged = AgcDriver::Graphics::StagedWriteBuilds();
+    const std::string what = std::to_string(groups) + " groups storing 16-byte elements by global thread id through a V# of " + std::to_string(target.Records()) + " records of " + MirrorChecks::NameOf(kind) + " behind a GPU spin, while the CPU writes the " + std::to_string(tail) + " records past them";
+    const std::uint64_t stored = std::uint64_t{groups} * Lanes;
+    const auto storedEnd = target.Base() + stored * ElementBytes;
+    const auto boundary = std::min<std::uint64_t>(stored + tail, stored + (((storedEnd + SubpageBytes - 1u) & ~(SubpageBytes - 1u)) - storedEnd) / ElementBytes);
+    const auto before = MirrorChecks::Counts();
     Commands commands;
     Spin(commands, scratch, rounds);
     commands.WriteData(spinLabel, {1u});
@@ -274,8 +280,9 @@ void TailWrittenBehindSpin(std::uint32_t rounds, std::uint32_t groups, std::uint
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
-            target.CpuWrite(std::uint64_t{groups} * Lanes, tail);
+            target.CpuWrite(boundary, stored + tail - boundary);
             running = scratch.Words()[SpinLabelWord] == 0u;
+            if (kind == Kind::Private) target.CpuWrite(stored, boundary - stored);
             WaitIdle();
             Settle();
         } catch (const std::exception& error) {
@@ -286,9 +293,10 @@ void TailWrittenBehindSpin(std::uint32_t rounds, std::uint32_t groups, std::uint
     }
     Expect(failure.empty(), what + ": the submission failed: " + failure);
     Expect(recorded, what + ": the dispatch's label was never recorded");
-    Expect(running, what + ": the spin had finished when the CPU wrote, so the writes did not meet a running batch");
+    Expect(running, what + ": the spin had finished when the CPU wrote the records past the stores' last 4 KiB subpage, so the writes did not meet a running batch");
+    target.ExpectHeld(stored, before, what);
+    if (kind == Kind::Shared) target.CpuWrite(stored, boundary - stored);
     target.Check(what);
-    ExpectStaged(staged, 1u, what);
 }
 
 }
@@ -301,17 +309,24 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
     }
-    const std::array<std::pair<const char*, void (*)()>, 4> cases{{
-        {"exact stores below the staging size", [] { Exact(16u, 5u, 300u); }},
-        {"exact stores in the staging size", [] { Exact(512u, 200u, 1000u); }},
-        {"tail written behind a spin below the staging size", [] { TailWrittenBehindSpin(Calibrate(), 16u, 512u); }},
-        {"tail written behind a spin in the staging size", [] { TailWrittenBehindSpin(Calibrate(), 512u, 1000u); }},
+    try {
+        MirrorChecks::PrepareResidency();
+    } catch (const std::exception& error) {
+        Expect(false, std::string("residency budget: exception: ") + error.what());
+    }
+    const std::array<std::pair<const char*, void (*)(Kind)>, 4> cases{{
+        {"exact stores of 16 groups", [](Kind kind) { Exact(kind, 16u, 5u, 300u); }},
+        {"exact stores of 512 groups", [](Kind kind) { Exact(kind, 512u, 200u, 1000u); }},
+        {"tail written behind a spin, 16 groups", [](Kind kind) { TailWrittenBehindSpin(kind, Calibrate(), 16u, 512u); }},
+        {"tail written behind a spin, 512 groups", [](Kind kind) { TailWrittenBehindSpin(kind, Calibrate(), 512u, 1000u); }},
     }};
-    for (const auto& [name, run] : cases) {
-        try {
-            run();
-        } catch (const std::exception& error) {
-            Expect(false, std::string(name) + ": exception: " + error.what());
+    for (const auto kind : {Kind::Shared, Kind::Private}) {
+        for (const auto& [name, run] : cases) {
+            try {
+                run(kind);
+            } catch (const std::exception& error) {
+                Expect(false, std::string(name) + " in " + MirrorChecks::NameOf(kind) + ": exception: " + error.what());
+            }
         }
     }
     try {

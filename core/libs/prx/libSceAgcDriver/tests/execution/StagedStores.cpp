@@ -1,6 +1,7 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -40,6 +42,27 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
+struct MirrorState {
+    std::uint64_t writtenBack = 0;
+    std::uint64_t cpuWriteBacks = 0;
+    std::uint32_t dirtyPages = 0;
+};
+
+MirrorState Mirrors(std::uint64_t address, std::uint64_t bytes) {
+    MirrorState state;
+    auto* residency = AgcDriver::Graphics::ResidencyDriver::Active();
+    if (residency == nullptr) return state;
+    const std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    auto& manager = residency->Manager();
+    const auto counts = manager.Counts();
+    state.writtenBack = counts.writtenBackBytes;
+    state.cpuWriteBacks = counts.cpuWriteBacks;
+    for (auto page = address >> AgcDriver::Graphics::ResidencyPageShift; page <= (address + bytes - 1u) >> AgcDriver::Graphics::ResidencyPageShift; ++page) {
+        if (manager.Dirty(page) != 0) ++state.dirtyPages;
+    }
+    return state;
+}
+
 }
 
 int main() {
@@ -62,15 +85,17 @@ int main() {
         };
         request.useCache = false;
         const auto result = ShaderRecompiler::Recompile(request);
-        const auto before = AgcDriver::Graphics::StagedWriteBuilds();
+        const auto targetAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Target.data()));
+        const auto before = Mirrors(targetAddress, decltype(Target)::ByteSize);
         device->Dispatch(result, 1, 1, 1, address);
         device->WaitIdle();
+        const auto after = Mirrors(targetAddress, decltype(Target)::ByteSize);
+        Require(after.writtenBack == before.writtenBack && after.cpuWriteBacks == before.cpuWriteBacks && after.dirtyPages == 0u, "staged stores: a dispatch storing one dword per lane 16 KiB apart through a 1 MiB V# of private pages, which writes only part of its range, left " + std::to_string(after.dirtyPages) + " of its pages dirty in mirrors and " + std::to_string(after.writtenBack - before.writtenBack) + " bytes written back over the range, where its stores reach the import alone");
         for (std::uint32_t index = 0; index < Dwords; ++index) {
             const bool stored = index % LaneStride == 0u;
             const auto expected = stored ? index / LaneStride + 1u : Pattern(index);
             Require(Target[index] == expected, "staged stores: dword " + std::to_string(index) + " is " + Hex(Target[index]) + ", expected " + Hex(expected) + (stored ? " from the store" : " kept from before the dispatch"));
         }
-        Require(AgcDriver::Graphics::StagedWriteBuilds() == before, "staged stores: a dispatch storing one dword per lane 16 KiB apart through a 1 MiB V#, which writes only part of its range, staged its stores");
         std::puts("staged stores tests passed");
         return 0;
     } catch (const std::exception& error) {

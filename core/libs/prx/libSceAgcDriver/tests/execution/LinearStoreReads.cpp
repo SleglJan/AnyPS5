@@ -1,5 +1,4 @@
-#include "NewPathFixture.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "MirrorChecks.hpp"
 #include "VulkanTestDevice.hpp"
 #include <exception>
 #include <string>
@@ -10,6 +9,7 @@
 namespace {
 
 using namespace NewPath;
+using MirrorChecks::Kind;
 
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t ElementBytes = 4;
@@ -79,13 +79,22 @@ std::uint32_t Previous(std::uint64_t word) {
 
 class Target {
 public:
-    explicit Target(std::uint32_t groups) : groups(groups), records(groups * Lanes + Tail), pages(static_cast<std::uint32_t>((Guard + std::uint64_t{records} * ElementBytes + Guard + PageBytes - 1u) / PageBytes)) {
+    Target(Kind kind, std::uint32_t groups) : groups(groups), records(groups * Lanes + Tail), pages(kind, static_cast<std::uint32_t>((Guard + std::uint64_t{records} * ElementBytes + Guard + PageBytes - 1u) / PageBytes)) {
         expected.resize(static_cast<std::size_t>(pages.Bytes() / 4u));
         for (std::size_t word = 0; word < expected.size(); ++word) {
             pages.Words()[word] = Previous(word);
             expected[word] = Previous(word);
         }
         AgcDriver::GuestMemory::BumpCollectEpoch();
+        Settle();
+    }
+
+    void ExpectHeld(const AgcDriver::Graphics::ResidencyCounts& before, const std::string& what) const {
+        const auto base = pages.Address(Guard);
+        const std::array<MirrorChecks::Range, 1> stored{{{base, base + std::uint64_t{groups} * Lanes * ElementBytes}}};
+        const std::array<MirrorChecks::Range, 1> range{{{base, base + std::uint64_t{records} * ElementBytes}}};
+        const auto failure = MirrorChecks::StoresHeld(pages.MemoryKind(), {pages.Address(), pages.Address() + pages.Bytes()}, stored, range, before);
+        Expect(failure.empty(), what + ": " + failure);
     }
 
     void Dispatch(Commands& commands, const Program& program) {
@@ -120,7 +129,7 @@ public:
 private:
     std::uint32_t groups;
     std::uint32_t records;
-    PrivatePages pages;
+    MirrorChecks::Pages pages;
     std::vector<std::uint32_t> expected;
 };
 
@@ -140,19 +149,18 @@ std::string Submitted(Commands& commands) {
 }
 
 void Run(Target& target, const Program& program, std::uint32_t dispatches, const std::string& what) {
-    const auto before = AgcDriver::Graphics::StagedWriteBuilds();
+    const auto before = MirrorChecks::Counts();
     Commands commands;
     for (std::uint32_t dispatch = 0; dispatch < dispatches; ++dispatch) target.Dispatch(commands, program);
     const auto failure = Submitted(commands);
     Expect(failure.empty(), what + ": the submission failed: " + failure);
+    target.ExpectHeld(before, what + ", the stores and the reads of every dispatch through the one copy");
     target.Check(what);
-    const auto staged = AgcDriver::Graphics::StagedWriteBuilds() - before;
-    Expect(staged == 0u, what + ": " + std::to_string(staged) + " dispatches staged their stores although they read the range they store to");
 }
 
-void Reads(std::uint32_t groups) {
-    Target target(groups);
-    const std::string shape = std::to_string(groups) + " groups of 64 lanes storing one dword per global thread id through a V# of " + std::to_string(target.Records()) + " records of host-imported memory";
+void Reads(Kind kind, std::uint32_t groups) {
+    Target target(kind, groups);
+    const std::string shape = std::to_string(groups) + " groups of 64 lanes storing one dword per global thread id through a V# of " + std::to_string(target.Records()) + " records of " + MirrorChecks::NameOf(kind);
     Run(target, IncrementProgram(), 1u, shape + ", each lane storing the dword it loaded from its own element plus one");
     Run(target, IncrementProgram(), Chained, shape + ", " + std::to_string(Chained) + " such dispatches in one submission");
     Run(target, NeighbourProgram(), 1u, shape + ", each lane storing the dword it loaded from its neighbour's element plus one");
@@ -168,11 +176,18 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
     }
-    for (const auto groups : {16u, 512u}) {
-        try {
-            Reads(groups);
-        } catch (const std::exception& error) {
-            Expect(false, std::to_string(groups) + " groups: exception: " + error.what());
+    try {
+        MirrorChecks::PrepareResidency();
+    } catch (const std::exception& error) {
+        Expect(false, std::string("residency budget: exception: ") + error.what());
+    }
+    for (const auto kind : {Kind::Shared, Kind::Private}) {
+        for (const auto groups : {16u, 512u}) {
+            try {
+                Reads(kind, groups);
+            } catch (const std::exception& error) {
+                Expect(false, std::to_string(groups) + " groups of " + MirrorChecks::NameOf(kind) + ": exception: " + error.what());
+            }
         }
     }
     try {

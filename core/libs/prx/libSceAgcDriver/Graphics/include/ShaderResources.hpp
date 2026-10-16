@@ -113,7 +113,6 @@ struct ImageTableReuseCounts {
     std::uint64_t resolved = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
-std::uint64_t StagedWriteBuilds();
 
 struct DeviceTableView {
     ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2D;

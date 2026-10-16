@@ -50,7 +50,6 @@
 namespace AgcDriver::Graphics {
 namespace {
 
-std::atomic<std::uint64_t> stagedWriteBuilds{0};
 
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {
     return first < second + secondSize && second < first + firstSize;
@@ -3110,10 +3109,6 @@ void ShaderResources::PatchLinearStoreBase(const ShaderRecompiler::RecompileResu
         return;
     }
     patchShaderData(-1, computeShaderData, position, words);
-}
-
-std::uint64_t StagedWriteBuilds() {
-    return stagedWriteBuilds.load(std::memory_order_relaxed);
 }
 
 void ShaderResources::checkBdaFault() const {

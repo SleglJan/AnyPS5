@@ -1,6 +1,5 @@
-#include "NewPathFixture.hpp"
+#include "MirrorChecks.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "VulkanTestDevice.hpp"
 #include <exception>
 #include <string>
@@ -11,6 +10,7 @@
 namespace {
 
 using namespace NewPath;
+using MirrorChecks::Kind;
 
 constexpr std::uint32_t Lanes = 64;
 constexpr std::uint32_t Groups = 16;
@@ -75,7 +75,7 @@ std::uint32_t ValueWord(std::uint32_t round, std::uint32_t range, std::uint32_t 
 
 class Area {
 public:
-    Area() : pages(AreaPages), values(static_cast<std::uint32_t>((std::uint64_t{Ranges} * 2u * 16u + PageBytes - 1u) / PageBytes)) {
+    explicit Area(Kind kind) : pages(kind, AreaPages), values(static_cast<std::uint32_t>((std::uint64_t{Ranges} * 2u * 16u + PageBytes - 1u) / PageBytes)) {
         expected.resize(static_cast<std::size_t>(pages.Bytes() / 4u));
         for (std::size_t word = 0; word < expected.size(); ++word) {
             pages.Words()[word] = Previous(word);
@@ -87,6 +87,19 @@ public:
             }
         }
         AgcDriver::GuestMemory::BumpCollectEpoch();
+        Settle();
+    }
+
+    Kind MemoryKind() const { return pages.MemoryKind(); }
+
+    void ExpectHeld(const AgcDriver::Graphics::ResidencyCounts& before, const std::string& what) const {
+        std::vector<MirrorChecks::Range> stored;
+        for (std::uint32_t range = 0; range < Ranges; ++range) {
+            const auto base = pages.Address(range * RangeStride + RangeOffset);
+            stored.emplace_back(base, base + std::uint64_t{Elements} * ElementBytes);
+        }
+        const auto failure = MirrorChecks::StoresHeld(MemoryKind(), {pages.Address(), pages.Address() + pages.Bytes()}, stored, stored, before);
+        Expect(failure.empty(), what + ": " + failure);
     }
 
     void Dispatch(Commands& commands, std::uint32_t round, std::uint32_t range) {
@@ -114,7 +127,7 @@ public:
     }
 
 private:
-    PrivatePages pages;
+    MirrorChecks::Pages pages;
     PrivatePages values;
     std::vector<std::uint32_t> expected;
 };
@@ -136,19 +149,19 @@ std::string Submitted(Commands& commands) {
 
 struct Counters {
     std::uint64_t tables = 0;
-    std::uint64_t staged = 0;
+    AgcDriver::Graphics::ResidencyCounts residency;
 
-    static Counters Now() { return {AgcDriver::Graphics::BdaPageTable::Totals().tables, AgcDriver::Graphics::StagedWriteBuilds()}; }
+    static Counters Now() { return {AgcDriver::Graphics::BdaPageTable::Totals().tables, MirrorChecks::Counts()}; }
 };
 
-void ExpectNoTables(const Counters& before, const std::string& what) {
+void ExpectNoTables(const Area& area, const Counters& before, const std::string& what) {
     const auto after = Counters::Now();
-    Expect(after.staged - before.staged == Ranges, what + ": " + std::to_string(after.staged - before.staged) + " of the " + std::to_string(Ranges) + " dispatches staged their linear stores");
+    area.ExpectHeld(before.residency, what);
     Expect(after.tables == before.tables, what + ": the dispatches built " + std::to_string(after.tables - before.tables) + " page tables over an unchanged address space");
 }
 
-void Tables() {
-    Area area;
+void Tables(Kind kind) {
+    Area area(kind);
     {
         Commands warm;
         for (std::uint32_t range = 0; range < Ranges; ++range) area.Dispatch(warm, 0u, range);
@@ -156,7 +169,7 @@ void Tables() {
         Expect(failure.empty(), "linear store tables: the warm-up submission failed: " + failure);
         area.Check("linear store tables: the warm-up submission");
     }
-    const std::string shape = std::to_string(Ranges) + " linear-store dispatches of " + std::to_string(Groups) + " groups, each into its own range of host-imported memory";
+    const std::string shape = std::to_string(Ranges) + " linear-store dispatches of " + std::to_string(Groups) + " groups, each into its own range of " + MirrorChecks::NameOf(kind);
     {
         const auto before = Counters::Now();
         Commands commands;
@@ -164,8 +177,8 @@ void Tables() {
         const auto failure = Submitted(commands);
         const std::string what = shape + ", in one submission";
         Expect(failure.empty(), what + ": the submission failed: " + failure);
+        ExpectNoTables(area, before, what);
         area.Check(what);
-        ExpectNoTables(before, what);
     }
     {
         const auto before = Counters::Now();
@@ -177,8 +190,8 @@ void Tables() {
         }
         const std::string what = shape + ", each in its own submission";
         Expect(failure.empty(), what + ": a submission failed: " + failure);
+        ExpectNoTables(area, before, what);
         area.Check(what);
-        ExpectNoTables(before, what);
     }
 }
 
@@ -193,9 +206,16 @@ int main() {
         if (!device) return VulkanTestSkipped;
     }
     try {
-        Tables();
+        MirrorChecks::PrepareResidency();
     } catch (const std::exception& error) {
-        Expect(false, std::string("exception: ") + error.what());
+        Expect(false, std::string("residency budget: exception: ") + error.what());
+    }
+    for (const auto kind : {Kind::Shared, Kind::Private}) {
+        try {
+            Tables(kind);
+        } catch (const std::exception& error) {
+            Expect(false, std::string(MirrorChecks::NameOf(kind)) + ": exception: " + error.what());
+        }
     }
     try {
         AgcDriverShutdown_nid_postfix();

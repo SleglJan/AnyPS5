@@ -1,5 +1,4 @@
-#include "NewPathFixture.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "MirrorChecks.hpp"
 #include "VulkanTestDevice.hpp"
 #include <chrono>
 #include <exception>
@@ -305,14 +304,16 @@ int main() {
         if (!device) return VulkanTestSkipped;
     }
     try {
+        MirrorChecks::PrepareResidency();
         Range range;
         for (const auto writer : {Writer::Linear, Writer::Strided}) {
-            const auto staged = AgcDriver::Graphics::StagedWriteBuilds();
+            const auto before = MirrorChecks::Counts();
             ReadInSameSubmission(range, writer);
             ReadAtLabel(range, writer);
             CpuWritesBeforeExecution(range, writer);
             ReadOnOtherStream(range, writer);
-            std::printf("store range ordering: %llu builds staged their stores in the four cases of %s, reading dispatches included\n", static_cast<unsigned long long>(AgcDriver::Graphics::StagedWriteBuilds() - staged), NameOf(writer));
+            const auto after = MirrorChecks::Counts();
+            std::printf("store range ordering: %llu bytes written back from residency mirrors in %llu CPU write-backs over the four cases of %s, reading dispatches included\n", static_cast<unsigned long long>(after.writtenBackBytes - before.writtenBackBytes), static_cast<unsigned long long>(after.cpuWriteBacks - before.cpuWriteBacks), NameOf(writer));
         }
     } catch (const std::exception& error) {
         Expect(false, std::string("exception: ") + error.what());
