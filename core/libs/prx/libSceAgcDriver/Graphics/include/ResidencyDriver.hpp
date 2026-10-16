@@ -5,9 +5,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Residency.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <vulkan/vulkan.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -53,6 +56,9 @@ struct ResidencyDriverCounts {
     std::uint64_t appliedAtOrderingPoints = 0;
     std::uint64_t vanishedCopies = 0;
     std::uint64_t frames = 0;
+    std::uint64_t touchHarvests = 0;
+    std::uint64_t touchedPages = 0;
+    std::uint64_t touchOverflows = 0;
     std::uint64_t budgetBytes = 0;
 };
 
@@ -86,6 +92,7 @@ public:
     ResidencyPublication Publish();
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
     void KeepChunks();
+    VkDeviceAddress TouchTableAddress() const;
     ResidencyDriverCounts Counts() const;
 
     bool Reached(const ResidencyToken& token) override;
@@ -109,8 +116,15 @@ public:
     std::uint64_t GuestBytes() override;
 
 private:
+    struct TouchReadback {
+        std::shared_ptr<Buffer> buffer;
+        ResidencyToken token{};
+        bool pending = false;
+    };
+
     ResidencyToken record(std::span<const ResidencyCopy> copies, bool intoMirror);
     void frameBoundary();
+    void harvestTouches();
 
     Context context;
     Recorder& recorder;
@@ -118,8 +132,14 @@ private:
     std::uint32_t deviceHeap = 0;
     ResidencyMirrors mirrors;
     ResidencyManager manager;
+    std::shared_ptr<Buffer> touchTable;
+    std::atomic<VkDeviceAddress> touchAddress{0};
+    std::array<TouchReadback, 2> touchReadbacks;
     std::uint64_t presents = 0;
     std::uint64_t frames = 0;
+    std::uint64_t touchHarvests = 0;
+    std::uint64_t touchedPages = 0;
+    std::uint64_t touchOverflows = 0;
     std::uint64_t budgetBytes = 0;
     std::atomic<std::uint64_t> orderingPoints{0};
     std::atomic<std::uint64_t> appliedAtOrderingPoints{0};

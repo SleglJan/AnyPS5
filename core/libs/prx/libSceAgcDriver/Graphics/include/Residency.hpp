@@ -119,6 +119,8 @@ struct ResidencyCounts {
     std::uint32_t accessGuarded = 0;
     std::uint32_t hotResident = 0;
     std::uint64_t writtenBackBytes = 0;
+    std::uint64_t touchAdmitted = 0;
+    std::uint64_t touchDeferred = 0;
     std::uint64_t aliasDemoted = 0;
     std::uint64_t recordRefreshed = 0;
     std::uint64_t chunksAllocated = 0;
@@ -139,6 +141,7 @@ public:
 
     void SetBudget(std::uint64_t bytes);
     void ApplyBudget();
+    void AdmitTouched(std::span<const std::uint64_t> pages);
     bool Advance();
     void Apply();
     void Prepare();
@@ -201,6 +204,7 @@ private:
         std::uint64_t importSerial = 0;
         std::uint64_t section = 0;
         std::uint64_t offset = 0;
+        std::uint64_t touchFrame = 0;
         ResidencyToken pin{};
     };
 
@@ -314,6 +318,7 @@ private:
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;
     std::atomic<std::uint32_t> dirtyPages{0};
+    std::uint64_t touchFrame = 0;
     ResidencyCounts counts;
     mutable std::mutex residentMutex;
     std::mutex queueMutex;

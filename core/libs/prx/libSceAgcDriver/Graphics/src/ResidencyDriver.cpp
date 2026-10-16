@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "BdaTouchAbi.hpp"
 #include <algorithm>
 #include <map>
 #include <mutex>
@@ -51,7 +52,8 @@ void ResidencyDriver::OrderingPoint() {
 void ResidencyDriver::BeforeDispatch() {
     const std::lock_guard lock(GuestMemory::GpuMutex());
     manager.Apply();
-    if (const auto now = Recorder::Presents(); now != presents) {
+    harvestTouches();
+    if (const auto now = Recorder::Presents(); now != presents || touchTable == nullptr) {
         presents = now;
         frameBoundary();
     }
@@ -76,9 +78,64 @@ std::uint64_t ResidencyDriver::GuestBytes() {
     return guest.GuestBytes();
 }
 
+VkDeviceAddress ResidencyDriver::TouchTableAddress() const {
+    return touchAddress.load(std::memory_order_acquire);
+}
+
 void ResidencyDriver::frameBoundary() {
+    namespace Touch = ShaderRecompiler::BdaTouchAbi;
     ++frames;
     manager.ApplyBudget();
+    if (!context.bufferDeviceAddress) return;
+    const auto commands = recorder.Commands();
+    const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
+    const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto barrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    const VkMemoryBarrier between{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT};
+    const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
+    if (touchTable == nullptr) {
+        touchTable = std::make_shared<Buffer>(context, Touch::TableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+        fill(commands, touchTable->Handle(), 0, Touch::TableBytes, 0u);
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+        recorder.MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+        recorder.Keep(touchTable);
+        touchAddress.store(touchTable->DeviceAddress(), std::memory_order_release);
+        return;
+    }
+    auto* readback = &touchReadbacks[0];
+    if (readback->pending) readback = &touchReadbacks[1];
+    if (readback->pending) return;
+    if (readback->buffer == nullptr) readback->buffer = std::make_shared<Buffer>(context, Touch::TableBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+    const VkBufferCopy region{0, 0, Touch::TableBytes};
+    copy(commands, touchTable->Handle(), readback->buffer->Handle(), 1, &region);
+    barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &between, 0, nullptr, 0, nullptr);
+    fill(commands, touchTable->Handle(), 0, Touch::TableBytes, 0u);
+    barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+    recorder.MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    recorder.Keep(touchTable);
+    recorder.Keep(readback->buffer);
+    readback->token = recorder.CallerToken();
+    readback->pending = true;
+}
+
+void ResidencyDriver::harvestTouches() {
+    namespace Touch = ShaderRecompiler::BdaTouchAbi;
+    for (auto& readback : touchReadbacks) {
+        if (!readback.pending || !recorder.Reached(readback.token)) continue;
+        readback.pending = false;
+        readback.buffer->Invalidate();
+        const auto bytes = readback.buffer->Bytes();
+        const auto* words = reinterpret_cast<const std::uint32_t*>(bytes.data());
+        if (words[Touch::OverflowWord] != 0) ++touchOverflows;
+        std::vector<std::uint64_t> touched;
+        Touch::ForEachTouchedPage(words, [&](std::uint64_t page) { touched.push_back(page); });
+        ++touchHarvests;
+        touchedPages += touched.size();
+        manager.AdmitTouched(touched);
+    }
 }
 
 std::vector<ResidencyRange> ResidencyDriver::WholeImports(std::uint64_t& generation) {
@@ -181,7 +238,7 @@ void ResidencyDriver::KeepChunks() {
 }
 
 ResidencyDriverCounts ResidencyDriver::Counts() const {
-    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, budgetBytes};
+    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes};
 }
 
 bool ResidencyDriver::Reached(const ResidencyToken& token) {

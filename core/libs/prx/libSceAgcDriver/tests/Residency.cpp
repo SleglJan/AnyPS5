@@ -949,6 +949,26 @@ void GrantThroughAliasDemotesMirror() {
     Expect(fixture.Stored(BasePage + 0, 3) == 77, "guest memory holds the store for both views");
 }
 
+void TouchedPagesAdmitted() {
+    scope = "pages touched in a frame are admitted for the next";
+    Fixture fixture(8, 1);
+    fixture.Use(0, BasePage + 0, 4);
+    fixture.gpu.Drain();
+    const std::array<std::uint64_t, 3> first{BasePage + 4, BasePage + 5, BasePage + 1};
+    fixture.manager->AdmitTouched(first);
+    Expect(fixture.manager->Slot(BasePage + 4) && fixture.manager->Slot(BasePage + 5) && fixture.manager->Slot(BasePage + 1), "the touched pages are resident");
+    Expect(!fixture.manager->Slot(BasePage + 0) && !fixture.manager->Slot(BasePage + 2), "the least recently used untouched pages left for them");
+    Expect(fixture.manager->Counts().touchAdmitted == 2, "two pages admitted from the touch records");
+    fixture.gpu.Drain();
+    const std::array<std::uint64_t, 5> second{BasePage + 1, BasePage + 4, BasePage + 5, BasePage + 6, BasePage + 7};
+    fixture.manager->AdmitTouched(second);
+    Expect(fixture.manager->Slot(BasePage + 6) && !fixture.manager->Slot(BasePage + 3), "an untouched page makes room for a touched one");
+    Expect(!fixture.manager->Slot(BasePage + 7) && fixture.manager->Counts().touchDeferred == 1, "a page touched in the same frame is never evicted for another touched page");
+    Expect(fixture.manager->Slot(BasePage + 1) && fixture.manager->Slot(BasePage + 4) && fixture.manager->Slot(BasePage + 5), "the pages touched again stay");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 6, 0x0002, (std::uint64_t{6} << 8) | 1u);
+    fixture.gpu.Drain();
+}
+
 void MeasuredBudget() {
     scope = "measured budget";
     Fixture fixture(16, 8);
@@ -1439,6 +1459,7 @@ int main() {
         ExactDirtyRanges();
         GrantDemotesPrivatePage();
         GrantThroughAliasDemotesMirror();
+        TouchedPagesAdmitted();
         MeasuredBudget();
         FullResidencyWhenTheGuestFits();
         AdmissionRule();

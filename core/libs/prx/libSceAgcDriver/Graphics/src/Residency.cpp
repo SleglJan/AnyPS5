@@ -22,6 +22,7 @@ PageSpan PagesOf(std::uint64_t address, std::uint64_t bytes) {
 }
 
 constexpr std::uint32_t WordBits = 64;
+constexpr std::uint64_t TouchPagesPerFrame = 4096;
 
 ResidencyMask RunMask(std::uint32_t begin, std::uint32_t end) {
     if (end <= begin) return 0;
@@ -353,6 +354,7 @@ std::optional<std::uint32_t> ResidencyManager::victim(std::uint64_t protectFirst
     for (auto id = oldest; id != None; id = pages[id].newer) {
         const auto& page = pages[id];
         if (page.index >= protectFirst && page.index <= protectLast) continue;
+        if (touchFrame != 0 && page.touchFrame == touchFrame) continue;
         if (!settled(page.pin)) continue;
         return id;
     }
@@ -692,6 +694,44 @@ void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, Residency
         admit(span.first, span.last);
     }
     Pin(address, bytes, access, device.Current());
+}
+
+void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
+    applyQueued();
+    ++touchFrame;
+    std::vector<std::uint64_t> sorted(touched.begin(), touched.end());
+    std::sort(sorted.begin(), sorted.end());
+    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+    std::vector<std::uint64_t> missing;
+    for (const auto page : sorted) {
+        const auto id = find(page);
+        if (!id) {
+            missing.push_back(page);
+            continue;
+        }
+        pages[*id].touchFrame = touchFrame;
+        unlink(*id);
+        linkNewest(*id);
+    }
+    std::uint64_t quota = TouchPagesPerFrame;
+    for (std::size_t first = 0; first < missing.size();) {
+        auto last = first;
+        while (last + 1 < missing.size() && missing[last + 1] == missing[last] + 1) ++last;
+        if (quota == 0) {
+            counts.touchDeferred += last - first + 1;
+            first = last + 1;
+            continue;
+        }
+        const auto before = counts.admitted;
+        const auto next = admitPages(missing[first], missing[last], &quota);
+        const auto admitted = counts.admitted - before;
+        counts.touchAdmitted += admitted;
+        if (next <= missing[last]) counts.touchDeferred += missing[last] - next + 1;
+        for (auto index = first; index <= last; ++index) {
+            if (const auto id = find(missing[index])) pages[*id].touchFrame = touchFrame;
+        }
+        first = last + 1;
+    }
 }
 
 void ResidencyManager::admit(std::uint64_t first, std::uint64_t last) {
