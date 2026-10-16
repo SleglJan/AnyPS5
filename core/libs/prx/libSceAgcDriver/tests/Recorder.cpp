@@ -4430,9 +4430,19 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     constexpr std::size_t targetBytes = 65536u;
     constexpr std::size_t bytes = 5u * 65536u;
 #ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536u);
+    if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
-    void* block = std::aligned_alloc(65536, bytes);
+    void* block = nullptr;
+    void* raw = mmap(nullptr, bytes + 65536u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw != MAP_FAILED) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        const auto aligned = (begin + 65535u) & ~std::uintptr_t{65535u};
+        if (aligned != begin) munmap(raw, aligned - begin);
+        if (aligned + bytes != begin + bytes + 65536u) munmap(reinterpret_cast<void*>(aligned + bytes), begin + 65536u - aligned);
+        block = reinterpret_cast<void*>(aligned);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
+    }
 #endif
     Require(block != nullptr, "cannot allocate the multisampled target block");
     std::memset(block, 0, bytes);
@@ -4451,11 +4461,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
                 GuestAllocations::Mutation mutation;
                 mutation.Remove(block);
             }
-#ifdef _WIN32
-            VirtualFree(block, 0, MEM_RELEASE);
-#else
-            std::free(block);
-#endif
+            ReleaseWatched(block, bytes);
         }
     } unregister{base, block};
     TextureDetiler detiler(base);
