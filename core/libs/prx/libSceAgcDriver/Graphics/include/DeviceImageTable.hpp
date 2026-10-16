@@ -37,6 +37,7 @@ public:
     void BeforeDispatch(const Context& context, Recorder& recorder);
     void AfterDispatch(const Context& context, Recorder& recorder, std::uint64_t storeRecord = 0);
     std::vector<std::shared_ptr<StorageTexture>> DispatchStorage() const;
+    std::vector<std::shared_ptr<Texture>> DispatchTextures() const;
 
     struct Rejection {
         std::array<std::uint32_t, 8> words{};
@@ -126,6 +127,7 @@ private:
         bool written = false;
     };
     std::vector<DispatchStorageUse> dispatchStorage;
+    std::vector<std::shared_ptr<Texture>> dispatchTextures;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;
     Counts totals;

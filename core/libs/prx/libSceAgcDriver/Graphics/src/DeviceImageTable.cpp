@@ -153,6 +153,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     refreshPerUse(build, recorder, resolved);
     for (const auto& key : current) {
         const auto held = entries.find(key);
+        if (held != entries.end() && held->second.texture != nullptr && std::ranges::find(dispatchTextures, held->second.texture) == dispatchTextures.end()) dispatchTextures.push_back(held->second.texture);
         if (held == entries.end() || held->second.storage == nullptr) continue;
         if (std::ranges::none_of(dispatchStorage, [&](const DispatchStorageUse& used) { return used.key == key; })) dispatchStorage.push_back({key, held->second.storage, held->second.written});
     }
@@ -162,6 +163,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
 void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder, std::uint64_t storeRecord) {
     std::lock_guard lock(mutex);
     const auto uses = std::exchange(dispatchStorage, {});
+    dispatchTextures.clear();
     std::exception_ptr failure;
     for (const auto& use : uses) {
         recorder.Keep(use.image);
@@ -207,6 +209,11 @@ void DeviceImageTable::evict(const Context& build, Recorder& recorder) {
     }
     if (dropped.empty()) return;
     totals.evicted += keys.Retain([&](const DeviceImageKeys::Key& key) { return !dropped.contains(key); });
+}
+
+std::vector<std::shared_ptr<Texture>> DeviceImageTable::DispatchTextures() const {
+    std::lock_guard lock(mutex);
+    return dispatchTextures;
 }
 
 std::vector<std::shared_ptr<StorageTexture>> DeviceImageTable::DispatchStorage() const {

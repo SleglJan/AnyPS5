@@ -1325,6 +1325,16 @@ struct RecordedDraw {
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
 };
 
+void requireNoTableDepthFeedback(const Context& context, const State& state, Recorder& recorder) {
+    if (!state.depth) return;
+    try {
+        RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, context.deviceImages->DispatchTextures());
+    } catch (...) {
+        context.deviceImages->AfterDispatch(context, recorder);
+        throw;
+    }
+}
+
 void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const ShaderResources::DrawBindings* drawBindings, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
@@ -1502,6 +1512,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         Require(context.deviceImages != nullptr, "a draw reading images through the device image table needs the device's table");
         for (const auto& shader : shaders) resources.ExpectDeviceImages(*context.deviceImages, *shader.program);
         context.deviceImages->BeforeDispatch(context, *recorder);
+        requireNoTableDepthFeedback(context, state, *recorder);
     }
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
     const bool capture = CaptureInputsEnabled();
@@ -2064,6 +2075,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(recorder != nullptr && context.deviceImages != nullptr, "a draw reading images through the device image table needs a recorder and the device's table");
         for (const auto& shader : shaders) resources->ExpectDeviceImages(*context.deviceImages, *shader.program);
         context.deviceImages->BeforeDispatch(context, *recorder);
+        requireNoTableDepthFeedback(context, state, *recorder);
         if (!recorded) recorder->Sync();
     }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
