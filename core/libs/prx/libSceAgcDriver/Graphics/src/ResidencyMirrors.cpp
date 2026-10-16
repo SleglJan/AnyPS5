@@ -197,7 +197,7 @@ void WriteBackAllMirrors() {
 
 bool MirrorsMayBeDirty(std::uint64_t begin, std::uint64_t end) {
     auto* residency = ResidencyDriver::Active();
-    return residency != nullptr && end > begin && residency->Manager().AnyDirty() && residency->Manager().AnyResident(begin, end - begin);
+    return residency != nullptr && end > begin && residency->Manager().DirtyIn(begin, end - begin);
 }
 
 void FlushMirrorsForCpuRead(std::uint64_t begin, std::uint64_t end) {
