@@ -255,6 +255,8 @@ public:
     // Completes batches that already finished; returns whether nothing is in flight.
     bool Reap();
     std::uint64_t Submissions() const { return submissions; }
+    bool CallerBatchValue(std::uint32_t& stream, std::uint64_t& value) const;
+    bool BatchValueFinished(std::uint32_t stream, std::uint64_t value) const { return stream < streams.size() && value <= streams[stream].finished; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
     std::size_t InFlightBatches() const { return inFlight.size(); }
     // Reaps that retired at least one batch so far (the [recorder] line's 'with work' count).

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,16 @@ namespace AgcDriver::Graphics {
         void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent);
 
     private:
+        struct DescriptorRing {
+            std::vector<VkDescriptorPool> pools;
+            std::vector<std::array<std::uint64_t, MaxRecorderStreams>> values;
+            std::vector<std::uint8_t> unrecorded;
+            std::size_t current = 0;
+            std::uint32_t used = 0;
+        };
+        VkDescriptorSet allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat);
+        void resetRing(DescriptorRing& ring, const char* resetWhat);
+        void destroyRing(DescriptorRing& ring) noexcept;
         VkDescriptorSet allocateDecodeImageSet();
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
         void release() noexcept;
@@ -71,33 +82,28 @@ namespace AgcDriver::Graphics {
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
-        std::vector<VkDescriptorPool> descriptorPools;
-        std::size_t allocatedSets = 0;
+        DescriptorRing descriptorSets;
         VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;
         VkPipeline cmaskPipeline = VK_NULL_HANDLE;
-        std::vector<VkDescriptorPool> cmaskDescriptorPools;
-        std::size_t allocatedCmaskSets = 0;
+        DescriptorRing cmaskDescriptorSets;
         std::unique_ptr<Buffer> cmaskErrors;
         VkDescriptorSetLayout keyClearDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout keyClearPipelineLayout = VK_NULL_HANDLE;
         VkPipeline keyClearPipeline = VK_NULL_HANDLE;
-        std::vector<VkDescriptorPool> keyClearDescriptorPools;
-        std::size_t allocatedKeyClearSets = 0;
+        DescriptorRing keyClearDescriptorSets;
         std::unique_ptr<Buffer> keyClearErrors;
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;
         VkShaderModule imageModule = VK_NULL_HANDLE;
-        std::vector<VkDescriptorPool> imageDescriptorPools;
-        std::size_t allocatedImageSets = 0;
+        DescriptorRing imageDescriptorSets;
         VkShaderModule decodeModule = VK_NULL_HANDLE;
         std::array<VkPipeline, 2> decodePipelines{};
         VkDescriptorSetLayout decodeImageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout decodeImagePipelineLayout = VK_NULL_HANDLE;
         std::array<VkShaderModule, 6> decodeImageModules{};
         std::array<VkPipeline, 6> decodeImagePipelines{};
-        std::vector<VkDescriptorPool> decodeImageDescriptorPools;
-        std::size_t allocatedDecodeImageSets = 0;
+        DescriptorRing decodeImageDescriptorSets;
     };
 
 }

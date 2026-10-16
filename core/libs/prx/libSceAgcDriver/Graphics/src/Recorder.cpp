@@ -1394,6 +1394,14 @@ const Recorder::Batch* Recorder::callerBatch() const {
     return opens[streamOfCaller()].get();
 }
 
+bool Recorder::CallerBatchValue(std::uint32_t& stream, std::uint64_t& value) const {
+    stream = streamOfCaller();
+    const auto* open = opens[stream].get();
+    if (open == nullptr) return false;
+    value = open->value;
+    return true;
+}
+
 bool Recorder::anyOpen() const {
     return std::any_of(opens.begin(), opens.begin() + static_cast<std::ptrdiff_t>(streams.size()), [](const auto& batch) { return batch != nullptr; });
 }

@@ -128,21 +128,21 @@ void TextureDetiler::release() noexcept {
     for (const auto decodeImageModule : decodeImageModules) {
         if (decodeImageModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, decodeImageModule, nullptr);
     }
-    for (const auto pool : decodeImageDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    destroyRing(decodeImageDescriptorSets);
     if (decodeImagePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, decodeImagePipelineLayout, nullptr);
     if (decodeImageDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, decodeImageDescriptorLayout, nullptr);
-    for (const auto pool : cmaskDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    destroyRing(cmaskDescriptorSets);
     if (cmaskPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, cmaskPipeline, nullptr);
     if (cmaskPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, cmaskPipelineLayout, nullptr);
     if (cmaskDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, cmaskDescriptorLayout, nullptr);
     cmaskErrors.reset();
     keyClearErrors.reset();
-    for (const auto pool : keyClearDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    destroyRing(keyClearDescriptorSets);
     if (keyClearPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, keyClearPipeline, nullptr);
     if (keyClearPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, keyClearPipelineLayout, nullptr);
     if (keyClearDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, keyClearDescriptorLayout, nullptr);
-    for (const auto pool : descriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
-    for (const auto pool : imageDescriptorPools) context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(context.device, pool, nullptr);
+    destroyRing(descriptorSets);
+    destroyRing(imageDescriptorSets);
     if (imageModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, imageModule, nullptr);
     if (imagePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, imagePipelineLayout, nullptr);
     if (imageDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, imageDescriptorLayout, nullptr);
@@ -447,26 +447,8 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         cmaskErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         std::memset(cmaskErrors->Bytes().data(), 0, 4);
     }
-    constexpr std::uint32_t setsPerPool = 64;
-    const auto poolIndex = allocatedCmaskSets / setsPerPool;
-    if (poolIndex == cmaskDescriptorPools.size()) {
-        const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setsPerPool * 2}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setsPerPool}}};
-        VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        info.maxSets = setsPerPool;
-        info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
-        info.pPoolSizes = sizes.data();
-        cmaskDescriptorPools.reserve(cmaskDescriptorPools.size() + 1);
-        VkDescriptorPool pool = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr, &pool), "vkCreateDescriptorPool CMASK clear");
-        cmaskDescriptorPools.push_back(pool);
-    }
-    VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocation.descriptorPool = cmaskDescriptorPools.at(poolIndex);
-    allocation.descriptorSetCount = 1;
-    allocation.pSetLayouts = &cmaskDescriptorLayout;
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets CMASK clear");
-    ++allocatedCmaskSets;
+    constexpr std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 2}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}};
+    const auto set = allocateFrom(cmaskDescriptorSets, cmaskDescriptorLayout, sizes, "vkCreateDescriptorPool CMASK clear", "vkAllocateDescriptorSets CMASK clear", "vkResetDescriptorPool CMASK clear");
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = cmaskOffset - cmaskOffset % alignment;
     const auto base = cmaskOffset - descriptorOffset;
@@ -544,26 +526,8 @@ void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys
         keyClearErrors = std::make_unique<Buffer>(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         std::memset(keyClearErrors->Bytes().data(), 0, 4);
     }
-    constexpr std::uint32_t setsPerPool = 64;
-    const auto poolIndex = allocatedKeyClearSets / setsPerPool;
-    if (poolIndex == keyClearDescriptorPools.size()) {
-        const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setsPerPool * 3}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setsPerPool}}};
-        VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        info.maxSets = setsPerPool;
-        info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
-        info.pPoolSizes = sizes.data();
-        keyClearDescriptorPools.reserve(keyClearDescriptorPools.size() + 1);
-        VkDescriptorPool pool = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &info, nullptr, &pool), "vkCreateDescriptorPool DCC key clear");
-        keyClearDescriptorPools.push_back(pool);
-    }
-    VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocation.descriptorPool = keyClearDescriptorPools.at(poolIndex);
-    allocation.descriptorSetCount = 1;
-    allocation.pSetLayouts = &keyClearDescriptorLayout;
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets DCC key clear");
-    ++allocatedKeyClearSets;
+    constexpr std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 3}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}};
+    const auto set = allocateFrom(keyClearDescriptorSets, keyClearDescriptorLayout, sizes, "vkCreateDescriptorPool DCC key clear", "vkAllocateDescriptorSets DCC key clear", "vkResetDescriptorPool DCC key clear");
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = keysOffset - keysOffset % alignment;
     const auto base = keysOffset - descriptorOffset;
