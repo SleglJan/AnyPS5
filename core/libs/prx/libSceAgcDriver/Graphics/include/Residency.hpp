@@ -213,8 +213,6 @@ private:
         bool accessGuarded = false;
         ResidencyMask accessMask = 0;
         std::uint64_t importSerial = 0;
-        std::uint64_t section = 0;
-        std::uint64_t offset = 0;
         std::uint64_t touchFrame = 0;
         ResidencyToken pin{};
     };

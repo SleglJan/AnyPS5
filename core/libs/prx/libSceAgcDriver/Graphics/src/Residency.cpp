@@ -173,8 +173,6 @@ std::uint32_t ResidencyManager::newPage(std::uint64_t page, MirrorSlot slot, con
     record.cpuWritable = import.cpuWritable;
     record.shared = import.section != 0;
     record.importSerial = import.serial;
-    record.section = import.section;
-    record.offset = import.offset;
     record.guarded = guarded;
     {
         const std::lock_guard lock(residentMutex);
@@ -457,10 +455,6 @@ void ResidencyManager::applyDrops() {
             const auto page = pages[id].index;
             const auto import = device.Import(page);
             if (import.whole && import.serial == pages[id].importSerial) continue;
-            if (import.whole && !pages[id].dirtyRuns.empty() && import.section != 0 && import.section == pages[id].section && import.offset == pages[id].offset) {
-                pages[id].importSerial = import.serial;
-                continue;
-            }
             ++counts.dropped;
             if (pages[id].accessGuarded) {
                 device.UnguardAccess(page);
