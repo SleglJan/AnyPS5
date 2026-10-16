@@ -205,6 +205,11 @@ int main() {
             if (function.name == "bda_segment") segment = id;
         }
         Expect(segment != 0u, "the module has no bda_segment function");
+        const auto mainRefreshes = [&](const Module& checked) {
+            const auto found = checked.callsFromMain.find(segment);
+            return found == checked.callsFromMain.end() ? 0u : found->second;
+        };
+        Expect(mainRefreshes(module) == 0u, "main refreshes the read segment " + std::to_string(mainRefreshes(module)) + " times for its three consecutive s_buffer_load_dword, expected their helpers to refill it");
         std::size_t spanReaders = 0;
         for (const auto& [id, function] : module.functions) {
             if (!function.name.starts_with("read_bda_span")) continue;
@@ -237,6 +242,24 @@ int main() {
             const bool access = function.name.starts_with("load_buffer_") || function.name.starts_with("store_buffer_") || function.name.starts_with("load_formatted_buffer_") || function.name.starts_with("buffer_atomic_address_");
             Expect(!access || branched == module.branchedCallsFromMain.end(), "main calls " + function.name + " from a conditional block " + std::to_string(branched == module.branchedCallsFromMain.end() ? 0u : branched->second) + " times, expected its active lanes passed to it instead");
         }
+        const std::vector<std::uint32_t> wide{
+            0x34020084u,
+            0xf42c0502u, 0xfa000000u,
+            0xbf8cc07fu,
+            0x7e1a0214u, 0x7e1c0215u, 0x7e1e0216u, 0x7e200217u,
+            0x7e220218u, 0x7e240219u, 0x7e26021au, 0x7e28021bu,
+            0xe0781000u, 0x80020d01u,
+            0xe0781010u, 0x80021101u,
+            0xbf810000u};
+        const auto wideModule = Parse(Recompiled(wide));
+        std::uint32_t wideSegment = 0;
+        for (const auto& [id, function] : wideModule.functions) {
+            if (function.name == "bda_segment") wideSegment = id;
+        }
+        const auto wideRefreshes = wideModule.callsFromMain.contains(wideSegment) ? wideModule.callsFromMain.at(wideSegment) : 0u;
+        Expect(wideSegment != 0u && wideRefreshes == 1u, "main refreshes the read segment " + std::to_string(wideRefreshes) + " times for an s_buffer_load_dwordx8, expected one refresh before the eight dwords fall back to their helpers");
+        const auto wideScalars = Calls(wideModule, "load_scalar_buffer_");
+        Expect(wideScalars.size() == 1u && wideScalars[0] == 8u, "expected one scalar load helper called by the eight dwords of the s_buffer_load_dwordx8 on their fallback path, found " + Describe(wideScalars));
     } catch (const std::exception& error) {
         std::cerr << "SpirvBufferAccessHelpers: " << error.what() << '\n';
         return 1;
