@@ -341,6 +341,10 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
         std::snprintf(text, sizeof(text), "shader 0x%llx stage %u pc 0x%x: buffer descriptor uses an unsupported type (buffer %u V# %08x %08x %08x %08x)", static_cast<unsigned long long>(shader), stage, report.instruction, resource, static_cast<std::uint32_t>(report.address), static_cast<std::uint32_t>(report.address >> 32u), report.bytes, report.reserved);
         throw std::runtime_error(text);
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ContinuationRounds) {
+        message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << std::dec << ", and the call ran past the " << report.bytes << " continuation rounds its dispatch allows";
+        throw std::runtime_error(message.str());
+    }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall) {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
         throw std::runtime_error(message.str());

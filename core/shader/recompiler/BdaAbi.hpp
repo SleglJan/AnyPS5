@@ -91,7 +91,7 @@ struct Grant {
 };
 
 enum class FaultState : std::uint32_t { Empty, Writing, Ready };
-enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned, InvalidDescriptor, ImageTable, UnlinkedCall, InvalidBufferDescriptor };
+enum class FaultReason : std::uint32_t { Unmapped = 1, Permission, Overflow, InvalidTable, InvalidRectangle, LoopLimit, Unaligned, InvalidDescriptor, ImageTable, UnlinkedCall, InvalidBufferDescriptor, ContinuationRounds };
 inline constexpr std::uint32_t DescriptorFaultResourceShift = 16;
 
 struct Fault {
