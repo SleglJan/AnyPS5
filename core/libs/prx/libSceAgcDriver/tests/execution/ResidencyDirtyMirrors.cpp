@@ -402,6 +402,12 @@ void LabelInDirtySubpage() {
     ExpectBytes(model, 10, what + ": the test's own read after the batch, which must see the label and the dispatch's store");
 }
 
+void ReleaseAccessGuards(std::uint64_t address, std::uint64_t bytes) {
+    for (auto page = address; page < address + bytes; page += SubpageBytes) {
+        if (GuestArena::GuestArenaAccessGuarded_nid_postfix(static_cast<std::uintptr_t>(page))) static_cast<void>(GuestArena::GuestArenaHandleAccess_nid_postfix(static_cast<std::uintptr_t>(page), false));
+    }
+}
+
 void ProtectDirtyPage(MirrorReader& reader) {
     SharedPages pages(ReadPages);
     Model model(pages.Address(), pages.Bytes(), 9);
@@ -410,6 +416,7 @@ void ProtectDirtyPage(MirrorReader& reader) {
     Store(model, 3, what);
     ExpectDirtySubpages(model, 3, WholePage, what + ": before the protection");
     const auto before = Counts();
+    ReleaseAccessGuards(model.Address(3), PageBytes);
     std::string protection;
     try {
         GuestAllocations::Mutation().Protect(reinterpret_cast<void*>(model.Address(3)), PageBytes, true, false, true, [&] { GuestArena::GuestArenaSetProtection_nid_postfix(static_cast<std::uintptr_t>(model.Address(3)), PageBytes, PAGE_READONLY); });
@@ -418,11 +425,13 @@ void ProtectDirtyPage(MirrorReader& reader) {
     }
     Expect(protection.empty(), what + ": making page 3 read-only failed: " + protection);
     const auto after = Counts();
-    Expect(after.writtenBackBytes == before.writtenBackBytes && DirtyMask(model.Address(3)) == WholePage, what + ": the protection wrote back " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes or cleaned the page; a protection change keeps it dirty and guarded until a CPU read");
+    Expect(after.writtenBackBytes == before.writtenBackBytes + PageBytes, what + ": releasing the access guards and the protection wrote back " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes, expected the page's 16 dirty subpages");
+    Expect(DirtyMask(model.Address(3)) == 0u, what + ": page 3 is still dirty after its protection");
     ExpectBytes(model, 3, what + ": the test's own read of the page made read-only after the GPU stored into it");
     ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch reading the read-only page");
     GuestAllocations::Mutation().Protect(reinterpret_cast<void*>(model.Address(3)), PageBytes, true, true, true, [&] { GuestArena::GuestArenaSetProtection_nid_postfix(static_cast<std::uintptr_t>(model.Address(3)), PageBytes, PAGE_READWRITE); });
 }
+
 
 void UnmapDirtyView(MirrorReader& reader) {
     const std::string what = "guest unmap of a dirty view";
@@ -437,6 +446,10 @@ void UnmapDirtyView(MirrorReader& reader) {
     Settle();
     Store(model, 0, what);
     ExpectDirtySubpages(model, 0, WholePage, what + ": before the unmap");
+    const auto before = Counts();
+    ReleaseAccessGuards(model.Address(0), PageBytes);
+    const auto released = Counts();
+    Expect(released.writtenBackBytes == before.writtenBackBytes + PageBytes && DirtyMask(model.Address(0)) == 0u, what + ": releasing the access guards before the unmap's mutation, as the guest's unmap does, wrote back " + std::to_string(released.writtenBackBytes - before.writtenBackBytes) + " bytes");
     std::string unmap;
     try {
         GuestAllocations::Mutation().Remove(first);

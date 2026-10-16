@@ -609,6 +609,20 @@ void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int
 #endif
 }
 
+static void ReleaseAccessGuards(const void* addr, std::size_t len) {
+#ifdef _WIN32
+    if (addr == nullptr || len == 0 || !GuestArena::GuestArenaContains_nid_postfix(addr, len)) return;
+    constexpr std::uintptr_t subpageBytes = 0x1000;
+    const auto end = reinterpret_cast<std::uintptr_t>(addr) + len;
+    for (auto page = reinterpret_cast<std::uintptr_t>(addr) & ~(subpageBytes - 1); page < end; page += subpageBytes) {
+        if (GuestArena::GuestArenaAccessGuarded_nid_postfix(page)) static_cast<void>(GuestArena::GuestArenaHandleAccess_nid_postfix(page, false));
+    }
+#else
+    static_cast<void>(addr);
+    static_cast<void>(len);
+#endif
+}
+
 void RequireResidentUnpinned(GuestAllocations::Mutation& mutation, std::uintptr_t address, std::size_t len) {
 #ifdef _WIN32
     std::uintptr_t start = 0;
@@ -919,6 +933,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    if ((flags & GuestMapFixedFlag) != 0) ReleaseAccessGuards(*addr, len);
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
@@ -951,6 +966,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if ((flags & GuestMapFixedFlag) != 0) ReleaseAccessGuards(*addr, len);
     GuestAllocations::Mutation mutation;
     if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
     flags = PlaceHintInReservation(*addr, len, flags);
@@ -1084,6 +1100,7 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         RecordProtection(insidePointer, insideBytes, prot);
         return 0;
     }
+    ReleaseAccessGuards(pointer, bytes);
     GuestAllocations::Mutation mutation;
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION memory{};
@@ -1140,6 +1157,7 @@ int DoMtypeprotect(const void* addr, size_t len, int type, int prot) {
 int DoMunmap(void* addr, size_t len) {
     Trace("unmap %p+0x%zx", addr, len);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
+    ReleaseAccessGuards(addr, len);
     GuestAllocations::Mutation mutation;
     if (!mutation.Overlaps(addr, len)) return 0;
     UnmapRegistered(mutation, addr, len);
@@ -1149,6 +1167,7 @@ int DoMunmap(void* addr, size_t len) {
 int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if ((flags & GuestMapFixedFlag) != 0) ReleaseAccessGuards(*addr, len);
     GuestAllocations::Mutation mutation;
     const bool fixed = *addr != nullptr && (flags & GuestMapFixedFlag) != 0;
     if (fixed && mutation.Covers(*addr, len)) {
@@ -1271,6 +1290,7 @@ std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
 
 void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views) {
     if (views.empty()) return;
+    for (const auto& view : views) ReleaseAccessGuards(reinterpret_cast<const void*>(view.address), view.bytes);
     GuestAllocations::Mutation mutation;
     for (const auto& view : views) {
         Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view.address), view.bytes);
