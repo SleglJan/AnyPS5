@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -24,10 +25,10 @@ constexpr std::uint32_t WaveSize = 64;
 constexpr std::uint32_t EarlyZThenLateZ = 0x10u;
 constexpr std::uint8_t Reference = 0x5au;
 constexpr std::byte Kept{0x40};
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
-alignas(256) std::array<std::byte, 256 * 256> StencilMemory{};
-alignas(256) std::array<std::uint32_t, Width * Height> Stores{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::byte, 128 * 128 * 4> DepthMemory;
+TestGuest::Array<std::byte, 256 * 256> StencilMemory;
+TestGuest::Array<std::uint32_t, Width * Height> Stores;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -42,9 +43,9 @@ alignas(256) constexpr std::array<std::uint32_t, 12> StoringPixelCode{
     0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
 
-using Triangle = std::array<std::array<float, 4>, 3>;
-alignas(256) constexpr Triangle Middle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
-alignas(256) constexpr Triangle Near{{{-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}}};
+using Triangle = TestGuest::Array<std::array<float, 4>, 3>;
+Triangle Middle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
+Triangle Near{{-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -110,7 +111,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     Require(pixel.earlyZ == state.pixelEarlyZ, "the pixel stage and the decoded state disagree on early Z");
     pixel.quadPixelMask = AgcDriver::Graphics::QuadPixelMask(state);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
-    const auto stores = BufferDescriptor(Stores.data(), 0u, static_cast<std::uint32_t>(sizeof(Stores)));
+    const auto stores = BufferDescriptor(Stores.data(), 0u, static_cast<std::uint32_t>(decltype(Stores)::ByteSize));
     std::copy(stores.begin(), stores.end(), pixelUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pass.pixelCode.data()), std::as_bytes(pass.pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
