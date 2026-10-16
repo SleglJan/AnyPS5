@@ -4552,6 +4552,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         element.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
         element.guestDescriptor = std::move(words);
         result.bindings.push_back(std::move(element));
+        result.pushConstants = program.pushConstants;
         return result;
     };
     const auto refusedSample = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words, const std::string& expected, const std::string& what) {
