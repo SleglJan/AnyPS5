@@ -240,7 +240,6 @@ struct SpirvEmitterState {
     std::unordered_map<const IrBlock*, std::uint32_t> labels;
     std::vector<std::uint32_t> blockFunctions;
     std::vector<std::uint32_t> functionParents;
-    std::map<std::uint32_t, std::vector<std::uint32_t>> calleeSlots;
     bool programStopsInvocations = false;
     std::uint32_t calleeStopValue = 0;
 };
