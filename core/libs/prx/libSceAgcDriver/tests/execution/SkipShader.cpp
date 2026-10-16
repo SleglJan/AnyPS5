@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -17,10 +18,10 @@ alignas(256) constexpr std::array<std::uint32_t, 7> Skipped{0xd7460000u, 0x04010
 alignas(256) constexpr std::array<std::uint32_t, 7> Kept{0xd7460000u, 0x04010c04u, 0x7e0202ffu, 0x12345678u, 0xe0702000u, 0x80000100u, 0xbf810000u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
 constexpr std::uint32_t Stored = 0x12345678u;
-alignas(256) std::array<std::uint32_t, 64> SkippedOutput{};
-alignas(256) std::array<std::uint32_t, 64> KeptOutput{};
+TestGuest::Array<std::uint32_t, 64> SkippedOutput;
+TestGuest::Array<std::uint32_t, 64> KeptOutput;
 
-void Dispatch(const std::array<std::uint32_t, 7>& code, std::array<std::uint32_t, 64>& output) {
+void Dispatch(const std::array<std::uint32_t, 7>& code, TestGuest::Array<std::uint32_t, 64>& output) {
     const auto address = reinterpret_cast<std::uintptr_t>(output.data());
     const std::array<std::uint32_t, 4> data{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), static_cast<std::uint32_t>(output.size()), 0x00014204u};
     const auto program = reinterpret_cast<std::uintptr_t>(code.data());
@@ -34,7 +35,7 @@ void Dispatch(const std::array<std::uint32_t, 7>& code, std::array<std::uint32_t
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(address, sizeof(output));
+    AgcDriver::GuestMemory::FlushGpuWrites(address, TestGuest::Array<std::uint32_t, 64>::ByteSize);
 }
 
 }
