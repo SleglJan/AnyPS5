@@ -40,10 +40,11 @@ BufferPool::BufferPool(const Context& context) : device(context.device), unmap(c
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = DeviceTierEnabled() ? DeviceBudget(context.memory) : 0;
+    tableTier.budget = PageTableBudget;
 }
 
 BufferPool::~BufferPool() {
-    for (auto* tier : {&smallTier, &largeTier, &deviceTier}) {
+    for (auto* tier : {&smallTier, &largeTier, &deviceTier, &tableTier}) {
         for (const auto& [key, slots] : tier->free) {
             for (const auto& slot : slots) destroy(slot.allocation);
         }
@@ -222,12 +223,13 @@ VkBufferUsageFlags BufferPool::Usage(VkBufferUsageFlags usage, VkMemoryPropertyF
     return DeviceTiered(properties) ? usage | deviceUsage : usage;
 }
 
-BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlags properties) {
+BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlags properties, bool pageTable) {
+    if (pageTable) return tableTier;
     if (DeviceTiered(properties)) return deviceTier;
     return !sharedTiers() && capacity < classLimit ? smallTier : largeTier;
 }
 
-std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
+std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, bool pageTable) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto capacity = Capacity(bytes, properties);
     std::lock_guard lock(mutex);
@@ -237,11 +239,11 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u));
+            AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu); page tables: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u), static_cast<unsigned long long>(tableTier.hits), static_cast<unsigned long long>(tableTier.misses), static_cast<unsigned long long>(tableTier.evictions), tableTier.slots, tableTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(tableTier.budget >> 20u));
         }
     }
-    auto& tier = tierFor(capacity, properties);
-    const auto largest = &tier == &deviceTier && !exactSizes() && bytes <= std::numeric_limits<std::size_t>::max() / 2 ? std::max(capacity, bytes * 2) : capacity;
+    auto& tier = tierFor(capacity, properties, pageTable);
+    const auto largest = (&tier == &deviceTier || &tier == &tableTier) && !exactSizes() && bytes <= std::numeric_limits<std::size_t>::max() / 2 ? std::max(capacity, bytes * 2) : capacity;
     auto found = tier.free.end();
     for (auto size = capacity; size <= largest && found == tier.free.end(); size = NextCapacity(size)) found = tier.free.find({size, usage, properties});
     if (found == tier.free.end() || found->second.empty()) {
@@ -283,9 +285,10 @@ VkDeviceSize BufferPool::trim() {
     Tier retiredSmall;
     Tier retiredLarge;
     Tier retiredDevice;
+    Tier retiredTables;
     {
         std::lock_guard lock(mutex);
-        for (const auto& [tier, retired] : {std::pair{&smallTier, &retiredSmall}, std::pair{&largeTier, &retiredLarge}, std::pair{&deviceTier, &retiredDevice}}) {
+        for (const auto& [tier, retired] : {std::pair{&smallTier, &retiredSmall}, std::pair{&largeTier, &retiredLarge}, std::pair{&deviceTier, &retiredDevice}, std::pair{&tableTier, &retiredTables}}) {
             tier->free.swap(retired->free);
             tier->evictions += tier->slots;
             tier->retainedBytes = 0;
@@ -293,7 +296,7 @@ VkDeviceSize BufferPool::trim() {
         }
     }
     VkDeviceSize bytes = 0;
-    for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice}) {
+    for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice, &retiredTables}) {
         for (const auto& [key, slots] : tier->free) {
             for (const auto& slot : slots) bytes += destroy(slot.allocation);
         }
@@ -322,7 +325,7 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
     std::vector<BufferAllocation> evicted;
     try {
         std::lock_guard lock(mutex);
-        auto& tier = tierFor(allocation.bytes, allocation.properties);
+        auto& tier = tierFor(allocation.bytes, allocation.properties, allocation.pageTable);
         if (allocation.allocationBytes > tier.budget) {
             evicted.push_back(allocation);
         } else {

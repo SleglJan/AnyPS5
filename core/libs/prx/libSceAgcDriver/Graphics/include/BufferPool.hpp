@@ -24,6 +24,7 @@ struct BufferAllocation {
     VkDeviceSize offset = 0;
     bool slab = false;
     std::size_t bufferBytes = 0;
+    bool pageTable = false;
 };
 
 struct SlabSlot {
@@ -62,7 +63,8 @@ public:
     static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
     VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation);
-    std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bool pageTable = false);
+    static constexpr VkDeviceSize PageTableBudget = 64ull * 1024 * 1024;
     void Put(const BufferAllocation& allocation) noexcept;
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
     static VkDeviceSize SlabBlockBytes(std::size_t capacity);
@@ -114,7 +116,7 @@ private:
     };
     // The tier a buffer of `capacity` and `properties` is retained in (the large one for everything
     // when shared; the device tier for device-local memory while it has a budget).
-    Tier& tierFor(std::size_t capacity, VkMemoryPropertyFlags properties);
+    Tier& tierFor(std::size_t capacity, VkMemoryPropertyFlags properties, bool pageTable = false);
     static bool DeviceTierEnabled();
     static bool DeviceTiered(VkMemoryPropertyFlags properties);
     static std::size_t NextCapacity(std::size_t capacity);
@@ -138,6 +140,7 @@ private:
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
+    Tier tableTier;
     std::uint64_t clock = 0;
     std::mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;

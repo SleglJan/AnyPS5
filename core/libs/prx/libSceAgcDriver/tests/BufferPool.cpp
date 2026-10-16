@@ -273,6 +273,30 @@ void Budget() {
     Expect(MemoryOf(probe.Handle()) != first, "the least recently used device buffer survived the eviction");
 }
 
+void PageTableTier() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr auto local = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    auto scratch = std::make_unique<Buffer>(context, 8 * MiB, usage, local);
+    const auto kept = MemoryOf(scratch->Handle());
+    scratch.reset();
+    std::vector<std::unique_ptr<Buffer>> tables;
+    for (int i = 0; i < 24; ++i) tables.push_back(std::make_unique<Buffer>(context, 4 * MiB, usage, local, true));
+    VkDeviceSize madeBytes = 0;
+    for (const auto& table : tables) madeBytes += ClassOf(table->Handle());
+    Expect(madeBytes > BufferPool::PageTableBudget, "the page-table case does not exceed the page-table budget");
+    const auto freesBefore = mock.frees;
+    for (auto& table : tables) table.reset();
+    Expect(mock.frees > freesBefore, "released page tables over the page-table budget were all retained");
+    Expect(mock.liveBytes <= BufferPool::PageTableBudget + 8 * MiB, "page tables and one device buffer retain " + std::to_string(mock.liveBytes / MiB) + " MiB, over the page-table budget and that buffer");
+    Buffer reused(context, 8 * MiB, usage, local);
+    Expect(MemoryOf(reused.Handle()) == kept, "releasing page tables evicted a device buffer from the device tier");
+    const auto allocations = mock.allocations;
+    Buffer table(context, 4 * MiB, usage, local, true);
+    Expect(mock.allocations == allocations, "a page table did not reuse a retained page-table buffer");
+}
+
 void AddressAndHostUnchanged() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -536,6 +560,7 @@ int main() {
         LargerClass();
         KeptUntilFence();
         Budget();
+        PageTableTier();
         AddressAndHostUnchanged();
         SmallDeviceClasses();
         Slabs();

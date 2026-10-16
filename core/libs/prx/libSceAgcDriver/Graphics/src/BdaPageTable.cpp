@@ -181,7 +181,7 @@ VkDeviceAddress BdaPageTable::LeafAddress(std::uint32_t window) const {
 }
 
 void BdaPageTable::stage(const Context& context, Upload& upload, const void* bytes, std::size_t size) {
-    upload.buffer = std::make_shared<Buffer>(context, size, TableUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    upload.buffer = std::make_shared<Buffer>(context, size, TableUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true);
     upload.staging = std::make_shared<Buffer>(context, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     upload.bytes = size;
     std::memcpy(upload.staging->Bytes().data(), bytes, size);
