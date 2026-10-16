@@ -151,6 +151,8 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvFunctionMatch.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvContinuation.cpp
 
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvProbeModule.cpp
+
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvBufferAccess.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvConstants.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvDescriptors.cpp
@@ -238,6 +240,7 @@ function(add_shader_recompiler target runtimeTarget)
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth
+            DeviceImageProbeResult
             HashBytes
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName

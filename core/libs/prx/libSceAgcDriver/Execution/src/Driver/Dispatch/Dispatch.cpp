@@ -327,8 +327,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     } catch (const std::exception& error) {
         rethrow(error);
     }
+    const auto probe = compiled.deviceImagesComplete ? nullptr : ShaderRecompiler::DeviceImageProbeResult(compiled);
+    std::shared_ptr<PreparedDispatch> preparedProbe;
     std::shared_ptr<PreparedDispatch> prepared;
     try {
+        if (probe != nullptr) {
+            static_cast<void>(localDevice->PrepareComputePipeline(*probe, address));
+            preparedProbe = localDevice->PrepareDispatch(*probe, dispatchThreads, linearThreads);
+        }
         prepared = localDevice->PrepareDispatch(compiled, dispatchThreads, linearThreads);
     } catch (const std::exception& error) {
         rethrow(error);
@@ -356,6 +362,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(PhaseLabels);
         try {
+            if (probe != nullptr && indirectArguments != 0) {
+                static_cast<void>(localDevice->DispatchIndirect(*probe, indirectArguments, address, std::move(preparedProbe), compute.threadsFromMemory ? std::optional(compute.numThreads) : std::nullopt));
+            } else if (probe != nullptr) {
+                localDevice->Dispatch(*probe, groups[0], groups[1], groups[2], address, std::move(preparedProbe));
+            }
             if (indirectArguments != 0) {
                 const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, address, std::move(prepared), compute.threadsFromMemory ? std::optional(compute.numThreads) : std::nullopt);
                 countIndirect(outcome.cpuReason, outcome.argumentReadMs);

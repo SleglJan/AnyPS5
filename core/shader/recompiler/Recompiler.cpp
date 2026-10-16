@@ -12,6 +12,7 @@
 #include "FragmentOutputSpecialization.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "SpirvBackend/SpirvImageEmitter.hpp"
+#include "SpirvBackend/SpirvProbeModule.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -23,6 +24,7 @@
 #include <mutex>
 #include <new>
 #include <shared_mutex>
+#include <tuple>
 #include <unordered_map>
 #include "ControlFlow/include/ControlFlow/CallFunctions.hpp"
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
@@ -1846,6 +1848,47 @@ std::optional<RunTimeProgram> CompileAtRunTime(const RecompileRequest& request) 
     auto compiled = invocation->MaterializeAtRunTime();
     if (compiled == nullptr) return std::nullopt;
     return RunTimeProgram{invocation->Plan(), std::move(compiled)};
+}
+
+std::shared_ptr<const RecompileResult> DeviceImageProbeResult(const RecompileResult& result) {
+    struct Probe {
+        SharedSpirv spirv;
+        std::uint64_t variantId = 0;
+    };
+    static std::mutex mutex;
+    static std::map<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>, std::optional<Probe>> probes;
+    if (result.spirv.empty()) return nullptr;
+    const auto content = result.spirv.ContentHash();
+    const std::tuple key{content.low, content.high, result.specializationId};
+    std::optional<Probe> probe;
+    bool known = false;
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = probes.find(key); found != probes.end()) {
+            probe = found->second;
+            known = true;
+        }
+    }
+    if (!known) {
+        auto words = DeviceImageProbeModule(result.spirv.Words());
+        if (words.has_value()) probe = Probe{SharedSpirv(std::move(*words)), nextVariantId()};
+        std::lock_guard lock(mutex);
+        probe = probes.try_emplace(key, probe).first->second;
+    }
+    if (!probe.has_value()) return nullptr;
+    auto copy = std::make_shared<RecompileResult>(result);
+    copy->spirv = probe->spirv;
+    if (result.specializationId != 0u) copy->specializationId = probe->variantId;
+    else copy->variantId = probe->variantId;
+    copy->identity = {};
+    copy->bdaWrites = false;
+    copy->imageStoresRecorded = false;
+    copy->writeRanges.clear();
+    copy->unboundedWrites = false;
+    copy->fixedUnboundedWrites = false;
+    copy->memoryWriteRanges = 0;
+    copy->linearStore.reset();
+    return copy;
 }
 
 std::shared_ptr<RecompileResult> RunTimeResult(const RunTimeProgram& program, const SrtRuntime& runtime, const SrtRuntime& settled) {
