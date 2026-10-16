@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -23,8 +24,8 @@ constexpr std::uint32_t Untouched = 0xcafebabeu;
 constexpr std::uint32_t Format = 0x0004bfacu;
 constexpr std::uint32_t LargeGroups = 8193;
 constexpr std::size_t Words = (std::size_t{LargeGroups} * 128u + 64u) * 4u;
-alignas(256) std::array<std::uint32_t, Words> Source{};
-alignas(256) std::array<std::uint32_t, Words> Destination{};
+TestGuest::Array<std::uint32_t, Words> Source;
+TestGuest::Array<std::uint32_t, Words> Destination;
 
 std::vector<std::uint32_t> UserData(const std::uint32_t* source, std::uint32_t sourceRecords, const std::uint32_t* destination, std::uint32_t destinationRecords, std::uint32_t sourceStride = 16, std::uint32_t destinationStride = 16) {
     const auto from = reinterpret_cast<std::uintptr_t>(source);
@@ -142,7 +143,7 @@ void ExecuteTests() {
         Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
         AgcDriverWaitIdle_nid_postfix();
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Destination.data()), sizeof(Destination));
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Destination.data()), decltype(Destination)::ByteSize);
         const std::string where = std::string(" (") + item.name + ")";
         Require(Taken() - taken == (hle ? 1u : 0u), (hle ? "the copy did not take the HLE path" : "the copy took the HLE path") + where);
         Require(copyPathCounts[CopyShape].load() - refused == (hle || !hleEnabled ? 0u : 1u), (hle ? "the copy was refused for its shape" : "the copy was not refused for its shape") + where);
