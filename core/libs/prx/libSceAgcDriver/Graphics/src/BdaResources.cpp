@@ -4,6 +4,7 @@
 #include "ImageTableAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -432,13 +433,14 @@ void BdaResources::markExactWrites(std::span<const BdaResources* const> users) {
     std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
     if (shadowed(users)) gpu.lock();
     for (const auto* user : users) {
-        for (const auto& [begin, end] : user->exactWrites) markWrittenRange(begin, static_cast<std::size_t>(end - begin), users);
+        for (const auto& [begin, end] : user->exactWrites) markWrittenRange(begin, static_cast<std::size_t>(end - begin), users, false);
     }
 }
 
-void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users) {
+void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users, bool mirrored) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     const auto end = begin + bytes;
+    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && mirrored) residency->NoteRecordedWrites(begin, bytes);
     for (const auto* user : users) {
         for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
             const auto [base, size] = user->imageTableRanges[index];

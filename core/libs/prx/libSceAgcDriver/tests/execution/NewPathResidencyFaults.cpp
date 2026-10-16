@@ -36,7 +36,7 @@ bool Guarded(std::uint64_t address) {
 
 bool Hot(std::uint64_t address) {
     bool hot = false;
-    Locked([&] { hot = Residency().Manager().Hot(PageOf(address)); });
+    Locked([&] { hot = Residency().Manager().HotResident(PageOf(address)); });
     return hot;
 }
 
@@ -130,7 +130,7 @@ int main() {
             PrivatePages warm(1);
             reader.Read(warm.Address(), 1);
         }
-        Residency();
+        Locked([] { Residency().Manager().SetBudget(std::uint64_t{1} << 30); });
         StoreBeforeAdmission();
         OneStoreOneFault();
         HotAcrossRemap();

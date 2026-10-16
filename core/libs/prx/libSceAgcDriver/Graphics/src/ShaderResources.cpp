@@ -1799,19 +1799,20 @@ void ShaderResources::buildComplete() {
         guestMemory.UploadFinish();
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) {
-            if (auto* residency = ResidencyDriver::Active()) {
+            auto* residency = ResidencyDriver::Active();
+            if (residency != nullptr) {
                 residency->BeforeDispatch();
                 residency->UseForRead(readRanges);
-                if (pageTableStores || !guestMemory.Writes().empty()) {
-                    std::vector<ResidencyRange> grants;
-                    for (const auto& [begin, end] : guestMemory.Writes()) grants.push_back({begin, end - begin});
-                    if (!storesUnbounded) {
-                        for (const auto& [begin, end] : storeRanges) grants.push_back({begin, end - begin});
-                    }
-                    residency->BeforeWritingDispatch(grants, pageTableStores && storesUnbounded);
-                }
             }
             if (computeBuild && pageTableStores) planWriteStaging();
+            if (residency != nullptr && staging != nullptr) PrepareImportWrite(stagedRange.first, stagedRange.second - stagedRange.first);
+            if (residency != nullptr && pageTableStores && (storesUnbounded || (staging == nullptr && !storeRanges.empty()))) {
+                std::vector<ResidencyRange> grants;
+                if (!storesUnbounded) {
+                    for (const auto& [begin, end] : storeRanges) grants.push_back({begin, end - begin});
+                }
+                residency->BeforeWritingDispatch(grants, storesUnbounded);
+            }
             bda = std::make_unique<BdaResources>(context, guestMemory, std::span<const ShaderRecompiler::BdaAbi::Range>{}, batchFaultRecord());
             if (staging != nullptr) bda->NoteExactWrites({stagedRange});
         } else if (usesFaultBuffer) {
@@ -3136,6 +3137,7 @@ void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
         const VkBufferCopy region{stagedOffsets[index], segment.offset, segment.end - segment.begin};
         copy(commands, staging->Handle(), segment.buffer, 1, &region);
     }
+    RefreshImportWritten(stagedRange.first, stagedRange.second - stagedRange.first);
 }
 
 void ShaderResources::PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push) {

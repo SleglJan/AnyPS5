@@ -72,10 +72,14 @@ std::uint64_t ResidencyMirrors::DeviceBytes() const {
 }
 
 void ResidencyMirrors::RecordCopyIn(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const {
-    record(commands, copies, import);
+    record(commands, copies, import, true);
 }
 
-void ResidencyMirrors::record(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const {
+void ResidencyMirrors::RecordWriteBack(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const {
+    record(commands, copies, import, false);
+}
+
+void ResidencyMirrors::record(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import, bool intoMirror) const {
     if (copies.empty()) return;
     std::map<std::pair<VkBuffer, VkBuffer>, std::vector<VkBufferCopy>> regions;
     for (const auto& copy : copies) {
@@ -85,7 +89,8 @@ void ResidencyMirrors::record(VkCommandBuffer commands, std::span<const Residenc
         const auto mirror = Chunk(copy.mirror.chunk);
         const VkDeviceSize mirrorOffset = (VkDeviceSize{copy.mirror.slot} << ResidencyPageShift) + copy.offset;
         const VkDeviceSize importOffset = location.offset + copy.offset;
-        regions[{location.buffer, mirror->buffer}].push_back({importOffset, mirrorOffset, copy.bytes});
+        if (intoMirror) regions[{location.buffer, mirror->buffer}].push_back({importOffset, mirrorOffset, copy.bytes});
+        else regions[{mirror->buffer, location.buffer}].push_back({mirrorOffset, importOffset, copy.bytes});
     }
     const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
     pipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);

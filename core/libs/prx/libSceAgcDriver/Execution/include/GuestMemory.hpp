@@ -212,6 +212,7 @@ struct ResidencyHooks {
     void (*cpuWritten)(std::span<const std::uint64_t> pages) = nullptr;
     void (*dropRange)(std::uint64_t address, std::size_t bytes) = nullptr;
     void (*writeBack)(std::uint64_t address, std::size_t bytes) = nullptr;
+    void (*accessFault)(std::uint64_t page) = nullptr;
 };
 constexpr unsigned ResidencyPageShift = 16;
 void SetResidencyHooks(const ResidencyHooks* hooks);
@@ -219,6 +220,9 @@ void SetShadowWriteObserver(void (*observer)(std::span<const std::uint64_t> page
 bool GuardWrites(std::uint64_t address, std::size_t bytes);
 void UnguardWrites(std::uint64_t address, std::size_t bytes);
 bool WriteGuarded(std::uint64_t page);
+bool GuardAccess(std::uint64_t address, std::size_t bytes);
+void UnguardAccess(std::uint64_t address, std::size_t bytes);
+bool AccessGuarded(std::uint64_t page);
 std::vector<std::pair<std::uint64_t, std::size_t>> Aliases(std::uint64_t address, std::size_t bytes);
 struct PageBacking {
     std::uint64_t section = 0;
@@ -226,6 +230,7 @@ struct PageBacking {
     bool shared = false;
     bool uniform = true;
     bool aliased = false;
+    bool resident = false;
 };
 PageBacking Backing(std::uint64_t page);
 

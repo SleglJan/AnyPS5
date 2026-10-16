@@ -15,9 +15,10 @@ std::optional<ResidencyGuestImport> ResidencyGuest::ImportOf(std::uint64_t page)
     result.attributes.whole = imported->bytes == ResidencyPageBytes && backing.uniform;
     result.attributes.cpuWritable = imported->cpuWritable;
     result.attributes.gpuWritable = true;
-    result.attributes.aliased = backing.aliased;
-    result.attributes.section = backing.section;
+    result.attributes.aliased = backing.aliased && !backing.resident;
+    result.attributes.section = backing.resident ? 0 : backing.section;
     result.attributes.offset = backing.offset;
+    result.attributes.serial = imported->serial;
     result.buffer = imported->buffer;
     result.offset = imported->offset;
     result.address = imported->address;
@@ -51,6 +52,51 @@ bool ResidencyGuest::Guard(std::uint64_t page) {
     return GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }
 
+bool ResidencyGuest::GuardAccess(std::uint64_t page, ResidencyMask mask) {
+    const auto base = page << ResidencyPageShift;
+    std::vector<std::pair<std::uint64_t, std::size_t>> guarded;
+    for (unsigned first = 0; first < ResidencySubpages;) {
+        if ((mask & (1u << first)) == 0) {
+            ++first;
+            continue;
+        }
+        auto last = first;
+        while (last + 1 < ResidencySubpages && (mask & (1u << (last + 1))) != 0) ++last;
+        const auto address = base + std::uint64_t{first} * ResidencySubpageBytes;
+        const auto bytes = static_cast<std::size_t>(std::uint64_t{last - first + 1} * ResidencySubpageBytes);
+        if (!GuestMemory::GuardAccess(address, bytes)) {
+            for (const auto& [done, size] : guarded) GuestMemory::UnguardAccess(done, size);
+            return false;
+        }
+        guarded.emplace_back(address, bytes);
+        first = last + 1;
+    }
+    return true;
+}
+
+void ResidencyGuest::UnguardAccess(std::uint64_t page) {
+    GuestMemory::UnguardAccess(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
+}
+
+std::vector<ResidencyRange> ResidencyGuest::WholeImports(std::uint64_t& generation) {
+    std::vector<ResidencyRange> ranges;
+    std::uint64_t current = generation;
+    const auto imported = Graphics::CommittedImportRanges(device, current);
+    if (current == generation) return ranges;
+    generation = current;
+    ranges.reserve(imported.size());
+    for (const auto& [begin, end] : imported) {
+        const auto first = (begin + ResidencyPageBytes - 1) & ~(ResidencyPageBytes - 1);
+        const auto last = end & ~(ResidencyPageBytes - 1);
+        if (last > first) ranges.push_back({first, last - first});
+    }
+    return ranges;
+}
+
+std::uint64_t ResidencyGuest::GuestBytes() {
+    return CommittedImportCounters().viewBytes;
+}
+
 void ResidencyGuest::Unguard(std::span<const std::uint64_t> pages) {
     for (const auto page : pages) GuestMemory::UnguardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }
@@ -62,7 +108,7 @@ ResidencyPolicy DeviceResidencyPolicy(const Context& context) {
     }
     Require(deviceLocal != 0, "residency: the device has no device-local heap");
     ResidencyPolicy policy;
-    policy.budgetBytes = deviceLocal / 4;
+    policy.budgetBytes = ResidencyMeasuredBudget;
     return policy;
 }
 
@@ -88,7 +134,11 @@ void writeBack(std::uint64_t address, std::size_t bytes) {
     driver->Manager().FlushForCpuRead(address, bytes);
 }
 
-const GuestMemory::ResidencyHooks residencyHooks{&anyResident, &cpuWritten, &dropRange, &writeBack};
+void accessFault(std::uint64_t page) {
+    if (auto* driver = ResidencyDriver::Active()) driver->AccessFault(page);
+}
+
+const GuestMemory::ResidencyHooks residencyHooks{&anyResident, &cpuWritten, &dropRange, &writeBack, &accessFault};
 
 }
 
@@ -104,35 +154,49 @@ void NoteImportWritten(std::uint64_t address, std::uint64_t bytes) {
     if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->Manager().NoteImportWritten(address, bytes);
 }
 
+void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes) {
+    if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->RefreshImportWritten(address, bytes);
+}
+
+void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes) {
+    if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->PrepareImportWrite(address, bytes);
+}
+
 std::vector<ShaderRecompiler::BdaAbi::Range> WithResidentPages(std::span<const ShaderRecompiler::BdaAbi::Range> ranges) {
     std::vector<ShaderRecompiler::BdaAbi::Range> result(ranges.begin(), ranges.end());
     auto* driver = ResidencyDriver::Active();
     if (driver == nullptr) return result;
     auto& manager = driver->Manager();
-    std::vector<ShaderRecompiler::BdaAbi::Range> mirrors;
+    struct Mirror {
+        std::uint64_t begin;
+        std::uint64_t end;
+        std::uint64_t device;
+    };
+    std::vector<Mirror> mirrors;
     for (const auto& run : manager.ResidentRanges()) {
         for (auto page = run.address >> ResidencyPageShift; page < (run.address + run.bytes) >> ResidencyPageShift; ++page) {
             const auto mirror = manager.Translate(page);
             if (!mirror) continue;
-            mirrors.push_back({page << ResidencyPageShift, (page + 1) << ResidencyPageShift, *mirror, ShaderRecompiler::BdaAbi::Read, 0});
+            mirrors.push_back({page << ResidencyPageShift, (page + 1) << ResidencyPageShift, *mirror});
         }
     }
     if (mirrors.empty()) return result;
-    std::vector<ShaderRecompiler::BdaAbi::Range> carved;
-    carved.reserve(ranges.size() + 2 * mirrors.size());
+    std::sort(mirrors.begin(), mirrors.end(), [](const Mirror& left, const Mirror& right) { return left.begin < right.begin; });
+    std::vector<ShaderRecompiler::BdaAbi::Range> merged;
+    merged.reserve(ranges.size() + 2 * mirrors.size());
     auto next = mirrors.begin();
     for (const auto& range : ranges) {
         auto begin = range.begin;
         while (next != mirrors.end() && next->end <= begin) ++next;
         for (auto page = next; page != mirrors.end() && page->begin < range.end; ++page) {
-            if (page->begin > begin) carved.push_back({begin, page->begin, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});
-            begin = std::max(begin, page->end);
+            const auto low = std::max(page->begin, range.begin);
+            const auto high = std::min(page->end, range.end);
+            if (low > begin) merged.push_back({begin, low, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});
+            merged.push_back({low, high, page->device + (low - page->begin), range.permissions, range.reserved});
+            begin = high;
         }
-        if (begin < range.end) carved.push_back({begin, range.end, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});
+        if (begin < range.end) merged.push_back({begin, range.end, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});
     }
-    std::vector<ShaderRecompiler::BdaAbi::Range> merged;
-    merged.reserve(carved.size() + mirrors.size());
-    std::merge(carved.begin(), carved.end(), mirrors.begin(), mirrors.end(), std::back_inserter(merged), [](const auto& left, const auto& right) { return left.begin < right.begin; });
     return merged;
 }
 

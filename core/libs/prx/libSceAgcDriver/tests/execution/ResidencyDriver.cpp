@@ -26,6 +26,7 @@
 #include <exception>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -166,12 +167,14 @@ public:
     TestGuest(const Context& context, const GuestRegion& region) : context(context), region(region) {}
 
     std::optional<ResidencyGuestImport> ImportOf(std::uint64_t page) override {
-        if (page < region.First() || page >= region.First() + GuestPages) return std::nullopt;
+        if (page < region.First() || page >= region.First() + GuestPages || unmapped.contains(page)) return std::nullopt;
         const auto address = page << ResidencyPageShift;
         const auto* import = HostImportFor(context, address, ResidencyPageBytes);
         if (import == nullptr) return std::nullopt;
         const bool whole = import->base <= address && address + ResidencyPageBytes <= import->base + import->bytes;
-        return ResidencyGuestImport{{whole, true, true}, import->buffer, address - import->base, import->address + (address - import->base)};
+        ResidencyImport attributes{whole, true, true};
+        if (shared.contains(page)) attributes.section = page + 1;
+        return ResidencyGuestImport{attributes, import->buffer, address - import->base, import->address + (address - import->base)};
     }
 
     std::vector<ResidencyRange> Aliases(std::uint64_t, std::uint64_t) override { return {}; }
@@ -198,13 +201,27 @@ public:
         }
     }
 
+    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+
+    void UnguardAccess(std::uint64_t) override {}
+
+    std::vector<ResidencyRange> WholeImports(std::uint64_t&) override { return {}; }
+
+    std::uint64_t GuestBytes() override { return std::uint64_t{GuestPages} << ResidencyPageShift; }
+
     void Stamp(std::uint64_t page) { stamps[page] = ++generation; }
+
+    void Share(std::uint64_t page) { shared.insert(page); }
+
+    void Unmap(std::uint64_t page) { unmapped.insert(page); }
 
 private:
     const Context& context;
     const GuestRegion& region;
     std::uint64_t generation = 1;
     std::map<std::uint64_t, std::uint64_t> stamps;
+    std::set<std::uint64_t> shared;
+    std::set<std::uint64_t> unmapped;
 };
 
 struct ReadPush {
@@ -325,6 +342,23 @@ public:
         for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) expected[{page, subpage * WordsPerSubpage + word}] = value;
     }
 
+    void FillMirror(std::uint32_t page, std::uint32_t subpage, std::uint32_t value) {
+        const auto slot = driver.Manager().Slot(Page(page));
+        Require(slot.has_value(), "residency driver: the page to fill is not resident");
+        const auto chunk = driver.Mirrors().Chunk(slot->chunk);
+        const std::array<Recorder::SectionObject, 1> objects{Recorder::SectionObject{chunk.get(), true}};
+        recorder.DeclareSection(objects);
+        const auto commands = recorder.Commands();
+        const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT};
+        const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+        const auto barrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, chunk->buffer, (VkDeviceSize{slot->slot} << ResidencyPageShift) + (VkDeviceSize{subpage} << ResidencySubpageShift), ResidencySubpageBytes, value);
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+        recorder.MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+        recorder.Keep(chunk);
+    }
+
     void Store(std::uint32_t page, std::uint32_t word, std::uint32_t value) {
         reinterpret_cast<volatile std::uint32_t*>(region.Words(Page(page)))[word] = value;
         guest.Stamp(Page(page));
@@ -409,7 +443,7 @@ void StoresAcrossStreams(Harness& harness) {
         harness.driver.BeforeWritingDispatch(grants, false);
         harness.FillImport(2, 3, 0x5a5a5a5au);
     });
-    Expect(!harness.driver.Manager().Slot(page), "the write grant demoted the page before the store was recorded");
+    Expect(!harness.driver.Manager().Slot(page), "the write grant demoted the private page before the store was recorded");
     harness.Drain();
     harness.OnStream(0, true, [&] { harness.driver.Manager().FlushForCpuRead(harness.region.Address(2, 3), 4); });
     Expect(harness.region.Words(page)[3 * WordsPerSubpage] == 0x5a5a5a5au && harness.region.Words(page)[4 * WordsPerSubpage - 1] == 0x5a5a5a5au, "a store another stream recorded into the import reached guest memory with no write-back");
@@ -422,6 +456,25 @@ void StoresAcrossStreams(Harness& harness) {
     Expect(harness.driver.Manager().Slot(page).has_value(), "the next use admits the page again");
     harness.Drain();
     harness.CheckResults(results, 2, 1, "a dispatch on one stream after a store recorded on another");
+}
+
+void WriteBackAcrossStreams(Harness& harness) {
+    const auto page = harness.Page(7);
+    harness.guest.Share(page);
+    harness.OnStream(OtherQueue, true, [&] {
+        harness.Use(7, 1);
+        const std::array<ResidencyRange, 1> grants{ResidencyRange{harness.region.Address(7, 3), ResidencySubpageBytes}};
+        harness.driver.BeforeWritingDispatch(grants, false);
+        harness.FillMirror(7, 3, 0x5b5b5b5bu);
+    });
+    Expect(harness.driver.Manager().Slot(page).has_value() && harness.driver.Manager().Dirty(page) == 0x0008, "a write grant into a shared page keeps it resident with the granted subpage dirty");
+    harness.Drain();
+    Expect(harness.region.Words(page)[3 * WordsPerSubpage] == GuestRegion::Pattern(7, 3 * WordsPerSubpage), "guest memory does not have the GPU's bytes before a CPU read");
+    harness.OnStream(0, true, [&] { harness.driver.Manager().FlushForCpuRead(harness.region.Address(7, 3), 4); });
+    Expect(harness.region.Words(page)[3 * WordsPerSubpage] == 0x5b5b5b5bu && harness.region.Words(page)[4 * WordsPerSubpage - 1] == 0x5b5b5b5bu, "a flush on one stream writes back what another stream wrote into the mirror");
+    Expect(harness.region.Words(page)[2 * WordsPerSubpage] == GuestRegion::Pattern(7, 2 * WordsPerSubpage), "subpages the GPU did not write are unchanged");
+    Expect(harness.driver.Manager().Dirty(page) == 0, "the page is clean after the flush");
+    for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) harness.expected[{7, 3 * WordsPerSubpage + word}] = 0x5b5b5b5bu;
 }
 
 void FaultsAtOrderingPoints(Harness& harness) {
@@ -454,6 +507,9 @@ void GrantsAndDrops(Harness& harness) {
     harness.Drain();
     harness.OnStream(0, true, [&] { harness.Use(6, 1); });
     harness.driver.Publish();
+    harness.driver.Manager().DropRange(harness.region.Address(6), ResidencyPageBytes);
+    Expect(harness.driver.Publish().changed.empty(), "a drop over a page whose import is unchanged keeps it");
+    harness.guest.Unmap(harness.Page(6));
     harness.driver.Manager().DropRange(harness.region.Address(6), ResidencyPageBytes);
     const auto publication = harness.driver.Publish();
     Expect(publication.changed.size() == 1 && publication.changed[0].page == harness.Page(6) && publication.changed[0].mirror == 0, "a dropped page is published back at its import");
@@ -495,6 +551,7 @@ int main() {
             CrossStreamCopyIn(harness);
             PinsAcrossStreams(harness);
             StoresAcrossStreams(harness);
+            WriteBackAcrossStreams(harness);
             FaultsAtOrderingPoints(harness);
             GrantsAndDrops(harness);
             const auto counts = harness.driver.Counts();

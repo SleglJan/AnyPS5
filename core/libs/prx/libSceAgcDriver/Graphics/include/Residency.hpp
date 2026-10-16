@@ -23,6 +23,7 @@ constexpr std::uint32_t ResidencySubpageBytes = 1u << ResidencySubpageShift;
 constexpr std::uint32_t ResidencySubpages = 1u << (ResidencyPageShift - ResidencySubpageShift);
 constexpr std::size_t ResidencyStreams = 16;
 constexpr std::uint64_t ResidencyUnchecked = ~std::uint64_t{0};
+constexpr std::uint64_t ResidencyMeasuredBudget = ~std::uint64_t{0};
 
 using ResidencyToken = std::array<std::uint64_t, ResidencyStreams>;
 using ResidencyMask = std::uint16_t;
@@ -42,6 +43,7 @@ struct ResidencyImport {
     bool aliased = false;
     std::uint64_t section = 0;
     std::uint64_t offset = 0;
+    std::uint64_t serial = 0;
 };
 
 struct ResidencyRange {
@@ -83,8 +85,17 @@ public:
     virtual std::uint64_t AllocateChunk(std::uint32_t chunk, std::uint32_t slots) = 0;
     virtual void ReleaseChunk(std::uint32_t chunk) = 0;
     virtual ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) = 0;
+    virtual ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) = 0;
     virtual bool Guard(std::uint64_t page) = 0;
     virtual void Unguard(std::span<const std::uint64_t> pages) = 0;
+    virtual bool GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
+    virtual void UnguardAccess(std::uint64_t page) = 0;
+    virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) {
+        static_cast<void>(generation);
+        return {};
+    }
+    virtual std::uint64_t Budget() { return ~std::uint64_t{0}; }
+    virtual std::uint64_t GuestBytes() { return 0; }
 };
 
 struct ResidencyCounts {
@@ -100,12 +111,21 @@ struct ResidencyCounts {
     std::uint64_t cooled = 0;
     std::uint64_t unguardable = 0;
     std::uint64_t aliasSkipped = 0;
+    std::uint64_t conflicts = 0;
     std::uint64_t waits = 0;
     std::uint64_t copiedInBytes = 0;
+    std::uint64_t cpuWriteBacks = 0;
+    std::uint64_t accessUnguardable = 0;
+    std::uint32_t accessGuarded = 0;
+    std::uint32_t hotResident = 0;
+    std::uint64_t writtenBackBytes = 0;
+    std::uint64_t aliasDemoted = 0;
+    std::uint64_t recordRefreshed = 0;
     std::uint64_t chunksAllocated = 0;
     std::uint64_t chunksReleased = 0;
     std::uint32_t chunks = 0;
     std::uint32_t resident = 0;
+    std::uint32_t dirty = 0;
     std::uint32_t retiring = 0;
     std::uint32_t free = 0;
 };
@@ -118,6 +138,7 @@ public:
     ~ResidencyManager();
 
     void SetBudget(std::uint64_t bytes);
+    void ApplyBudget();
     bool Advance();
     void Apply();
     void Prepare();
@@ -127,12 +148,20 @@ public:
     void DemoteWritable();
     void DropRange(std::uint64_t address, std::uint64_t bytes);
     void NoteImportWritten(std::uint64_t address, std::uint64_t bytes);
+    void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
     void QueueCpuWritten(std::span<const std::uint64_t> pages);
+    void NoteGpuWritten(std::uint64_t address, std::uint64_t bytes, bool written = false);
+    void QueueGpuWritten(std::uint64_t address, std::uint64_t bytes);
+    bool AnyDirty() const { return dirtyPages.load(std::memory_order_relaxed) != 0; }
+    void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
+    void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
+    std::optional<MirrorSlot> WriteSlot(std::uint64_t page);
     std::optional<std::uint64_t> Translate(std::uint64_t page);
+    ResidencyMask Dirty(std::uint64_t page);
     bool AnyResident(std::uint64_t address, std::uint64_t bytes);
     std::vector<ResidencyRange> ResidentRanges();
     std::vector<std::uint64_t> TakeChanges();
@@ -142,10 +171,16 @@ public:
     std::uint64_t Serial() const { return serial; }
     std::uint64_t Epoch() const { return epoch.load(std::memory_order_relaxed); }
     bool Hot(std::uint64_t page) const { return hot.contains(page); }
+    bool HotResident(std::uint64_t page) const { return hotResident.contains(page); }
+    std::uint64_t BudgetBytes() { return budgetBytes(); }
+    bool FullResidency() { return fullResidency(); }
     ResidencyCounts Counts() const;
 
 private:
     static constexpr std::uint32_t None = ~std::uint32_t{0};
+    static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
+
+    using Run = std::pair<std::uint32_t, std::uint32_t>;
 
     struct Page {
         std::uint64_t index = 0;
@@ -155,8 +190,17 @@ private:
         std::uint32_t newer = None;
         std::uint64_t faultEpoch = 0;
         std::uint64_t faultHistory = 0;
+        ResidencyMask dirty = 0;
+        std::vector<Run> dirtyRuns;
         bool gpuWritable = false;
+        bool cpuWritable = false;
+        bool shared = false;
         bool guarded = false;
+        bool accessGuarded = false;
+        ResidencyMask accessMask = 0;
+        std::uint64_t importSerial = 0;
+        std::uint64_t section = 0;
+        std::uint64_t offset = 0;
         ResidencyToken pin{};
     };
 
@@ -180,10 +224,14 @@ private:
 
     struct Fill {
         std::uint32_t id = 0;
-        ResidencyMask mask = 0;
+        std::uint32_t begin = 0;
+        std::uint32_t end = WholeEnd;
     };
 
     struct WriteBacks {
+        std::vector<ResidencyCopy> copies;
+        std::vector<Retiring> slots;
+        std::vector<std::uint64_t> pages;
         std::vector<std::uint64_t> unguard;
     };
 
@@ -202,18 +250,32 @@ private:
     void retireReached();
     std::optional<std::uint32_t> allocateChunk();
     void releaseChunk(std::uint32_t chunk);
+    std::uint64_t budgetBytes();
+    std::uint32_t chunkLimit(bool growing);
+    bool fullResidency();
     std::optional<std::uint32_t> victim(std::uint64_t protectFirst, std::uint64_t protectLast);
     void admit(std::uint64_t first, std::uint64_t last);
+    std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false);
+    void writeBackDirty(std::span<const std::uint32_t> ids);
+    void settleAccessGuards();
+    void admitEager();
+    void rearm(std::uint32_t id);
     void coolHot(std::uint64_t first, std::span<const std::uint8_t> written);
     std::optional<MirrorSlot> acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks);
     void leave(std::uint32_t id, WriteBacks& writeBacks);
     void forget(std::uint32_t id);
     void recordWriteBacks(WriteBacks& writeBacks);
-    void appendRuns(std::uint64_t page, MirrorSlot slot, ResidencyMask mask, std::vector<ResidencyCopy>& copies) const;
+    void markDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
+    void clearDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
+    void clearAllDirty(std::uint32_t id);
+    void appendDirty(std::uint32_t id, std::vector<ResidencyCopy>& copies) const;
+    void appendClean(std::uint32_t id, std::uint32_t begin, std::uint32_t end, std::vector<ResidencyCopy>& copies) const;
     void copyIn(std::span<const Fill> fills);
     void refresh(std::span<const Fill> fills);
+    void refreshOrdered(std::span<const Fill> fills);
     void waitWriters(std::span<const Fill> fills);
     void applyFaults(std::vector<std::uint64_t> written);
+    void applyRecorded(std::uint64_t address, std::uint64_t bytes);
     void evictDraining();
     void demote(std::span<const std::uint32_t> ids);
     void changed(std::uint64_t page);
@@ -223,7 +285,11 @@ private:
     const std::uint32_t chunkSlots;
     const std::uint32_t hotFaults;
     const std::uint32_t hotEpochs;
+    std::uint64_t budget = 0;
     std::uint32_t maxChunks = 0;
+    std::uint64_t limitEpoch = 0;
+    std::uint64_t measured = 0;
+    std::uint64_t measuredEpoch = 0;
     std::uint32_t liveChunks = 0;
     std::vector<Chunk> chunks;
     std::vector<Page> pages;
@@ -233,8 +299,13 @@ private:
     std::uint32_t newest = None;
     std::deque<Retiring> retiring;
     std::unordered_map<std::uint64_t, ResidencyToken> writers;
+    std::unordered_map<std::uint64_t, ResidencyToken> writingBack;
     std::unordered_set<std::uint64_t> changes;
     std::unordered_map<std::uint64_t, Cooling> hot;
+    std::unordered_map<std::uint64_t, std::uint64_t> hotResident;
+    std::unordered_set<std::uint64_t> accessGuards;
+    std::uint64_t importsGeneration = 0;
+    std::vector<ResidencyRange> pendingImports;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> aliasKeys;
     std::atomic<std::uint64_t> epoch{1};
@@ -242,11 +313,13 @@ private:
     std::uint64_t serial = 0;
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;
+    std::atomic<std::uint32_t> dirtyPages{0};
     ResidencyCounts counts;
     mutable std::mutex residentMutex;
     std::mutex queueMutex;
     std::vector<ResidencyRange> dropQueue;
     std::vector<std::uint64_t> cpuQueue;
+    std::vector<ResidencyRange> gpuQueue;
 };
 
 }

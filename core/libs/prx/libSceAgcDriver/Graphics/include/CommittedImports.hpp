@@ -34,6 +34,7 @@ void NoteGuestMapping(std::uint64_t address, std::size_t bytes, GuestArena::Mapp
 const HostImport* CommittedImportCovering(VkDevice device, std::uint64_t begin, std::uint64_t end);
 bool CommittedImportsOverlap(VkDevice device, std::uint64_t begin, std::uint64_t end);
 std::optional<ImportedPage> ImportOf(VkDevice device, std::uint64_t page);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedImportRanges(VkDevice device, std::uint64_t& generation);
 std::uint64_t CommittedImportPinnedBytes();
 CommittedImportStats CommittedImportCounters();
 void SetCommittedImportBudget(std::uint64_t bytes);

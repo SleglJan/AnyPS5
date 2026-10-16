@@ -21,10 +21,11 @@ constexpr std::uint32_t WrittenBase = 0x7c000000u;
 constexpr std::uint32_t MirrorMarker = 0x5a000001u;
 constexpr std::uint32_t StoredByCpu = 0x5a000002u;
 constexpr std::uint32_t HotStore = 0x5a000100u;
-constexpr std::uint32_t MirrorOnly = 0x5a000003u;
+constexpr std::uint32_t WrittenBack = 0x5a000003u;
 constexpr std::uint32_t DroppedMarker = 0x5a000004u;
 constexpr std::uint32_t EvictedMarker = 0x5a000005u;
 constexpr std::uint32_t AdmittedMarker = 0x5a000006u;
+constexpr std::uint64_t TestBudget = std::uint64_t{1} << 30;
 
 int failures = 0;
 
@@ -134,10 +135,16 @@ bool Guarded(const SharedPages& pages, std::uint64_t page) {
     return AgcDriver::GuestMemory::WriteGuarded(PageOf(pages.Address(page)));
 }
 
-bool Hot(const SharedPages& pages, std::uint64_t page) {
+bool HotResident(const SharedPages& pages, std::uint64_t page) {
     bool hot = false;
-    Locked([&] { hot = Residency().Manager().Hot(PageOf(pages.Address(page))); });
+    Locked([&] { hot = Residency().Manager().HotResident(PageOf(pages.Address(page))); });
     return hot;
+}
+
+std::uint16_t Dirty(const SharedPages& pages, std::uint64_t page) {
+    std::uint16_t dirty = 0;
+    Locked([&] { dirty = Residency().Manager().Dirty(PageOf(pages.Address(page))); });
+    return dirty;
 }
 
 void Use(const SharedPages& pages, std::uint64_t first, std::uint64_t count) {
@@ -155,12 +162,13 @@ void WarmUp(Harness& harness) {
 
 void Admission(Harness& harness, Model& model) {
     auto& pages = model.Pages();
-    const auto before = Counts();
-    Use(pages, 0, 4);
-    const auto after = Counts();
-    Expect(after.admitted == before.admitted + 4, "admission: a read use of four pages admitted " + std::to_string(after.admitted - before.admitted));
-    for (std::uint64_t page = 0; page < 4; ++page) {
-        Expect(Resident(pages, page), "admission: page " + std::to_string(page) + " is not resident after its use");
+    bool full = false;
+    Locked([&] { full = Residency().Manager().FullResidency(); });
+    Expect(full, "admission: a budget above the guest size is not full residency");
+    harness.Read(pages, 0);
+    Settle();
+    for (std::uint64_t page = 0; page < SectionPages; ++page) {
+        Expect(Resident(pages, page), "admission: page " + std::to_string(page) + " of a shared view mapped before a dispatch has no mirror under full residency");
         Expect(Guarded(pages, page), "admission: CPU-writable page " + std::to_string(page) + " is resident without a write guard");
     }
     FillMirror(pages.Address(1, 2), MirrorMarker);
@@ -168,11 +176,7 @@ void Admission(Harness& harness, Model& model) {
     const auto lanes = harness.Read(pages, 0);
     ExpectLanes(lanes, model, 0, ReadPages, {{1 * SubpagesPerPage + 2, MirrorMarker}}, "a dispatch reading a resident page through the page table did not read its mirror");
     Expect(pages.Words(1)[2 * WordsPerSubpage] == model.Value(1, 2 * WordsPerSubpage), "admission: a change made only to the mirror reached guest memory");
-    const auto readAdmitted = Counts().admitted - read.admitted;
-    Expect(readAdmitted == ReadPages - 4u, "admission: a dispatch reading " + std::to_string(ReadPages) + " pages through a bounded range admitted " + std::to_string(readAdmitted) + " of the " + std::to_string(ReadPages - 4u) + " it read that were not resident");
-    for (std::uint64_t page = 4; page < ReadPages; ++page) {
-        Expect(Resident(pages, page) && Guarded(pages, page), "admission: page " + std::to_string(page) + ", read by a dispatch, is not resident with a write guard");
-    }
+    Expect(Counts().admitted == read.admitted && Counts().writtenBackBytes == read.writtenBackBytes, "admission: a read of resident pages admitted or wrote back pages");
 }
 
 void DemotionAndVersions(Harness& harness, Model& model) {
@@ -193,16 +197,15 @@ void DemotionAndVersions(Harness& harness, Model& model) {
         }
     }
     const auto after = Counts();
-    Expect(after.demoted >= before.demoted + 2, "demotion: two dispatches that store through the page table into two pages demoted " + std::to_string(after.demoted - before.demoted) + " of their GPU-writable mirrors");
+    Expect(after.demoted == before.demoted, "bounded stores: two dispatches that store through bounded ranges into two shared pages demoted " + std::to_string(after.demoted - before.demoted) + " mirrors");
     for (const std::uint64_t page : {1u, 2u}) {
-        Expect(!Resident(pages, page), "demotion: page " + std::to_string(page) + " stayed resident through a dispatch storing into it");
-        Expect(!Guarded(pages, page), "demotion: page " + std::to_string(page) + " left residency but kept its write guard");
+        Expect(Resident(pages, page) && Dirty(pages, page) == 0, "bounded stores: page " + std::to_string(page) + " left residency or stayed dirty after the CPU read its stores");
     }
     for (const std::uint64_t page : {0u, 3u}) {
-        Expect(Resident(pages, page) && Guarded(pages, page), "demotion: page " + std::to_string(page) + ", outside the bounded store ranges, left residency or its write guard");
+        Expect(Resident(pages, page) && Guarded(pages, page), "bounded stores: page " + std::to_string(page) + ", outside the bounded store ranges, left residency or its write guard");
     }
     const auto again = harness.Read(pages, 0);
-    ExpectLanes(again, model, 0, ReadPages, {}, "after demotion a dispatch did not read the imports");
+    ExpectLanes(again, model, 0, ReadPages, {}, "bounded stores: a dispatch after the stores did not read them");
 }
 
 void GuardFaultAndRefresh(Harness& harness, Model& model) {
@@ -229,47 +232,52 @@ void HotRule(Harness& harness, Model& model) {
     ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read after admission");
     Expect(Resident(pages, 6), "hot rule: page 6 was not admitted");
     std::uint32_t stores = 0;
-    for (; stores < 8 && Resident(pages, 6); ++stores) {
+    for (; stores < 8 && !HotResident(pages, 6); ++stores) {
         model.Store(6, 4 * WordsPerSubpage, HotStore + stores);
         ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a dispatch after a CPU store to page 6");
     }
-    Expect(!Resident(pages, 6) && Hot(pages, 6), "hot rule: a page the CPU stored to before each of " + std::to_string(stores) + " submissions stayed resident or did not turn hot");
-    Expect(!Guarded(pages, 6), "hot rule: a page that left residency as hot kept its guard");
+    Expect(Resident(pages, 6) && HotResident(pages, 6), "hot rule: a page the CPU stored to before each of " + std::to_string(stores) + " submissions left residency or did not turn hot");
+    Expect(!Guarded(pages, 6), "hot rule: a hot page kept its guard");
     const auto faults = Counts().faults;
     model.Store(6, 5 * WordsPerSubpage, HotStore + 0x80u);
     Expect(Counts().faults == faults, "hot rule: a store to a hot page faulted");
-    Use(pages, 6, 1);
-    Expect(!Resident(pages, 6), "hot rule: a use right after the page turned hot admitted it again");
-    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read of a hot page through its import");
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read of a hot page after an unguarded CPU store");
     const auto cooled = Counts().cooled;
-    bool admitted = false;
-    for (std::uint32_t quiet = 0; quiet < 6 && !admitted; ++quiet) {
+    bool cool = false;
+    for (std::uint32_t quiet = 0; quiet < 6 && !cool; ++quiet) {
         harness.Read(pages, 0);
-        Use(pages, 6, 1);
-        admitted = Resident(pages, 6);
+        cool = !HotResident(pages, 6);
     }
-    Expect(admitted && Counts().cooled > cooled, "hot rule: a hot page the CPU stopped writing was not admitted again after six quiet submissions");
+    Expect(cool && Counts().cooled > cooled && Resident(pages, 6) && Guarded(pages, 6), "hot rule: a hot page the CPU stopped writing was not guarded again within six quiet submissions");
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read after the page cooled");
 }
 
-void CpuReadOfMirroredPage(Harness& harness, Model& model) {
+void WriteBackOnCpuRead(Harness& harness, Model& model) {
     auto& pages = model.Pages();
     Use(pages, 7, 1);
     harness.Read(pages, 0);
-    Expect(Resident(pages, 7), "CPU read: the page was not admitted");
-    FillMirror(pages.Address(7, 3), MirrorOnly);
+    FillMirror(pages.Address(7, 3), WrittenBack);
+    Locked([&] { Residency().Manager().NoteGpuWritten(pages.Address(7, 3), SubpageBytes); });
     Settle();
+    MEMORY_BASIC_INFORMATION memory{};
+    Require(VirtualQuery(reinterpret_cast<const void*>(pages.Address(7, 3)), &memory, sizeof(memory)) == sizeof(memory), "write-back: VirtualQuery failed");
+    Expect((memory.Protect & 0xffu) == PAGE_NOACCESS && Dirty(pages, 7) == 0x0008, "write-back: the dirty subpage is not guarded against CPU access before a CPU read (protection " + Hex(memory.Protect) + ", dirty " + Hex(Dirty(pages, 7)) + ")");
     const auto before = Counts();
     std::uint32_t value = 0;
     AgcDriver::GuestMemory::Read(pages.Address(7, 3, 5), std::as_writable_bytes(std::span(&value, 1)), 4);
-    const auto wanted = model.Value(7, 3 * WordsPerSubpage + 5);
-    Expect(value == wanted, "CPU read: a driver CPU read of a resident page read " + Hex(value) + ", expected guest memory's " + Hex(wanted));
+    Expect(value == WrittenBack, "write-back: a driver CPU read of a dirty mirror page read " + Hex(value) + ", expected the GPU's " + Hex(WrittenBack));
     for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) {
-        if (pages.Words(7)[3 * WordsPerSubpage + word] == model.Value(7, 3 * WordsPerSubpage + word)) continue;
-        Expect(false, "CPU read: word " + std::to_string(word) + " of the subpage changed only in the mirror reached guest memory");
+        if (pages.Words(7)[3 * WordsPerSubpage + word] == WrittenBack) continue;
+        Expect(false, "write-back: word " + std::to_string(word) + " of the dirty subpage was not written back");
         break;
     }
+    Expect(pages.Words(7)[2 * WordsPerSubpage] == model.Value(7, 2 * WordsPerSubpage) && pages.Words(7)[4 * WordsPerSubpage] == model.Value(7, 4 * WordsPerSubpage), "write-back: a clean subpage of the page was overwritten");
     const auto after = Counts();
-    Expect(after.copiedInBytes == before.copiedInBytes && Resident(pages, 7), "CPU read: a driver CPU read of a resident page copied " + std::to_string(after.copiedInBytes - before.copiedInBytes) + " bytes or demoted the page");
+    Expect(after.writtenBackBytes == before.writtenBackBytes + SubpageBytes, "write-back: " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes written back, expected one subpage");
+    std::uint16_t dirty = 1;
+    Locked([&] { dirty = Residency().Manager().Dirty(PageOf(pages.Address(7))); });
+    Expect(dirty == 0, "write-back: the page stayed dirty after its write-back");
+    for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) model.Set(7, 3 * WordsPerSubpage + word, WrittenBack);
 }
 
 void DropOnUnmap(Harness& harness) {
@@ -284,7 +292,6 @@ void DropOnUnmap(Harness& harness) {
     pages.Unmap();
     pages.Map();
     Locked([] { Residency().Manager().Apply(); });
-    Expect(!Resident(pages, 0), "drop: an unmapped page stayed resident");
     Expect(Counts().dropped >= before.dropped + 1, "drop: the unmap dropped no resident page");
     model.Retag(3);
     ExpectLanes(harness.Read(pages, 0, 2), model, 0, 2, {}, "drop: a dispatch after an unmap and a new mapping at the same address did not read the new memory");
@@ -346,12 +353,12 @@ int main() {
         model.Fill();
         Harness harness;
         WarmUp(harness);
-        Residency();
+        Locked([] { Residency().Manager().SetBudget(TestBudget); });
         Admission(harness, model);
         DemotionAndVersions(harness, model);
         GuardFaultAndRefresh(harness, model);
         HotRule(harness, model);
-        CpuReadOfMirroredPage(harness, model);
+        WriteBackOnCpuRead(harness, model);
         DropOnUnmap(harness);
         EvictionUnderBudget(harness);
         AgcDriverShutdown_nid_postfix();

@@ -9,17 +9,17 @@ namespace BdaAbi = ShaderRecompiler::BdaAbi;
 
 constexpr std::uint32_t AliasStore = 0x5b000003u;
 constexpr std::uint32_t DriverValue = 0x5b000004u;
-constexpr std::uint32_t MirrorOnly = 0x5b000006u;
 constexpr std::uint64_t PublishedDevice = 0x100000000ull;
 
-void MirrorsAreReadOnly(MirrorReader& reader) {
+void SharedMirrorsTakeStores(MirrorReader& reader) {
     SharedPages pages(2);
     Fill(pages.Words(), 2, 1);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     Use(pages.Address(0));
-    Expect(Resident(pages.Address(0)) && !Resident(pages.Address(1)), "rule 1: only page 0 was admitted");
+    Expect(Resident(pages.Address(0)), "rule 1: page 0 was not admitted");
     ExpectRead(reader.Read(pages.Address(), 1), 1, [](std::uint64_t page, std::uint32_t subpage) { return Pattern(1, page, subpage * WordsPerSubpage); }, "rule 1: the read after admission");
-    Expect(!Resident(pages.Address(1)), "rule 1: page 1 became resident without a use");
+    Settle();
+    Expect(Resident(pages.Address(1)), "rule 1: page 1 of the shared view has no mirror after a dispatch under full residency");
     const std::array<BdaAbi::Range, 1> ranges{{{pages.Address(0), pages.Address(2), PublishedDevice, BdaAbi::Read | BdaAbi::Write, 0}}};
     std::vector<BdaAbi::Range> published;
     std::optional<std::uint64_t> mirror;
@@ -29,23 +29,24 @@ void MirrorsAreReadOnly(MirrorReader& reader) {
     });
     const auto find = [&](std::uint64_t begin) { return std::ranges::find_if(published, [&](const BdaAbi::Range& range) { return range.begin == begin; }); };
     const auto resident = find(pages.Address(0));
-    const auto imported = find(pages.Address(1));
-    Expect(mirror.has_value() && resident != published.end() && resident->end == pages.Address(1) && resident->deviceAddress == *mirror && resident->permissions == BdaAbi::Read, "rule 1: a resident page is not published at its mirror as read-only");
-    Expect(imported != published.end() && imported->end == pages.Address(2) && imported->deviceAddress == PublishedDevice + PageBytes && imported->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: the page beside a resident page lost its import address or its write permission");
-    FillMirror(pages.Address(0, 5), MirrorOnly);
+    std::optional<std::uint64_t> second;
+    Locked([&] { second = Residency().Manager().Translate(PageOf(pages.Address(1))); });
+    const auto beside = find(pages.Address(1));
+    Expect(mirror.has_value() && resident != published.end() && resident->end == pages.Address(1) && resident->deviceAddress == *mirror && resident->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: a resident page of a shared view is not published at its mirror with the range's write permission");
+    Expect(second.has_value() && beside != published.end() && beside->end == pages.Address(2) && beside->deviceAddress == *second && beside->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: the resident page beside it is not published at its own mirror with the range's permissions");
     const auto before = Counts();
     Store(pages.Address(0));
     const auto after = Counts();
-    Expect(!Resident(pages.Address(0)) && after.demoted == before.demoted + 1, "rule 1: a dispatch storing into a resident page did not demote it before it ran (" + std::to_string(after.demoted - before.demoted) + " demotions)");
+    Expect(Resident(pages.Address(0)) && after.demoted == before.demoted, "rule 1: a dispatch storing into a resident shared page demoted its mirror");
+    Expect(after.writtenBackBytes == before.writtenBackBytes, "rule 1: a dispatch storing into a resident page wrote back " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " bytes before any CPU read");
     AgcDriver::GuestMemory::FlushGpuWrites(pages.Address(0), PageBytes);
+    Expect(Counts().dirty == 0u && Resident(pages.Address(0)), "rule 1: a CPU read left the page dirty or demoted it");
     for (std::uint32_t subpage = 0; subpage < SubpagesPerPage; ++subpage) {
         const auto stored = pages.Words(0)[subpage * WordsPerSubpage];
         if (stored == WrittenBase + subpage) continue;
         Expect(false, "rule 1: the store into a resident page did not reach guest memory: subpage " + std::to_string(subpage) + " holds " + Hex(stored));
         break;
     }
-    const auto kept = pages.Words(0)[5 * WordsPerSubpage + 1];
-    Expect(kept == Pattern(1, 0, 5 * WordsPerSubpage + 1), "rule 1: bytes changed only in the mirror reached guest memory when the page left residency: " + Hex(kept));
     ExpectRead(reader.Read(pages.Address(), 2), 2, [](std::uint64_t page, std::uint32_t subpage) { return page == 0 ? WrittenBase + subpage : Pattern(1, page, subpage * WordsPerSubpage); }, "rule 1: the read after the store");
     Settle();
 }
@@ -59,7 +60,9 @@ void AliasStoreDemotes(MirrorReader& reader) {
     ExpectRead(reader.Read(aliases.Address(0), 1), 1, [](std::uint64_t page, std::uint32_t subpage) { return Pattern(2, page, subpage * WordsPerSubpage); }, "rule 2: the read through the first view after admission");
     const auto before = Counts();
     Store(aliases.Address(1));
-    Expect(!Resident(aliases.Address(0)) && Counts().demoted > before.demoted, "rule 2: a dispatch storing through the other view did not demote the mirrored page");
+    const auto after = Counts();
+    Expect((!Resident(aliases.Address(0)) && after.demoted > before.demoted) || after.refreshed > before.refreshed, "rule 2: a dispatch storing through the other view neither demoted nor refreshed the mirrored page");
+    Expect(after.dirty == before.dirty, "rule 2: a store through the other view of an aliased page left a mirror dirty");
     ExpectRead(reader.Read(aliases.Address(0), 1), 1, [](std::uint64_t, std::uint32_t subpage) { return WrittenBase + subpage; }, "rule 2: the read through the first view after a store through the other view");
     Settle();
 }
@@ -127,7 +130,7 @@ void OneMirrorPerPhysicalPage(MirrorReader& reader) {
 }
 
 void Run(MirrorReader& reader) {
-    MirrorsAreReadOnly(reader);
+    SharedMirrorsTakeStores(reader);
     AliasStoreDemotes(reader);
     UnboundedWriterDemotes(reader);
     DriverWriteThroughAlias(reader);

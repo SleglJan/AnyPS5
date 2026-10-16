@@ -40,10 +40,11 @@ public:
     void Release(std::uint32_t chunk);
     std::shared_ptr<MirrorChunk> Chunk(std::uint32_t chunk) const;
     void RecordCopyIn(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const;
+    void RecordWriteBack(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const;
     std::uint64_t DeviceBytes() const;
 
 private:
-    void record(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import) const;
+    void record(VkCommandBuffer commands, std::span<const ResidencyCopy> copies, const ResidencyImportLocator& import, bool intoMirror) const;
 
     Context context;
     std::uint32_t chunkSlots;

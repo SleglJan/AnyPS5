@@ -905,7 +905,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     MEMORY_BASIC_INFORMATION refused{};
     for (std::uint64_t cursor = base; cursor < base + bytes;) {
         MEMORY_BASIC_INFORMATION info{};
-        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT || ((info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0 && !GuestArena::GuestArenaAccessGuarded_nid_postfix(static_cast<std::uintptr_t>(cursor)))) {
             failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
             return nullptr;
         }
@@ -1836,6 +1836,7 @@ std::uint64_t HostImportLiveBytes() {
 
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    PrepareImportWrite(address, bytes);
     ensurePinWaiter();
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
@@ -2314,7 +2315,10 @@ void GuestBufferMemory::UploadPrepare() {
 
 void GuestBufferMemory::UploadFinish() {
     Require(prepared && !uploaded, "guest memory upload was not prepared");
-    for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
+    for (const auto& region : regions) {
+        CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
+        PrepareImportWrite(region.begin, region.end - region.begin);
+    }
     if (space != nullptr && Recorder::PendingCompletionLabels() != 0) {
         if (auto* recorder = Recorder::Active()) {
             for (const auto& [address, bytes] : recorder->CompletionLabelRanges()) {
@@ -2633,7 +2637,10 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::buildWith(const Context& 
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {
-    for (const auto& [begin, end] : writes) GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+    for (const auto& [begin, end] : writes) {
+        GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+        RefreshImportWritten(begin, end - begin);
+    }
 }
 
 void GuestBufferMemory::Release() {

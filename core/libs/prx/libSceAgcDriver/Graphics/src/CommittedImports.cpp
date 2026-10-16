@@ -105,6 +105,7 @@ struct Committed {
     Views views;
     std::vector<ViewNode> retired;
     std::uint64_t viewBytes = 0;
+    std::uint64_t generation = 1;
     std::map<VkDevice, Parked> parked;
 };
 
@@ -211,6 +212,7 @@ void destroyView(const Context& context, HostImport& view) {
 
 void insert(Committed& state, HostImport view) {
     state.viewBytes += view.bytes;
+    ++state.generation;
     state.views.emplace(view.base, std::move(view));
 }
 
@@ -256,6 +258,7 @@ void release(Committed& state, std::uint64_t begin, std::uint64_t end) {
         if (viewEnd > end) kept.push_back({memory, {end, viewEnd}});
         state.viewBytes -= it->second.bytes;
         const auto next = std::next(it);
+        ++state.generation;
         state.retired.push_back(state.views.extract(it));
         it = next;
         any = true;
@@ -462,6 +465,20 @@ bool CommittedImportsOverlap(VkDevice device, std::uint64_t begin, std::uint64_t
     std::lock_guard lock(state.mutex);
     if (device == VK_NULL_HANDLE || state.device != device || end <= begin) return false;
     return overlapsLocked(state, begin, end);
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedImportRanges(VkDevice device, std::uint64_t& generation) {
+    auto& state = CommittedState();
+    std::lock_guard lock(state.mutex);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (device == VK_NULL_HANDLE || state.device != device) return ranges;
+    generation = state.generation;
+    ranges.reserve(state.views.size());
+    for (const auto& [base, view] : state.views) {
+        if (!ranges.empty() && ranges.back().second == view.base) ranges.back().second = view.base + view.bytes;
+        else ranges.emplace_back(view.base, view.base + view.bytes);
+    }
+    return ranges;
 }
 
 std::optional<ImportedPage> ImportOf(VkDevice device, std::uint64_t page) {

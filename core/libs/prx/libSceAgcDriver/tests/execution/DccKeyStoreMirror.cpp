@@ -87,7 +87,7 @@ void KeysCopiedAfterTheirStore() {
         warm.Submit(0);
         NewPath::WaitIdle();
     }
-    Expect(!Resident(keys.Address()), "DCC key store before a mirror copy: the key page is resident before the test");
+    NewPath::Locked([] { NewPath::Residency().Manager().SetBudget(std::uint64_t{1} << 30); });
     AgcDriver::Graphics::ResidencyCounts before;
     NewPath::Locked([&] { before = NewPath::Residency().Manager().Counts(); });
 
@@ -118,7 +118,7 @@ void KeysCopiedAfterTheirStore() {
     Expect(failure.empty(), "DCC key store before a mirror copy: the submission failed: " + failure);
     AgcDriver::Graphics::ResidencyCounts after;
     NewPath::Locked([&] { after = NewPath::Residency().Manager().Counts(); });
-    Expect(Resident(keys.Address()) && after.admitted > before.admitted, "DCC key store before a mirror copy: the dispatch's build did not copy the key page into a residency mirror, so the test does not cover the copy-in (admitted " + std::to_string(after.admitted - before.admitted) + ", inadmissible " + std::to_string(after.inadmissible - before.inadmissible) + ", deferred " + std::to_string(after.deferred - before.deferred) + ")");
+    Expect(Resident(keys.Address()) && (after.admitted > before.admitted || after.refreshed > before.refreshed), "DCC key store before a mirror copy: neither the dispatch's build nor the key store copied the key page into a residency mirror, so the test does not cover the copy-in (admitted " + std::to_string(after.admitted - before.admitted) + ", refreshed " + std::to_string(after.refreshed - before.refreshed) + ", inadmissible " + std::to_string(after.inadmissible - before.inadmissible) + ", deferred " + std::to_string(after.deferred - before.deferred) + ")");
     AgcDriver::GuestMemory::FlushGpuWrites(output.Address(), output.Bytes());
     std::size_t wrong = 0;
     std::string first;

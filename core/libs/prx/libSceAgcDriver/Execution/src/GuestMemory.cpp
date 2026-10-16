@@ -615,7 +615,7 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         std::uint32_t logicalProtection = memory.Protect;
         GuestArena::GuestArenaProtection_nid_postfix(cursor, &logicalProtection);
         const auto protection = logicalProtection & 0xffu;
-        const bool committed = memory.State == MEM_COMMIT && (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0;
+        const bool committed = memory.State == MEM_COMMIT && ((memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 || GuestArena::GuestArenaAccessGuarded_nid_postfix(cursor));
         const bool readable = committed && readableProtection(protection);
         const bool writable = readable && writableProtection(protection);
         pages.record(base, regionEnd, readable, writable, generation);
@@ -2241,10 +2241,19 @@ void reportGuardedWrites(const std::uintptr_t* pages, std::size_t count) {
 }
 #endif
 
+#ifdef _WIN32
+void reportAccessFault(std::uintptr_t page) {
+    const auto* hooks = residencyHooks.load(std::memory_order_acquire);
+    if (hooks != nullptr && hooks->accessFault != nullptr) hooks->accessFault(static_cast<std::uint64_t>(page) >> ResidencyPageShift);
+}
+#endif
+
 void observeGuards() {
 #ifdef _WIN32
-    const bool observed = residencyHooks.load(std::memory_order_acquire) != nullptr || shadowWriteObserver.load(std::memory_order_acquire) != nullptr;
+    const auto* hooks = residencyHooks.load(std::memory_order_acquire);
+    const bool observed = hooks != nullptr || shadowWriteObserver.load(std::memory_order_acquire) != nullptr;
     GuestArena::GuestArenaSetWriteGuardObserver_nid_postfix(observed ? &reportGuardedWrites : nullptr);
+    GuestArena::GuestArenaSetAccessGuardObserver_nid_postfix(hooks != nullptr && hooks->accessFault != nullptr ? &reportAccessFault : nullptr);
 #endif
 }
 
@@ -2281,6 +2290,34 @@ void UnguardWrites(std::uint64_t address, std::size_t bytes) {
 #endif
 }
 
+bool GuardAccess(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    return GuestArena::GuestArenaGuardAccess_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+void UnguardAccess(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    GuestArena::GuestArenaUnguardAccess_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
+bool AccessGuarded(std::uint64_t page) {
+#ifdef _WIN32
+    return GuestArena::GuestArenaAccessGuarded_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift));
+#else
+    static_cast<void>(page);
+    return false;
+#endif
+}
+
 bool WriteGuarded(std::uint64_t page) {
 #ifdef _WIN32
     return GuestArena::GuestArenaWriteGuarded_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift));
@@ -2306,6 +2343,9 @@ PageBacking Backing(std::uint64_t page) {
     backing.offset = page << ResidencyPageShift;
 #ifdef _WIN32
     backing.shared = GuestArena::GuestArenaBacking_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift), &backing.section, &backing.offset, &backing.uniform, &backing.aliased);
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    backing.resident = GuestArena::GuestArenaResidentSpan_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift), std::size_t{1} << ResidencyPageShift, &start, &end);
 #endif
     return backing;
 }

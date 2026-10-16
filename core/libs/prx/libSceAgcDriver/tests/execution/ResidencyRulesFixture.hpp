@@ -19,6 +19,7 @@ constexpr std::uint32_t WriteLanes = SubpagesPerPage;
 constexpr std::uint32_t WrittenBase = 0x7d000000u;
 constexpr std::uint32_t BufferLoadDwordX2 = 0x0du;
 constexpr std::uint32_t UnboundedValue = 0x5b000005u;
+constexpr std::uint64_t TestBudget = std::uint64_t{1} << 30;
 
 inline int failures = 0;
 
@@ -155,7 +156,7 @@ inline int Main(const char* name, void (*run)(MirrorReader&)) {
             reader.Read(warm.Address(), 1);
             reader.Read(warm.Address(), 1);
         }
-        Residency();
+        Locked([] { Residency().Manager().SetBudget(TestBudget); });
         run(reader);
     } catch (const std::exception& error) {
         Expect(false, std::string("exception: ") + error.what());

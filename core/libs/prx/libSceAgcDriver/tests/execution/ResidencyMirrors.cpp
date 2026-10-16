@@ -440,6 +440,11 @@ public:
         return stream.Current();
     }
 
+    ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) override {
+        mirrors.RecordWriteBack(stream.Commands(), copies, locator());
+        return stream.Current();
+    }
+
     bool Guard(std::uint64_t page) override {
         const auto index = static_cast<std::uint32_t>(page - BasePage);
         ProtectOrThrow(index, true);
@@ -453,6 +458,10 @@ public:
             if (faultLog.guarded[index].exchange(false)) ProtectOrThrow(index, false);
         }
     }
+
+    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+
+    void UnguardAccess(std::uint64_t) override {}
 
     void Stamp(std::uint64_t page) { stamps[page] = ++generation; }
 
@@ -536,6 +545,17 @@ public:
         barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
         context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, buffer, offset, ResidencySubpageBytes, value);
         barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+    }
+
+    void FillMirror(std::uint64_t page, std::uint32_t subpage, std::uint32_t value) {
+        const auto slot = manager.Slot(page);
+        Expect(slot.has_value(), "the page to fill is resident");
+        if (!slot) return;
+        GpuFill(device.mirrors.Chunk(slot->chunk)->buffer, (VkDeviceSize{slot->slot} << ResidencyPageShift) + (VkDeviceSize{subpage} << ResidencySubpageShift), value);
+        stream.Submit();
+        stream.WaitAll();
+        manager.NoteGpuWritten(Address(page, subpage), ResidencySubpageBytes);
+        for (std::uint32_t word = 0; word < WordsPerSubpage; ++word) expected[{page, subpage * WordsPerSubpage + word}] = value;
     }
 
     void FillImport(std::uint64_t page, std::uint32_t subpage, std::uint32_t value, bool note) {
@@ -685,19 +705,15 @@ void GuardedStores(Fixture& fixture) {
     Expect(fixture.manager.Slot(BasePage + 2).has_value() && fixture.manager.Counts().hot == 0, "faults two epochs apart keep the page resident");
 }
 
-void GpuStoresStayInImports(Fixture& fixture) {
-    Expect(fixture.manager.Slot(BasePage + 3).has_value(), "page 3 is resident before the store");
-    const auto copied = fixture.manager.Counts().copiedInBytes;
-    fixture.FillImport(BasePage + 3, 1, 0x5a5a5a5au, false);
+void WriteBackOut(Fixture& fixture) {
+    fixture.FillMirror(BasePage + 3, 1, 0x5a5a5a5au);
+    Expect(fixture.manager.Dirty(BasePage + 3) == 0x0002, "the GPU write into the mirror marks subpage 1 dirty");
+    Expect(fixture.guest.Words(BasePage + 3)[WordsPerSubpage] == Fixture::Pattern(BasePage + 3, WordsPerSubpage), "guest memory does not have the GPU's bytes yet");
     fixture.manager.FlushForCpuRead(Fixture::Address(BasePage + 3, 1), 4);
     const auto* words = fixture.guest.Words(BasePage + 3);
-    Expect(words[WordsPerSubpage] == 0x5a5a5a5au && words[2 * WordsPerSubpage - 1] == 0x5a5a5a5au, "a GPU store into the import reaches guest memory with no copy out of the mirror");
+    Expect(words[WordsPerSubpage] == 0x5a5a5a5au && words[2 * WordsPerSubpage - 1] == 0x5a5a5a5au, "the write-back brought the GPU's bytes to guest memory");
     Expect(words[0] == Fixture::Pattern(BasePage + 3, 0) && words[2 * WordsPerSubpage] == Fixture::Pattern(BasePage + 3, 2 * WordsPerSubpage), "subpages the GPU did not write are unchanged");
-    Expect(fixture.manager.Counts().copiedInBytes == copied, "the store and the flush recorded no copy");
-    const auto stale = fixture.Read(BasePage + 3, 1, ResidencySubpageBytes, ResidencySubpages, false);
-    Expect(stale[1] == Fixture::Pattern(BasePage + 3, WordsPerSubpage), "the mirror keeps its bytes until it is refreshed");
-    fixture.device.Stamp(BasePage + 3);
-    fixture.CheckRead(BasePage + 3, 1, "the next use of the changed page refreshes its mirror");
+    Expect(fixture.manager.Dirty(BasePage + 3) == 0, "the page is clean after the flush");
 }
 
 void PinsHoldInFlightWork(Fixture& fixture) {
@@ -711,6 +727,7 @@ void PinsHoldInFlightWork(Fixture& fixture) {
 }
 
 void EvictionUnderSmallBudget(Fixture& fixture) {
+    fixture.FillMirror(BasePage + 0, 7, 0x77777777u);
     fixture.manager.Use(Fixture::Address(BasePage + 2), 2 * ResidencyPageBytes, ResidencyAccess::Read);
     const auto slot0 = fixture.manager.Slot(BasePage + 0);
     const auto slot1 = fixture.manager.Slot(BasePage + 1);
@@ -720,6 +737,7 @@ void EvictionUnderSmallBudget(Fixture& fixture) {
     Expect(!faultLog.guarded[0].load() && !faultLog.guarded[1].load(), "evicted pages are unguarded");
     fixture.stream.Submit();
     fixture.stream.WaitAll();
+    Expect(fixture.guest.Words(BasePage + 0)[7 * WordsPerSubpage] == 0x77777777u, "the dirty victim was written back");
     fixture.Ordering();
     fixture.manager.Use(Fixture::Address(BasePage + 4), 2 * ResidencyPageBytes, ResidencyAccess::Read);
     const auto slot4 = fixture.manager.Slot(BasePage + 4);
@@ -806,7 +824,7 @@ int main() {
             Fixture fixture(device->Get(), std::uint64_t{ChunkSlots} << ResidencyPageShift);
             CopyInAndPublishedReads(fixture);
             GuardedStores(fixture);
-            GpuStoresStayInImports(fixture);
+            WriteBackOut(fixture);
             PinsHoldInFlightWork(fixture);
             EvictionUnderSmallBudget(fixture);
             Frames(fixture);

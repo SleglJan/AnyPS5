@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -2897,6 +2898,7 @@ StorageTexture::PaddingSeeds StorageTexture::paddingSeeds(const HostImport& impo
         }
     }
     if (pieces.empty()) return seeds;
+    PrepareImportWrite(descriptor.baseAddress + pieceRuns.front().first, pieceRuns.back().second - pieceRuns.front().first);
     const auto sources = ShadowSources(context, import, descriptor.baseAddress, pieceRuns, {}, false);
     std::size_t first = 0;
     for (const auto& source : sources) {
@@ -3007,6 +3009,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             if (tailBlocks.empty() || tailBlocks.back().first != sliceBegin) tailBlocks.emplace_back(sliceBegin, sliceBegin + mip.tiledSize);
         }
     }
+    if (!runs.empty()) PrepareImportWrite(descriptor.baseAddress + runs.front().first, runs.back().second - runs.front().first);
     const auto sources = ShadowSources(context, import, descriptor.baseAddress, runs, tailBlocks);
     std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
     bool allShadow = true;
@@ -3180,8 +3183,28 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     std::vector<SlabPieces> slabPieces;
     std::vector<std::vector<VkBufferCopy>> importCopies(segments.size());
     std::vector<SeedUnit> seeds;
+    struct MirrorPieces {
+        VkBuffer buffer;
+        std::vector<VkBufferCopy> copies;
+    };
+    std::vector<MirrorPieces> mirrorPieces;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> mirrored;
+    auto* residency = ResidencyDriver::Active();
+    if (residency != nullptr && lastStored > firstStored) residency->PrepareImportWrite(firstStored, lastStored - firstStored);
     const auto addPiece = [&](std::uint64_t scratchOffset, std::uint64_t guestBegin, std::uint64_t guestEnd) {
         while (guestBegin < guestEnd) {
+            if (residency != nullptr) {
+                if (const auto mirror = residency->MirrorOf(guestBegin)) {
+                    const auto pieceEnd = std::min(guestEnd, mirror->end);
+                    if (mirrorPieces.empty() || mirrorPieces.back().buffer != mirror->buffer) mirrorPieces.push_back({mirror->buffer, {}});
+                    mirrorPieces.back().copies.push_back({scratchOffset, mirror->offset, pieceEnd - guestBegin});
+                    if (!mirrored.empty() && mirrored.back().second == guestBegin) mirrored.back().second = pieceEnd;
+                    else mirrored.emplace_back(guestBegin, pieceEnd);
+                    scratchOffset += pieceEnd - guestBegin;
+                    guestBegin = pieceEnd;
+                    continue;
+                }
+            }
             std::size_t segment = 0;
             while (segment + 1 < segments.size() && segments[segment + 1].begin <= guestBegin) ++segment;
             Require(segments[segment].begin <= guestBegin && guestBegin < segments[segment].end, "storage image write-back piece lies outside its import segments");
@@ -3343,7 +3366,9 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         for (std::size_t segment = 0; segment < segments.size(); ++segment) {
             if (!importCopies[segment].empty()) copyBuffer(commands, tiledScratch->Handle(), segments[segment].import->buffer, static_cast<std::uint32_t>(importCopies[segment].size()), importCopies[segment].data());
         }
+        for (const auto& pieces : mirrorPieces) copyBuffer(commands, tiledScratch->Handle(), pieces.buffer, static_cast<std::uint32_t>(pieces.copies.size()), pieces.copies.data());
         if (!saves.empty()) copyBuffer(commands, tiledScratch->Handle(), save->Handle(), static_cast<std::uint32_t>(saves.size()), saves.data());
+        for (const auto& [begin, end] : mirrored) residency->NoteDriverWrite(begin, end - begin);
     }
     VkImageMemoryBarrier backToGeneral = toSource;
     backToGeneral.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;

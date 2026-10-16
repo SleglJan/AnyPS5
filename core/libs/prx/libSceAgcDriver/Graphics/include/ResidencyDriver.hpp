@@ -32,6 +32,10 @@ public:
     virtual void ChangedPages(std::uint64_t firstPage, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed) = 0;
     virtual bool Guard(std::uint64_t page) = 0;
     virtual void Unguard(std::span<const std::uint64_t> pages) = 0;
+    virtual bool GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
+    virtual void UnguardAccess(std::uint64_t page) = 0;
+    virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) = 0;
+    virtual std::uint64_t GuestBytes() = 0;
 };
 
 struct ResidencyPublishedPage {
@@ -48,6 +52,8 @@ struct ResidencyDriverCounts {
     std::uint64_t orderingPoints = 0;
     std::uint64_t appliedAtOrderingPoints = 0;
     std::uint64_t vanishedCopies = 0;
+    std::uint64_t frames = 0;
+    std::uint64_t budgetBytes = 0;
 };
 
 class ResidencyDriver final : public IResidencyDevice {
@@ -65,6 +71,17 @@ public:
     void BeforeDispatch();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
+    void NoteRecordedWrites(std::uint64_t address, std::uint64_t bytes);
+    void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
+    void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
+    void AccessFault(std::uint64_t page);
+    struct MirrorTarget {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+        std::uint64_t end = 0;
+    };
+    std::optional<MirrorTarget> MirrorOf(std::uint64_t address);
+    void NoteDriverWrite(std::uint64_t address, std::uint64_t bytes);
     void DropMirrors(std::span<const ResidencyRange> ranges);
     ResidencyPublication Publish();
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
@@ -82,16 +99,28 @@ public:
     std::uint64_t AllocateChunk(std::uint32_t chunk, std::uint32_t slots) override;
     void ReleaseChunk(std::uint32_t chunk) override;
     ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) override;
+    ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) override;
     bool Guard(std::uint64_t page) override;
     void Unguard(std::span<const std::uint64_t> pages) override;
+    bool GuardAccess(std::uint64_t page, ResidencyMask mask) override;
+    void UnguardAccess(std::uint64_t page) override;
+    std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
+    std::uint64_t Budget() override;
+    std::uint64_t GuestBytes() override;
 
 private:
-    ResidencyToken record(std::span<const ResidencyCopy> copies);
+    ResidencyToken record(std::span<const ResidencyCopy> copies, bool intoMirror);
+    void frameBoundary();
 
+    Context context;
     Recorder& recorder;
     IResidencyGuestMemory& guest;
+    std::uint32_t deviceHeap = 0;
     ResidencyMirrors mirrors;
     ResidencyManager manager;
+    std::uint64_t presents = 0;
+    std::uint64_t frames = 0;
+    std::uint64_t budgetBytes = 0;
     std::atomic<std::uint64_t> orderingPoints{0};
     std::atomic<std::uint64_t> appliedAtOrderingPoints{0};
     std::uint64_t vanishedCopies = 0;
