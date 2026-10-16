@@ -148,6 +148,7 @@ void DescriptorHeap::release(Array array, std::uint32_t slot) noexcept {
     std::lock_guard lock(mutex);
     auto& slots = arrays[static_cast<std::size_t>(array)];
     slots.entries[slot] = slots.entries[0];
+    for (const auto& item : views) write(item, array, slot, 1);
     slots.free.push_back(slot);
 }
 
