@@ -96,6 +96,7 @@ public:
         std::vector<std::string> messages;
     };
     void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NameStages(std::vector<std::pair<std::uint32_t, std::uint64_t>> stages) { stageShaders = std::move(stages); }
 
 private:
     friend class BatchFaultRecord;
@@ -117,6 +118,7 @@ private:
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<std::vector<std::byte>> imageTableBytes;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> stageShaders;
 };
 
 }

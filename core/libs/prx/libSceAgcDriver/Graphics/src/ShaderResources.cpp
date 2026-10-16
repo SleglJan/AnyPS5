@@ -1158,6 +1158,9 @@ ShaderResources::ShaderResources(const Context& context, const ShaderRecompiler:
 
 ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) : context(context), guestMemory(context) {
     drawBuild = true;
+    for (const auto& shader : shaders) {
+        if (shader.codeAddress != 0) stageShaders.emplace_back(static_cast<std::uint32_t>(shader.stage), shader.codeAddress);
+    }
     prepareAddressBindings(shaders);
     build(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
@@ -1181,6 +1184,9 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     this->linearThreads = linearThreads;
     if (compute.program != nullptr) linearStore = compute.program->linearStore;
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
+    for (const auto& shader : shaders) {
+        if (shader.codeAddress != 0) stageShaders.emplace_back(static_cast<std::uint32_t>(shader.stage), shader.codeAddress);
+    }
     if (!deferred) {
         prepareAddressBindings(shaders);
         build(shaders, nullptr, 0, 0, 0);
@@ -1814,6 +1820,7 @@ void ShaderResources::buildComplete() {
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }
+        if (bda != nullptr) bda->NameStages(stageShaders);
         finishImageTables();
         phase(BuildPhase::Bda);
         if (_set != VK_NULL_HANDLE || fragment.set != VK_NULL_HANDLE) {

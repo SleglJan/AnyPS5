@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "ImageTableAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
+#include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -249,7 +251,7 @@ bool BdaResources::published(const ShaderRecompiler::BdaAbi::Fault& report) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, "BDA fault record has data without publication");
         return false;
     }
-    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.reserved == 0, "incomplete or invalid BDA fault record");
+    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && (report.reserved == 0 || report.reason == ShaderRecompiler::BdaAbi::FaultReason::InvalidBufferDescriptor), "incomplete or invalid BDA fault record");
     return true;
 }
 
@@ -269,6 +271,23 @@ void BdaResources::CheckFault() const {
         return;
     }
     throwFault(report);
+}
+
+namespace {
+std::uint32_t RecordedStage(std::uint32_t stage) {
+    using Ir = ShaderRecompiler::IrShaderStage;
+    using Stage = ShaderRecompiler::ShaderStage;
+    switch (static_cast<Ir>(stage)) {
+        case Ir::Vertex: case Ir::Fetch: return static_cast<std::uint32_t>(Stage::Vertex);
+        case Ir::Pixel: return static_cast<std::uint32_t>(Stage::Fragment);
+        case Ir::Compute: return static_cast<std::uint32_t>(Stage::Compute);
+        case Ir::Mesh: return static_cast<std::uint32_t>(Stage::Mesh);
+        case Ir::Local: return static_cast<std::uint32_t>(Stage::Local);
+        case Ir::TessellationControl: return static_cast<std::uint32_t>(Stage::TessellationControl);
+        case Ir::TessellationEvaluation: return static_cast<std::uint32_t>(Stage::TessellationEvaluation);
+        default: return stage;
+    }
+}
 }
 
 bool BdaResources::owns(const ShaderRecompiler::BdaAbi::Fault& report) const {
@@ -311,6 +330,17 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
         throw std::runtime_error(message.str());
     }
     std::ostringstream message;
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::InvalidBufferDescriptor) {
+        const auto stage = RecordedStage(report.stage & ((1u << ShaderRecompiler::BdaAbi::DescriptorFaultResourceShift) - 1u));
+        const auto resource = report.stage >> ShaderRecompiler::BdaAbi::DescriptorFaultResourceShift;
+        std::uint64_t shader = 0;
+        for (const auto& [named, address] : stageShaders) {
+            if (named == stage) shader = address;
+        }
+        char text[192];
+        std::snprintf(text, sizeof(text), "shader 0x%llx stage %u pc 0x%x: buffer descriptor uses an unsupported type (buffer %u V# %08x %08x %08x %08x)", static_cast<unsigned long long>(shader), stage, report.instruction, resource, static_cast<std::uint32_t>(report.address), static_cast<std::uint32_t>(report.address >> 32u), report.bytes, report.reserved);
+        throw std::runtime_error(text);
+    }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall) {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
         throw std::runtime_error(message.str());
