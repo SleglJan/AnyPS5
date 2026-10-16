@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -20,7 +21,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 16;
 constexpr std::uint32_t WaveSize = 64;
 constexpr std::uint32_t Kept = 0x12345678u;
-alignas(256) std::array<std::uint32_t, Width * Height> Pixels{};
+TestGuest::Array<std::uint32_t, Width * Height> Pixels;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -35,7 +36,7 @@ constexpr std::array<std::array<float, 2>, 6> Corners{{
     {17.0f, 1.0f}, {31.0f, 1.0f}, {17.0f, 15.0f},
 }};
 
-alignas(256) std::array<std::array<float, 4>, Corners.size()> Vertices{};
+TestGuest::Array<std::array<float, 4>, Corners.size()> Vertices;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -86,7 +87,7 @@ void Draw(AgcDriver::VulkanDevice& device, bool allBits) {
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, WaveSize, WaveSize, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R32_UINT, sizeof(Pixels), 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R32_UINT, decltype(Pixels)::ByteSize, 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
