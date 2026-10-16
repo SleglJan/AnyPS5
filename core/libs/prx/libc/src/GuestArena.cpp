@@ -60,8 +60,8 @@ std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
 class Arena {
 public:
     static Arena& Get() {
-        static Arena arena;
-        return arena;
+        static auto* arena = new Arena;
+        return *arena;
     }
 
     bool Available() const {
@@ -78,21 +78,18 @@ public:
     }
 
     void* AllocateAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
-        if (_base == 0) throw std::runtime_error("guest address space arena is unavailable");
-        if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
+        RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
         if (hint >= _end) throw std::runtime_error("mapping address hint is above the guest address space arena");
-        std::uintptr_t candidate = alignUp(std::max(_base, hint), alignment);
-        auto it = _used.upper_bound(candidate);
-        if (it != _used.begin() && std::prev(it)->second > candidate) --it;
-        for (; it != _used.end(); ++it) {
-            const auto& [start, end] = *it;
-            if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
-            candidate = std::max(candidate, alignUp(end, alignment));
-        }
-        if (candidate > _end || bytes > _end - candidate) throw std::runtime_error("guest address space arena exhausted");
-        _used.emplace(candidate, candidate + bytes);
-        return reinterpret_cast<void*>(candidate);
+        return Claim(FindAtOrAbove(hint, bytes, alignment), bytes);
+    }
+
+    void* AllocateFromHint(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
+        RequireAllocatable(alignment);
+        std::lock_guard lock(_lock);
+        auto candidate = hint < _end ? FindAtOrAbove(hint, bytes, alignment) : 0;
+        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(_base, bytes, alignment);
+        return Claim(candidate, bytes);
     }
 
     std::uintptr_t HighestFree(std::size_t bytes, std::size_t alignment) {
@@ -259,6 +256,30 @@ private:
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _hostRegions;
+    void RequireAllocatable(std::size_t alignment) const {
+        if (_base == 0) throw std::runtime_error("guest address space arena is unavailable");
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
+    }
+
+    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
+        std::uintptr_t candidate = alignUp(std::max(_base, hint), alignment);
+        auto it = _used.upper_bound(candidate);
+        if (it != _used.begin() && std::prev(it)->second > candidate) --it;
+        for (; it != _used.end(); ++it) {
+            const auto& [start, end] = *it;
+            if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
+            candidate = std::max(candidate, alignUp(end, alignment));
+        }
+        if (candidate > _end || bytes > _end - candidate) return 0;
+        return candidate;
+    }
+
+    void* Claim(std::uintptr_t candidate, std::size_t bytes) {
+        if (candidate == 0) throw std::runtime_error("guest address space arena exhausted");
+        _used.emplace(candidate, candidate + bytes);
+        return reinterpret_cast<void*>(candidate);
+    }
+
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
     bool _writeWatched = false;
@@ -299,6 +320,10 @@ void* GuestArenaAllocate_nid_postfix(std::size_t bytes, std::size_t alignment) {
 
 void* GuestArenaAllocateAtOrAbove_nid_postfix(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
     return Arena::Get().AllocateAtOrAbove(hint, bytes, alignment);
+}
+
+void* GuestArenaAllocateFromHint_nid_postfix(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
+    return Arena::Get().AllocateFromHint(hint, bytes, alignment);
 }
 
 std::uintptr_t GuestArenaHighestFree_nid_no_patch(std::size_t bytes, std::size_t alignment) {
@@ -363,6 +388,10 @@ void GuestArenaAliases_nid_postfix(std::uintptr_t address, std::size_t bytes, vo
 
 bool GuestArenaBacking_nid_postfix(std::uintptr_t page, std::uint64_t* section, std::uint64_t* offset, bool* uniform, bool* aliased) {
     return WindowsMappings::Get().Backing(page, section, offset, uniform, aliased);
+}
+
+bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address) {
+    return WindowsMappings::Get().HandleRead(address);
 }
 
 void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
@@ -455,7 +484,15 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, 
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
-    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection);
+    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), false);
+    notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Mapped, protection);
+}
+
+void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("direct memory mapping", pointer, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
+    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), true);
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Mapped, protection);
 }
 
@@ -465,6 +502,14 @@ void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) 
 
 void GuestArenaUnmapAlias_nid_postfix(void* alias) {
     WindowsMappings::Get().UnmapAlias(alias);
+}
+
+bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end) {
+    return WindowsMappings::Get().ResidentSpan(address, bytes, start, end);
+}
+
+void GuestArenaForgetSection_nid_postfix(void* section) {
+    WindowsMappings::Get().ForgetSection(section);
 }
 #endif
 

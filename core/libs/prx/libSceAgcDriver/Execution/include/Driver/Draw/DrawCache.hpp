@@ -23,6 +23,13 @@ struct DrawProgram {
 
     std::shared_ptr<const ShaderSnapshot> snapshot;
     std::size_t codeOffset = 0;
+    std::shared_ptr<const ShaderSnapshot> tailContinuation;
+    std::uint32_t resourceRegister = 0;
+    bool nullPixel = false;
+    bool merged = false;
+    bool mergedPointerRequired = false;
+    std::uint32_t mergedPointer = 0;
+    std::uint32_t hiddenUserWords = 0;
 };
 
 struct DrawDecode {
@@ -32,6 +39,8 @@ struct DrawDecode {
     std::vector<ShaderRecompiler::ProgramRole> roles;
 };
 
+void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi);
+void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32_t pointerBase, bool pointerRequired, bool staticAbi);
 void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment);
 
 struct PreparedGraphicsStage {

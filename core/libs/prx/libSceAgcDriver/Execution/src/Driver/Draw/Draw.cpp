@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -8,8 +9,10 @@
 #include "CacheKey.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <set>
+#include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
 
@@ -56,9 +59,18 @@ std::shared_ptr<const DrawDecode> Driver::drawDecode(const QueueState& queue, co
         fresh->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(fresh->state), Graphics::PixelProgramSkipped(queue));
         fresh->pixel.targetExportPacking = Graphics::ExportPackings(fresh->state);
         fresh->pixel.dualSourceBlend = fresh->state.dualSourceBlend;
+        fresh->pixel.reversedBlend = fresh->state.reversedBlend;
         fresh->pixel.alphaToCoverage = fresh->state.alphaToCoverage;
+        fresh->pixel.quadPixelMask = Graphics::QuadPixelMask(fresh->state);
+        fresh->pixel.quadSampleMask = Graphics::QuadSampleMasks(fresh->state);
+        if (fresh->pixel.stencilRefExportEnable && Graphics::StencilReferenceUnused(fresh->state)) {
+            const auto localDevice = device.Load();
+            const auto capabilities = localDevice == nullptr ? std::vector<std::uint32_t>{} : localDevice->Target().supportedCapabilities;
+            if (std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == capabilities.end()) fresh->pixel.stencilRefExportEnable = false;
+        }
         if (fresh->pixel.ancillary) fresh->pixel.rasterPrimitive = Graphics::RasterPrimitiveOf(fresh->state);
         if (fresh->pixel.ancillary) fresh->pixel.layerExported = fresh->state.layerExports != 0;
+        fresh->pixel.ditheredAlphaToCoverage = fresh->state.ditheredAlphaToCoverage;
         std::lock_guard cacheLock(drawCacheMutex);
         if (drawDecodes.size() >= DrawDecodeEntries) drawDecodes.clear();
         state = drawDecodes.try_emplace(key, std::move(fresh)).first->second;
@@ -136,6 +148,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto& graphics = decode->state;
     auto pixel = decode->pixel;
     std::vector<DrawProgram> programs = decode->programs;
+    if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
         if (!graphics.stages.mesh) return;
         auto& words = programs.front().userData;
@@ -146,6 +159,16 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (!drawParameters.indirect) setMeshIndexBuffer(drawParameters);
     else if (graphics.stages.mesh) setMeshIndexBuffer(Pm4::DrawParameters{drawParameters.indexAddress, std::max(drawParameters.indexCount, 1u), drawParameters.indexSize, 1, 0, drawParameters.indexed});
     const std::vector<Role>& roles = decode->roles;
+    static const bool tracePrograms = std::getenv("APS5_TRACE_DRAW_PROGRAMS") != nullptr;
+    if (tracePrograms) {
+        std::vector<DrawProgramTraceEntry> identities;
+        identities.reserve(programs.size());
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            identities.push_back({programs[i].binary.stage, roles[i], programs[i].snapshot->codeAddress, programs[i].binary.codeAddress});
+        }
+        const auto line = FormatDrawProgramTrace(submission.serial, submission.queue, identities);
+        std::fprintf(stderr, "%s\n", line.c_str());
+    }
     phaseTiming.Phase(DrawRowDecode);
 
     const auto locate = [&](std::uint32_t location) -> std::optional<std::pair<std::size_t, std::size_t>> {
@@ -189,20 +212,20 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     std::vector<const ShaderRecompiler::RecompileResult*> programResults(programs.size(), nullptr);
     std::uint32_t pushCursorBytes = 0;
 
-    const auto stageProgram = [&](std::size_t i, std::uint32_t pushOffset) {
+    const auto stageProgram = [&](std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& parameters) {
         const auto& program = programs[i];
         const auto waveSize = program.binary.stage == Stage::Fragment ? graphics.stages.fragmentWaveSize : graphics.stages.vertexWaveSize;
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
         if (program.binary.stage != Stage::Fragment) {
             vertex.emplace();
-            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207)) | graphics.layerExports;
+            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports;
         }
         const ShaderRecompiler::RecompileRequest request{
             program.binary,
             {waveSize, program.firstUserSgpr, program.userData, std::nullopt, program.binary.stage == Stage::Fragment ? std::optional(pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)},
             localDevice->Target(),
             {0, 0, pushOffset, (graphics.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : graphics.stages.tessellation && pushOffset < Graphics::PipelinePushSlotBytes ? ShaderRecompiler::TessellationLevelPushOffsetBytes : Graphics::PipelinePushSlotBytes) - pushOffset % Graphics::PipelinePushSlotBytes},
-            ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}}
+            ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {parameters.indexAddress, parameters.indexCount, parameters.indexSize, parameters.instanceCount}}
         };
         auto key = ShaderRecompiler::RecompileCacheKey::ContextHash(request);
         const auto mix = [&](std::uint64_t value) {
@@ -212,6 +235,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         mix(program.binary.codeAddress);
         mix(reinterpret_cast<std::uintptr_t>(program.snapshot.get()));
         mix(program.codeOffset);
+        mix(reinterpret_cast<std::uintptr_t>(program.tailContinuation.get()));
         mix(request.layout.descriptorSet);
         mix(request.layout.firstBinding);
         mix(request.layout.pushConstantOffsetBytes);
@@ -243,7 +267,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 break;
             }
         }
-        stagePrograms[i] = stageProgram(i, pushCursorBytes);
+        stagePrograms[i] = stageProgram(i, pushCursorBytes, drawParameters);
         phaseTiming.Phase(DrawRowRecompile);
         stageResults[i] = runTimeResult(*stagePrograms[i], program.userData, program.binary.codeAddress);
         phaseTiming.Phase(DrawRowKeyLookupValidate);
@@ -349,6 +373,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             patch(baseVertexWord, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
             patch(startInstanceWord, arguments.firstInstance);
             patch(drawIndexWord, record);
+            if (graphics.stages.tessellation) {
+                for (std::size_t i = 0; i < programs.size(); ++i) {
+                    if (programs[i].binary.stage == Stage::TessellationControl || programs[i].binary.stage == Stage::TessellationEvaluation) patched.insert(i);
+                }
+            }
             Pm4::DrawParameters direct{0, arguments.count, 0, arguments.instances, drawParameters.flags, drawParameters.indexed, 0, 0};
             if (drawParameters.indexed) {
                 if (arguments.firstVertexOrIndex >= drawParameters.indexCount) continue;
@@ -365,6 +394,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             for (const auto programIndex : patched) {
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
+                if (programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation) stagePrograms[programIndex] = stageProgram(programIndex, pushOffsets[programIndex], direct);
                 result = *runTimeResult(*stagePrograms[programIndex], programs[programIndex].userData, programs[programIndex].binary.codeAddress);
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }

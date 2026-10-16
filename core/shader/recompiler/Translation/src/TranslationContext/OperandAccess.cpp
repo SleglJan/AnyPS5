@@ -450,9 +450,9 @@ IrU32 TranslationContext::readScalarCode(std::uint32_t code) {
             return mask[code - 126u];
         }
         case 235u:
-        case 237u: return IrU32(ir.Constant(0u));
         case 236u:
-        case 238u: return IrU32(ir.Constant(0xffffffffu));
+        case 237u:
+        case 238u: return readRawU32(DecodeRdnaScalarSource(code, 0u));
         default: return IrU32(ir.Constant(0u));
     }
 }
@@ -484,9 +484,9 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
             return IrU32(ir.Select(ir.IEqual(mask.Value(), zero.Value()), ir.Constant(1u), zero.Value()));
         }
         case RdnaOperandKind::SrcSharedBase:
-        case RdnaOperandKind::SrcPrivateBase: return IrU32(ir.Constant(0u));
         case RdnaOperandKind::SrcSharedLimit:
-        case RdnaOperandKind::SrcPrivateLimit: return IrU32(ir.Constant(0xffffffffu));
+        case RdnaOperandKind::SrcPrivateBase:
+        case RdnaOperandKind::SrcPrivateLimit: return IrU32(ir.Constant(static_cast<std::uint32_t>(RdnaApertureSourceValue(operand))));
         default: throw std::runtime_error("TranslationContext::readRawU32 invalid decoded operand used as a raw U32 source");
     }
 }

@@ -18,7 +18,7 @@ using DepthFastClearHarness::Surface;
 using DepthFastClearHarness::Width;
 
 TestGuest::Array<float, Width * Height * 2> Depth;
-TestGuest::Array<std::uint32_t, 1024> Htile;
+TestGuest::Array<std::uint32_t, HtileBytes / 4u> Htile;
 TestGuest::Array<std::uint32_t, 4> FillValue;
 constexpr std::array<std::uint32_t, 9> MemoryValueFillKernel{0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u};
 

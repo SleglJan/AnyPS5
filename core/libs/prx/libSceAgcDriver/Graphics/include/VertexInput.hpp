@@ -3,6 +3,10 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <algorithm>
+#include <atomic>
+#include <list>
+#include <mutex>
+#include <unordered_map>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -65,4 +69,3 @@ inline std::vector<std::uint32_t> MeshRestartTable(std::span<const std::byte> in
 }
 
 #endif
-

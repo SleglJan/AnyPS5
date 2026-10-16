@@ -125,8 +125,8 @@ static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) 
 static void FreeGuestStack(PthreadPrivate* thread) {
     if (thread->guestStack == nullptr) return;
     void* const mapping = thread->guestStack;
-    DoMunmap(thread->guestStack, thread->guestStackBytes);
     UnregisterGuestStackMapping(mapping);
+    DoMunmap(thread->guestStack, thread->guestStackBytes);
     thread->guestStack = nullptr;
     thread->guestStackBytes = 0;
 }
@@ -152,8 +152,8 @@ static void ReapRetiredStacks() {
         }
     }
     for (const auto& stack : ready) {
-        DoMunmap(stack.address, stack.bytes);
         UnregisterGuestStackMapping(stack.address);
+        DoMunmap(stack.address, stack.bytes);
     }
 }
 
@@ -310,8 +310,11 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     const KernelCpumask inherited = parent ? parent->affinity.load(std::memory_order_relaxed) : registry.processAffinity;
     affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
+    const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
     const int inheritedPolicy = parent ? parent->schedPolicy.load(std::memory_order_relaxed) : schedPolicy.load(std::memory_order_relaxed);
-    schedPolicy.store(attr && attr->_inheritsched == ExplicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
+    schedPolicy.store(explicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
+    const int attrPriority = attr ? attr->_schedpriority : DEFAULT_THREAD_PRIORITY;
+    priority.store(explicitSched || !parent ? attrPriority : parent->priority.load(std::memory_order_relaxed), std::memory_order_relaxed);
     if (registry.nextThread > static_cast<int>(CPU_CLOCK_ID_MASK))
         throw std::runtime_error("Guest thread CPU clock identifiers are exhausted");
     cpuClockThread = registry.nextThread++;
@@ -702,7 +705,6 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     p->_detached = detached;
     p->stackSize = attr ? (*attr)->_stacksize : DEFAULT_STACK_SIZE;
     if (attr) {
-        p->priority.store((*attr)->_schedpriority, std::memory_order_relaxed);
         if ((*attr)->_inheritsched != GUEST_INHERIT_SCHED)
             p->scope = (*attr)->_scope;
         else if (CurrentGuestState().current)

@@ -1,5 +1,6 @@
 #include <mutex>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cerrno>
 #include <cfenv>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <xmmintrin.h>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -18,7 +20,7 @@ namespace {
 template<typename TFloat>
 std::int64_t RoundToInt64(TFloat value) {
     const TFloat rounded = std::round(value);
-    if (!(rounded >= static_cast<TFloat>(INT64_MIN) && rounded < static_cast<TFloat>(INT64_MAX))) {
+    if (!(rounded >= static_cast<TFloat>(INT64_MIN) && rounded < -static_cast<TFloat>(INT64_MIN))) {
         std::feraiseexcept(FE_INVALID);
         return INT64_MIN;
     }
@@ -300,7 +302,11 @@ float APS5_VABI log1pf_nid_postfix(float x) { return std::log1p(x); }
 double APS5_VABI expm1_nid_postfix(double x) { return std::expm1(x); }
 float APS5_VABI expm1f_nid_postfix(float x) { return std::expm1(x); }
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
-double APS5_VABI lgamma_nid_postfix(double x) { return std::lgamma(x); }
+double APS5_VABI lgamma_nid_postfix(double x) {
+    const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
+    return std::lgamma(x);
+}
 
 float APS5_VABI sinf_nid_postfix(float x) { return std::sin(x); }
 float APS5_VABI cosf_nid_postfix(float x) { return std::cos(x); }
@@ -498,6 +504,13 @@ int APS5_VABI __signbitl_nid_postfix(long double x) {
     return std::signbit(x) ? 1 : 0;
 }
 
+int APS5_VABI __isfinitel_nid_postfix(long double x) {
+    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64 && std::numeric_limits<long double>::max_exponent == 16384 && std::endian::native == std::endian::little, "guest long double requires little-endian x87 extended precision storage");
+    std::uint16_t exponent;
+    std::memcpy(&exponent, reinterpret_cast<const std::uint8_t*>(&x) + 8, sizeof(exponent));
+    return (exponent & 0x7fffu) != 0x7fffu;
+}
+
 static std::mutex g_randLock;
 static std::uint32_t g_randState = 1;
 
@@ -537,6 +550,22 @@ double APS5_VABI _Sinh_nid_postfix(double x, double y) {
 
 int APS5_VABI _Fltrounds_nid_postfix(void) {
     return SonyFltrounds();
+}
+
+struct GuestFloatingPointEnvironment {
+    std::uint32_t control;
+    std::uint32_t status;
+    std::uint32_t tag;
+    unsigned char other[16];
+    std::uint32_t mxcsr;
+};
+static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && offsetof(GuestFloatingPointEnvironment, mxcsr) == 28);
+
+int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment) {
+    if (environment == nullptr) throw std::invalid_argument("fegetenv: null environment");
+    asm volatile("fnstenv %0\n\tfldcw %0" : "+m"(*environment));
+    environment->mxcsr = _mm_getcsr();
+    return 0;
 }
 
 union SonyDconst {

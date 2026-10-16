@@ -24,6 +24,7 @@ constexpr std::uint32_t spiPsInputCntl0 = 0x191;
 constexpr std::uint32_t spiPsInputEna = 0x1B3;
 constexpr std::uint32_t spiPsInputAddr = 0x1B4;
 constexpr std::uint32_t spiPsInControl = 0x1B6;
+constexpr std::uint32_t spiBarycCntl = 0x1B8;
 constexpr std::uint32_t dbShaderControl = 0x203;
 constexpr std::uint32_t spiShaderColFormat = 0x1C5;
 constexpr std::uint32_t defaultPixelInputs = 0x2u;
@@ -149,8 +150,6 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool depthExportEnable = (shaderControl & 0x1u) != 0;
     const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
     const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0;
-    const bool depthBeforeShader = ((shaderControl >> 12u) & 0x1u) != 0;
-    const auto zOrder = (shaderControl >> 4u) & 0x3u;
     const auto aaMask = readIfWritten(context, 0x30e, RegisterBank::Context, 0xffffffffu);
     const auto aaMaskBottom = readIfWritten(context, 0x30f, RegisterBank::Context, 0xffffffffu);
     const auto quadPixelMask = static_cast<std::uint8_t>((aaMask & 1u) | (((aaMask >> 16u) & 1u) << 1u) | ((aaMaskBottom & 1u) << 2u) | (((aaMaskBottom >> 16u) & 1u) << 3u));
@@ -167,6 +166,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .posZ = loaded(PixelInput::PositionZ),
         .posW = loaded(PixelInput::PositionW),
         .frontFace = loaded(PixelInput::FrontFace),
+        .frontFaceAllBits = loaded(PixelInput::FrontFace) && ((read(context, spiBarycCntl, RegisterBank::Context) >> 24u) & 0x1u) != 0,
         .ancillary = loaded(PixelInput::Ancillary),
         .sampleShading = loaded(PixelInput::PerspectiveSample) && loaded(PixelInput::LinearSample),
         .noPerspective = loaded(PixelInput::LinearCenter),
@@ -174,7 +174,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .pixelKillEnable = pixelKillEnable,
         .depthExportEnable = depthExportEnable,
         .sampleMaskExportEnable = sampleMaskExportEnable,
-        .earlyZ = depthBeforeShader || ((zOrder & 1u) != 0u && !pixelKillEnable && !depthExportEnable && !sampleMaskExportEnable && !stencilRefExportEnable),
+        .earlyZ = PixelEarlyZ(shaderControl),
         .executeOnNoop = ((shaderControl >> 10u) & 0x1u) != 0,
         .conservativeZExport = static_cast<ShaderRecompiler::ConservativeZExport>(conservativeZExport),
         .orderedPixelShader = ((shaderControl >> 16u) & 0x1u) != 0,
@@ -183,6 +183,16 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .stencilRefExportEnable = stencilRefExportEnable,
         .quadPixelMask = quadPixelMask
     };
+}
+
+bool PixelEarlyZ(std::uint32_t shaderControl) {
+    const bool pixelKillEnable = ((shaderControl >> 6u) & 0x1u) != 0;
+    const bool depthExportEnable = (shaderControl & 0x1u) != 0;
+    const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
+    const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0;
+    const bool depthBeforeShader = ((shaderControl >> 12u) & 0x1u) != 0;
+    const auto zOrder = (shaderControl >> 4u) & 0x3u;
+    return depthBeforeShader || ((zOrder & 1u) != 0u && !pixelKillEnable && !depthExportEnable && !sampleMaskExportEnable && !stencilRefExportEnable);
 }
 
 ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<DecodeRead>* reads, bool staticAbi, std::uint32_t hiddenUserWords) {

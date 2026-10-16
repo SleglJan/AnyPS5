@@ -8,6 +8,9 @@
 
 namespace ShaderRecompiler {
 
+inline constexpr std::uint32_t SharedApertureHigh = 0x80000000u;
+inline constexpr std::uint32_t PrivateApertureHigh = 0x70000000u;
+
 class RdnaInstructionDecoder {
 public:
     [[nodiscard]] RdnaProgram Decode(std::span<const std::uint32_t> code) const;
@@ -24,6 +27,7 @@ void LinkRdnaLiterals(RdnaProgram& program, std::span<const std::uint32_t> progr
 RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCounter);
 RdnaOperand DecodeRdnaScalarDestination(std::uint32_t code, std::uint32_t programCounter);
 RdnaOperand DecodeRdnaVectorGpr(std::uint32_t reg);
+std::uint64_t RdnaApertureSourceValue(const RdnaOperand& operand);
 void ReadRdnaLiteralOperands(std::span<const std::uint32_t> code, std::uint32_t wordIndex, RdnaInstruction& instruction);
 void SetRdnaRawWords(RdnaInstruction& instruction, std::span<const std::uint32_t> code, std::uint32_t wordIndex, std::uint32_t wordCount);
 void SetRdnaUnsupported(RdnaInstruction& instruction, RdnaInstructionFamily family, std::uint32_t opcodeId, const char* reason);

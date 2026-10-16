@@ -551,6 +551,7 @@ private:
         std::vector<Read> reads;
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
+        std::uint64_t traceId = 0;
         bool submitted = false;
         std::uint32_t stream = 0;
         std::uint64_t value = 0;
@@ -754,8 +755,9 @@ private:
     // `source` is the CountSync source the wait is attributed to.
     void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
     void release(Batch& batch) noexcept;
+    void discard(std::unique_ptr<Batch> batch) noexcept;
+    void removeLabels(Batch& batch);
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
-    // The first noted read of `batch` overlapping [address, end), or null.
     static const Batch::Read* readOverlap(const Batch& batch, std::uint64_t address, std::uint64_t end);
     bool signaled(const Batch& batch) const;
     // Rebuilds the lock-free snapshot of pending writes from open, inFlight and finishing.

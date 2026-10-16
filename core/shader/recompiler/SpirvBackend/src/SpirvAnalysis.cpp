@@ -19,8 +19,11 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     case IrOpcode::DppUpdateU32:
     case IrOpcode::SwizzleU32:
     case IrOpcode::BpermuteU32:
+    case IrOpcode::PermuteU32:
     case IrOpcode::Permlane16U32:
     case IrOpcode::ReadLane:
+    case IrOpcode::ReadFirstLane:
+    case IrOpcode::Ballot:
     case IrOpcode::WqmU64:
         return true;
     case IrOpcode::ImageSampleImplicitLod:
@@ -74,6 +77,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::DataAppend:
     case IrOpcode::DataConsume:
     case IrOpcode::LoadVectorWindow:
+    case IrOpcode::DataOrderedCount:
         return true;
     case IrOpcode::GetBuiltin: {
         const auto* kind = value.Argument(0)->Resolve();
@@ -249,11 +253,17 @@ std::uint32_t FunctionLdsDwords(const IrProgram& program) {
     std::uint64_t needed = 0;
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
-            if (SharedAccessOf(inst->Opcode()) == SharedAccess::None) continue;
+            const auto access = SharedAccessOf(inst->Opcode());
+            if (access == SharedAccess::None) continue;
             const auto index = inst->Flags<MemoryFlags>().index;
             if (index >= program.Resources().memoryInfo.size()) return FunctionLdsDwordLimit;
             const auto& memory = program.Resources().memoryInfo[index];
             if (memory.kind != ResourceKind::Lds) continue;
+            if (access == SharedAccess::Append || access == SharedAccess::Consume) {
+                needed = std::max<std::uint64_t>(needed, (std::uint64_t{memory.offset} >> 2u) + 1u);
+                if (needed >= FunctionLdsDwordLimit) return FunctionLdsDwordLimit;
+                continue;
+            }
             const auto dwords = SharedAccessDwords(inst->Opcode());
             if (dwords == 0u || inst->ArgumentCount() == 0) return FunctionLdsDwordLimit;
             const auto address = bound.Of(inst->Argument(0));
