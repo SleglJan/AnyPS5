@@ -3127,20 +3127,16 @@ void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::u
 void Recorder::publishPendingWrites() const {
     if (activeRecorder != this) return;
     const auto started = DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    auto merged = std::make_shared<WriteRanges>();
-    forEachOpen([&](const Batch& batch) { merged->insert(merged->end(), batch.writes.begin(), batch.writes.end()); });
-    for (const auto& batch : inFlight) merged->insert(merged->end(), batch->writes.begin(), batch->writes.end());
-    for (const auto* batch : finishing) merged->insert(merged->end(), batch->writes.begin(), batch->writes.end());
-    std::sort(merged->begin(), merged->end());
-    std::size_t out = 0;
-    for (const auto& [begin, end] : *merged) {
-        if (out != 0 && begin <= (*merged)[out - 1].second) (*merged)[out - 1].second = std::max((*merged)[out - 1].second, end);
-        else (*merged)[out++] = {begin, end};
-    }
-    merged->resize(out);
-    pendingWrites.store(std::move(merged), std::memory_order_release);
+    std::vector<PendingWriteRanges::Source> sources;
+    sources.reserve(opens.size() + inFlight.size() + finishing.size());
+    const auto add = [&](const Batch& batch) { sources.push_back({&batch, batch.writes, batch.writeNotes}); };
+    forEachOpen(add);
+    for (const auto& batch : inFlight) add(*batch);
+    for (const auto* batch : finishing) add(*batch);
+    auto published = publishedWrites.Publish(sources, pendingWrites.load(std::memory_order_acquire));
+    pendingWrites.store(std::move(published.snapshot), std::memory_order_release);
     publishGeneration.fetch_add(1, std::memory_order_release);
-    ++snapshotRebuilds;
+    if (published.rebuilt) ++snapshotRebuilds;
     if (DrawProfiled()) snapshotRebuildMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 }
 

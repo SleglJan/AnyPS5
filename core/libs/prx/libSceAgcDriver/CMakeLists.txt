@@ -2656,3 +2656,18 @@ endif()
 
 target_include_directories(agc_driver_draw_input_in_place_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_include_directories(agc_driver_sampled_texture_gather_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
+add_test_executable(agc_pending_write_ranges_tests EXCLUDE_FROM_ALL tests/PendingWriteRanges.cpp)
+target_include_directories(agc_pending_write_ranges_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_pending_write_ranges_tests PRIVATE libc)
+set_target_properties(agc_pending_write_ranges_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_pending_write_ranges_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_pending_write_ranges_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_pending_write_ranges COMMAND agc_pending_write_ranges_tests)
+    set_tests_properties(agc_pending_write_ranges PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_pending_write_ranges PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
