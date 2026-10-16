@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "BdaAbi.hpp"
+#include <optional>
 #include <vector>
 #include <array>
 #include <functional>
@@ -57,6 +58,15 @@ bool WaveUniformDescriptor(SpirvEmitterState& state, const std::vector<const IrV
 std::uint32_t BroadcastFirstLane(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value);
 std::vector<const IrValue*> InvalidFormatInputs(const SpirvEmitterState& state, const IrValue& inst);
 void EmitInvalidFormatStop(SpirvValueEmitContext& ctx, const IrValue& inst, const IrValue& anchor);
+struct BdaSegmentValues {
+    std::uint32_t begin = 0;
+    std::uint32_t end = 0;
+    std::uint32_t delta = 0;
+};
+BdaCacheProbe ProbeBdaSegment(SpirvEmitterState& state, const BdaSegmentValues& segment, std::uint32_t address, std::uint32_t bytes);
+std::vector<const IrValue*> ResolvedBufferInputs(const SpirvEmitterState& state, const IrValue& inst);
+void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst);
 
 }
 

@@ -560,20 +560,26 @@ bool BdaVectorCacheAvailable(const SpirvEmitterState& state) {
     return state.bdaVectorCache[0] != 0u;
 }
 
-BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes) {
+BdaCacheProbe ProbeBdaSegment(SpirvEmitterState& state, const BdaSegmentValues& segment, std::uint32_t address, std::uint32_t bytes) {
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
-    const auto load = [&](std::uint32_t variable) {
-        const auto value = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, u64, value, variable);
-        return value;
-    };
     const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
     const auto end = Binary(state, spv::OpIAdd, u64, address, bytes);
-    const auto device = Binary(state, spv::OpIAdd, u64, address, load(state.bdaVectorCache[2]));
-    const auto inside = both(Binary(state, spv::OpULessThanEqual, boolean, load(state.bdaVectorCache[0]), address), Binary(state, spv::OpULessThanEqual, boolean, end, load(state.bdaVectorCache[1])));
+    const auto device = Binary(state, spv::OpIAdd, u64, address, segment.delta);
+    const auto inside = both(Binary(state, spv::OpULessThanEqual, boolean, segment.begin, address), Binary(state, spv::OpULessThanEqual, boolean, end, segment.end));
     const auto aligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, device, BdaConstant(state, 3u)), BdaConstant(state, 0u));
     return {both(both(Binary(state, spv::OpULessThan, boolean, address, end), inside), aligned), device};
+}
+
+BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes) {
+    const auto load = [&](std::uint32_t variable) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeScalarU64(state), value, variable);
+        return value;
+    };
+    const auto begin = load(state.bdaVectorCache[0]);
+    const auto end = load(state.bdaVectorCache[1]);
+    return ProbeBdaSegment(state, {begin, end, load(state.bdaVectorCache[2])}, address, bytes);
 }
 
 void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address) {
@@ -686,6 +692,113 @@ void EmitInvalidFormatStop(SpirvValueEmitContext& ctx, const IrValue& inst, cons
     });
     StopBdaInvocationIf(state, stops);
     state.deviceImageLookups.emplace(std::move(key), 0u);
+}
+
+namespace {
+
+constexpr std::uint64_t ResolvedBufferTag = ~std::uint64_t{0};
+
+bool RawDwordBufferRead(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::LoadBufferU32:
+    case IrOpcode::LoadBufferU32x2:
+    case IrOpcode::LoadBufferU32x3:
+    case IrOpcode::LoadBufferU32x4:
+        return true;
+    default:
+        return false;
+    }
+}
+
+const IrValue* ResolvedBufferHandle(const SpirvEmitterState& state, const IrValue& inst) {
+    const bool raw = RawDwordBufferRead(inst.Opcode());
+    if ((!raw && inst.Opcode() != IrOpcode::ReadConstBuffer) || inst.ArgumentCount() == 0u) return nullptr;
+    const auto* handle = inst.Argument(0)->Resolve();
+    if (handle == nullptr || handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return nullptr;
+    const auto& infos = state.program.Resources().memoryInfo;
+    const auto index = inst.Flags<MemoryFlags>().index;
+    if (index >= infos.size()) return nullptr;
+    const auto& memory = infos[index];
+    if (!memory.gpuDescriptor || memory.planningOnly) return nullptr;
+    if (raw) return memory.kind == ResourceKind::Buffer && !memory.formatted && memory.dataBits == 32u ? handle : nullptr;
+    return memory.kind == ResourceKind::ScalarBuffer ? handle : nullptr;
+}
+
+std::vector<std::uint64_t> ResolvedBufferKey(const IrValue& handle) {
+    std::vector<std::uint64_t> key{ResolvedBufferTag};
+    for (std::uint32_t word = 0; word < 2u; ++word) {
+        const auto* resolved = handle.Argument(word)->Resolve();
+        key.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
+        key.push_back(resolved->HasImmediate() ? resolved->ImmediateU32() : 0u);
+    }
+    return key;
+}
+
+std::uint32_t SplitU64(SpirvEmitterState& state, std::uint32_t value, bool high) {
+    const auto u64 = TypeScalarU64(state);
+    return Unary(state, spv::OpUConvert, TypeU32(state), high ? Binary(state, spv::OpShiftRightLogical, u64, value, BdaConstant(state, 32u)) : value);
+}
+
+std::uint32_t JoinU64(SpirvEmitterState& state, std::uint32_t low, std::uint32_t high) {
+    const auto u64 = TypeScalarU64(state);
+    return Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, low), Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, high), BdaConstant(state, 32u)));
+}
+
+std::uint32_t Extract(SpirvEmitterState& state, std::uint32_t type, std::uint32_t composite, std::uint32_t index) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, type, value, composite, index);
+    return value;
+}
+
+}
+
+std::vector<const IrValue*> ResolvedBufferInputs(const SpirvEmitterState& state, const IrValue& inst) {
+    const auto* handle = ResolvedBufferHandle(state, inst);
+    if (handle == nullptr || !state.program.Info().usesDma || BdaByteReadsForced()) return {};
+    return {handle->Argument(0), handle->Argument(1)};
+}
+
+void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto* handle = ResolvedBufferHandle(state, inst);
+    if (handle == nullptr || state.bdaSegmentFunction == 0u) return;
+    std::vector<const IrValue*> words{handle->Argument(0), handle->Argument(1)};
+    for (const auto* word : words) {
+        const auto* resolved = word->Resolve();
+        if (!resolved->HasImmediate() && !ctx.definitions.contains(resolved)) return;
+    }
+    auto key = ResolvedBufferKey(*handle);
+    if (state.deviceImageLookups.contains(key)) return;
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto type = SegmentType(state);
+    const auto high = Binary(state, spv::OpBitwiseAnd, u32, ctx.Def(words[1]), ConstantU32(state, 0xffffu));
+    auto segment = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, type, segment, state.bdaSegmentFunction, JoinU64(state, ctx.Def(words[0]), high));
+    if (WaveUniformDescriptor(state, words)) {
+        std::array<std::uint32_t, 3> fields{};
+        for (std::uint32_t field = 0; field < 3u; ++field) fields[field] = Extract(state, u64, segment, field);
+        const auto bounds = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), bounds, SplitU64(state, fields[0], false), SplitU64(state, fields[0], true), SplitU64(state, fields[1], false), SplitU64(state, fields[1], true));
+        const auto delta = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2u), delta, SplitU64(state, fields[2], false), SplitU64(state, fields[2], true));
+        const auto sharedBounds = BroadcastFirstLane(state, TypeU32Vector(state, 4u), bounds);
+        const auto sharedDelta = BroadcastFirstLane(state, TypeU32Vector(state, 2u), delta);
+        const auto part = [&](std::uint32_t vector, std::uint32_t index) { return Extract(state, u32, vector, index); };
+        segment = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, type, segment, JoinU64(state, part(sharedBounds, 0u), part(sharedBounds, 1u)), JoinU64(state, part(sharedBounds, 2u), part(sharedBounds, 3u)), JoinU64(state, part(sharedDelta, 0u), part(sharedDelta, 1u)));
+    }
+    state.deviceImageLookups.emplace(std::move(key), segment);
+}
+
+std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto* handle = ResolvedBufferHandle(state, inst);
+    if (handle == nullptr || state.module.InHelperFunction()) return std::nullopt;
+    const auto found = state.deviceImageLookups.find(ResolvedBufferKey(*handle));
+    if (found == state.deviceImageLookups.end()) return std::nullopt;
+    const auto u64 = TypeScalarU64(state);
+    return BdaSegmentValues{Extract(state, u64, found->second, 0u), Extract(state, u64, found->second, 1u), Extract(state, u64, found->second, 2u)};
 }
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {
