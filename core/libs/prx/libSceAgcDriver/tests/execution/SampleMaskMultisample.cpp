@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -26,8 +27,8 @@ constexpr std::uint32_t Samples = 4;
 constexpr std::uint32_t WaveSize = 64;
 constexpr std::uint32_t EarlyZThenLateZ = 0x10u;
 constexpr Masks Full{0xf, 0xf, 0xf, 0xf};
-alignas(256) std::array<std::uint32_t, Width * Height * Samples> Invocations{};
-alignas(256) std::array<std::byte, 256 * 1024> DepthMemory{};
+TestGuest::Array<std::uint32_t, Width * Height * Samples> Invocations;
+TestGuest::Array<std::byte, 256 * 1024> DepthMemory;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -41,10 +42,10 @@ alignas(256) constexpr std::array<std::uint32_t, 17> SampleStoreCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 3> NullExportCode{0xf8001890, 0x00000000, 0xbf810000};
 
-using Triangle = std::array<std::array<float, 4>, 3>;
-alignas(256) constexpr Triangle Far{{{-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}}};
-alignas(256) constexpr Triangle Probe{{{-1.0f, -1.0f, 0.375f, 1.0f}, {3.0f, -1.0f, 0.375f, 1.0f}, {-1.0f, 3.0f, 0.375f, 1.0f}}};
-alignas(256) constexpr Triangle Middle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
+using Triangle = TestGuest::Array<std::array<float, 4>, 3>;
+Triangle Far{{-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f}};
+Triangle Probe{{-1.0f, -1.0f, 0.375f, 1.0f}, {3.0f, -1.0f, 0.375f, 1.0f}, {-1.0f, 3.0f, 0.375f, 1.0f}};
+Triangle Middle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -107,7 +108,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Pass& pass) {
     pixel.quadPixelMask = AgcDriver::Graphics::QuadPixelMask(state);
     pixel.quadSampleMask = AgcDriver::Graphics::QuadSampleMasks(state);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
-    const auto invocations = BufferDescriptor(Invocations.data(), 0u, static_cast<std::uint32_t>(sizeof(Invocations)));
+    const auto invocations = BufferDescriptor(Invocations.data(), 0u, static_cast<std::uint32_t>(decltype(Invocations)::ByteSize));
     std::copy(invocations.begin(), invocations.end(), pixelUserData.begin());
     const std::span<const std::uint32_t> code = pass.perSample ? std::span<const std::uint32_t>(SampleStoreCode) : std::span<const std::uint32_t>(NullExportCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
