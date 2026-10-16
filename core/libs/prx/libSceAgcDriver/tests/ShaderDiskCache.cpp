@@ -76,7 +76,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.bdaAbiVersion == right.bdaAbiVersion && left.bdaWrites == right.bdaWrites, prefix + "BDA ABI version or page table stores differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
-    require(left.dispatchThreadLimitDword == right.dispatchThreadLimitDword && left.linearStoreBaseDword == right.linearStoreBaseDword, prefix + "dispatch limit or linear store base dword differs");
+    require(left.dispatchThreadLimitDword == right.dispatchThreadLimitDword, prefix + "dispatch limit dword differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
     require(left.hostSubgroupSize == right.hostSubgroupSize, prefix + "host subgroup size differs");
     require(left.registrationModule == right.registrationModule, prefix + "registration module flags differ");
@@ -258,7 +258,6 @@ CompiledVariant sampleVariant() {
     info.bindings.pushDataStartDword = 2;
     info.bindings.memoryOffsetDword = 1;
     info.bindings.memoryOffsetCount = 5;
-    info.bindings.linearStoreBase = true;
     info.bindings.stencilReferenceDword = 23u;
     info.bindings.userDataRegisters = {4, 5, 9};
     info.bindings.descriptors = {{DescriptorBindingKind::Buffers, {0, 1}}, {DescriptorBindingKind::FlattenedSrt, {}}};

@@ -759,7 +759,6 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.bufferAddressDword = bindings.layout.BufferAddressDword();
     result.samplerSlotDword = bindings.layout.SamplerSlotDword();
     result.dispatchThreadLimitDword = bindings.layout.DispatchThreadLimitDword();
-    result.linearStoreBaseDword = bindings.layout.linearStoreBase ? bindings.layout.LinearStoreBaseDword() : NoLinearStoreBaseDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
@@ -1071,7 +1070,6 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .bufferAddressDword = artifact.bufferAddressDword,
         .samplerSlotDword = artifact.samplerSlotDword,
         .dispatchThreadLimitDword = artifact.dispatchThreadLimitDword,
-        .linearStoreBaseDword = artifact.linearStoreBaseDword,
         .shaderDataDwords = artifact.shaderDataDwords,
         .imageMetadataDword = artifact.imageMetadataDword,
         .runtimeImageCount = artifact.runtimeImageCount,

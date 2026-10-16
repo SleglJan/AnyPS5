@@ -247,7 +247,6 @@ public:
     static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
     void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
-    void PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }

@@ -314,48 +314,10 @@ bool byteStores(SpirvEmitterState& state) {
     return true;
 }
 
-void stagedWrite(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t address, std::uint32_t value, std::uint32_t bits, std::uint32_t enabled) {
-    auto& state = context.state;
-    const auto u32 = TypeU32(state);
-    const auto u64 = TypeScalarU64(state);
-    const auto boolean = TypeBool(state);
-    const auto relative = Binary(state, spv::OpISub, u64, address, resource.base);
-    const auto elementEnd = Binary(state, spv::OpIMul, u64, Binary(state, spv::OpIAdd, u64, Unary(state, spv::OpUConvert, u64, resource.index), BdaConstant(state, 1u)), Unary(state, spv::OpUConvert, u64, resource.stride));
-    const auto indexChecked = Binary(state, spv::OpULessThan, boolean, field(state, resource.word3, 28u, 2u), ConstantU32(state, 2u));
-    const auto indexBounded = Binary(state, spv::OpLogicalOr, boolean, Unary(state, spv::OpLogicalNot, boolean, indexChecked), Binary(state, spv::OpULessThan, boolean, resource.index, resource.records));
-    const auto within = both(state, indexBounded, Binary(state, spv::OpULessThanEqual, boolean, Binary(state, spv::OpIAdd, u64, relative, BdaConstant(state, bits / 8u)), elementEnd));
-    EmitIfCondition(state, both(state, enabled, within), [&] {
-        const auto physical = Binary(state, spv::OpIAdd, u64, state.linearStoreStaging, relative);
-        const bool coherent = context.Memory(instruction).coherent || state.requirements.coherentBuffers;
-        const auto mask = static_cast<std::uint32_t>(spv::MemoryAccessAlignedMask) | (coherent ? static_cast<std::uint32_t>(spv::MemoryAccessVolatileMask) : 0u);
-        const auto storeBytes = [&] {
-            const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
-            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
-                const auto pointer = state.module.AllocateId();
-                state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType), pointer, byte == 0u ? physical : Binary(state, spv::OpIAdd, u64, physical, BdaConstant(state, byte)));
-                const auto shifted = byte == 0u ? value : Binary(state, spv::OpShiftRightLogical, u32, value, ConstantU32(state, byte * 8u));
-                state.module.AddFunction(spv::OpStore, pointer, Unary(state, spv::OpUConvert, byteType, shifted), mask, 1u);
-            }
-        };
-        if (bits != 32u) {
-            storeBytes();
-            return;
-        }
-        const auto aligned = Binary(state, spv::OpIEqual, boolean, Binary(state, spv::OpBitwiseAnd, u64, physical, BdaConstant(state, 3u)), BdaConstant(state, 0u));
-        EmitIfCondition(state, aligned, [&] {
-            const auto pointer = state.module.AllocateId();
-            state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, physical);
-            state.module.AddFunction(spv::OpStore, pointer, value, mask, 4u);
-        });
-        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, aligned), storeBytes);
-    });
-}
-
 void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t address, std::uint32_t value, std::uint32_t bits = 32u) {
     auto& state = context.state;
     if (context.Memory(instruction).gpuDescriptor) {
-        if (state.linearStoreStaging != 0u) stagedWrite(context, instruction, resource, address, value, bits, ConstantBool(state, true));
-        else EmitBdaWrite(context, instruction, address, value, bits, ConstantBool(state, true));
+        EmitBdaWrite(context, instruction, address, value, bits, ConstantBool(state, true));
         return;
     }
     const auto access = directAccess(context, instruction, resource, true);
@@ -831,8 +793,7 @@ void rawStore(SpirvValueEmitContext& context, const IrValue& instruction, std::u
         const auto values = storeValues(state, data, components);
         for (std::uint32_t component = 0; component < components; ++component) {
             const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
-            if (memory.gpuDescriptor && state.linearStoreStaging != 0u) stagedWrite(context, instruction, resource, access.guest, values[component], memory.dataBits, access.inBounds);
-            else if (memory.gpuDescriptor) EmitBdaWrite(context, instruction, access.guest, values[component], memory.dataBits, access.inBounds);
+            if (memory.gpuDescriptor) EmitBdaWrite(context, instruction, access.guest, values[component], memory.dataBits, access.inBounds);
             else EmitIfCondition(state, access.inBounds, [&] { writeBuffer(context, instruction, resource, access.guest, values[component], memory.dataBits); });
         }
     });
@@ -1228,30 +1189,11 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
     if (request.components != components) context.Fail(instruction, "buffer store component count does not match its opcode");
     const auto dataType = TypeId(state, instruction.Argument(instruction.ArgumentCount() - 2u)->Type());
     if (dataType == 0u) context.Fail(instruction, "buffer store data has no SPIR-V type");
-    const auto store = [&](bool inlineOnly) {
-        static_cast<void>(emitAccess(context, instruction, request, active, 0u, 0u, {{dataType, storeData(context, instruction)}}, runtimeFormatted(instruction, memory), [&](const BufferValues& values, std::uint32_t enabled, std::span<const std::uint32_t> data) {
-            if (memory.formatted) return formattedAccess(context, instruction, components, true, enabled, values, data[0]);
-            rawStore(context, instruction, components, enabled, values, data[0]);
-            return 0u;
-        }, inlineOnly));
-    };
-    const auto& layout = state.program.Metadata().bindings;
-    if (!layout.linearStoreBase) {
-        store(false);
-        return;
-    }
-    if (!memory.gpuDescriptor) context.Fail(instruction, "stages a linear store through a descriptor that is not read at run time");
-    const auto u64 = TypeScalarU64(state);
-    const auto low = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, layout.LinearStoreBaseDword()));
-    const auto high = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, layout.LinearStoreBaseDword() + 1u));
-    const auto staging = Binary(state, spv::OpBitwiseOr, u64, low, Binary(state, spv::OpShiftLeftLogical, u64, high, ConstantU32(state, 32u)));
-    const auto staged = Binary(state, spv::OpINotEqual, TypeBool(state), staging, BdaConstant(state, 0u));
-    EmitIfCondition(state, staged, [&] {
-        state.linearStoreStaging = staging;
-        store(true);
-        state.linearStoreStaging = 0u;
-    });
-    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), staged), [&] { store(false); });
+    static_cast<void>(emitAccess(context, instruction, request, active, 0u, 0u, {{dataType, storeData(context, instruction)}}, runtimeFormatted(instruction, memory), [&](const BufferValues& values, std::uint32_t enabled, std::span<const std::uint32_t> data) {
+        if (memory.formatted) return formattedAccess(context, instruction, components, true, enabled, values, data[0]);
+        rawStore(context, instruction, components, enabled, values, data[0]);
+        return 0u;
+    }, false));
 }
 
 void DefineFormatCodecs(SpirvEmitterState& state) {

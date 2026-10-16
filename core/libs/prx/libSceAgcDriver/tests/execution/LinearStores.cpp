@@ -7,9 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
-#include <map>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -46,47 +44,6 @@ std::array<std::uint32_t, 4> Descriptor(const void* data, std::uint32_t stride, 
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | stride << 16u | (swizzle ? 1u << 31u : 0u), records, word3};
 }
 
-bool StagedStoreBranch(std::span<const std::uint32_t> words) {
-    std::map<std::uint32_t, std::string> names;
-    std::set<std::uint32_t> zero64;
-    std::set<std::uint32_t> staged;
-    std::set<std::uint32_t> physical;
-    std::map<std::uint32_t, std::uint32_t> wide;
-    std::uint32_t merge = 0;
-    std::uint32_t regionEnd = 0;
-    std::size_t stores = 0;
-    bool writesThroughTable = false;
-    bool found = false;
-    for (std::size_t cursor = 5; cursor < words.size();) {
-        const auto count = words[cursor] >> 16u;
-        const auto op = words[cursor] & 0xffffu;
-        if (count == 0u || cursor + count > words.size()) return false;
-        const auto* operands = words.data() + cursor + 1u;
-        if (op == 5u) names[operands[0]] = std::string(reinterpret_cast<const char*>(operands + 1), (count - 2u) * 4u).c_str();
-        if (op == 21u && operands[1] == 64u) wide[operands[0]] = 64u;
-        if (op == 43u && wide.contains(operands[0]) && count == 5u && operands[2] == 0u && operands[3] == 0u) zero64.insert(operands[1]);
-        if (op == 171u && (zero64.contains(operands[2]) || zero64.contains(operands[3]))) staged.insert(operands[1]);
-        if (op == 247u) merge = operands[0];
-        if (op == 248u && regionEnd != 0u && operands[0] == regionEnd) {
-            found = found || (stores != 0u && !writesThroughTable);
-            regionEnd = 0u;
-        }
-        if (op == 250u && regionEnd == 0u && staged.contains(operands[0])) {
-            regionEnd = merge;
-            stores = 0u;
-            writesThroughTable = false;
-        }
-        if (op == 120u) physical.insert(operands[1]);
-        if (regionEnd != 0u && op == 62u && physical.contains(operands[0])) ++stores;
-        if (regionEnd != 0u && op == 57u) {
-            const auto name = names[operands[2]];
-            writesThroughTable = writesThroughTable || name.starts_with("write_bda") || name.starts_with("get_bda_write_pointer") || name.starts_with("note_bda_write");
-        }
-        cursor += count;
-    }
-    return found;
-}
-
 ShaderRecompiler::RecompileResult Compiled(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 4>& target, const std::array<std::uint32_t, 4>& constants, std::uint32_t threadsY = 1u) {
     alignas(256) static std::array<std::uint32_t, 64> program{};
     std::copy(code.begin(), code.end(), program.begin());
@@ -107,17 +64,7 @@ ShaderRecompiler::RecompileResult Compiled(AgcDriver::VulkanDevice& device, std:
 }
 
 std::optional<ShaderRecompiler::LinearStore> Recognized(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 4>& target, const std::array<std::uint32_t, 4>& constants, std::uint32_t threadsY = 1u) {
-    const auto result = Compiled(device, code, target, constants, threadsY);
-    const bool reserved = result.linearStoreBaseDword != ShaderRecompiler::NoLinearStoreBaseDword;
-    Require(reserved || !result.linearStore.has_value(), "linear stores: a program reserved no staging base but has a linear store");
-    if (!reserved) return result.linearStore;
-    Require(result.linearStoreBaseDword + 2u <= result.shaderDataDwords, "linear stores: the staging base lies outside the shader data");
-    Require(StagedStoreBranch(result.spirv.Words()), "linear stores: a program with a staging base has no branch that stores to it without the page table");
-    return result.linearStore;
-}
-
-bool Reserved(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 4>& target, const std::array<std::uint32_t, 4>& constants, std::uint32_t threadsY = 1u) {
-    return Compiled(device, code, target, constants, threadsY).linearStoreBaseDword != ShaderRecompiler::NoLinearStoreBaseDword;
+    return Compiled(device, code, target, constants, threadsY).linearStore;
 }
 
 }
@@ -153,11 +100,6 @@ int main() {
         refuse("a swizzled descriptor", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw, true), cb));
         refuse("a descriptor that adds the thread id", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw | 1u << 23u), cb));
         refuse("a two-dimensional workgroup", Recognized(*device, fill, Descriptor(target.data(), 16u, 768u, Raw), cb, 2u));
-        Require(Reserved(*device, fill, Descriptor(target.data(), 16u, 768u, Raw), cb), "linear stores: a linear fill reserved no staging base");
-        Require(Reserved(*device, fill, Descriptor(target.data(), 16u, 768u, Raw, true), cb), "linear stores: a linear fill through a swizzled descriptor reserved no staging base for the dispatches that may stage it");
-        Require(!Reserved(*device, Fill({Store, StoreOperands, Store | 0x10u, StoreOperands}), Descriptor(target.data(), 16u, 768u, Raw), cb), "linear stores: a program with two stores reserved a staging base");
-        Require(!Reserved(*device, Fill({AtomicAdd, StoreOperands}), Descriptor(target.data(), 4u, 4096u, Raw), cb), "linear stores: an atomic add reserved a staging base");
-        Require(!Reserved(*device, Fill({Store, StoreOperands}, true), Descriptor(target.data(), 16u, 768u, Raw), cb), "linear stores: a store skipped by a branch reserved a staging base");
         const auto mad24 = Fill({Store, StoreOperands}, false, false, Mad24Index);
         expect("a fill indexed by v_mad_u32_u24 of the group id", Recognized(*device, mad24, Descriptor(target.data(), 16u, 768u, Raw), cb), 16u, 768u, 16u);
         expect("a v_mad_u32_u24 fill whose records exceed the threads of 2^24 groups", Recognized(*device, mad24, Descriptor(target.data(), 16u, 0xffffffffu, Raw), cb), 16u, 1u << 30u, 16u);

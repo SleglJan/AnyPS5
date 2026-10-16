@@ -99,7 +99,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.userDataRegisters = collectUserData(program);
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
-    next.linearStoreBase = info.linearStore.has_value();
     if (info.images.size() > RuntimeAbi::ImageCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     next.samplerSlotCount = 2u * static_cast<std::uint32_t>(std::ranges::count_if(info.samplers, [](const SamplerResource& sampler) { return sampler.table == NoTable; }));
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");

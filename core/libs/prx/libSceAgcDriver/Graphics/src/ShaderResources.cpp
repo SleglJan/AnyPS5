@@ -1179,7 +1179,7 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
     computeBuild = true;
     imageStoresRecorded = compute.program != nullptr && compute.program->imageStoresRecorded;
     this->linearThreads = linearThreads;
-    if (compute.program != nullptr && compute.program->linearStoreBaseDword != ShaderRecompiler::NoLinearStoreBaseDword) linearStore = compute.program->linearStore;
+    if (compute.program != nullptr) linearStore = compute.program->linearStore;
     const std::span<const CompiledShader> shaders(&deferredCompute, 1);
     if (!deferred) {
         prepareAddressBindings(shaders);
@@ -3097,18 +3097,6 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::linearSt
     const auto bytes = elements * linear.stride + (linear.elementBytes > linear.stride ? linear.elementBytes - linear.stride : 0u);
     if (linear.base > std::numeric_limits<std::uint64_t>::max() - bytes) return std::nullopt;
     return std::pair{linear.base, linear.base + bytes};
-}
-
-void ShaderResources::PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push) {
-    if (program.linearStoreBaseDword == ShaderRecompiler::NoLinearStoreBaseDword) return;
-    const std::array<std::uint32_t, 2> words{0u, 0u};
-    const auto position = program.linearStoreBaseDword * 4u;
-    if (!program.pushConstants.empty()) {
-        Require(position + sizeof(words) <= program.pushConstants.size() && position + sizeof(words) <= push.size(), "a linear store base lies outside the shader's push constants");
-        std::memcpy(push.data() + position, words.data(), sizeof(words));
-        return;
-    }
-    patchShaderData(-1, computeShaderData, position, words);
 }
 
 void ShaderResources::checkBdaFault() const {

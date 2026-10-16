@@ -4468,7 +4468,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         if (profile) timer.add(PhaseResourcesFullBuild, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count());
     }
     resources->PatchPushConstants(pushBytes);
-    resources->PatchLinearStoreBase(shader, pushBytes);
     std::optional<Graphics::BdaArena::Slice> threadScratch;
     if (threadGroup.has_value()) {
         require(arguments != 0, "a dispatch with thread dimensions from memory has no indirect arguments");

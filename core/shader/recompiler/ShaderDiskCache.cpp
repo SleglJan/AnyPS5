@@ -470,7 +470,6 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bufferAddressDword);
     writer.Value(result.samplerSlotDword);
     writer.Value(result.dispatchThreadLimitDword);
-    writer.Value(result.linearStoreBaseDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
     writer.Value(result.runtimeImageCount);
@@ -523,7 +522,6 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bufferAddressDword);
     reader.Value(result.samplerSlotDword);
     reader.Value(result.dispatchThreadLimitDword);
-    reader.Value(result.linearStoreBaseDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
     reader.Value(result.runtimeImageCount);
@@ -659,7 +657,6 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.imageSlotCount);
     writer.Values(std::span<const std::uint32_t>(layout.imageSlotBases));
     writer.Value(layout.dispatchThreadLimit);
-    writer.Value(layout.linearStoreBase);
     writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
     writer.Values(std::span<const std::uint32_t>(layout.userDataRegisters));
@@ -678,7 +675,6 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.imageSlotCount);
     reader.Values(layout.imageSlotBases);
     reader.Value(layout.dispatchThreadLimit);
-    reader.Value(layout.linearStoreBase);
     reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);
     reader.Values(layout.userDataRegisters);
