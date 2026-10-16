@@ -307,6 +307,11 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
     const auto& mode = interface->modes.at(*match.mode);
     if (mode.constantSwizzle) return {0u, *match.mode, 0u, 0u};
+    if (interface->image.singleMipPlaneBiasCompatible && interface->image.dimension == ShaderRecompiler::RdnaImageDimension::Dim2D && mode.dimension == ShaderRecompiler::RdnaImageDimension::Dim3D && (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u) {
+        const auto first = key[Abi::SamplerWord];
+        const auto third = key[Abi::SamplerWord + 2u];
+        if ((first & Abi::SamplerUnnormalized) != 0u || ((first >> 29u) & 3u) > 2u || ((third >> 20u) & 0xfu) != 0u || ((third >> 26u) & 3u) > 1u) return rejected(Reason::DriverRejected, "2D biased sampling of a one-slice volume requires a normalized point sampler");
+    }
     if (interface->image.resourceClass == ShaderRecompiler::ImageResourceClass::Storage) {
         if (!perUse) return rejected(Reason::DriverRejected, "a storage image is read or written through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented");
         try {
