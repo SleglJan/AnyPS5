@@ -72,8 +72,8 @@ std::uint32_t EmitCountedLoop(SpirvEmitterState& state, std::uint32_t first, std
     EmitLabel(state, header);
     state.module.AddFunction(spv::OpPhi, u32, index, first, entry, next, continueLabel);
     state.module.AddFunction(spv::OpPhi, u32, carried, initial, entry, updated, continueLabel);
-    state.module.AddFunction(spv::OpLoopMerge, merge, continueLabel, spv::LoopControlMaskNone);
     const auto more = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpULessThan, boolean, index, end), Binary(state, spv::OpIEqual, boolean, carried, initial));
+    state.module.AddFunction(spv::OpLoopMerge, merge, continueLabel, spv::LoopControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, more, bodyLabel, merge);
     EmitLabel(state, bodyLabel);
     const auto result = body(index, carried);
