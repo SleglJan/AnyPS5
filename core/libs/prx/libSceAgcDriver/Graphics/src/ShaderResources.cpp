@@ -6,6 +6,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -134,6 +137,7 @@ struct CachedTexture {
     std::uint64_t sourceVersion = 0;
     std::uint64_t accounted = 0;
     std::uint64_t present = 0;
+    bool gathered = false;
 };
 
 // Entries in use order (front = most recent) with a hash index by key: a lookup is O(1) and the
@@ -347,6 +351,7 @@ std::list<CachedTexture>::iterator findSampledEntry(TextureCache& cache, VkDevic
 struct TextureCounters {
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
+    std::atomic<std::uint64_t> gathers{0};
     std::atomic<std::uint64_t> pendingReads{0};
     std::atomic<std::uint64_t> storageFallbacks{0};
     std::atomic<std::uint64_t> records{0};
@@ -365,6 +370,24 @@ struct TextureCounters {
 TextureCounters& TextureCounts() {
     static TextureCounters counters;
     return counters;
+}
+
+std::optional<std::vector<TextureGatherCopy>> gatherSurface(const Context& context, std::uint64_t address, std::uint64_t bytes) {
+    const MirrorSpan span(ResidencyDriver::Active(), address, address + bytes, ResidencyAccess::Read);
+    std::vector<TextureGatherCopy> copies;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> importReads;
+    for (const auto& piece : span.Pieces(address, address + bytes)) {
+        if (piece.buffer != VK_NULL_HANDLE) {
+            copies.push_back({piece.buffer, piece.offset, piece.begin - address, piece.end - piece.begin});
+            continue;
+        }
+        const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
+        if (import == nullptr) return std::nullopt;
+        copies.push_back({import->buffer, piece.begin - import->base, piece.begin - address, piece.end - piece.begin});
+        importReads.emplace_back(piece.begin, piece.end);
+    }
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !importReads.empty()) recorder->NotePendingReads(importReads, Recorder::ReadKind::GpuCopy);
+    return copies;
 }
 
 void reportTextureCounters() {
@@ -716,7 +739,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
                 return it->texture;
             }
-        } else if (source == nullptr && it->snapshotBytes == guestBytes && it->keys == *keys) {
+        } else if (source == nullptr && it->gathered && it->snapshotBytes == guestBytes && it->keys == *keys && GuestMemory::UnchangedSince(address, bytes, it->generation)) {
+            it->generation = generation;
+            touchTexture(cache, it);
+            logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
+            reportTextureCounters();
+            if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
+            return it->texture;
+        } else if (source == nullptr && !it->gathered && it->snapshotBytes == guestBytes && it->keys == *keys) {
             // Unwritten pages need no comparison; partially resident textures compare only committed
             // pages. The compare goes through the flush hook: it waits for recorded work over the
             // surface (counted, and named for the [hooksync] line).
@@ -744,6 +774,11 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = storageTexture();
         entry.accounted = (source->Cached() ? 0u : heldBytes(*source)) + (decodedCopy ? entry.texture->AllocationBytes() : 0u);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
+    } else if (auto gather = *keys == DccKeys::Uncompressed ? gatherSurface(context, address, bytes) : std::nullopt) {
+        entry.gathered = true;
+        entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const TextureGatherCopy>(*gather), depthCompare, decodedCopy);
+        entry.accounted = entry.texture->AllocationBytes();
+        counters.gathers.fetch_add(1, std::memory_order_relaxed);
     } else {
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         if (*keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
@@ -2685,6 +2720,11 @@ void ShaderResources::resolveImageTables() {
         }
     }
     reportTextureCounters();
+}
+
+SampledTextureCounts SampledTextureSources() {
+    const auto& counters = TextureCounts();
+    return {counters.snapshots.load(std::memory_order_relaxed), counters.gathers.load(std::memory_order_relaxed)};
 }
 
 ImageTableReuseCounts ImageTableReuses() {

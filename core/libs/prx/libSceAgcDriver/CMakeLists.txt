@@ -2655,3 +2655,4 @@ if(BUILD_TESTING)
 endif()
 
 target_include_directories(agc_driver_draw_input_in_place_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+target_include_directories(agc_driver_sampled_texture_gather_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)

@@ -114,6 +114,11 @@ struct ImageTableReuseCounts {
     std::uint64_t resolved = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+struct SampledTextureCounts {
+    std::uint64_t snapshots;
+    std::uint64_t gathers;
+};
+SampledTextureCounts SampledTextureSources();
 
 struct DeviceTableView {
     ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2D;
