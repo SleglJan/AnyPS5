@@ -1673,7 +1673,7 @@ target_include_directories(agc_driver_prepared_shaders_tests PRIVATE
         $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-foreach(agcDeviceTableTest IN ITEMS user_data_sample srt_sample load_query two_textures cpu_writes stored_texels storage_mips storage_mip_range)
+foreach(agcDeviceTableTest IN ITEMS user_data_sample srt_sample load_query two_textures same_texture cpu_writes stored_texels storage_mips storage_mip_range)
     target_include_directories(agc_driver_device_table_${agcDeviceTableTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 

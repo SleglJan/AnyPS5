@@ -2077,11 +2077,38 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     }
     const auto id = ResourceMaterializer::DeviceImageInterfaceId(base, modes);
     const auto record = both(exec, Unary(state, spv::OpLogicalNot, boolean, null));
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, header,
-        CompositeU32x4(state, words[0], words[1], words[2], words[3]), CompositeU32x4(state, words[4], words[5], words[6], words[7]),
-        CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), samplerClass, pc),
-        CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3]), record);
+    const auto arguments = [&] {
+        return std::array{CompositeU32x4(state, words[0], words[1], words[2], words[3]), CompositeU32x4(state, words[4], words[5], words[6], words[7]),
+            CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), samplerClass, pc),
+            CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3])};
+    };
+    std::vector<std::uint64_t> lookupKey{reinterpret_cast<std::uintptr_t>(inst.Parent()), state.laneHalf, id, memory.sampler, HasFlag(memory, RdnaImageSampleFlagLevelZero) ? 1u : 0u, deviceSampler ? 1u : 0u};
+    const auto keyWord = [&](const IrValue* value) {
+        const auto* resolved = value->Resolve();
+        lookupKey.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
+        lookupKey.push_back(resolved->HasImmediate() ? resolved->ImmediateU32() : 0u);
+    };
+    for (std::uint32_t word = 0; word < words.size(); ++word) keyWord(handle->Argument(word));
+    if (deviceSampler) {
+        const IrValue* samplerHandle = inst.Argument(1)->Resolve();
+        for (std::uint32_t word = 0; word < Abi::SamplerWords; ++word) keyWord(samplerHandle->Argument(word));
+    }
+    const auto earlier = state.module.InHelperFunction() ? state.deviceImageLookups.end() : state.deviceImageLookups.find(lookupKey);
+    std::uint32_t result = 0;
+    if (earlier != state.deviceImageLookups.end()) {
+        result = earlier->second;
+        const auto missing = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, missing, result, 3u);
+        EmitIfCondition(state, both(record, equal(missing, zero)), [&] {
+            const auto passed = arguments();
+            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.deviceImageMissFunction, header, passed[0], passed[1], passed[2], passed[3]);
+        });
+    } else {
+        const auto passed = arguments();
+        result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, header, passed[0], passed[1], passed[2], passed[3], record);
+        if (!state.module.InHelperFunction()) state.deviceImageLookups.emplace(std::move(lookupKey), result);
+    }
     const auto extract = [&](std::uint32_t index) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, u32, value, result, index);
@@ -2172,6 +2199,42 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpLoad, type, value, variable);
         return value;
     };
+    const auto appendMiss = [&](std::uint32_t header, const std::array<std::uint32_t, Abi::KeyWords>& key, std::uint32_t pc) {
+        const auto ring = DeviceAddress(state, LoadDeviceWord(state, header, constant(Abi::HeaderRingLow)), LoadDeviceWord(state, header, constant(Abi::HeaderRingHigh)));
+        const auto capacity = LoadDeviceWord(state, header, constant(Abi::HeaderRingCapacity));
+        const auto index = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicIAdd, u32, index, DeviceWordPointer(state, ring, constant(Abi::RingCountWord)), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(1u));
+        EmitIfCondition(state, binary(spv::OpULessThan, boolean, index, capacity), [&] {
+            const auto recordFirst = binary(spv::OpIAdd, u32, constant(Abi::RingRecordsWord), binary(spv::OpIMul, u32, index, constant(Abi::RecordWords)));
+            for (std::uint32_t word = 0; word < Abi::KeyWords; ++word) StoreDeviceWord(state, ring, binary(spv::OpIAdd, u32, recordFirst, constant(word)), key[word]);
+            StoreDeviceWord(state, ring, binary(spv::OpIAdd, u32, recordFirst, constant(Abi::RecordPcWord)), pc);
+        });
+    };
+    const auto keyOf = [&](std::uint32_t low, std::uint32_t high, std::uint32_t extra, std::uint32_t sampler) {
+        std::array<std::uint32_t, Abi::KeyWords> key{};
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            key[word] = extract(low, word);
+            key[word + 4u] = extract(high, word);
+        }
+        for (std::uint32_t word = 0; word < 3u; ++word) key[Abi::InterfaceWord + word] = extract(extra, word);
+        for (std::uint32_t word = 0; word < Abi::SamplerWords; ++word) key[Abi::SamplerWord + word] = extract(sampler, word);
+        return key;
+    };
+    {
+        const auto missFunction = state.module.AllocateId();
+        state.module.AddName(missFunction, "device_image_record_miss");
+        state.module.AddFunction(spv::OpFunction, TypeVoid(state), missFunction, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, TypeVoid(state), u64, uvec4, uvec4, uvec4, uvec4));
+        std::array<std::uint32_t, 5> parameters{};
+        for (std::uint32_t index = 0; index < parameters.size(); ++index) {
+            parameters[index] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionParameter, index == 0u ? u64 : uvec4, parameters[index]);
+        }
+        EmitLabel(state, state.module.AllocateId());
+        appendMiss(parameters[0], keyOf(parameters[1], parameters[2], parameters[3], parameters[4]), extract(parameters[3], 3u));
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.deviceImageMissFunction = missFunction;
+    }
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "device_image_lookup");
     state.module.AddFunction(spv::OpFunction, uvec4, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, uvec4, u64, uvec4, uvec4, uvec4, uvec4, boolean));
@@ -2194,13 +2257,7 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), stepVariable, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), doneVariable, spv::StorageClassFunction);
     state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, uvec4), resultVariable, spv::StorageClassFunction);
-    std::array<std::uint32_t, Abi::KeyWords> key{};
-    for (std::uint32_t word = 0; word < 4u; ++word) {
-        key[word] = extract(low, word);
-        key[word + 4u] = extract(high, word);
-    }
-    for (std::uint32_t word = 0; word < 3u; ++word) key[Abi::InterfaceWord + word] = extract(extra, word);
-    for (std::uint32_t word = 0; word < Abi::SamplerWords; ++word) key[Abi::SamplerWord + word] = extract(sampler, word);
+    const auto key = keyOf(low, high, extra, sampler);
     const auto pc = extract(extra, 3u);
     const auto hash = DeviceKeyHash(state, key);
     const auto table = DeviceAddress(state, LoadDeviceWord(state, header, constant(Abi::HeaderTableLow)), LoadDeviceWord(state, header, constant(Abi::HeaderTableHigh)));
@@ -2237,17 +2294,7 @@ void DefineDeviceImageLookup(SpirvEmitterState& state) {
     EmitLabel(state, merge);
     const auto result = load(resultVariable, uvec4);
     const auto missed = binary(spv::OpIEqual, boolean, extract(result, 3u), constant(0u));
-    EmitIfCondition(state, binary(spv::OpLogicalAnd, boolean, record, missed), [&] {
-        const auto ring = DeviceAddress(state, LoadDeviceWord(state, header, constant(Abi::HeaderRingLow)), LoadDeviceWord(state, header, constant(Abi::HeaderRingHigh)));
-        const auto capacity = LoadDeviceWord(state, header, constant(Abi::HeaderRingCapacity));
-        const auto index = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAtomicIAdd, u32, index, DeviceWordPointer(state, ring, constant(Abi::RingCountWord)), constant(spv::ScopeDevice), constant(spv::MemorySemanticsMaskNone), constant(1u));
-        EmitIfCondition(state, binary(spv::OpULessThan, boolean, index, capacity), [&] {
-            const auto recordFirst = binary(spv::OpIAdd, u32, constant(Abi::RingRecordsWord), binary(spv::OpIMul, u32, index, constant(Abi::RecordWords)));
-            for (std::uint32_t word = 0; word < Abi::KeyWords; ++word) StoreDeviceWord(state, ring, binary(spv::OpIAdd, u32, recordFirst, constant(word)), key[word]);
-            StoreDeviceWord(state, ring, binary(spv::OpIAdd, u32, recordFirst, constant(Abi::RecordPcWord)), pc);
-        });
-    });
+    EmitIfCondition(state, binary(spv::OpLogicalAnd, boolean, record, missed), [&] { appendMiss(header, key, pc); });
     state.module.AddFunction(spv::OpReturnValue, result);
     state.module.AddFunction(spv::OpFunctionEnd);
     state.deviceImageLookupFunction = function;
