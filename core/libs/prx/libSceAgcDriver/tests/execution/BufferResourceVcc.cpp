@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -14,8 +15,8 @@ namespace {
 using AgcDriver::Graphics::Require;
 constexpr std::uint32_t Threads = 64u;
 constexpr std::uint32_t Guard = 0xdeadbeefu;
-alignas(256) std::array<std::uint32_t, Threads> Input{};
-alignas(256) std::array<std::uint32_t, Threads + 8u> Output{};
+TestGuest::Array<std::uint32_t, Threads> Input;
+TestGuest::Array<std::uint32_t, Threads + 8u> Output;
 
 std::array<std::uint32_t, 4> Descriptor(const void* bytes, std::uint32_t size, std::uint32_t format) {
     const auto address = reinterpret_cast<std::uintptr_t>(bytes);
