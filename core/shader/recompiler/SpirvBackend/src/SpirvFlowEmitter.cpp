@@ -872,12 +872,12 @@ struct FunctionLayout {
 struct CalleeValue {
     const IrValue* value = nullptr;
     std::uint32_t half = 0;
-    std::uint32_t slot = 0;
 };
 
 struct CalleeExit {
     std::vector<CalleeValue> outputs;
     bool status = false;
+    std::uint32_t type = 0;
 };
 
 struct CalleeSignature {
@@ -887,13 +887,6 @@ struct CalleeSignature {
     std::vector<std::uint32_t> pointers;
     CalleeExit exit;
 };
-
-std::uint32_t CalleeSlot(SpirvEmitterState& state, std::uint32_t type, std::map<std::uint32_t, std::uint32_t>& used) {
-    auto& slots = state.calleeSlots[type];
-    const auto index = used[type]++;
-    while (slots.size() <= index) slots.push_back(state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, type), spv::StorageClassPrivate));
-    return slots[index];
-}
 
 struct CalleeStateScope {
     explicit CalleeStateScope(SpirvEmitterState& state)
@@ -1058,20 +1051,32 @@ void EmitFunctionBlocks(SpirvValueEmitContext& context, StructuredFunctionState&
 
 void EmitCalleeExit(SpirvValueEmitContext& context, const CalleeExit& calleeExit) {
     auto& state = context.state;
-    for (const auto& output : calleeExit.outputs) state.module.AddFunction(spv::OpStore, output.slot, (output.half == 0u ? context : *context.otherHalf).Def(output.value));
-    if (calleeExit.status) state.module.AddFunction(spv::OpReturnValue, ConstantU32(state, 1u));
-    else state.module.AddFunction(spv::OpReturn);
+    if (calleeExit.outputs.empty()) {
+        if (calleeExit.status) state.module.AddFunction(spv::OpReturnValue, ConstantU32(state, 1u));
+        else state.module.AddFunction(spv::OpReturn);
+        return;
+    }
+    const auto result = state.module.AllocateId();
+    std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, calleeExit.type, result};
+    if (calleeExit.status) construct.push_back(ConstantU32(state, 1u));
+    for (const auto& output : calleeExit.outputs) construct.push_back((output.half == 0u ? context : *context.otherHalf).Def(output.value));
+    state.module.AddFunction(std::span<const std::uint32_t>(construct));
+    state.module.AddFunction(spv::OpReturnValue, result);
 }
 
 CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgram& program, const FunctionLayout& layout, std::uint32_t function) {
     auto& state = caller.state;
     CalleeSignature signature;
-    std::map<std::uint32_t, std::uint32_t> outputSlots;
     for (const IrValue* value : CalleeLiveOuts(state, program, function)) {
-        for (std::uint32_t half = 0; half < state.laneCount; ++half) signature.exit.outputs.push_back({value, half, CalleeSlot(state, TypeId(state, value->Type()), outputSlots)});
+        for (std::uint32_t half = 0; half < state.laneCount; ++half) signature.exit.outputs.push_back({value, half});
     }
     signature.exit.status = CalleeStops(state, program, layout, function);
-    signature.type = signature.exit.status ? TypeU32(state) : TypeVoid(state);
+    std::vector<std::uint32_t> members;
+    if (signature.exit.status) members.push_back(TypeU32(state));
+    for (const auto& output : signature.exit.outputs) members.push_back(TypeId(state, output.value->Type()));
+    if (signature.exit.outputs.empty()) signature.type = signature.exit.status ? TypeU32(state) : TypeVoid(state);
+    else signature.type = state.module.Type(spv::OpTypeStruct, std::span<const std::uint32_t>(members));
+    signature.exit.type = signature.type;
     struct Pointer {
         std::uint32_t* slot;
         std::uint32_t type;
@@ -1123,38 +1128,32 @@ CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgra
         state.gdsLength = state.module.AllocateId();
         state.module.AddFunction(spv::OpArrayLength, TypeU32(state), state.gdsLength, state.gdsVariable, 0u);
     }
-    state.calleeStopValue = signature.exit.status ? ConstantU32(state, 0u) : 0u;
+    state.calleeStopValue = !signature.exit.status ? 0u : signature.exit.outputs.empty() ? ConstantU32(state, 0u) : state.module.Constant(spv::OpConstantNull, signature.type);
     state.bdaStopValue = state.calleeStopValue;
     state.bdaPcOverride = 0u;
     StructuredFunctionState functionState;
     functionState.blockExitLabels.emplace(blocks[layout.callBlock[function]], state.currentLabel);
-    const auto prologue = state.module.FunctionWordCount() - start;
     state.module.AddFunction(spv::OpBranch, low.Label(layout.entry[function]));
     EmitFunctionBlocks(low, functionState, program, layout, function, &signature.exit);
     PatchStructuredPhis(low, functionState);
     const auto words = state.module.TakeFunctionWords(start);
-    std::map<std::uint32_t, std::uint32_t> inputSlots;
-    std::vector<std::uint32_t> loads;
-    for (const auto* lane : lanes) {
-        for (const auto& [value, id] : lane->inputs) {
-            const auto type = TypeId(state, value->Type());
-            const auto slot = CalleeSlot(state, type, inputSlots);
-            signature.inputs.push_back({value, lane->half, slot});
-            loads.insert(loads.end(), {4u << spv::WordCountShift | spv::OpLoad, type, id, slot});
-        }
-    }
     std::vector<std::uint32_t> types{signature.type};
     std::vector<std::uint32_t> ids;
     for (std::size_t index = 0; index < pointers.size(); ++index) {
         types.push_back(pointers[index].type);
         ids.push_back(pointerParameters[index]);
     }
+    for (const auto* lane : lanes) {
+        for (const auto& [value, id] : lane->inputs) {
+            signature.inputs.push_back({value, lane->half});
+            types.push_back(TypeId(state, value->Type()));
+            ids.push_back(id);
+        }
+    }
     state.module.BeginHelperFunction();
     state.module.AddFunction(spv::OpFunction, signature.type, signature.id, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, std::span<const std::uint32_t>(types)));
     for (std::size_t index = 0; index < ids.size(); ++index) state.module.AddFunction(spv::OpFunctionParameter, types[index + 1u], ids[index]);
-    state.module.AppendFunctionWords(std::span(words).first(prologue));
-    state.module.AppendFunctionWords(loads);
-    state.module.AppendFunctionWords(std::span(words).subspan(prologue));
+    state.module.AppendFunctionWords(words);
     state.module.AddFunction(spv::OpFunctionEnd);
     state.module.EndHelperFunction();
     char name[32];
@@ -1173,18 +1172,25 @@ void EmitGuestCall(SpirvValueEmitContext& caller, StructuredFunctionState& funct
     EmitLabel(state, callLabel);
     const auto signature = EmitCalleeFunction(caller, program, layout, function);
     const auto lane = [&](std::uint32_t half) -> SpirvValueEmitContext& { return half == 0u ? caller : *caller.otherHalf; };
-    for (const auto& input : signature.inputs) state.module.AddFunction(spv::OpStore, input.slot, lane(input.half).Def(input.value));
     const auto result = state.module.AllocateId();
     std::vector<std::uint32_t> call{spv::OpFunctionCall, signature.type, result, signature.id};
     call.insert(call.end(), signature.pointers.begin(), signature.pointers.end());
+    for (const auto& input : signature.inputs) call.push_back(lane(input.half).Def(input.value));
     state.module.AddFunction(std::span<const std::uint32_t>(call));
+    const bool composite = !signature.exit.outputs.empty();
+    std::uint32_t member = signature.exit.status ? 1u : 0u;
     for (const auto& output : signature.exit.outputs) {
-        const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeId(state, output.value->Type()), loaded, output.slot);
-        lane(output.half).Define(*output.value, loaded);
+        const auto returned = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeId(state, output.value->Type()), returned, result, member++);
+        lane(output.half).Define(*output.value, returned);
     }
     if (signature.exit.status) {
-        const auto stopped = Binary(state, spv::OpIEqual, TypeBool(state), result, ConstantU32(state, 0u));
+        std::uint32_t status = result;
+        if (composite) {
+            status = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), status, result, 0u);
+        }
+        const auto stopped = Binary(state, spv::OpIEqual, TypeBool(state), status, ConstantU32(state, 0u));
         const auto stop = state.module.AllocateId();
         const auto next = state.module.AllocateId();
         state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
