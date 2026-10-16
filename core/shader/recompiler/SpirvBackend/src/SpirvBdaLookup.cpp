@@ -863,11 +863,12 @@ std::vector<const IrValue*> ResolvedBufferInputs(const SpirvEmitterState& state,
     return {handle->Argument(0), handle->Argument(1)};
 }
 
-void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst) {
+void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst, const IrValue& anchor) {
     auto& state = ctx.state;
     const auto* handle = ResolvedBufferHandle(state, inst);
     if (handle == nullptr || state.bdaSegmentFunction == 0u) return;
     std::vector<const IrValue*> words{handle->Argument(0), handle->Argument(1)};
+    if (std::ranges::none_of(words, [&](const IrValue* word) { return word->Resolve() == &anchor; })) return;
     for (const auto* word : words) {
         const auto* resolved = word->Resolve();
         if (!resolved->HasImmediate() && !ctx.definitions.contains(resolved)) return;

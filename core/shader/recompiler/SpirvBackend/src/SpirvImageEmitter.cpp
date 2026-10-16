@@ -2124,13 +2124,14 @@ std::vector<const IrValue*> DeviceImageWords(const DeviceImagePlan& plan) {
     return words;
 }
 
-std::vector<const IrValue*> DescriptorInputs(const SpirvEmitterState& state, const IrValue& inst) {
+std::vector<std::vector<const IrValue*>> DescriptorInputGroups(const SpirvEmitterState& state, const IrValue& inst) {
     const auto plan = PlanDeviceImage(state, inst);
-    if (plan) return DeviceImageWords(*plan);
-    auto inputs = InvalidFormatInputs(state, inst);
-    const auto buffer = ResolvedBufferInputs(state, inst);
-    inputs.insert(inputs.end(), buffer.begin(), buffer.end());
-    return inputs;
+    if (plan) return {DeviceImageWords(*plan)};
+    std::vector<std::vector<const IrValue*>> groups;
+    for (auto inputs : {InvalidFormatInputs(state, inst), ResolvedBufferInputs(state, inst)}) {
+        if (!inputs.empty()) groups.push_back(std::move(inputs));
+    }
+    return groups;
 }
 
 bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImagePlan& plan) {
@@ -2275,26 +2276,28 @@ void PlanDeviceImageAnchors(SpirvEmitterState& state) {
     }
     for (const IrBlock* block : blocks) {
         for (const IrValue* inst : block->Instructions()) {
-            const auto inputs = DescriptorInputs(state, *inst);
-            if (inputs.empty()) continue;
-            const IrValue* anchor = nullptr;
-            std::pair<std::size_t, std::size_t> latest{};
-            bool placed = true;
-            const auto consider = [&](const IrValue* argument) {
-                const auto* resolved = argument->Resolve();
-                if (resolved->HasImmediate()) return;
-                const auto found = positions.find(resolved);
-                if (found == positions.end()) {
-                    placed = false;
-                    return;
-                }
-                if (anchor == nullptr || found->second > latest) {
-                    anchor = resolved;
-                    latest = found->second;
-                }
-            };
-            for (const auto* argument : inputs) consider(argument);
-            if (placed && anchor != nullptr) state.deviceImageAnchors[anchor].push_back(inst);
+            for (const auto& inputs : DescriptorInputGroups(state, *inst)) {
+                const IrValue* anchor = nullptr;
+                std::pair<std::size_t, std::size_t> latest{};
+                bool placed = true;
+                const auto consider = [&](const IrValue* argument) {
+                    const auto* resolved = argument->Resolve();
+                    if (resolved->HasImmediate()) return;
+                    const auto found = positions.find(resolved);
+                    if (found == positions.end()) {
+                        placed = false;
+                        return;
+                    }
+                    if (anchor == nullptr || found->second > latest) {
+                        anchor = resolved;
+                        latest = found->second;
+                    }
+                };
+                for (const auto* argument : inputs) consider(argument);
+                if (!placed || anchor == nullptr) continue;
+                auto& anchored = state.deviceImageAnchors[anchor];
+                if (std::ranges::find(anchored, inst) == anchored.end()) anchored.push_back(inst);
+            }
         }
     }
     if (!state.deviceImageAnchors.empty() && state.program.Resources().stage == IrShaderStage::Compute && state.sharedLaneValues.empty()) state.sharedLaneValues = WaveUniformValues(state.program);
@@ -2308,7 +2311,7 @@ void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& a
         const auto plan = PlanDeviceImage(state, *inst);
         if (!plan) {
             EmitInvalidFormatStop(ctx, *inst, anchor);
-            EmitResolvedBufferSegment(ctx, *inst);
+            EmitResolvedBufferSegment(ctx, *inst, anchor);
             continue;
         }
         if (state.deviceImageLookupFunction == 0u || state.tableMapVariable == 0u || !DeviceImageInputsDefined(ctx, *plan)) continue;

@@ -65,7 +65,7 @@ struct BdaSegmentValues {
 };
 BdaCacheProbe ProbeBdaSegment(SpirvEmitterState& state, const BdaSegmentValues& segment, std::uint32_t address, std::uint32_t bytes);
 std::vector<const IrValue*> ResolvedBufferInputs(const SpirvEmitterState& state, const IrValue& inst);
-void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst, const IrValue& anchor);
 std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst);
 
 }
