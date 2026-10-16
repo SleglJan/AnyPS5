@@ -412,6 +412,7 @@ public:
             if ((mask >> subpage) & 1u) (*entry.storage)[subpage] = value;
         }
         entry.stamp = ++generation;
+        for (const auto alias : AliasesOf(page)) imports[alias].stamp = generation;
         auto& guard = armed[entry.group];
         if (!guard) return;
         guard = false;
@@ -1141,6 +1142,7 @@ struct Stress {
             attributes.cpuWritable = kind != 0;
             attributes.whole = kind != 1;
             attributes.gpuWritable = kind > 3;
+            if (kind >= 7) attributes.section = fixture.gpu.imports[BasePage + page].group + 1;
             if (kind == 2) fixture.gpu.guardRefused.insert(BasePage + page);
         }
         for (std::uint32_t page = AliasFirst; page < Pages; ++page) {
