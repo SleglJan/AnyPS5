@@ -103,7 +103,9 @@ struct Module {
     std::map<std::uint32_t, std::set<std::uint32_t>> composites;
     std::map<std::uint32_t, std::set<std::uint32_t>> returned;
     std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> callResults;
-    std::map<std::uint32_t, std::uint32_t> spilledResults;
+    std::map<std::uint32_t, std::uint32_t> pointerResults;
+    std::map<std::uint32_t, std::uint32_t> lastParameters;
+    std::map<std::uint32_t, std::set<std::uint32_t>> parameterStores;
     std::map<std::uint32_t, std::set<std::uint32_t>> extracted;
 };
 
@@ -111,7 +113,7 @@ Module Parse(std::span<const std::uint32_t> words) {
     Module module;
     std::uint32_t function = 0;
     std::uint32_t lastCall = 0;
-    std::uint32_t lastStore = 0;
+    std::uint32_t lastPointer = 0;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -129,9 +131,13 @@ Module Parse(std::span<const std::uint32_t> words) {
             module.resultTypes[function] = operand(0);
         } else if (op == spv::OpFunctionEnd) {
             function = 0;
+        } else if (op == spv::OpFunctionParameter) {
+            module.lastParameters[function] = operand(1);
         } else if (op == spv::OpFunctionCall) {
             module.calls.emplace_back(function, operand(2));
             module.callResults[operand(1)] = {function, operand(2)};
+        } else if (op == spv::OpStore && module.lastParameters.contains(function) && operand(0) == module.lastParameters.at(function)) {
+            module.parameterStores[function].insert(operand(1));
         } else if (op == spv::OpCompositeConstruct) {
             module.composites[function].insert(operand(1));
         } else if (op == spv::OpReturnValue) {
@@ -139,11 +145,12 @@ Module Parse(std::span<const std::uint32_t> words) {
         } else if (op == spv::OpCompositeExtract) {
             module.extracted[function].insert(operand(2));
         }
-        if (op == spv::OpStore && count == 4u && lastCall != 0u && operand(1) == lastCall) lastStore = operand(0);
-        if (op == spv::OpLoad && count == 5u && lastStore != 0u && operand(2) == lastStore) module.spilledResults[operand(1)] = lastCall;
-        if (op != spv::OpFunctionCall && op != spv::OpStore) lastCall = 0;
-        if (op == spv::OpFunctionCall) lastCall = operand(1);
-        if (op != spv::OpStore) lastStore = 0;
+        if (op == spv::OpLoad && lastCall != 0u && operand(2) == lastPointer) module.pointerResults[operand(1)] = lastCall;
+        lastCall = 0;
+        if (op == spv::OpFunctionCall && count > 4u) {
+            lastCall = operand(1);
+            lastPointer = operand(count - 2u);
+        }
         cursor += count;
     }
     return module;
@@ -176,16 +183,21 @@ void RequireCallees(const Module& module, std::size_t count, const std::string& 
 
 void RequireReturns(const Module& module, std::uint32_t callee, std::uint32_t caller, const std::string& what) {
     const auto returned = module.returned.find(callee);
+    const auto stored = module.parameterStores.find(callee);
     const auto composites = module.composites.find(callee);
-    const bool returnsRegisters = module.resultTypes.at(callee) != module.voidType && returned != module.returned.end() && composites != module.composites.end() &&
-        std::ranges::any_of(returned->second, [&](std::uint32_t value) { return composites->second.contains(value); });
+    const auto builds = [&](const std::set<std::uint32_t>& values) {
+        return composites != module.composites.end() && std::ranges::any_of(values, [&](std::uint32_t value) { return composites->second.contains(value); });
+    };
+    const bool byValue = module.resultTypes.at(callee) != module.voidType && returned != module.returned.end() && builds(returned->second);
+    const bool throughPointer = module.resultTypes.at(callee) == module.voidType && stored != module.parameterStores.end() && builds(stored->second);
+    const bool returnsRegisters = byValue || throughPointer;
     const auto extracted = module.extracted.find(caller);
     bool taken = false;
     if (extracted != module.extracted.end()) {
         for (const auto& [result, call] : module.callResults) {
             if (call.first == caller && call.second == callee && extracted->second.contains(result)) taken = true;
         }
-        for (const auto& [loaded, result] : module.spilledResults) {
+        for (const auto& [loaded, result] : module.pointerResults) {
             const auto call = module.callResults.find(result);
             if (call != module.callResults.end() && call->second.first == caller && call->second.second == callee && extracted->second.contains(loaded)) taken = true;
         }
