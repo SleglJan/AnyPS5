@@ -1432,6 +1432,7 @@ private:
             }
             image.table = next++;
             image.deviceTable = DeviceSource(image.source);
+            image.directRuntime = RuntimeSource(image.source) && !TableSource(image.source);
             const bool storage = image.resourceClass == ImageResourceClass::Storage || image.written || image.atomic;
             if ((storage && !(image.deviceTable && RuntimeSource(image.source))) || image.packed || image.byElements != 0u) {
                 image.tableOperation = TableOperation::Unsupported;

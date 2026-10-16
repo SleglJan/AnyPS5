@@ -46,6 +46,7 @@ int main() {
         ExpectDistinct("cubeFaceCompatible", [](ImageResource& image) { image.cubeFaceCompatible = false; });
         ExpectDistinct("singleMipPlaneBiasCompatible", [](ImageResource& image) { image.singleMipPlaneBiasCompatible = true; });
         ExpectDistinct("flatVolumeLineCompatible", [](ImageResource& image) { image.flatVolumeLineCompatible = false; });
+        ExpectDistinct("directRuntime", [](ImageResource& image) { image.directRuntime = true; });
     } catch (const std::exception& error) {
         std::cerr << "DeviceImageInterfaceIds: " << error.what() << '\n';
         return 1;

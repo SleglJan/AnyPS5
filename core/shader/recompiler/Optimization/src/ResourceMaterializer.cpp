@@ -79,7 +79,7 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
 
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
     if (nullImageDescriptor(descriptor)) return true;
-    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.table == NoTable && image.read && !image.written && !image.atomic;
+    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && (image.table == NoTable || image.directRuntime) && image.read && !image.written && !image.atomic;
 }
 
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
@@ -1264,7 +1264,7 @@ std::uint64_t mixImageInterface(std::uint64_t hash, const ImageResource& image) 
     mix(image.shaderSwizzle);
     mix((image.read ? 1u : 0u) | (image.written ? 2u : 0u) | (image.atomic ? 4u : 0u) | (image.atomic64 ? 8u : 0u) | (image.depthCompare ? 16u : 0u) | (image.cube ? 32u : 0u) | (image.r128 ? 64u : 0u) | (image.srgbDecode ? 128u : 0u));
     mix((image.srgbDecodeCompatible ? 1u : 0u) | (image.depthBits ? 2u : 0u) | (image.depthUnorm16 ? 4u : 0u) | (image.packed ? 8u : 0u) | (image.fmaskCompatible ? 16u : 0u) | (image.depthBitsCompatible ? 32u : 0u) | (image.constantSwizzle ? 64u : 0u) | (image.constantSwizzleCompatible ? 128u : 0u));
-    mix((image.flatVolumeCompatible ? 1u : 0u) | (image.flatLineCompatible ? 2u : 0u) | (image.foldTexelOffsetsOnly ? 4u : 0u) | (image.table != NoTable ? 8u : 0u) | (image.deviceTable ? 16u : 0u) | (image.cubeFaceCompatible ? 32u : 0u) | (image.singleMipPlaneBiasCompatible ? 64u : 0u) | (image.flatVolumeLineCompatible ? 128u : 0u));
+    mix((image.flatVolumeCompatible ? 1u : 0u) | (image.flatLineCompatible ? 2u : 0u) | (image.foldTexelOffsetsOnly ? 4u : 0u) | (image.table != NoTable ? 8u : 0u) | (image.deviceTable ? 16u : 0u) | (image.cubeFaceCompatible ? 32u : 0u) | (image.singleMipPlaneBiasCompatible ? 64u : 0u) | (image.flatVolumeLineCompatible ? 128u : 0u) | (image.directRuntime ? 256u : 0u));
     mix(image.srgbDecodeFormats);
     mix(image.byElements);
     mix(image.byComponents);
@@ -1511,6 +1511,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             DescriptorValue descriptor;
             descriptor.dwordCount = Abi::DescriptorWords;
             std::copy_n(key.begin(), Abi::DescriptorWords, descriptor.dwords.begin());
+            if (nullImageDescriptor(image, descriptor)) continue;
             if (!validImageDescriptor(descriptor, image.r128)) {
                 if (!joinedImage && executed(use.image)) throw std::runtime_error("runtime image descriptor is invalid");
                 continue;

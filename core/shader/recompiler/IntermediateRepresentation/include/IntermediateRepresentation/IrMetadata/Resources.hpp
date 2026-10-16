@@ -82,6 +82,7 @@ struct ImageResource {
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
     bool deviceTable = false;
+    bool directRuntime = false;
 
     bool operator==(const ImageResource& other) const = default;
 };
