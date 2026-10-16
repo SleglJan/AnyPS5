@@ -214,20 +214,7 @@ inline bool SurfaceThroughMemory(const std::array<std::uint32_t, 8>& words, Acce
 }
 
 inline bool ResourceThroughMemory(const ShaderInfo& info, const ImageResource& image) {
-    if (!info.usesDma || image.table != NoTable || image.deviceTable || image.r128 || image.packed || image.byElements != 0u) return false;
-    switch (image.dimension) {
-        case RdnaImageDimension::Dim1D:
-        case RdnaImageDimension::Dim1DArray:
-        case RdnaImageDimension::Dim2D:
-        case RdnaImageDimension::Dim2DArray:
-        case RdnaImageDimension::Dim3D:
-            break;
-        default:
-            return false;
-    }
-    if (image.resourceClass == ImageResourceClass::Storage) return info.bdaWrites && (image.written || image.atomic);
-    if (image.resourceClass == ImageResourceClass::Sampled) return image.read && !image.written && !image.atomic && image.fmaskCompatible && image.srgbDecodeCompatible && !image.depthCompare && image.emulatedCompare == 0u;
-    return false;
+    return info.usesDma && MemoryPathImage(image) && (image.resourceClass != ImageResourceClass::Storage || info.bdaWrites);
 }
 
 inline Access AccessOf(const ImageResource& image) {
