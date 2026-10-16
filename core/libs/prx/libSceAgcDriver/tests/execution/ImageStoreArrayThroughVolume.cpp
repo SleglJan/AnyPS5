@@ -2,15 +2,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -36,7 +30,7 @@ constexpr std::uint32_t IdentitySwizzle = 0xfacu;
 constexpr std::size_t TexelBytes = 16384;
 constexpr std::size_t BlockBytes = 65536;
 
-alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
+TestGuest::Array<std::uint32_t, Threads * 4> Input;
 
 alignas(256) constexpr std::array<std::uint32_t, 10> StoreCode{
     0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0xf0201128, 0x00011714, 0x7e2c0282, 0xf0201128,
@@ -46,22 +40,7 @@ alignas(256) constexpr std::array<std::uint32_t, 10> StoreCode{
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
-#endif
-        Require(block != nullptr, "image store array through volume: cannot allocate the guest block");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
-    }
-
-    ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
-#else
-        std::free(block);
-#endif
+        block = reinterpret_cast<std::uint8_t*>(TestGuest::Allocate(BlockBytes, BlockBytes));
     }
 
     GuestBlock(const GuestBlock&) = delete;
