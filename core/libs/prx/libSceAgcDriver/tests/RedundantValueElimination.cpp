@@ -189,8 +189,8 @@ std::size_t RepeatedInBlock(std::span<const std::uint32_t> words) {
 
 std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
-    const std::array<std::uint32_t, 2> capabilities{1u, 61u};
-    const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    const std::array<std::uint32_t, 5> capabilities{1u, 61u, 11u, 5347u, 4448u};
+    const std::array<std::string_view, 3> extensions{"SPV_KHR_storage_buffer_storage_class", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
     request.context.waveSize = 64;
