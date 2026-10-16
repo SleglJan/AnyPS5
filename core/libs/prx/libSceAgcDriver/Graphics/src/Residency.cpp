@@ -71,11 +71,39 @@ ResidencyManager::~ResidencyManager() {
     std::vector<std::uint64_t> guarded;
     for (auto id = oldest; id != None; id = pages[id].newer) {
         if (pages[id].guarded) guarded.push_back(pages[id].index);
+        if (pages[id].accessGuarded) accessGuards.insert(pages[id].index);
     }
     if (!guarded.empty()) device.Unguard(guarded);
+    for (const auto page : accessGuards) device.UnguardAccess(page);
     for (std::uint32_t chunk = 0; chunk < chunks.size(); ++chunk) {
         if (chunks[chunk].live) device.ReleaseChunk(chunk);
     }
+}
+
+void ResidencyManager::WriteBackAll() {
+    applyQueued();
+    std::vector<std::uint32_t> ids;
+    ResidencyToken pending{};
+    for (auto id = oldest; id != None; id = pages[id].newer) {
+        if (pages[id].dirtyRuns.empty()) continue;
+        ids.push_back(id);
+        const auto writer = writers.find(pages[id].index);
+        if (writer != writers.end() && !settled(writer->second)) pending = MergeTokens(pending, writer->second);
+    }
+    if (!TokenEmpty(pending)) waitFor(pending);
+    writeBackDirty(ids);
+    ResidencyToken wait{};
+    for (const auto& [page, token] : writingBack) wait = MergeTokens(wait, token);
+    if (!settled(wait)) waitFor(wait);
+    writingBack.clear();
+    for (auto id = oldest; id != None; id = pages[id].newer) {
+        if (!pages[id].accessGuarded) continue;
+        accessGuards.insert(pages[id].index);
+        pages[id].accessGuarded = false;
+        pages[id].accessMask = 0;
+    }
+    for (const auto page : accessGuards) device.UnguardAccess(page);
+    accessGuards.clear();
 }
 
 bool ResidencyManager::settled(const ResidencyToken& token) {

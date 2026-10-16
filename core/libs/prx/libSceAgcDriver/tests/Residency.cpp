@@ -132,6 +132,7 @@ public:
     std::map<std::uint64_t, bool> armed;
     std::set<std::uint64_t> guardRefused;
     std::set<std::uint64_t> reported;
+    std::set<std::uint64_t> accessUnguarded;
     std::vector<std::vector<Contents>> mirrors;
     std::vector<bool> live;
     std::vector<std::uint64_t> slotOwner;
@@ -287,7 +288,7 @@ public:
 
     bool GuardAccess(std::uint64_t page, ResidencyMask) override { return !guardRefused.contains(page); }
 
-    void UnguardAccess(std::uint64_t) override {}
+    void UnguardAccess(std::uint64_t page) override { accessUnguarded.insert(page); }
 
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override {
         if (generation == importsGeneration) return {};
@@ -917,6 +918,27 @@ void ExactDirtyRanges() {
     fixture.gpu.Drain();
 }
 
+void WriteBackAllAtTeardown() {
+    scope = "write-back of every dirty page at teardown";
+    Fixture fixture(8, 1);
+    for (std::uint32_t page = 0; page < 3; ++page) fixture.Share(BasePage + page);
+    fixture.Use(0, BasePage + 0, 3);
+    fixture.gpu.Drain();
+    fixture.Grant(0, BasePage + 0, 0x0003);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0003, 501, true);
+    fixture.Grant(1, BasePage + 2, 0x8000);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 2, 0x8000, 502, true);
+    fixture.manager->NoteGpuWritten(Address(BasePage + 1, 4), ResidencySubpageBytes);
+    fixture.manager->Demote(Address(BasePage + 1), ResidencyPageBytes);
+    Expect(fixture.manager->Counts().dirty == 2, "two resident pages dirty before the teardown");
+    fixture.manager->WriteBackAll();
+    const auto counts = fixture.manager->Counts();
+    Expect(counts.dirty == 0 && counts.accessGuarded == 0, "the teardown write-back left " + std::to_string(counts.dirty) + " dirty pages and " + std::to_string(counts.accessGuarded) + " access-guarded pages");
+    Expect(fixture.Stored(BasePage + 0, 0) == 501 && fixture.Stored(BasePage + 0, 1) == 501 && fixture.Stored(BasePage + 2, 15) == 502, "the GPU's bytes reached guest memory before the call returned");
+    for (std::uint32_t page = 0; page < 3; ++page) Expect(fixture.gpu.accessUnguarded.contains(BasePage + page), Name(BasePage + page) + " kept its access guard, the evicted one included");
+    fixture.gpu.Drain();
+}
+
 void GrantDemotesPrivatePage() {
     scope = "a grant demotes a private page";
     Fixture fixture(4, 1);
@@ -1459,6 +1481,7 @@ int main() {
         DirtyMirrorsOnSharedPages();
         CpuReadWritesDirtyBytesBack();
         ExactDirtyRanges();
+        WriteBackAllAtTeardown();
         GrantDemotesPrivatePage();
         GrantThroughAliasDemotesMirror();
         TouchedPagesAdmitted();

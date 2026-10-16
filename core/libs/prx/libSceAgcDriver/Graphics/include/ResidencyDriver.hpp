@@ -86,6 +86,7 @@ public:
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
     void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
     void AccessFault(std::uint64_t page);
+    void WriteBackAll();
     struct MirrorTarget {
         VkBuffer buffer = VK_NULL_HANDLE;
         VkDeviceSize offset = 0;

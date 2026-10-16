@@ -170,6 +170,7 @@ public:
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
     void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
+    void WriteBackAll();
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
@@ -192,6 +193,7 @@ public:
 
 private:
     static constexpr std::uint32_t None = ~std::uint32_t{0};
+
     static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
 
     using Run = std::pair<std::uint32_t, std::uint32_t>;
