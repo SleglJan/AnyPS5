@@ -5101,7 +5101,7 @@ void cachedPipelineConcurrencyTests() {
     ShaderRecompiler::RecompileResult vertex, cachedFragment, newFragment;
     vertex.spirv = makeModule({});
     cachedFragment.spirv = makeModule({.fragment = true});
-    newFragment.spirv = makeModule({.fragment = true});
+    newFragment.spirv = makeModule({.fragment = true, .fragmentMode = spv::ExecutionModeDepthUnchanged});
     vertex.variantId = 1;
     cachedFragment.variantId = 2;
     newFragment.variantId = 3;
@@ -5169,6 +5169,8 @@ void pipelineDescriptionTests() {
     auto context = mockContext();
     context.depthClamp = true;
     ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
     vertex.variantId = 1;
     fragment.variantId = 2;
     fragment.pushConstants.resize(16);
