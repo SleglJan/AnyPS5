@@ -3039,13 +3039,13 @@ void pixelStageQuadPixelMaskTests() {
     queue.context[0x30f] = 0u;
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
-    static_cast<void>(AgcDriver::Graphics::DecodeState(queue));
+    const auto masked = AgcDriver::Graphics::DecodeState(queue);
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a single-sample quad pixel mask was refused by the precheck");
-    Require(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, {}).quadPixelMask == 0x2u, "PA_SC_AA_MASK did not decode to the covered quad pixel");
+    Require(AgcDriver::Graphics::QuadPixelMask(masked) == 0x2u, "PA_SC_AA_MASK did not decode to the covered quad pixel");
     queue = makeState();
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
-    Require(AgcDriver::Graphics::DecodePixelStageInfo(queue.context, {}).quadPixelMask == 0xfu, "full sample masks did not cover the whole quad");
+    Require(AgcDriver::Graphics::QuadPixelMask(AgcDriver::Graphics::DecodeState(queue)) == 0xfu, "full sample masks did not cover the whole quad");
 }
 
 void quadPixelMaskTests() {

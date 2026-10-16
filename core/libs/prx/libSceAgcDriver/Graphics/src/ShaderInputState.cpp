@@ -150,9 +150,6 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool depthExportEnable = (shaderControl & 0x1u) != 0;
     const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
     const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0;
-    const auto aaMask = readIfWritten(context, 0x30e, RegisterBank::Context, 0xffffffffu);
-    const auto aaMaskBottom = readIfWritten(context, 0x30f, RegisterBank::Context, 0xffffffffu);
-    const auto quadPixelMask = static_cast<std::uint8_t>((aaMask & 1u) | (((aaMask >> 16u) & 1u) << 1u) | ((aaMaskBottom & 1u) << 2u) | (((aaMaskBottom >> 16u) & 1u) << 3u));
     const auto loaded = [&](PixelInput input) { return (activeInputs & PixelInputBit(input)) != 0; };
     return ShaderRecompiler::ShaderPixelStageInfo{
         .interpolatorCount = inputNum,
@@ -180,8 +177,7 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .orderedPixelShader = ((shaderControl >> 16u) & 0x1u) != 0,
         .targetOutputMode = targetOutputMode,
         .targetExportMapping = nullProgram ? std::array<std::uint8_t, 8>{} : exportMappings,
-        .stencilRefExportEnable = stencilRefExportEnable,
-        .quadPixelMask = quadPixelMask
+        .stencilRefExportEnable = stencilRefExportEnable
     };
 }
 
