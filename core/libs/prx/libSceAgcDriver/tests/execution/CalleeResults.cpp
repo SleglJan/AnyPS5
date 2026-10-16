@@ -22,12 +22,13 @@ constexpr std::uint32_t Results = 4;
 TestGuest::Array<std::uint32_t, MaxThreads * Inputs> Input;
 TestGuest::Array<std::uint32_t, MaxThreads * Results> Output;
 
-alignas(256) constexpr std::array<std::uint32_t, 19> Code{
+alignas(256) constexpr std::array<std::uint32_t, 24> Code{
     0x34020084, 0xe0381000, 0x80000401, 0xbf8c3f70,
     0x7e120304, 0xbb080007, 0x7e18030a,
-    0x7e120305, 0xbb080004, 0x4a1a150c,
+    0x7e120305, 0xbb0a0009, 0x4a1a150c,
     0xe0781000, 0x80010a01, 0xbf810000,
-    0x3a1412ff, 0xa5a5a5a5, 0x4a1612ff, 0x13579bdf, 0xbe802008, 0xbf810000,
+    0x3a1412ff, 0xa5a5a5a5, 0x4a1612ff, 0x13579bdf, 0xbe802008,
+    0x3a1412ff, 0xa5a5a5a5, 0x4a1612ff, 0x13579bdf, 0xbe80200a, 0xbf810000,
 };
 
 constexpr const char* Names[Results] = {"second call's xor", "second call's sum", "first call's xor after the second call", "sum of both xors"};
