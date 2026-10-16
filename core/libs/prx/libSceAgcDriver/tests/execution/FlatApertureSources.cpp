@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -170,12 +171,12 @@ Words Kernel() {
     return code;
 }
 
-void Expect(const std::vector<std::uint32_t>& output, std::uint32_t waveSize, std::uint32_t lane, std::uint32_t slot, std::uint32_t expected, const std::string& what) {
+void Expect(const TestGuest::Vector<std::uint32_t>& output, std::uint32_t waveSize, std::uint32_t lane, std::uint32_t slot, std::uint32_t expected, const std::string& what) {
     const auto read = output[lane * LaneDwords + slot];
     Require(read == expected, "flat aperture sources wave" + std::to_string(waveSize) + ": lane " + std::to_string(lane) + " " + what + " read " + Hex(read) + ", expected " + Hex(expected));
 }
 
-void Check(const std::vector<std::uint32_t>& output, std::uint32_t waveSize) {
+void Check(const TestGuest::Vector<std::uint32_t>& output, std::uint32_t waveSize) {
     for (std::uint32_t lane = 0; lane < waveSize; ++lane) {
         for (std::uint32_t index = 0; index < Sources.size(); ++index) {
             const auto value = SourceValues[index];
@@ -197,7 +198,7 @@ void Check(const std::vector<std::uint32_t>& output, std::uint32_t waveSize) {
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
-    std::vector<std::uint32_t> output(waveSize * LaneDwords, 0xdeadbeefu);
+    TestGuest::Vector<std::uint32_t> output(waveSize * LaneDwords, 0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto descriptor = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * 4u));
     std::copy(descriptor.begin(), descriptor.end(), userData.begin());
