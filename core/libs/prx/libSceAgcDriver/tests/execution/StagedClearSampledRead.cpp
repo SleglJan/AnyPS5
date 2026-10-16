@@ -11,6 +11,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -165,7 +166,7 @@ int main() {
         const auto resource = AgcDriver::Graphics::DecodeTextureResource(texture);
         AgcDriver::GuestMemory::BumpCollectEpoch();
         std::vector<std::uint32_t> userData(24, 0u);
-        std::vector<std::uint32_t> outputData(Threads * 4u, 0xdeadbeefu);
+        TestGuest::Vector<std::uint32_t> outputData(Threads * 4u, 0xdeadbeefu);
         const auto results = BufferDescriptor(outputData.data(), Threads * 16u);
         std::copy(results.begin(), results.end(), userData.begin());
         std::copy(texture.begin(), texture.end(), userData.begin() + 4);
