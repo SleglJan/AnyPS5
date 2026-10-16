@@ -27,7 +27,6 @@ std::uint32_t DeviceLocalHeap(const Context& context) {
 
 ResidencyDriver::ResidencyDriver(const Context& context, Recorder& recorder, IResidencyGuestMemory& guest, const ResidencyPolicy& policy)
     : context(context), recorder(recorder), guest(guest), deviceHeap(DeviceLocalHeap(context)), mirrors(context, policy.chunkSlots), manager(*this, policy) {
-    presents = Recorder::Presents();
     activeDriver.store(this);
 }
 
@@ -48,12 +47,16 @@ void ResidencyDriver::OrderingPoint() {
     appliedAtOrderingPoints.fetch_add(1, std::memory_order_relaxed);
 }
 
+void ResidencyDriver::Flip() {
+    flips.fetch_add(1, std::memory_order_acq_rel);
+}
+
 void ResidencyDriver::BeforeDispatch() {
     const std::lock_guard lock(GuestMemory::GpuMutex());
     manager.Apply();
     harvestTouches();
-    if (const auto now = Recorder::Presents(); now != presents || touchTable == nullptr) {
-        presents = now;
+    if (const auto now = flips.load(std::memory_order_acquire); now != flipsSeen || touchTable == nullptr) {
+        flipsSeen = now;
         frameBoundary();
     }
     manager.RefreshHot();

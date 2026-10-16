@@ -84,6 +84,7 @@ public:
     const ResidencyMirrors& Mirrors() const { return mirrors; }
     void OrderingPoint();
     void BeforeDispatch();
+    void Flip();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
     void NoteRecordedWrites(std::uint64_t address, std::uint64_t bytes);
@@ -147,7 +148,8 @@ private:
     std::shared_ptr<Buffer> touchTable;
     std::atomic<VkDeviceAddress> touchAddress{0};
     std::array<TouchReadback, 2> touchReadbacks;
-    std::uint64_t presents = 0;
+    std::atomic<std::uint64_t> flips{0};
+    std::uint64_t flipsSeen = 0;
     std::uint64_t frames = 0;
     std::uint64_t touchHarvests = 0;
     std::uint64_t touchedPages = 0;
