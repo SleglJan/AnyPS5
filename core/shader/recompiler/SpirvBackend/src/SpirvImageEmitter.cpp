@@ -362,48 +362,9 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
     return result;
 }
 
-constexpr std::array<std::uint32_t, 256> SrgbToLinear{
-    0x00000000u, 0x399f0000u, 0x3a1f0000u, 0x3a6f0000u, 0x3a9f0000u, 0x3ac70000u, 0x3aef0000u, 0x3b0b0000u,
-    0x3b1f0000u, 0x3b330000u, 0x3b470000u, 0x3b5b0000u, 0x3b710000u, 0x3b840000u, 0x3b900000u, 0x3b9d0000u,
-    0x3baa0000u, 0x3bb80000u, 0x3bc60000u, 0x3bd50000u, 0x3be50000u, 0x3bf60000u, 0x3c030000u, 0x3c0c0000u,
-    0x3c160000u, 0x3c1f0000u, 0x3c290000u, 0x3c340000u, 0x3c3e0000u, 0x3c490000u, 0x3c550000u, 0x3c600000u,
-    0x3c6d0000u, 0x3c790000u, 0x3c830000u, 0x3c8a0000u, 0x3c910000u, 0x3c980000u, 0x3c9f0000u, 0x3ca60000u,
-    0x3cae0000u, 0x3cb60000u, 0x3cbe0000u, 0x3cc60000u, 0x3cce0000u, 0x3cd70000u, 0x3ce00000u, 0x3ce90000u,
-    0x3cf20000u, 0x3cfc0000u, 0x3d030000u, 0x3d080000u, 0x3d0d0000u, 0x3d120000u, 0x3d170000u, 0x3d1c0000u,
-    0x3d220000u, 0x3d280000u, 0x3d2d0000u, 0x3d330000u, 0x3d390000u, 0x3d3f0000u, 0x3d450000u, 0x3d4c0000u,
-    0x3d520000u, 0x3d590000u, 0x3d5f0000u, 0x3d660000u, 0x3d6d0000u, 0x3d740000u, 0x3d7b0000u, 0x3d810000u,
-    0x3d850000u, 0x3d880000u, 0x3d8c0000u, 0x3d900000u, 0x3d940000u, 0x3d980000u, 0x3d9c0000u, 0x3da00000u,
-    0x3da40000u, 0x3da90000u, 0x3dad0000u, 0x3db10000u, 0x3db60000u, 0x3dba0000u, 0x3dbf0000u, 0x3dc30000u,
-    0x3dc80000u, 0x3dcd0000u, 0x3dd10000u, 0x3dd60000u, 0x3ddb0000u, 0x3de00000u, 0x3de50000u, 0x3dea0000u,
-    0x3df00000u, 0x3df50000u, 0x3dfa0000u, 0x3e000000u, 0x3e020000u, 0x3e050000u, 0x3e080000u, 0x3e0b0000u,
-    0x3e0e0000u, 0x3e110000u, 0x3e140000u, 0x3e170000u, 0x3e1a0000u, 0x3e1d0000u, 0x3e200000u, 0x3e230000u,
-    0x3e260000u, 0x3e290000u, 0x3e2c0000u, 0x3e300000u, 0x3e330000u, 0x3e360000u, 0x3e3a0000u, 0x3e3d0000u,
-    0x3e400000u, 0x3e440000u, 0x3e470000u, 0x3e4b0000u, 0x3e4e0000u, 0x3e520000u, 0x3e560000u, 0x3e590000u,
-    0x3e5d0000u, 0x3e610000u, 0x3e650000u, 0x3e680000u, 0x3e6c0000u, 0x3e700000u, 0x3e740000u, 0x3e780000u,
-    0x3e7c0000u, 0x3e800000u, 0x3e820000u, 0x3e840000u, 0x3e860000u, 0x3e880000u, 0x3e8a0000u, 0x3e8d0000u,
-    0x3e8f0000u, 0x3e910000u, 0x3e930000u, 0x3e950000u, 0x3e980000u, 0x3e9a0000u, 0x3e9c0000u, 0x3e9e0000u,
-    0x3ea10000u, 0x3ea30000u, 0x3ea50000u, 0x3ea80000u, 0x3eaa0000u, 0x3ead0000u, 0x3eaf0000u, 0x3eb20000u,
-    0x3eb40000u, 0x3eb60000u, 0x3eb90000u, 0x3ebc0000u, 0x3ebe0000u, 0x3ec10000u, 0x3ec30000u, 0x3ec60000u,
-    0x3ec80000u, 0x3ecb0000u, 0x3ece0000u, 0x3ed10000u, 0x3ed30000u, 0x3ed60000u, 0x3ed90000u, 0x3edb0000u,
-    0x3ede0000u, 0x3ee10000u, 0x3ee40000u, 0x3ee70000u, 0x3eea0000u, 0x3eed0000u, 0x3ef00000u, 0x3ef20000u,
-    0x3ef50000u, 0x3ef80000u, 0x3efb0000u, 0x3efe0000u, 0x3f010000u, 0x3f020000u, 0x3f040000u, 0x3f050000u,
-    0x3f070000u, 0x3f090000u, 0x3f0a0000u, 0x3f0c0000u, 0x3f0d0000u, 0x3f0f0000u, 0x3f110000u, 0x3f120000u,
-    0x3f140000u, 0x3f160000u, 0x3f170000u, 0x3f190000u, 0x3f1b0000u, 0x3f1c0000u, 0x3f1e0000u, 0x3f200000u,
-    0x3f210000u, 0x3f230000u, 0x3f250000u, 0x3f270000u, 0x3f290000u, 0x3f2a0000u, 0x3f2c0000u, 0x3f2e0000u,
-    0x3f300000u, 0x3f320000u, 0x3f330000u, 0x3f350000u, 0x3f370000u, 0x3f390000u, 0x3f3b0000u, 0x3f3d0000u,
-    0x3f3f0000u, 0x3f410000u, 0x3f430000u, 0x3f450000u, 0x3f470000u, 0x3f490000u, 0x3f4b0000u, 0x3f4d0000u,
-    0x3f4f0000u, 0x3f510000u, 0x3f530000u, 0x3f550000u, 0x3f570000u, 0x3f590000u, 0x3f5b0000u, 0x3f5d0000u,
-    0x3f5f0000u, 0x3f610000u, 0x3f630000u, 0x3f650000u, 0x3f680000u, 0x3f6a0000u, 0x3f6c0000u, 0x3f6e0000u,
-    0x3f700000u, 0x3f730000u, 0x3f750000u, 0x3f770000u, 0x3f790000u, 0x3f7b0000u, 0x3f7e0000u, 0x3f800000u,
-};
-
 std::uint32_t DecodeSrgbTexel(SpirvEmitterState& state, std::uint32_t color) {
-    const auto pointerType = TypePointer(state, spv::StorageClassPrivate, TypeU32(state));
-    std::array<std::uint32_t, SrgbToLinear.size()> words{};
-    for (std::size_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, SrgbToLinear[index]);
-    const auto arrayType = state.module.Type(spv::OpTypeArray, TypeU32(state), ConstantU32(state, static_cast<std::uint32_t>(words.size())));
-    if (state.srgbTableVariable == 0) state.srgbTableVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, arrayType), spv::StorageClassPrivate);
-    state.module.AddFunction(spv::OpStore, state.srgbTableVariable, state.module.Constant(spv::OpConstantComposite, arrayType, std::span<const std::uint32_t>(words)));
+    const auto u32 = TypeU32(state);
+    const auto f32 = TypeF32(state);
     std::uint32_t components[4] = {};
     for (std::uint32_t index = 0; index < 4u; index++) {
         const auto value = state.module.AllocateId();
@@ -411,11 +372,14 @@ std::uint32_t DecodeSrgbTexel(SpirvEmitterState& state, std::uint32_t color) {
         const auto scaled = Binary(state, spv::OpFAdd, TypeF32(state), Binary(state, spv::OpFMul, TypeF32(state), value, ConstantF32Value(state, 255.0f)), ConstantF32Value(state, 0.5f));
         const auto code = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, TypeU32(state), code, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpConvertFToU, TypeU32(state), scaled), ConstantU32(state, 255u));
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.srgbTableVariable, code);
-        const auto bits = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, TypeU32(state), bits, pointer);
-        components[index] = Unary(state, spv::OpBitcast, TypeF32(state), bits);
+        const auto encoded = Binary(state, spv::OpFDiv, f32, Unary(state, spv::OpConvertUToF, f32, code), ConstantF32Value(state, 255.0f));
+        const auto low = Binary(state, spv::OpFDiv, f32, encoded, ConstantF32Value(state, 12.92f));
+        const auto base = Binary(state, spv::OpFDiv, f32, Binary(state, spv::OpFAdd, f32, encoded, ConstantF32Value(state, 0.055f)), ConstantF32Value(state, 1.055f));
+        const auto high = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, high, GlslStd450(state), GLSLstd450Pow, base, ConstantF32Value(state, 2.4f));
+        const auto linear = Select(state, f32, Binary(state, spv::OpULessThanEqual, TypeBool(state), code, ConstantU32(state, 10u)), low, high);
+        const auto rounded = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIAdd, u32, Unary(state, spv::OpBitcast, u32, linear), ConstantU32(state, 0x8000u)), ConstantU32(state, 0xffff0000u));
+        components[index] = Unary(state, spv::OpBitcast, f32, rounded);
     }
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4), result, components[0], components[1], components[2], components[3]);

@@ -9,6 +9,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <spirv/unified1/spirv.hpp>
 #include <windows.h>
 #endif
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -127,6 +129,19 @@ std::uint32_t Linear(std::uint32_t code) {
     return std::bit_cast<std::uint32_t>(static_cast<float>(std::ldexp(std::nearbyint(mantissa * 256.0), exponent - 8)));
 }
 
+std::size_t PrivateArrays(std::span<const std::uint32_t> words) {
+    std::set<std::uint32_t> arrays;
+    std::set<std::uint32_t> pointers;
+    std::size_t variables = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpTypeArray) arrays.insert(words[cursor + 1]);
+        if (op == spv::OpTypePointer && words[cursor + 2] == spv::StorageClassPrivate && arrays.contains(words[cursor + 3])) pointers.insert(words[cursor + 1]);
+        if (op == spv::OpVariable && pointers.contains(words[cursor + 1])) ++variables;
+    }
+    return variables;
+}
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -175,6 +190,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     };
     request.useCache = useCache;
     const auto result = ShaderRecompiler::Recompile(request);
+    Require(PrivateArrays(result.spirv.Words()) == 0u, "image sRGB load: the module keeps " + std::to_string(PrivateArrays(result.spirv.Words())) + " Private arrays, expected the sRGB decode computed without a per-invocation table");
     device.Dispatch(result, groups, 1, 1, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
