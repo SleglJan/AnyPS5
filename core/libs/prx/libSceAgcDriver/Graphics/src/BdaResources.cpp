@@ -172,7 +172,8 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     ValidateBdaRangeList(ownRanges);
     ValidateBdaGrants(writeGrants);
     table = BdaArena::Take(context, tableBytes);
-    const Abi::Header header{Abi::TableVersion, static_cast<std::uint32_t>(ownRanges.size()), static_cast<std::uint32_t>(writeGrants.size()), 0, pages != nullptr ? pages->Address() : 0u, 0};
+    const auto* residency = ResidencyDriver::Active();
+    const Abi::Header header{Abi::TableVersion, static_cast<std::uint32_t>(ownRanges.size()), static_cast<std::uint32_t>(writeGrants.size()), 0, pages != nullptr ? pages->Address() : 0u, residency != nullptr ? residency->TouchTableAddress() : 0u};
     auto* bytes = table.data;
     std::memcpy(bytes, &header, sizeof(header));
     if (!ownRanges.empty()) std::memcpy(bytes + sizeof(header), ownRanges.data(), ownRanges.size() * sizeof(Abi::Range));
