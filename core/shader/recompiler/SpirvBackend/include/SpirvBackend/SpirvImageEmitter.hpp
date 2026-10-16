@@ -22,6 +22,15 @@ void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& a
 
 bool ImageStoresRecorded(const IrProgram& program, std::span<const std::uint32_t> capabilities);
 
+struct StorageImageMemoryFunctions {
+    std::uint32_t texel = 0;
+    std::uint32_t decode = 0;
+    std::uint32_t decodeType = 0;
+    std::uint32_t encode = 0;
+};
+
+const StorageImageMemoryFunctions* StorageImageMemoryFunctionsOf(const SpirvEmitterState& state);
+
 void DefineImageStoreRecord(SpirvEmitterState& state);
 
 }
