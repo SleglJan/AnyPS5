@@ -4558,4 +4558,153 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     return outcome;
 }
 
+std::size_t VulkanDevice::ContinuationBlockBudget() const {
+    VkDeviceSize largest = 0;
+    for (std::uint32_t heap = 0; heap < state->memoryProperties.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        if ((state->memoryProperties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) largest = std::max(largest, state->memoryProperties.memoryHeaps[heap].size);
+    }
+    return static_cast<std::size_t>(std::max<VkDeviceSize>(VkDeviceSize{256} << 20u, largest / 16u));
+}
+
+std::shared_ptr<Graphics::Buffer> VulkanDevice::ContinuationBlock(std::size_t bytes) {
+    constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    return std::make_shared<Graphics::Buffer>(readyContext(), bytes, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+}
+
+void VulkanDevice::InitializeContinuationBlock(const std::shared_ptr<Graphics::Buffer>& block, std::span<const std::uint32_t> words) {
+    require(state->recorder != nullptr && block != nullptr, "a continuation block needs the device's recorder");
+    auto& recorder = *state->recorder;
+    const auto& context = readyContext();
+    recorder.DeclareSection({});
+    const auto commands = recorder.Commands();
+    recorder.Keep(block);
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    const auto update = context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer");
+    constexpr std::size_t chunk = 65536u / sizeof(std::uint32_t);
+    for (std::size_t first = 0; first < words.size(); first += chunk) {
+        const auto count = std::min(chunk, words.size() - first);
+        update(commands, block->Handle(), first * sizeof(std::uint32_t), count * sizeof(std::uint32_t), words.data() + first);
+    }
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+}
+
+void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::uint32_t rounds, std::uint32_t slots, std::uint64_t programAddress) {
+    require(state->recorder != nullptr && block != nullptr, "continuation rounds need the device's recorder");
+    state->recorder->BoundKeptBytes();
+    auto& recorder = *state->recorder;
+    const auto& context = readyContext();
+    struct Part {
+        const ShaderRecompiler::RecompileResult* program = nullptr;
+        std::shared_ptr<Graphics::ShaderResources> resources;
+        std::shared_ptr<ComputePipelineObjects> objects;
+        std::array<std::byte, Graphics::PipelinePushConstantBytes> pushBytes{};
+        VkShaderStageFlags pushStages = 0;
+        std::shared_ptr<WorkgroupMemory> workgroupMemory;
+        std::uint32_t bin = 0;
+    };
+    std::vector<Part> built;
+    built.reserve(parts.size());
+    for (auto& part : parts) {
+        require(part.shader != nullptr && part.bin < bins, "a continuation part names no program or a bin outside the block");
+        const auto& shader = *part.shader;
+        ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
+        if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
+        const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+        Part entry;
+        entry.program = &shader;
+        entry.bin = part.bin;
+        entry.pushStages = Graphics::PushConstantStages(shaders);
+        if (entry.pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) throw std::runtime_error("Vulkan dispatch: compute push constant range exceeds device limit");
+        entry.pushBytes = Graphics::AssemblePushConstants(shaders);
+        if (part.prepared != nullptr && part.prepared->presyncSerial != 0) ReapRecorded(part.prepared->presyncSerial);
+        if (part.prepared != nullptr && part.prepared->resources != nullptr) {
+            entry.resources = std::move(part.prepared->resources);
+            entry.resources->Complete();
+        } else {
+            entry.resources = std::make_shared<Graphics::ShaderResources>(context, shaders[0], false, 0, 0);
+        }
+        entry.resources->PatchPushConstants(entry.pushBytes);
+        entry.resources->NameProgram(programAddress);
+        entry.objects = computePipeline(shader, programAddress);
+        require(std::ranges::equal(entry.objects->setLayoutKey, entry.resources->SetLayouts().mainKey), "Vulkan dispatch: a continuation's pipeline was created with a set layout other than its resources");
+        if (shader.workgroupMemoryDwords != 0) entry.workgroupMemory = state->WorkgroupMemoryFor(context, std::max(slots, 1u), 1, 1, shader.workgroupMemoryDwords);
+        built.push_back(std::move(entry));
+    }
+    for (auto& part : built) {
+        auto& resources = *part.resources;
+        if (recorder.HasQueuedKeyStores()) recorder.FlushKeyStores();
+        if (recorder.HasQueuedStores()) recorder.FlushStores();
+        if (resources.UsesDeviceImages()) {
+            Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
+            resources.ExpectDeviceImages(*context.deviceImages, *part.program);
+            context.deviceImages->BeforeDispatch(context, recorder);
+        }
+    }
+    const bool sectioned = recorder.Streams() > 1 && std::ranges::none_of(built, [](const Part& part) { return part.resources->HoldsLease() || part.resources->UsesAddressTable(); });
+    if (sectioned) {
+        std::vector<Graphics::Recorder::SectionObject> objects{{block.get(), true}};
+        for (const auto& part : built) {
+            objects.push_back({part.resources.get(), true});
+            if (part.workgroupMemory != nullptr) objects.push_back({part.workgroupMemory.get(), true});
+            for (const auto& [image, written] : part.resources->StorageImages()) objects.push_back({image, written});
+        }
+        recorder.DeclareSection(objects);
+    } else {
+        recorder.DeclareSection({});
+    }
+    const auto commands = recorder.Commands();
+    recorder.Keep(block);
+    for (auto& part : built) {
+        part.resources->UseBatchFaultRecord(recorder);
+        part.resources->PrepareDeviceRecords(&recorder, commands);
+        recorder.Keep(part.objects);
+        recorder.Keep(part.resources);
+        if (part.workgroupMemory != nullptr) recorder.Keep(part.workgroupMemory);
+        if (part.resources->UsesAddressTable()) {
+            if (auto* residency = Graphics::ResidencyDriver::Active()) residency->KeepChunks();
+        }
+    }
+    const auto update = context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer");
+    const auto bind = context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
+    const auto bindSets = context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
+    const auto push = context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants");
+    const auto dispatchIndirect = context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect");
+    const ShaderRecompiler::ContinuationAbi::Geometry geometry{bins, rounds, slots, 0u};
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    for (std::uint32_t round = 1; round <= rounds; ++round) {
+        update(commands, block->Handle(), ShaderRecompiler::ContinuationAbi::RoundWord * sizeof(std::uint32_t), sizeof(round), &round);
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        for (auto& part : built) {
+            bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->pipeline);
+            part.resources->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->layout);
+            context.descriptorHeap->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->layout, state->computeHeapSet);
+            if (part.workgroupMemory != nullptr) bindSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &part.workgroupMemory->set, 0, nullptr);
+            if (part.pushStages != 0) push(commands, part.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, part.pushBytes.data());
+            const auto timing = recorder.BeginGpuTiming(programAddress != 0 ? programAddress : part.program->variantId);
+            dispatchIndirect(commands, block->Handle(), ShaderRecompiler::ContinuationAbi::CounterDword(geometry, round, part.bin) * sizeof(std::uint32_t));
+            recorder.EndGpuTiming(timing);
+        }
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    }
+    constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
+    recorder.MarkCovered(dispatchedAccess);
+    bool leased = false;
+    for (auto& part : built) {
+        part.resources->MarkGpuWrites(recorder);
+        if (part.resources->UsesDeviceImages()) context.deviceImages->AfterDispatch(context, recorder, part.resources->ImageStoreRecord());
+        if (part.resources->NeedsCompletion()) Graphics::ShaderResources::RecordBatchFaults(recorder, part.resources);
+        leased = leased || part.resources->HoldsLease();
+    }
+    if (SyncEachDispatch() || (leased && Graphics::SyncLeaseWork())) {
+        Graphics::Recorder::CountSync(3);
+        recorder.Sync();
+        if (leased) Graphics::CountLeaseOutcome(true, {});
+    } else if (leased) {
+        Graphics::CountLeaseOutcome(false, recorder.CallerToken());
+    }
+}
+
 }

@@ -308,6 +308,15 @@ function(add_shader_recompiler target runtimeTarget)
             LinkCalls
             LinkCallees
             WriteFileAtomically
+            SplitTableCalls
+            ReadTableCallTargets
+            TableCallContinuation
+            TableCallShape
+            ContinuationAbi::CounterDword
+            ContinuationAbi::ListsDword
+            ContinuationAbi::RecordsDword
+            ContinuationAbi::BlockDwords
+            ContinuationAbi::RecordDwords
     )
     set(shaderCacheManifest)
     foreach(section IN ITEMS sources guard submodules includes reviewed)

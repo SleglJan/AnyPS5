@@ -247,6 +247,15 @@ public:
         double argumentReadMs;
     };
     IndirectOutcome DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::optional<std::array<std::uint32_t, 3>> threadGroup = std::nullopt);
+    std::size_t ContinuationBlockBudget() const;
+    std::shared_ptr<Graphics::Buffer> ContinuationBlock(std::size_t bytes);
+    void InitializeContinuationBlock(const std::shared_ptr<Graphics::Buffer>& block, std::span<const std::uint32_t> words);
+    struct ContinuationPart {
+        const ShaderRecompiler::RecompileResult* shader = nullptr;
+        std::shared_ptr<PreparedDispatch> prepared;
+        std::uint32_t bin = 0;
+    };
+    void DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::uint32_t rounds, std::uint32_t slots, std::uint64_t programAddress);
     void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders);
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
