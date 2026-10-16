@@ -95,17 +95,23 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code, std::
 
 struct Module {
     std::uint32_t entry = 0;
+    std::uint32_t voidType = 0;
     std::map<std::uint32_t, std::string> names;
     std::map<std::uint32_t, std::uint32_t> controls;
-    std::set<std::uint32_t> privates;
+    std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> calls;
-    std::map<std::uint32_t, std::set<std::uint32_t>> stores;
-    std::map<std::uint32_t, std::set<std::uint32_t>> loads;
+    std::map<std::uint32_t, std::set<std::uint32_t>> composites;
+    std::map<std::uint32_t, std::set<std::uint32_t>> returned;
+    std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> callResults;
+    std::map<std::uint32_t, std::uint32_t> spilledResults;
+    std::map<std::uint32_t, std::set<std::uint32_t>> extracted;
 };
 
 Module Parse(std::span<const std::uint32_t> words) {
     Module module;
     std::uint32_t function = 0;
+    std::uint32_t lastCall = 0;
+    std::uint32_t lastStore = 0;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -115,20 +121,29 @@ Module Parse(std::span<const std::uint32_t> words) {
             module.names[operand(0)] = reinterpret_cast<const char*>(words.data() + cursor + 2u);
         } else if (op == spv::OpEntryPoint) {
             module.entry = operand(1);
-        } else if (op == spv::OpVariable && function == 0u && operand(2) == spv::StorageClassPrivate) {
-            module.privates.insert(operand(1));
+        } else if (op == spv::OpTypeVoid) {
+            module.voidType = operand(0);
         } else if (op == spv::OpFunction) {
             function = operand(1);
             module.controls[function] = operand(2);
+            module.resultTypes[function] = operand(0);
         } else if (op == spv::OpFunctionEnd) {
             function = 0;
         } else if (op == spv::OpFunctionCall) {
             module.calls.emplace_back(function, operand(2));
-        } else if (op == spv::OpStore && module.privates.contains(operand(0))) {
-            module.stores[function].insert(operand(0));
-        } else if (op == spv::OpLoad && module.privates.contains(operand(2))) {
-            module.loads[function].insert(operand(2));
+            module.callResults[operand(1)] = {function, operand(2)};
+        } else if (op == spv::OpCompositeConstruct) {
+            module.composites[function].insert(operand(1));
+        } else if (op == spv::OpReturnValue) {
+            module.returned[function].insert(operand(0));
+        } else if (op == spv::OpCompositeExtract) {
+            module.extracted[function].insert(operand(2));
         }
+        if (op == spv::OpStore && count == 4u && lastCall != 0u && operand(1) == lastCall) lastStore = operand(0);
+        if (op == spv::OpLoad && count == 5u && lastStore != 0u && operand(2) == lastStore) module.spilledResults[operand(1)] = lastCall;
+        if (op != spv::OpFunctionCall && op != spv::OpStore) lastCall = 0;
+        if (op == spv::OpFunctionCall) lastCall = operand(1);
+        if (op != spv::OpStore) lastStore = 0;
         cursor += count;
     }
     return module;
@@ -160,10 +175,22 @@ void RequireCallees(const Module& module, std::size_t count, const std::string& 
 }
 
 void RequireReturns(const Module& module, std::uint32_t callee, std::uint32_t caller, const std::string& what) {
-    const auto stores = module.stores.find(callee);
-    const auto loads = module.loads.find(caller);
-    Require(stores != module.stores.end() && loads != module.loads.end() && std::ranges::any_of(stores->second, [&](std::uint32_t slot) { return loads->second.contains(slot); }),
-        what + ": " + module.names.at(callee) + " does not hand the register it wrote back to its caller");
+    const auto returned = module.returned.find(callee);
+    const auto composites = module.composites.find(callee);
+    const bool returnsRegisters = module.resultTypes.at(callee) != module.voidType && returned != module.returned.end() && composites != module.composites.end() &&
+        std::ranges::any_of(returned->second, [&](std::uint32_t value) { return composites->second.contains(value); });
+    const auto extracted = module.extracted.find(caller);
+    bool taken = false;
+    if (extracted != module.extracted.end()) {
+        for (const auto& [result, call] : module.callResults) {
+            if (call.first == caller && call.second == callee && extracted->second.contains(result)) taken = true;
+        }
+        for (const auto& [loaded, result] : module.spilledResults) {
+            const auto call = module.callResults.find(result);
+            if (call != module.callResults.end() && call->second.first == caller && call->second.second == callee && extracted->second.contains(loaded)) taken = true;
+        }
+    }
+    Require(returnsRegisters && taken, what + ": " + module.names.at(callee) + " does not hand the register it wrote back to its caller");
 }
 
 void CheckTableCall() {
