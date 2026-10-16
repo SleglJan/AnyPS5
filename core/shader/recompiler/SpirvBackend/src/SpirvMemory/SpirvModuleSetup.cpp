@@ -192,6 +192,8 @@ private:
     std::unordered_set<const IrValue*> active;
 };
 
+constexpr std::uint32_t MaxIndexedWindowSlots = 8u;
+
 std::uint32_t IndexedWindowSlots(const IrProgram& program) {
     const auto window = program.Metadata().vectorWindowSize;
     WindowIndexBounds bounds;
@@ -227,11 +229,12 @@ void DefineModule(SpirvEmitterState& state) {
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
         state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
+        const bool indexedSlots = state.vectorWindowIndexed != 0u && state.vectorWindowIndexed <= MaxIndexedWindowSlots && state.program.Metadata().callFunctions.empty();
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
             if (state.vectorWindowIndexed == 0u) continue;
             auto& slots = state.vectorWindowSlots.at(half);
-            for (std::uint32_t slot = state.vectorWindowIndexed; slot < window; slot++) slots.push_back(state.module.AllocateId());
+            for (std::uint32_t slot = indexedSlots ? 0u : state.vectorWindowIndexed; slot < window; slot++) slots.push_back(state.module.AllocateId());
         }
     }
     state.mainFunc = state.module.AllocateId();
