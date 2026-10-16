@@ -64,7 +64,7 @@ void BudgetIsTheGuestSize(MirrorReader& reader) {
     SharedPages base(guestPages);
     Fill(base.Words(), 1, 12);
     AgcDriver::GuestMemory::CollectWritesUncached(base.Address(), PageBytes);
-    Locked([&] { Residency().Manager().SetBudget(ResidencyMeasuredBudget); });
+    Locked([&] { Residency().Manager().SetBudget(std::uint64_t{GuestChunks} * chunkBytes); });
     Use(base.Address());
     std::optional<AgcDriver::Graphics::Context> context;
     Locked([&] {
@@ -74,7 +74,7 @@ void BudgetIsTheGuestSize(MirrorReader& reader) {
             if (const auto chunk = residency.Mirrors().Chunk(chunks.front())) context = chunk->context;
         }
     });
-    Expect(context.has_value(), "the measured budget admitted no page of a " + std::to_string(GuestChunks) + "-chunk guest allocation, so no mirror chunk exists");
+    Expect(context.has_value(), "a budget of " + std::to_string(GuestChunks) + " chunks admitted no page of a " + std::to_string(GuestChunks) + "-chunk guest allocation, so no mirror chunk exists");
     if (!context) return;
     const auto first = Measure(*context);
     ExpectBudget(first, "with a " + std::to_string(GuestChunks) + "-chunk shared allocation");
