@@ -1762,6 +1762,10 @@ private:
             m_info.usesDma = true;
             return;
         }
+        if (op == IrOpcode::ContinuationSpill || op == IrOpcode::ContinuationSpillLds || op == IrOpcode::TableCallBin || op == IrOpcode::ContinuationSlot || op == IrOpcode::ContinuationLoad || op == IrOpcode::ContinuationRestoreLds) {
+            m_info.usesDma = true;
+            return;
+        }
         const auto buffer = BufferAccessOf(op);
         const auto addressInfo = AddressOpcodeInfoOf(op);
         const auto imageInfo = ImageOpcodeInfoOf(op);
