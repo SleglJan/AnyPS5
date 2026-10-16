@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -26,8 +27,8 @@ constexpr std::uint32_t Mips = 1;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type3D = 10;
 constexpr float SecondCoordinateScale = 1.0f / static_cast<float>(Size);
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::uint8_t, 16384> Volume{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::uint8_t, 16384> Volume;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -37,7 +38,7 @@ alignas(256) constexpr std::array<std::uint32_t, 9> BiasPixelCode{
     0x10040010, 0x06060300, 0x10060611, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
+TestGuest::Array<std::array<float, 4>, 3> Triangle{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
