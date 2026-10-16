@@ -485,8 +485,7 @@ bool evictOne(Shadows& registry) {
 }
 
 bool UnitShadowEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_UNIT_SHADOW") == nullptr && GuestMemory::WriteWatched();
-    return enabled;
+    return false;
 }
 
 bool ShadowVerify() {

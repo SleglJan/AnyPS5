@@ -232,11 +232,6 @@ public:
     void Flush();
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
     // Stores into host-imported memory are recorded (not waited for): a CPU reader syncs afterwards.
-    // Then the unit shadows over the range are published into their imports as `scope` says (see
-    // UnitShadow.hpp; the reason string picks the publish reason), `published` receiving whether
-    // any unit was: a reader of the import must sync for a publish as for a store. Only images
-    // with a pending unit inside the range are stored (APS5_NO_FLUSH_PRETEST=1 lists every
-    // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr);
     static void FlushAllPending(const char* reason);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
@@ -246,8 +241,6 @@ public:
     static void FlushDumpSelected(const char* reason);
     static bool StoreAtFlipRequested(const char* value);
     static bool StoreAtLabelRequested(const char* value);
-    // See PendingSerial: a change of a surface's source outside the registry (a unit shadow
-    // retile) moves it too.
     static void BumpPendingSerial();
     // Whether an image with results pending, or one a FlushPending is storing right now, overlaps
     // any of the [begin, end) ranges: one acquisition of the registry's mutex.
@@ -297,9 +290,6 @@ public:
     // short hold, no GPU wait), the collect before it.
     static constexpr std::size_t ClassifyLimit = 1u << 20u;
     static bool AccessKeptByCpu(std::uint64_t address, std::size_t bytes, std::size_t* images = nullptr, std::size_t* evicted = nullptr);
-    // FlushPending's publish of the unit shadows over the range without the image stores (what it
-    // does when it lists no image, and all an access AccessKeptByCpu approved needs): whether any
-    // unit was published.
     static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access");
     // For the [hooksync] recorded-store line: images a FlushPending stored after a hook skip of
     // theirs (AccessKeptByCpu), of which by the hook for the same read site as the last skip; 10 s deltas.
@@ -463,11 +453,6 @@ private:
     // covered tile blocks and of linear rows, tail blocks, the bytes between mips; every byte of a
     // thick surface), ascending: a write-back keeps the guest's bytes there.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> uncoveredBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) const;
-    // The seed of a write-back's tiled scratch where its copies would carry bytes no element holds:
-    // those bytes' current contents (a fresh unit shadow's, else the import's), copied into the
-    // scratch before the retile, so the copies out of the scratch store them unchanged. `copied`
-    // lists the surface-relative [begin, end) ranges the write-back copies out of the scratch, each
-    // with the scratch offset of its begin.
     struct CopiedBytes {
         std::uint64_t begin;
         std::uint64_t end;
@@ -475,7 +460,6 @@ private:
     };
     struct PaddingSeeds {
         std::vector<std::pair<VkBuffer, std::vector<VkBufferCopy>>> copies;
-        std::vector<std::shared_ptr<ShadowSlab>> slabs;
         // Guest ranges read from the import.
         std::vector<std::pair<std::uint64_t, std::uint64_t>> importReads;
     };
@@ -487,13 +471,8 @@ private:
     };
     std::vector<ImportSegment> importSegments() const;
     PaddingSeeds paddingSeeds(std::span<const ImportSegment> segments, const std::vector<CopiedBytes>& copied) const;
-    // The direct upload and GPU-direct write-back of the runs through their windows (block units);
-    // both return the bytes moved. The upload reads each unit from its unit shadow while fresh,
-    // else from the import (`discard`: the image has no layout yet, a whole-surface first upload).
-    // The write-back retiles into the import's unit shadow where a slab takes the piece
-    // (`shadowed` receives those guest ranges, `imported` the pieces written to the import).
     std::uint64_t uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
-    std::uint64_t writeBackWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, Buffer* save = nullptr);
+    std::uint64_t writeBackWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, Buffer* save = nullptr);
     // Per-layer validity (thin array surfaces whose layers are 64 KiB-aligned guest slices; every
     // other surface is one tracked layer): a layer's generation is the write generation its guest
     // bytes were last known to match the image at, and a pending layer holds results (a clear, a

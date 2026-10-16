@@ -53,6 +53,38 @@ private:
     PFN_vkCmdPipelineBarrier pipelineBarrier = nullptr;
 };
 
+class ResidencyDriver;
+
+struct MirrorPiece {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceSize offset = 0;
+};
+
+class MirrorSpan {
+public:
+    MirrorSpan(ResidencyDriver* residency, std::uint64_t begin, std::uint64_t end, ResidencyAccess access);
+
+    std::vector<MirrorPiece> Pieces(std::uint64_t begin, std::uint64_t end) const;
+    bool Mirrored(std::uint64_t begin, std::uint64_t end) const;
+    void NoteWritten(std::span<const MirrorPiece> pieces) const;
+
+private:
+    struct Page {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+    };
+
+    const Page* page(std::uint64_t index) const;
+
+    ResidencyDriver* residency = nullptr;
+    std::uint64_t first = 0;
+    std::vector<Page> pages;
+};
+
+bool MirrorsDirty(std::uint64_t begin, std::uint64_t end);
+
 }
 
 #endif

@@ -1,5 +1,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include <algorithm>
 #include <map>
+#include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -97,6 +103,92 @@ void ResidencyMirrors::record(VkCommandBuffer commands, std::span<const Residenc
     for (const auto& [buffers, list] : regions) copyBuffer(commands, buffers.first, buffers.second, static_cast<std::uint32_t>(list.size()), list.data());
     const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
     pipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+}
+
+MirrorSpan::MirrorSpan(ResidencyDriver* residency, std::uint64_t begin, std::uint64_t end, ResidencyAccess access) {
+    if (residency == nullptr || end <= begin) return;
+    this->residency = residency;
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    auto& manager = residency->Manager();
+    first = begin >> ResidencyPageShift;
+    const auto last = (end - 1) >> ResidencyPageShift;
+    pages.resize(static_cast<std::size_t>(last - first + 1));
+    for (auto index = first; index <= last;) {
+        if (!manager.Slot(index)) {
+            ++index;
+            continue;
+        }
+        auto next = index + 1;
+        while (next <= last && manager.Slot(next)) ++next;
+        manager.Use(index << ResidencyPageShift, (next - index) << ResidencyPageShift, access);
+        index = next;
+    }
+    auto* recorder = Recorder::Active();
+    std::set<std::uint32_t> kept;
+    for (std::size_t k = 0; k < pages.size(); ++k) {
+        const auto index = first + k;
+        const auto slot = access == ResidencyAccess::Write ? manager.WriteSlot(index) : manager.Slot(index);
+        if (!slot) continue;
+        const auto chunk = residency->Mirrors().Chunk(slot->chunk);
+        pages[k] = {chunk->buffer, VkDeviceSize{slot->slot} << ResidencyPageShift};
+        if (recorder != nullptr && kept.insert(slot->chunk).second) recorder->Keep(chunk);
+    }
+    for (const auto& piece : Pieces(begin, end)) {
+        if (piece.buffer == VK_NULL_HANDLE) manager.PrepareImportWrite(piece.begin, piece.end - piece.begin);
+    }
+}
+
+const MirrorSpan::Page* MirrorSpan::page(std::uint64_t index) const {
+    if (residency == nullptr || index < first || index - first >= pages.size()) return nullptr;
+    return &pages[static_cast<std::size_t>(index - first)];
+}
+
+std::vector<MirrorPiece> MirrorSpan::Pieces(std::uint64_t begin, std::uint64_t end) const {
+    std::vector<MirrorPiece> pieces;
+    for (auto at = begin; at < end;) {
+        const auto index = at >> ResidencyPageShift;
+        const auto pageEnd = std::min(end, (index + 1) << ResidencyPageShift);
+        const auto* entry = page(index);
+        if (entry != nullptr && entry->buffer != VK_NULL_HANDLE) pieces.push_back({at, pageEnd, entry->buffer, entry->offset + (at & (ResidencyPageBytes - 1))});
+        else if (!pieces.empty() && pieces.back().buffer == VK_NULL_HANDLE && pieces.back().end == at) pieces.back().end = pageEnd;
+        else pieces.push_back({at, pageEnd, VK_NULL_HANDLE, 0});
+        at = pageEnd;
+    }
+    return pieces;
+}
+
+bool MirrorSpan::Mirrored(std::uint64_t begin, std::uint64_t end) const {
+    if (end <= begin) return false;
+    for (auto index = begin >> ResidencyPageShift; index <= (end - 1) >> ResidencyPageShift; ++index) {
+        const auto* entry = page(index);
+        if (entry != nullptr && entry->buffer != VK_NULL_HANDLE) return true;
+    }
+    return false;
+}
+
+void MirrorSpan::NoteWritten(std::span<const MirrorPiece> pieces) const {
+    if (residency == nullptr) return;
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    for (const auto& piece : pieces) {
+        if (piece.end <= piece.begin) continue;
+        if (piece.buffer != VK_NULL_HANDLE) residency->NoteDriverWrite(piece.begin, piece.end - piece.begin);
+        else residency->RefreshImportWritten(piece.begin, piece.end - piece.begin);
+    }
+}
+
+bool MirrorsDirty(std::uint64_t begin, std::uint64_t end) {
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr || end <= begin) return false;
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    auto& manager = residency->Manager();
+    if (!manager.AnyDirty() || !manager.AnyResident(begin, end - begin)) return false;
+    for (auto index = begin >> ResidencyPageShift; index <= (end - 1) >> ResidencyPageShift; ++index) {
+        if (manager.Dirty(index) != 0) return true;
+    }
+    return false;
 }
 
 }
