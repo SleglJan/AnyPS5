@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <span>
 #include <string>
@@ -36,6 +37,11 @@ double millisecondsSince(std::chrono::steady_clock::time_point started) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 }
 
+std::mutex& fileMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 std::string sessionPrefix(const std::filesystem::path& base) {
     return base.stem().string() + ".session-";
 }
@@ -59,7 +65,10 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
     {
         std::vector<std::byte> file;
         std::span<const std::byte> data;
-        if (!path.empty() && read(path, file, data)) std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(data.size()) / 1024.0, path.string().c_str());
+        if (!path.empty() && read(path, file, data)) {
+            fileHash = ShaderRecompiler::HashBytes(data);
+            std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(data.size()) / 1024.0, path.string().c_str());
+        }
         base = create(data);
     }
     if (path.empty()) return;
@@ -182,7 +191,7 @@ VkPipelineCache PipelineCache::create(std::span<const std::byte> data) const {
     return base == VK_NULL_HANDLE ? create({}) : VK_NULL_HANDLE;
 }
 
-bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes) const {
+bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes, std::uint64_t* hash) const {
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     std::size_t size = 0;
     if (getData(context.device, source, &size, nullptr) != VK_SUCCESS) return false;
@@ -197,6 +206,7 @@ bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& f
         return false;
     }
     bytes = size;
+    if (hash != nullptr) *hash = header.dataHash;
     return true;
 }
 
@@ -208,9 +218,18 @@ void PipelineCache::save(bool final) {
     const auto started = std::chrono::steady_clock::now();
     if (final) {
         if (!baseStale && size == initialSessionBytes) return;
-        Check(context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, base, 1, &session), "vkMergePipelineCaches teardown");
+        const auto merge = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches");
+        Check(merge(context.device, base, 1, &session), "vkMergePipelineCaches teardown");
+        std::lock_guard fileLock(fileMutex());
+        std::vector<std::byte> file;
+        std::span<const std::byte> data;
+        VkPipelineCache merged = VK_NULL_HANDLE;
+        if (read(path, file, data) && ShaderRecompiler::HashBytes(data) != fileHash) merged = create(data);
+        if (merged != VK_NULL_HANDLE) Check(merge(context.device, merged, 1, &base), "vkMergePipelineCaches file");
         std::size_t bytes = 0;
-        if (!write(base, path, bytes)) return;
+        const bool written = write(merged != VK_NULL_HANDLE ? merged : base, path, bytes, &fileHash);
+        if (merged != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, merged, nullptr);
+        if (!written) return;
         std::error_code error;
         for (const auto& merged : mergedSessions) std::filesystem::remove(merged, error);
         std::filesystem::remove(sessionPath, error);

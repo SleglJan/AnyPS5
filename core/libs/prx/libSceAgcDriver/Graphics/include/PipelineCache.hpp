@@ -31,7 +31,7 @@ public:
 private:
     bool read(const std::filesystem::path& file, std::vector<std::byte>& bytes, std::span<const std::byte>& data) const;
     VkPipelineCache create(std::span<const std::byte> data) const;
-    bool write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes) const;
+    bool write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes, std::uint64_t* hash = nullptr) const;
     void save(bool final);
     void run();
 
@@ -43,6 +43,7 @@ private:
     std::filesystem::path sessionPath;
     std::vector<std::filesystem::path> mergedSessions;
     bool baseStale = false;
+    std::uint64_t fileHash = 0;
     std::size_t savedSessionBytes = 0;
     std::size_t initialSessionBytes = 0;
     std::mutex saveMutex;
