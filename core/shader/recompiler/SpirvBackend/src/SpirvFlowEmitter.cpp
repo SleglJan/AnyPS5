@@ -777,6 +777,16 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
     EmitDirectInstruction(ctx, inst);
 }
 
+void EmitAnchoredLookups(SpirvValueEmitContext& ctx, const IrValue& anchor) {
+    auto& state = ctx.state;
+    for (std::uint32_t half = 0; half < state.laneCount; ++half) {
+        if (half != 0 && ctx.otherHalf == nullptr) ctx.Fail(anchor, "requires a second lane context");
+        state.laneHalf = half;
+        EmitAnchoredDeviceImageLookups(half == 0 ? ctx : *ctx.otherHalf, anchor);
+    }
+    state.laneHalf = 0;
+}
+
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {
     auto& state = ctx.state;
     state.currentBlock = block;
@@ -794,7 +804,7 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
         } else {
             emittedNonPhi = true;
-            for (const IrValue* anchor : phiAnchors) EmitAnchoredDeviceImageLookups(ctx, *anchor);
+            for (const IrValue* anchor : phiAnchors) EmitAnchoredLookups(ctx, *anchor);
             phiAnchors.clear();
         }
         if (state.waveLdsScope != 0) {
@@ -831,12 +841,12 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
         }
         state.laneHalf = 0;
-        if (state.laneCount == 1u && state.deviceImageAnchors.contains(inst)) {
+        if (state.deviceImageAnchors.contains(inst)) {
             if (inst->Opcode() == IrOpcode::Phi) phiAnchors.push_back(inst);
-            else EmitAnchoredDeviceImageLookups(ctx, *inst);
+            else EmitAnchoredLookups(ctx, *inst);
         }
     }
-    for (const IrValue* anchor : phiAnchors) EmitAnchoredDeviceImageLookups(ctx, *anchor);
+    for (const IrValue* anchor : phiAnchors) EmitAnchoredLookups(ctx, *anchor);
 }
 
 void PatchStructuredPhis(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState) {
