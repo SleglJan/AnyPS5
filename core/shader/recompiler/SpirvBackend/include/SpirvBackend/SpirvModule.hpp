@@ -75,7 +75,7 @@ public:
     void BeginHelperFunction();
     [[nodiscard]] bool InHelperFunction() const { return inHelperFunction; }
     void EndHelperFunction();
-    void SpillCallResults();
+    void ReturnSharedResultsThroughPointers();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 
