@@ -250,14 +250,14 @@ int main() {
         for (const auto& [id, function] : module.functions) {
             if (function.name.starts_with("load_scalar_buffer_")) Expect(function.bufferMemoryLoads == 3u, function.name + " loads buffer memory " + std::to_string(function.bufferMemoryLoads) + " times, expected three times: through its cached translation, through a refilled one and through the uncached read");
             if (function.name.starts_with("load_formatted_buffer_")) {
-                Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per format layout and the invalid format (at most 15)");
-                Expect(function.switches == 1u, function.name + " has " + std::to_string(function.switches) + " switches, expected only its layout switch with the formats of a layout decoded by shared functions");
-                std::size_t decoders = 0;
+                Expect(function.widestSwitch != 0u && function.widestSwitch <= 15u, function.name + " switches to " + std::to_string(function.widestSwitch) + " labels, expected one per number type (at most 15)");
+                Expect(function.switches == 1u, function.name + " has " + std::to_string(function.switches) + " switches, expected only its switch over the number types of the format table");
+                std::size_t reads = 0;
                 for (const auto& [callee, count] : function.calls) {
                     const auto found = module.functions.find(callee);
-                    if (found != module.functions.end() && found->second.name.starts_with("decode_format_layout_")) ++decoders;
+                    if (found != module.functions.end() && found->second.name.starts_with("read_bda_components")) reads += count;
                 }
-                Expect(decoders != 0u, function.name + " calls no shared format decoder");
+                Expect(reads == 1u, function.name + " calls read_bda_components " + std::to_string(reads) + " times, expected one read of the components of every format");
                 Expect(function.dynamicExtracts != 0u, function.name + " selects its destination components without a dynamic extract");
             }
             if (function.name.starts_with("decode_format_layout_")) Expect((function.control & spv::FunctionControlDontInlineMask) != 0u && function.switches == 1u, function.name + " is not one DontInline switch over the formats of its layout");
