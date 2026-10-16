@@ -945,7 +945,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         const auto table = descriptorBytes(access, 4, since);
         ShaderRecompiler::BdaAbi::Header header{};
         std::memcpy(&header, table.data(), sizeof(header));
-        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 0 && header.grants == 0 && header.reserved == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " own ranges, " + std::to_string(header.grants) + " write grants");
+        Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 0 && header.grants == 0 && header.reserved == 0 && header.touchTable == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " own ranges, " + std::to_string(header.grants) + " write grants");
         Require(header.pageTable != 0, "an address-based build over an imported range has no page table");
         const auto fault = descriptorBytes(access, 5, since);
         std::memset(fault.data(), 0xa5, fault.size());

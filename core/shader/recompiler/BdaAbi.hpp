@@ -11,7 +11,7 @@
 namespace ShaderRecompiler::BdaAbi {
 
 inline constexpr std::uint32_t Version = 1;
-inline constexpr std::uint32_t TableVersion = 3;
+inline constexpr std::uint32_t TableVersion = 4;
 inline constexpr std::uint32_t Read = 1;
 inline constexpr std::uint32_t Write = 2;
 
@@ -21,13 +21,14 @@ struct Header {
     std::uint32_t grants;
     std::uint32_t reserved;
     std::uint64_t pageTable;
-    std::uint64_t unused;
+    std::uint64_t touchTable;
 };
 
 inline constexpr std::uint32_t HeaderWords = 8;
 inline constexpr std::uint32_t CountWord = 1;
 inline constexpr std::uint32_t GrantsWord = 2;
 inline constexpr std::uint32_t PageTableWord = 4;
+inline constexpr std::uint32_t TouchTableWord = 6;
 inline constexpr std::uint32_t RangeWords = 8;
 inline constexpr std::uint32_t GrantWords = 4;
 inline constexpr std::uint32_t PageShift = 16;
@@ -104,6 +105,7 @@ struct Fault {
 
 static_assert(std::is_standard_layout_v<Header> && std::is_trivially_copyable_v<Header> && sizeof(Header) == HeaderWords * sizeof(std::uint32_t));
 static_assert(offsetof(Header, pageTable) == PageTableWord * sizeof(std::uint32_t));
+static_assert(offsetof(Header, touchTable) == TouchTableWord * sizeof(std::uint32_t));
 static_assert(std::is_standard_layout_v<PageEntry> && std::is_trivially_copyable_v<PageEntry> && sizeof(PageEntry) == 16);
 static_assert(PageShift % SplitShift == 0 && FirstMask >= (1u << PageShift) && LimitMax > (std::uint64_t{1} << PageShift) + 0xffffffffull);
 static_assert(offsetof(Header, count) == CountWord * sizeof(std::uint32_t) && offsetof(Header, grants) == GrantsWord * sizeof(std::uint32_t));

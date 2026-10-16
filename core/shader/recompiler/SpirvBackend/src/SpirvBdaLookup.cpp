@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "BdaTouchAbi.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -12,6 +13,16 @@ namespace {
 
 std::uint32_t TranslationType(SpirvEmitterState& state) {
     return state.module.Type(spv::OpTypeStruct, TypeScalarU64(state), TypeU32(state));
+}
+
+void ReturnIf(SpirvEmitterState& state, std::uint32_t condition) {
+    const auto taken = state.module.AllocateId();
+    const auto next = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, condition, taken, next);
+    EmitLabel(state, taken);
+    state.module.AddFunction(spv::OpReturn);
+    EmitLabel(state, next);
 }
 
 void ReturnValueIf(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t value) {
@@ -95,7 +106,97 @@ std::uint32_t DefineBdaWriteGranted(SpirvEmitterState& state) {
     return function;
 }
 
-std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes) {
+std::uint32_t DefineBdaTouch(SpirvEmitterState& state) {
+    namespace Touch = BdaTouchAbi;
+    static_assert(Touch::HeaderWord == BdaAbi::TouchTableWord);
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto binary = [&](std::uint32_t op, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, op, type, left, right); };
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "note_bda_touch");
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, u64));
+    const auto address = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    EmitLabel(state, state.module.AllocateId());
+    const auto done = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, boolean), done, spv::StorageClassFunction);
+    const auto counter = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, u32), counter, spv::StorageClassFunction);
+    const auto length = state.module.AllocateId();
+    state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
+    ReturnIf(state, binary(spv::OpULessThan, boolean, length, constant(BdaAbi::HeaderWords)));
+    const auto table = binary(spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, BdaLoadWord(state, constant(BdaAbi::TouchTableWord))), binary(spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, BdaLoadWord(state, constant(BdaAbi::TouchTableWord + 1u))), BdaConstant(state, 32u)));
+    ReturnIf(state, binary(spv::OpIEqual, boolean, table, BdaConstant(state, 0u)));
+    const auto word = [&](std::uint32_t index) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, binary(spv::OpIAdd, u64, table, binary(spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, index), BdaConstant(state, 2u))));
+        return pointer;
+    };
+    const auto scope = constant(spv::ScopeDevice);
+    const auto relaxed = constant(spv::MemorySemanticsMaskNone);
+    const auto key = binary(spv::OpIAdd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, Touch::ChunkShift))), constant(1u));
+    const auto bit = binary(spv::OpShiftLeftLogical, u32, constant(1u), binary(spv::OpBitwiseAnd, u32, Unary(state, spv::OpUConvert, u32, binary(spv::OpShiftRightLogical, u64, address, BdaConstant(state, Touch::PageShift))), constant(Touch::ChunkPages - 1u)));
+    const auto home = binary(spv::OpShiftRightLogical, u32, binary(spv::OpIMul, u32, key, constant(Touch::HashMultiplier)), constant(32u - static_cast<std::uint32_t>(std::countr_zero(Touch::Slots))));
+    state.module.AddFunction(spv::OpStore, done, ConstantBool(state, false));
+    state.module.AddFunction(spv::OpStore, counter, constant(0u));
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto continuation = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    const auto probe = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, u32, probe, counter);
+    const auto found = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, boolean, found, done);
+    const auto searching = binary(spv::OpLogicalAnd, boolean, Unary(state, spv::OpLogicalNot, boolean, found), binary(spv::OpULessThan, boolean, probe, constant(Touch::Probes)));
+    state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, searching, body, merge);
+    EmitLabel(state, body);
+    const auto slot = binary(spv::OpBitwiseAnd, u32, binary(spv::OpIAdd, u32, home, probe), constant(Touch::Slots - 1u));
+    const auto keyWord = binary(spv::OpIAdd, u32, constant(Touch::SlotsWord), binary(spv::OpShiftLeftLogical, u32, slot, constant(1u)));
+    const auto current = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicLoad, u32, current, word(keyWord), scope, relaxed);
+    const auto same = binary(spv::OpIEqual, boolean, current, key);
+    state.module.AddFunction(spv::OpStore, done, same);
+    EmitIfCondition(state, binary(spv::OpIEqual, boolean, current, constant(0u)), [&] {
+        const auto previous = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicCompareExchange, u32, previous, word(keyWord), scope, relaxed, relaxed, key, constant(0u));
+        state.module.AddFunction(spv::OpStore, done, binary(spv::OpLogicalOr, boolean, binary(spv::OpIEqual, boolean, previous, constant(0u)), binary(spv::OpIEqual, boolean, previous, key)));
+    });
+    const auto holds = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, boolean, holds, done);
+    EmitIfCondition(state, holds, [&] {
+        const auto maskWord = binary(spv::OpIAdd, u32, keyWord, constant(1u));
+        const auto mask = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicLoad, u32, mask, word(maskWord), scope, relaxed);
+        EmitIfCondition(state, binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, mask, bit), constant(0u)), [&] {
+            state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), word(maskWord), scope, relaxed, bit);
+        });
+    });
+    state.module.AddFunction(spv::OpBranch, continuation);
+    EmitLabel(state, continuation);
+    state.module.AddFunction(spv::OpStore, counter, binary(spv::OpIAdd, u32, probe, constant(1u)));
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
+    const auto noted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, boolean, noted, done);
+    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, noted), [&] {
+        state.module.AddFunction(spv::OpAtomicStore, word(constant(Touch::OverflowWord)), scope, relaxed, constant(1u));
+    });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+void NoteBdaTouch(SpirvEmitterState& state, std::uint32_t touch, std::uint32_t address) {
+    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), touch, address);
+}
+
+std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uint32_t touch) {
     const auto grantedFunction = writes ? DefineBdaWriteGranted(state) : 0u;
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
@@ -160,7 +261,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes) {
     const auto count = fields[BdaAbi::CountWord];
     const auto grants = fields[BdaAbi::GrantsWord];
     const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
-    const auto reserved = binary(spv::OpBitwiseOr, u32, fields[3], binary(spv::OpBitwiseOr, u32, fields[BdaAbi::HeaderWords - 2u], fields[BdaAbi::HeaderWords - 1u]));
+    const auto reserved = fields[3];
     const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
     const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
     const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
@@ -226,6 +327,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes) {
             fail(binary(spv::OpLogicalAnd, boolean, held, binary(spv::OpUGreaterThan, boolean, binary(spv::OpIAdd, u64, offset, widen(bytes)), limit)), BdaAbi::FaultReason::Unmapped);
             const auto allowed = permitted(binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::PermissionShift)), constant(BdaAbi::Read | BdaAbi::Write)), held);
             fail(binary(spv::OpLogicalAnd, boolean, held, Unary(state, spv::OpLogicalNot, boolean, allowed)), BdaAbi::FaultReason::Permission);
+            EmitIfCondition(state, held, [&] { NoteBdaTouch(state, touch, address); });
             ReturnValueIf(state, held, translation(binary(spv::OpIAdd, u64, address, pair(component(found, 0u), component(found, 1u))), constant(0)));
         });
     });
@@ -246,6 +348,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes) {
     fail(binary(spv::OpULessThan, boolean, device, base), BdaAbi::FaultReason::Overflow);
     const auto deviceEnd = binary(spv::OpIAdd, u64, device, widen(bytes));
     fail(binary(spv::OpULessThanEqual, boolean, deviceEnd, device), BdaAbi::FaultReason::Overflow);
+    NoteBdaTouch(state, touch, address);
     state.module.AddFunction(spv::OpReturnValue, translation(device, constant(0)));
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
@@ -256,7 +359,7 @@ std::uint32_t SegmentType(SpirvEmitterState& state) {
     return state.module.Type(spv::OpTypeStruct, u64, u64, u64);
 }
 
-std::uint32_t DefineBdaSegment(SpirvEmitterState& state) {
+std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
     const auto u32 = TypeU32(state);
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
@@ -318,7 +421,7 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state) {
     const auto count = fields[BdaAbi::CountWord];
     const auto grants = fields[BdaAbi::GrantsWord];
     const auto available = binary(spv::OpISub, u32, length, constant(BdaAbi::HeaderWords));
-    const auto reserved = binary(spv::OpBitwiseOr, u32, fields[3], binary(spv::OpBitwiseOr, u32, fields[BdaAbi::HeaderWords - 2u], fields[BdaAbi::HeaderWords - 1u]));
+    const auto reserved = fields[3];
     const auto layout = either(differs(fields[0], constant(BdaAbi::TableVersion)), differs(reserved, constant(0)));
     const auto rangeWords = binary(spv::OpIMul, u32, count, constant(BdaAbi::RangeWords));
     const auto exceeds = either(binary(spv::OpUGreaterThan, boolean, count, binary(spv::OpShiftRightLogical, u32, available, constant(3))), binary(spv::OpUGreaterThan, boolean, grants, binary(spv::OpShiftRightLogical, u32, available, constant(2))));
@@ -368,6 +471,7 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state) {
             const auto permissions = binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::PermissionShift)), constant(BdaAbi::Read | BdaAbi::Write));
             none(both(held, Unary(state, spv::OpLogicalNot, boolean, readable(permissions))));
             const auto start = binary(spv::OpISub, u64, address, offset);
+            EmitIfCondition(state, held, [&] { NoteBdaTouch(state, touch, address); });
             ReturnValueIf(state, held, segment(binary(spv::OpIAdd, u64, start, first), binary(spv::OpIAdd, u64, start, limit), pair(component(found, 0u), component(found, 1u))));
         });
     });
@@ -383,6 +487,7 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state) {
     none(binary(spv::OpUGreaterThanEqual, boolean, address, finish));
     none(Unary(state, spv::OpLogicalNot, boolean, readable(BdaLoadWord(state, at(6)))));
     none(binary(spv::OpIEqual, boolean, base, zero));
+    NoteBdaTouch(state, touch, address);
     state.module.AddFunction(spv::OpReturnValue, segment(begin, finish, binary(spv::OpISub, u64, base, begin)));
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
@@ -804,8 +909,9 @@ std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;
-    state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites);
-    if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state);
+    const auto touch = DefineBdaTouch(state);
+    state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites, touch);
+    if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state, touch);
     DeclareBdaVectorCache(state);
     DeclareBdaReadCache(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);
