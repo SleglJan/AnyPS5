@@ -12,7 +12,7 @@ namespace {
 
 namespace Abi = ShaderRecompiler::BdaAbi;
 
-constexpr VkBufferUsageFlags TableUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+constexpr VkBufferUsageFlags TableUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 constexpr std::uint64_t PageBytes = std::uint64_t{1} << Abi::PageShift;
 constexpr std::uint64_t WindowBytes = std::uint64_t{1} << Abi::WindowShift;
 
@@ -139,12 +139,11 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
             const auto entries = EncodeBdaWindow(window, held);
             auto leaf = std::make_shared<Leaf>();
             leaf->window = window;
-            leaf->buffer = std::make_shared<Buffer>(context, entries.size() * sizeof(Abi::PageEntry), TableUsage);
-            std::memcpy(leaf->buffer->Bytes().data(), entries.data(), entries.size() * sizeof(Abi::PageEntry));
+            stage(context, leaf->table, entries.data(), entries.size() * sizeof(Abi::PageEntry));
             leaf->ranges = std::move(held);
             table->leaves.push_back(std::move(leaf));
         }
-        const auto address = table->leaves.back()->buffer->DeviceAddress();
+        const auto address = table->leaves.back()->table.buffer->DeviceAddress();
         Require(address != 0 && address % sizeof(Abi::PageEntry) == 0, "a BDA page table leaf is not aligned for its entries");
         addresses[window] = address;
     }
@@ -154,9 +153,8 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
         newest.counts.sharedWindows += shared;
         return previous;
     }
-    table->first = std::make_shared<Buffer>(context, addresses.size() * sizeof(std::uint64_t), TableUsage);
-    std::memcpy(table->first->Bytes().data(), addresses.data(), addresses.size() * sizeof(std::uint64_t));
-    Require(table->first->DeviceAddress() % sizeof(std::uint64_t) == 0, "the BDA page table is not aligned for its entries");
+    stage(context, table->first, addresses.data(), addresses.size() * sizeof(std::uint64_t));
+    Require(table->first.buffer->DeviceAddress() % sizeof(std::uint64_t) == 0, "the BDA page table is not aligned for its entries");
     std::shared_ptr<const BdaPageTable> built = std::move(table);
     std::lock_guard lock(newest.mutex);
     newest.device = context.device;
@@ -174,12 +172,49 @@ BdaPageTable::Counts BdaPageTable::Totals() {
 }
 
 VkDeviceAddress BdaPageTable::Address() const {
-    return first->DeviceAddress();
+    return first.buffer->DeviceAddress();
 }
 
 VkDeviceAddress BdaPageTable::LeafAddress(std::uint32_t window) const {
     const auto leaf = find(window);
-    return leaf != nullptr ? leaf->buffer->DeviceAddress() : 0u;
+    return leaf != nullptr ? leaf->table.buffer->DeviceAddress() : 0u;
+}
+
+void BdaPageTable::stage(const Context& context, Upload& upload, const void* bytes, std::size_t size) {
+    upload.buffer = std::make_shared<Buffer>(context, size, TableUsage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    upload.staging = std::make_shared<Buffer>(context, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    upload.bytes = size;
+    std::memcpy(upload.staging->Bytes().data(), bytes, size);
+}
+
+bool BdaPageTable::recordUpload(const Context& context, VkCommandBuffer commands, const Upload& upload, std::uint32_t stream) {
+    if (stream != EveryStream) {
+        Require(stream < 32u, "a BDA page table upload names a stream past its upload mask");
+        const auto bit = 1u << stream;
+        if ((upload.streams.fetch_or(bit, std::memory_order_relaxed) & bit) != 0u) return false;
+    }
+    const VkBufferCopy region{0, 0, upload.bytes};
+    context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, upload.staging->Handle(), upload.buffer->Handle(), 1, &region);
+    return true;
+}
+
+VkMemoryPropertyFlags BdaPageTable::Properties() const {
+    auto properties = first.buffer->Properties();
+    for (const auto& leaf : leaves) properties &= leaf->table.buffer->Properties();
+    return properties;
+}
+
+bool BdaPageTable::NeedsUploads(std::uint32_t stream) const {
+    if (stream == EveryStream) return true;
+    const auto bit = 1u << stream;
+    const auto missing = [&](const Upload& upload) { return (upload.streams.load(std::memory_order_relaxed) & bit) == 0u; };
+    return missing(first) || std::any_of(leaves.begin(), leaves.end(), [&](const auto& leaf) { return missing(leaf->table); });
+}
+
+bool BdaPageTable::RecordUploads(const Context& context, VkCommandBuffer commands, std::uint32_t stream) const {
+    bool recorded = false;
+    for (const auto& leaf : leaves) recorded = recordUpload(context, commands, leaf->table, stream) || recorded;
+    return recordUpload(context, commands, first, stream) || recorded;
 }
 
 std::optional<Abi::Range> BdaPageTable::Find(std::uint64_t address) const {

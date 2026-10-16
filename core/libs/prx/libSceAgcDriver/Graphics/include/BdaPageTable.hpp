@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "BdaAbi.hpp"
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,20 +29,32 @@ public:
     static std::shared_ptr<const BdaPageTable> Build(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     static std::shared_ptr<const BdaPageTable> Build(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::span<const std::shared_ptr<const BdaPageTable>> shares);
     static Counts Totals();
+    static constexpr std::uint32_t EveryStream = ~0u;
     VkDeviceAddress Address() const;
     VkDeviceAddress LeafAddress(std::uint32_t window) const;
     std::optional<ShaderRecompiler::BdaAbi::Range> Find(std::uint64_t address) const;
+    bool RecordUploads(const Context& context, VkCommandBuffer commands, std::uint32_t stream) const;
+    bool NeedsUploads(std::uint32_t stream) const;
+    VkMemoryPropertyFlags Properties() const;
 
 private:
+    struct Upload {
+        std::shared_ptr<Buffer> buffer;
+        std::shared_ptr<Buffer> staging;
+        std::size_t bytes = 0;
+        mutable std::atomic<std::uint32_t> streams{0};
+    };
     struct Leaf {
         std::uint32_t window = 0;
         std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
-        std::shared_ptr<Buffer> buffer;
+        Upload table;
     };
     BdaPageTable() = default;
+    static void stage(const Context& context, Upload& upload, const void* bytes, std::size_t size);
+    static bool recordUpload(const Context& context, VkCommandBuffer commands, const Upload& upload, std::uint32_t stream);
     std::shared_ptr<const Leaf> find(std::uint32_t window) const;
     std::vector<std::shared_ptr<const Leaf>> leaves;
-    std::shared_ptr<Buffer> first;
+    Upload first;
 };
 
 }

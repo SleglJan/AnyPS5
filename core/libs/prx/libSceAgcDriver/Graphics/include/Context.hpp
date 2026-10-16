@@ -212,7 +212,9 @@ struct Context {
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
             if ((mask & (1u << i)) != 0 && (memory.memoryTypes[i].propertyFlags & flags) == flags) return i;
         }
-        throw std::runtime_error("AGC graphics: required Vulkan memory type is unavailable");
+        char text[128];
+        std::snprintf(text, sizeof(text), "AGC graphics: required Vulkan memory type is unavailable (allowed types 0x%x, properties 0x%x)", mask, flags);
+        throw std::runtime_error(text);
     }
 
     std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {

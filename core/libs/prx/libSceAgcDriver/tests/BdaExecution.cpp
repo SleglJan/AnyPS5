@@ -3,6 +3,7 @@
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -173,8 +174,16 @@ static void RunWrittenRangeDecodeTests() {
     Require(!decode() && !decodeImages(), "a claim of an image slot without a chunk was accepted");
 }
 
+static std::shared_ptr<const BdaPageTable> Uploaded(const Context& context, std::shared_ptr<const BdaPageTable> table) {
+    if (table == nullptr) return table;
+    CommandBatch batch(context);
+    if (table->RecordUploads(context, batch.Handle(), BdaPageTable::EveryStream)) RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    batch.SubmitAndWait();
+    return table;
+}
+
 static std::shared_ptr<const BdaPageTable> PagesFor(const Context& context, bool paged, std::span<const ShaderRecompiler::BdaAbi::Range> ranges) {
-    return paged ? BdaPageTable::Build(context, ranges) : nullptr;
+    return paged ? Uploaded(context, BdaPageTable::Build(context, ranges)) : nullptr;
 }
 
 static std::uint64_t PageTableAddress(const std::shared_ptr<const BdaPageTable>& pages) {
@@ -481,11 +490,11 @@ static void RunBdaPageTableTests(const Context& context) {
         const auto grants = Ref::RandomGrants(random, table.list, 8u);
         Require(check("list alone", table.list, nullptr, {}) == 0u, "the BDA list lookup differs from its reference");
         Require(check("list alone with write grants", table.list, nullptr, {}, grants) == 0u, "the BDA list lookup with write grants differs from its reference");
-        Require(check("random pages", table.list, BdaPageTable::Build(context, table.pages), table.pages) == 0u, "the page table and the own ranges translated a random table unlike its ranges");
-        Require(check("random pages with write grants", table.list, BdaPageTable::Build(context, table.pages), table.pages, grants) == 0u, "the page table and the own ranges with write grants translated a random table unlike its ranges");
+        Require(check("random pages", table.list, Uploaded(context, BdaPageTable::Build(context, table.pages)), table.pages) == 0u, "the page table and the own ranges translated a random table unlike its ranges");
+        Require(check("random pages with write grants", table.list, Uploaded(context, BdaPageTable::Build(context, table.pages)), table.pages, grants) == 0u, "the page table and the own ranges with write grants translated a random table unlike its ranges");
         auto shifted = grants;
         for (auto& grant : shifted) ++grant.end;
-        Require(check("wrong write grants", table.list, BdaPageTable::Build(context, table.pages), table.pages, grants, shifted, true) != 0u, "write grants one byte too long went unnoticed");
+        Require(check("wrong write grants", table.list, Uploaded(context, BdaPageTable::Build(context, table.pages)), table.pages, grants, shifted, true) != 0u, "write grants one byte too long went unnoticed");
     }
     constexpr std::uint64_t base = 0x3fffff0000ull;
     const std::vector<Abi::Range> shapes{
@@ -495,20 +504,20 @@ static void RunBdaPageTableTests(const Context& context) {
         {base + 0x9010u, base + 0x10000u, 0x400000000ull, 0u, 0u},
         {base + 0x10000u, base + 0x10000u + 0x240000000ull, 0x500000000ull, Abi::Read | Abi::Write, 0u},
     };
-    Require(check("partial and split pages", shapes, BdaPageTable::Build(context, shapes), shapes) == 0u, "the page table changed a BDA translation of partial and split pages");
+    Require(check("partial and split pages", shapes, Uploaded(context, BdaPageTable::Build(context, shapes)), shapes) == 0u, "the page table changed a BDA translation of partial and split pages");
     const std::vector<Abi::Range> shared{shapes[0], shapes[2], shapes[4]};
-    Require(check("split pages shared with own ranges", shapes, BdaPageTable::Build(context, shared), shared) == 0u, "the page table and the own ranges of one page translated unlike their ranges");
+    Require(check("split pages shared with own ranges", shapes, Uploaded(context, BdaPageTable::Build(context, shared)), shared) == 0u, "the page table and the own ranges of one page translated unlike their ranges");
     auto wrong = shapes;
     wrong[1].deviceAddress += 0x40u;
-    Require(check("wrong translation", shapes, BdaPageTable::Build(context, wrong), wrong) != 0u, "a page table with a wrong translation went unnoticed");
+    Require(check("wrong translation", shapes, Uploaded(context, BdaPageTable::Build(context, wrong)), wrong) != 0u, "a page table with a wrong translation went unnoticed");
     auto writable = shapes;
     writable[0].permissions |= Abi::Write;
-    Require(check("wrong permission", shapes, BdaPageTable::Build(context, writable), writable) != 0u, "a page table that made a read-only range writable went unnoticed");
+    Require(check("wrong permission", shapes, Uploaded(context, BdaPageTable::Build(context, writable)), writable) != 0u, "a page table that made a read-only range writable went unnoticed");
     constexpr std::uint64_t split = 0x6000001000ull;
     constexpr std::uint64_t splitDevice = 0xa00000000ull;
     const std::vector<Abi::Range> whole{{split, split + 0x30000u, splitDevice, Abi::Read, 0u}};
     const std::vector<Abi::Grant> middle{{split + 0x10010u, split + 0x10050u}};
-    const auto wholePages = BdaPageTable::Build(context, whole);
+    const auto wholePages = Uploaded(context, BdaPageTable::Build(context, whole));
     Require(check("write grant inside a read-only range", whole, wholePages, whole, middle) == 0u, "a write grant inside a read-only range translated unlike its reference");
     const auto grantProbes = probesOf(std::vector<Abi::Range>{{split + 0x10010u, split + 0x10050u, splitDevice + 0x10010u, Abi::Read, 0u}}, {1u, 4u, 16u, 64u});
     const auto granted = translate({}, middle, wholePages->Address(), grantProbes);
@@ -532,8 +541,8 @@ static void RunBdaPageTableTests(const Context& context) {
     const Abi::Range kept{window + 0x200000000ull, window + 0x200040000ull, 0x600000000ull, Abi::Read, 0u};
     const std::vector<Abi::Range> before{{window + 0x10u, window + 0x8000u, 0x700000000ull, Abi::Read, 0u}, {window + 0x8000u, window + 0x30000u, 0x800000000ull, Abi::Read | Abi::Write, 0u}, kept};
     const std::vector<Abi::Range> after{{window + 0x10u, window + 0x8000u, 0x700000000ull, Abi::Read, 0u}, {window + 0x9000u, window + 0x9100u, 0x900000000ull, Abi::Read, 0u}, kept};
-    const auto first = BdaPageTable::Build(context, before);
-    const auto second = BdaPageTable::Build(context, after);
+    const auto first = Uploaded(context, BdaPageTable::Build(context, before));
+    const auto second = Uploaded(context, BdaPageTable::Build(context, after));
     const auto keptWindow = static_cast<std::uint32_t>(kept.begin >> Abi::WindowShift);
     const auto changedWindow = static_cast<std::uint32_t>(window >> Abi::WindowShift);
     Require(first->LeafAddress(keptWindow) != 0u && first->LeafAddress(keptWindow) == second->LeafAddress(keptWindow), "a page table update did not share the leaf of an unchanged window");
@@ -710,7 +719,7 @@ static void RunBdaPageTableVersionTests(const Context& context) {
         Version version;
         version.name = std::move(name);
         version.list = std::move(list);
-        version.table = BdaPageTable::Build(context, version.list, tables);
+        version.table = Uploaded(context, BdaPageTable::Build(context, version.list, tables));
         Require(version.table != nullptr, version.name + ": no table was built");
         const auto windows = windowsOf(version.list);
         std::set<std::uint32_t> encoded;
@@ -1017,7 +1026,40 @@ static void RunImageStoreRecordTests(const Context& context) {
     }
 }
 
+static void RunBdaPlacementTests(const Context& device) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    auto context = device;
+    context.bdaArena = std::make_shared<BdaArena>();
+    constexpr VkMemoryPropertyFlags deviceLocal = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    constexpr VkMemoryPropertyFlags hostVisible = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    const auto table = BdaArena::Take(context, 256);
+    Require((table.slab->Properties() & deviceLocal) != 0u, "a BDA table slice was placed outside device-local memory");
+    if (BdaArena::MappedTables(context)) {
+        Require((table.slab->Properties() & hostVisible) != 0u && table.host == nullptr && table.data == table.slab->Bytes().data() + table.offset, "a BDA table slice on a device with device-local host-visible memory was not written in place");
+    } else {
+        Require(table.host != nullptr && (table.host->Properties() & hostVisible) != 0u && (table.slab->Properties() & hostVisible) == 0u, "a BDA table slice on a device without device-local host-visible memory has no staging slice");
+    }
+    const auto record = BdaArena::Take(context, Abi::FaultBufferBytes, BdaArena::Use::Record);
+    Require(record.slab->Properties() == deviceLocal, "a fault and written-page record was placed outside device-local memory");
+    Require(record.host != nullptr && (record.host->Properties() & hostVisible) != 0u && record.data == record.host->Bytes().data() + record.hostOffset, "a fault and written-page record has no host copy for the CPU to read after its batch");
+    constexpr std::uint64_t base = 0x123450000ull;
+    const std::array ranges{Abi::Range{base, base + 0x30000u, 0x2000000000ull, Abi::Read, 0u}};
+    const auto pages = BdaPageTable::Build(context, ranges);
+    Require(pages->Properties() == deviceLocal, "a BDA page table was placed outside device-local memory");
+    Require(pages->NeedsUploads(0) && pages->NeedsUploads(1), "a new page table needed no upload");
+    CommandBatch batch(context);
+    Require(pages->RecordUploads(context, batch.Handle(), 0), "a new page table recorded no upload");
+    Require(!pages->NeedsUploads(0) && !pages->RecordUploads(context, batch.Handle(), 0), "a page table was uploaded twice on one stream");
+    Require(pages->NeedsUploads(1), "a page table uploaded on one stream counted as uploaded on another");
+    RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    batch.SubmitAndWait();
+    const std::array<std::array<std::uint64_t, 3>, 1> probes{{{base + 0x10008u, 4u, Abi::Read}}};
+    const auto translated = TranslateThroughTable(context, pages->Address(), probes);
+    Require(translated.size() == 1u && translated.front().device == 0x2000000000ull + 0x10008u && translated.front().reason == 0u, "a dispatch did not read the uploaded page table");
+}
+
 void RunBdaExecutionTests(const Context& context) {
+    RunBdaPlacementTests(context);
     RunBdaPageTableTests(context);
     RunBdaPageTableVersionTests(context);
     for (const bool paged : {false, true}) RunBdaReadTests(context, paged);

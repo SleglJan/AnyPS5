@@ -198,6 +198,9 @@ public:
     void OrderAfterQueue(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
+    bool UseRecord(const std::shared_ptr<Buffer>& device, VkDeviceSize offset, VkDeviceSize cleared, const std::shared_ptr<Buffer>& host, VkDeviceSize hostOffset, VkDeviceSize bytes);
+    std::uint32_t CallerStream() const { return streamOfCaller(); }
+    bool RecordUsed(const Buffer* device, VkDeviceSize offset) const;
     bool CallerFaultRecordCurrent(const BatchFaultRecord& record) const;
     BatchFaults& CallerBatchFaults();
     using Token = std::array<std::uint64_t, MaxRecorderStreams>;
@@ -653,6 +656,15 @@ private:
             std::uint64_t end;
         };
         std::vector<KeyStore> keyStores;
+        struct RecordCopy {
+            const Buffer* device;
+            VkDeviceSize offset;
+            VkBuffer source;
+            VkBuffer host;
+            VkDeviceSize hostOffset;
+            VkDeviceSize bytes;
+        };
+        std::vector<RecordCopy> recordCopies;
     };
     void readGpuTiming(Batch& batch);
     void beginSamples(Batch& batch);

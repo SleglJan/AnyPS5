@@ -1478,6 +1478,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool unknownMemory = addressBased || resources.UsesAddressTable();
     const PassAccess passAccess{passReads, resources.MemoryWrites(), passImages, passAttachments, resources.MemoryReadsUnknown(), resources.MemoryWritesUnknown()};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    if (resources.NeedsDeviceTransfers(*recorder)) resources.PrepareDeviceRecords(recorder, recorder->Commands());
     if (recorder->Streams() > 1 && !unknownMemory && !capture) {
         std::vector<Recorder::SectionObject> objects{{record.resources.get(), true}};
         for (const auto& [image, written] : passImages) objects.push_back({image, written});
@@ -1964,6 +1965,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) resources->UseBatchFaultRecord(*recorder);
+    resources->PrepareDeviceRecords(recorded ? recorder : nullptr, commands);
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.
@@ -2120,6 +2122,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
         return;
     }
+    resources->FinishDeviceRecords(commands);
     {
         // The recorder sync SubmitAndWait makes is the draw's own wait, not a nested hook wait.
         const auto ownBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;

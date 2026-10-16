@@ -3876,6 +3876,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     resources.UseBatchFaultRecord(recorder);
+    resources.PrepareDeviceRecords(&recorder, commands);
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     recorder.Keep(record.resources);
@@ -3893,7 +3894,13 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         const auto images = resources.StorageImages();
         recorder.NoteAccess(CommandClass::DispatchLeading, Graphics::Recorder::Access{reads, resources.GpuWrites(), images, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, resources.HoldsLease()});
     }
-    if (record.threadScratch != nullptr) recorder.Keep(record.threadScratch->slab);
+    if (record.threadScratch != nullptr) {
+        recorder.Keep(record.threadScratch->slab);
+        if (Graphics::BdaArena::RecordUpload(context, commands, *record.threadScratch)) {
+            recorder.Keep(record.threadScratch->host);
+            Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+        }
+    }
     if (argumentImport != nullptr && record.threadGroup.has_value()) {
         const auto timing = recorder.BeginGpuTiming(CommandClass::IndirectArguments);
         const auto threads = argumentImport->address + (arguments - argumentImport->base);

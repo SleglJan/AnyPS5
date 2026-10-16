@@ -241,6 +241,9 @@ public:
     void CheckFaults() const;
     void UseBatchFaultRecord(Recorder& recorder);
     void UseOwnFaultRecord();
+    void PrepareDeviceRecords(Recorder* recorder, VkCommandBuffer commands);
+    bool NeedsDeviceTransfers(const Recorder& recorder) const;
+    void FinishDeviceRecords(VkCommandBuffer commands) const;
     static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
     bool StagesWrites() const { return staging != nullptr; }

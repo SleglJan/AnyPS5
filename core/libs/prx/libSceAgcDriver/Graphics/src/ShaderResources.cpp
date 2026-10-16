@@ -3177,6 +3177,18 @@ void ShaderResources::UseOwnFaultRecord() {
     if (bda != nullptr && bda->SharedRecord() != nullptr) rebindFaultRecord(nullptr);
 }
 
+void ShaderResources::PrepareDeviceRecords(Recorder* recorder, VkCommandBuffer commands) {
+    if (bda != nullptr) bda->PrepareUse(context, commands, recorder);
+}
+
+bool ShaderResources::NeedsDeviceTransfers(const Recorder& recorder) const {
+    return bda != nullptr && bda->NeedsTransfers(recorder);
+}
+
+void ShaderResources::FinishDeviceRecords(VkCommandBuffer commands) const {
+    if (bda != nullptr) bda->FinishUse(context, commands);
+}
+
 void ShaderResources::RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources) {
     if (resources->bda != nullptr && resources->bda->SharedRecord() != nullptr) Require(recorder.CallerFaultRecordCurrent(*resources->bda->SharedRecord()), "a build was recorded into a batch other than its fault record's");
     recorder.CallerBatchFaults().Add(resources);

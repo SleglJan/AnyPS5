@@ -707,6 +707,7 @@ static void pageTableRootTests(const Context& shared, const BdaTestAccess& acces
         leased.AddInPlace(address + 16, 32, true);
         leased.Upload();
         BdaResources bda(context, leased);
+        bda.PrepareUse(context, VK_NULL_HANDLE, nullptr);
         const auto table = bda.Table();
         const auto root = access.bytes(table.buffer).subspan(static_cast<std::size_t>(table.offset), static_cast<std::size_t>(table.range));
         Abi::Header header{};
@@ -919,9 +920,13 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         Require(resources.NeedsCompletion() && !resources.UsesAddressTable(), "a fault-only build reaches guest memory through the BDA table");
         resources.CheckFaults();
         const auto fault = descriptorBytes(access, 5, since);
-        for (const auto byte : fault.first(ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t))) Require(byte == std::byte{}, "rect-list fault buffer was not initialized");
+        std::memset(fault.data(), 0xa5, fault.size());
+        resources.PrepareDeviceRecords(nullptr, VK_NULL_HANDLE);
+        for (const auto byte : fault.first(ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t))) Require(byte == std::byte{}, "rect-list fault buffer was not cleared before its first use");
         const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, 0, 0, 0, 0, 0};
         std::memcpy(fault.data(), &report, sizeof(report));
+        resources.CheckFaults();
+        resources.FinishDeviceRecords(VK_NULL_HANDLE);
         reject([&] { resources.CheckFaults(); }, "rect-list requires");
     }
     {
@@ -943,11 +948,15 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         Require(header.version == ShaderRecompiler::BdaAbi::TableVersion && header.count == 0 && header.grants == 0 && header.reserved == 0 && header.unused == 0, "BDA header layout mismatch: version " + std::to_string(header.version) + ", " + std::to_string(header.count) + " own ranges, " + std::to_string(header.grants) + " write grants");
         Require(header.pageTable != 0, "an address-based build over an imported range has no page table");
         const auto fault = descriptorBytes(access, 5, since);
-        for (const auto byte : fault.first(ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t))) Require(byte == std::byte{}, "fault buffer was not initialized");
+        std::memset(fault.data(), 0xa5, fault.size());
+        resources.PrepareDeviceRecords(nullptr, VK_NULL_HANDLE);
+        for (const auto byte : fault.first(ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t))) Require(byte == std::byte{}, "fault buffer was not cleared before its first use");
         const ShaderRecompiler::BdaAbi::Fault unmapped{ShaderRecompiler::BdaAbi::FaultState::Ready, ShaderRecompiler::BdaAbi::FaultReason::Unmapped, 0x7fff99880000ULL, 4, 0, 0x44, 0};
         std::memcpy(fault.data(), &unmapped, sizeof(unmapped));
+        resources.FinishDeviceRecords(VK_NULL_HANDLE);
         reject([&] { resources.WriteBack(); }, "BDA access failed");
-        std::memset(fault.data(), 0, fault.size());
+        resources.PrepareDeviceRecords(nullptr, VK_NULL_HANDLE);
+        resources.FinishDeviceRecords(VK_NULL_HANDLE);
         resources.WriteBack();
     }
     {

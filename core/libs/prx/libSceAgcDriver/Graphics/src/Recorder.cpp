@@ -2978,6 +2978,26 @@ std::shared_ptr<BatchFaultRecord> Recorder::CallerFaultRecord(std::uint32_t chun
     return current;
 }
 
+bool Recorder::UseRecord(const std::shared_ptr<Buffer>& device, VkDeviceSize offset, VkDeviceSize cleared, const std::shared_ptr<Buffer>& host, VkDeviceSize hostOffset, VkDeviceSize bytes) {
+    auto& open = callerOpen();
+    Require(open != nullptr, "a GPU record was used outside an open batch");
+    Require(host != nullptr, "a GPU record has no host copy");
+    for (const auto& copy : open->recordCopies) {
+        if (copy.device == device.get() && copy.offset == offset) return false;
+    }
+    context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(open->commands, device->Handle(), offset, cleared, 0u);
+    open->recordCopies.push_back({device.get(), offset, device->Handle(), host->Handle(), hostOffset, bytes});
+    Keep(device);
+    Keep(host);
+    return true;
+}
+
+bool Recorder::RecordUsed(const Buffer* device, VkDeviceSize offset) const {
+    const auto* open = callerBatch();
+    if (open == nullptr) return false;
+    return std::any_of(open->recordCopies.begin(), open->recordCopies.end(), [&](const Batch::RecordCopy& copy) { return copy.device == device && copy.offset == offset; });
+}
+
 bool Recorder::CallerFaultRecordCurrent(const BatchFaultRecord& record) const {
     const auto stream = streamOfCaller();
     return opens[stream] != nullptr && record.Stream() == stream && record.Batch() == opens[stream]->value;
@@ -3609,6 +3629,15 @@ void Recorder::submitStream(std::uint32_t stream) {
         if (stream == 0 && pendingSamples.size() >= SampleFoldCapacity) foldSamples(*open, 0);
     }
     const bool hostReadCovered = (open->run.open || !open->run.queued.empty()) && closeStoreRun(true);
+    if (!open->recordCopies.empty()) {
+        recordBarrier(open->commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        for (const auto& copy : open->recordCopies) {
+            const VkBufferCopy region{copy.offset, copy.hostOffset, copy.bytes};
+            context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(open->commands, copy.source, copy.host, 1, &region);
+        }
+        recordBarrier(open->commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        open->recordCopies.clear();
+    }
     if (segments && stream == 0 && pendingSamples.size() >= SampleFoldCapacity) foldSegments();
     if (BarrierValidate()) validateBatchEnds.fetch_add(1, std::memory_order_relaxed);
     if (open->hostReadOwed && !hostReadCovered) {

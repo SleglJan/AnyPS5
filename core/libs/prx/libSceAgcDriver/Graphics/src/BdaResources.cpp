@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "ImageTableAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
@@ -15,6 +16,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <tuple>
 #include <iomanip>
 #include <sstream>
 
@@ -36,42 +38,91 @@ std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> WrittenImage
 
 }
 
-BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes) {
-    Require(bytes != 0 && bytes <= SlabBytes, "a BDA table or fault record does not fit a slab");
-    if (!context.bdaArena) context.bdaArena = std::make_shared<BdaArena>();
-    const auto arena = context.bdaArena;
+bool BdaArena::MappedTables(const Context& context) {
+    constexpr VkMemoryPropertyFlags mapped = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (std::uint32_t type = 0; type < context.memory.memoryTypeCount; ++type) {
+        if ((context.memory.memoryTypes[type].propertyFlags & mapped) == mapped) return true;
+    }
+    return false;
+}
+
+std::pair<std::shared_ptr<Buffer>, VkDeviceSize> BdaArena::take(const std::shared_ptr<BdaArena>& self, const Context& context, Pool pool, std::size_t bytes, std::vector<std::shared_ptr<Buffer>>& retired) {
+    const VkBufferUsageFlags addressable = context.bufferDeviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u;
+    constexpr VkBufferUsageFlags transfers = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkMemoryPropertyFlags properties = host;
+    std::size_t slabBytes = SlabBytes;
+    if (pool == TableDevice) {
+        usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | addressable | transfers;
+        properties = MappedTables(context) ? VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | host : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        slabBytes = TableSlabBytes;
+    } else if (pool == TableStaging) {
+        slabBytes = TableSlabBytes;
+    } else if (pool == RecordDevice) {
+        usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | addressable | transfers;
+        properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    } else {
+        usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    }
+    auto slabContext = context;
+    slabContext.bdaArena.reset();
+    if (bytes > slabBytes) return {std::make_shared<Buffer>(slabContext, bytes, usage, properties), 0};
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
-    std::shared_ptr<Buffer> retired;
-    std::lock_guard lock(arena->mutex);
-    auto offset = (arena->used + alignment - 1u) / alignment * alignment;
-    if (arena->current == nullptr || offset + bytes > SlabBytes) {
-        retired = std::move(arena->current);
+    auto& slabs = pools[pool];
+    auto offset = (slabs.used + alignment - 1u) / alignment * alignment;
+    if (slabs.current == nullptr || offset + bytes > slabBytes) {
+        retired.push_back(std::move(slabs.current));
         std::unique_ptr<Buffer> slab;
-        if (!arena->free.empty()) {
-            slab = std::move(arena->free.back());
-            arena->free.pop_back();
+        if (!slabs.free.empty()) {
+            slab = std::move(slabs.free.back());
+            slabs.free.pop_back();
         } else {
-            auto slabContext = context;
-            slabContext.bdaArena.reset();
-            slab = std::make_unique<Buffer>(slabContext, SlabBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | (context.bufferDeviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
+            slab = std::make_unique<Buffer>(slabContext, slabBytes, usage, properties);
         }
-        const std::weak_ptr<BdaArena> owner = arena;
-        arena->current = std::shared_ptr<Buffer>(slab.release(), [owner](Buffer* released) {
+        const std::weak_ptr<BdaArena> owner = self;
+        slabs.current = std::shared_ptr<Buffer>(slab.release(), [owner, pool](Buffer* released) {
             if (const auto live = owner.lock()) {
                 std::lock_guard returned(live->mutex);
-                live->free.emplace_back(released);
+                live->pools[pool].free.emplace_back(released);
                 return;
             }
             delete released;
         });
-        arena->used = 0;
+        slabs.used = 0;
         offset = 0;
     }
-    arena->used = offset + bytes;
-    return {arena->current, offset, bytes, arena->current->Bytes().data() + offset};
+    slabs.used = offset + bytes;
+    return {slabs.current, offset};
 }
 
-BatchFaultRecord::BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch) : slice(BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes)), stream(stream), batch(batch), id(NextStoreRecord()) {
+BdaArena::Slice BdaArena::Take(const Context& context, std::size_t bytes, Use use) {
+    Require(bytes != 0, "an empty BDA table or fault record");
+    if (!context.bdaArena) context.bdaArena = std::make_shared<BdaArena>();
+    const auto arena = context.bdaArena;
+    const bool mapped = use == Use::Table && MappedTables(context);
+    std::vector<std::shared_ptr<Buffer>> retired;
+    std::lock_guard lock(arena->mutex);
+    Slice slice;
+    slice.bytes = bytes;
+    std::tie(slice.slab, slice.offset) = arena->take(arena, context, use == Use::Table ? TableDevice : RecordDevice, bytes, retired);
+    if (mapped) {
+        slice.data = slice.slab->Bytes().data() + slice.offset;
+        return slice;
+    }
+    std::tie(slice.host, slice.hostOffset) = arena->take(arena, context, use == Use::Table ? TableStaging : RecordHost, bytes, retired);
+    slice.data = slice.host->Bytes().data() + slice.hostOffset;
+    return slice;
+}
+
+bool BdaArena::RecordUpload(const Context& context, VkCommandBuffer commands, const Slice& slice) {
+    if (slice.host == nullptr) return false;
+    const VkBufferCopy region{slice.hostOffset, slice.offset, slice.bytes};
+    context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, slice.host->Handle(), slice.slab->Handle(), 1, &region);
+    return true;
+}
+
+BatchFaultRecord::BatchFaultRecord(const Context& context, std::uint32_t stream, std::uint64_t batch) : slice(BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, BdaArena::Use::Record)), stream(stream), batch(batch), id(NextStoreRecord()) {
     std::memset(slice.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
 }
 
@@ -89,7 +140,7 @@ BdaResources::BdaResources(const Context& context, std::shared_ptr<BatchFaultRec
     static_assert(std::endian::native == std::endian::little);
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
     if (this->shared != nullptr) return;
-    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
+    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, BdaArena::Use::Record);
     std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
     ownRecord = NextStoreRecord();
 }
@@ -101,7 +152,7 @@ void BdaResources::UseRecord(const Context& context, std::shared_ptr<BatchFaultR
         return;
     }
     if (fault.slab != nullptr) return;
-    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes);
+    fault = BdaArena::Take(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, BdaArena::Use::Record);
     std::memset(fault.data, 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
     ownRecord = NextStoreRecord();
 }
@@ -129,6 +180,45 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     std::memcpy(bytes, &header, sizeof(header));
     if (!ownRanges.empty()) std::memcpy(bytes + sizeof(header), ownRanges.data(), ownRanges.size() * sizeof(Abi::Range));
     if (!writeGrants.empty()) std::memcpy(bytes + sizeof(header) + ownRanges.size() * sizeof(Abi::Range), writeGrants.data(), writeGrants.size() * sizeof(Abi::Grant));
+}
+
+void BdaResources::PrepareUse(const Context& context, VkCommandBuffer commands, Recorder* recorder) {
+    const auto& record = shared != nullptr ? shared->Record() : fault;
+    bool transfers = false;
+    if (record.slab != nullptr) {
+        constexpr VkDeviceSize cleared = ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t);
+        if (recorder != nullptr) {
+            transfers = recorder->UseRecord(record.slab, record.offset, cleared, record.host, record.hostOffset, record.bytes);
+        } else {
+            context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, record.slab->Handle(), record.offset, cleared, 0u);
+            transfers = true;
+        }
+    }
+    const auto stream = recorder != nullptr ? recorder->CallerStream() : BdaPageTable::EveryStream;
+    if (table.host != nullptr) {
+        const bool fresh = stream == BdaPageTable::EveryStream || (tableStreams & (1u << stream)) == 0u;
+        if (stream != BdaPageTable::EveryStream) tableStreams |= 1u << stream;
+        if (fresh) transfers = BdaArena::RecordUpload(context, commands, table) || transfers;
+    }
+    if (pages != nullptr) transfers = pages->RecordUploads(context, commands, stream) || transfers;
+    if (transfers) RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+}
+
+bool BdaResources::NeedsTransfers(const Recorder& recorder) const {
+    const auto& record = shared != nullptr ? shared->Record() : fault;
+    if (record.slab != nullptr && !recorder.RecordUsed(record.slab.get(), record.offset)) return true;
+    const auto stream = recorder.CallerStream();
+    if (table.host != nullptr && (tableStreams & (1u << stream)) == 0u) return true;
+    return pages != nullptr && pages->NeedsUploads(stream);
+}
+
+void BdaResources::FinishUse(const Context& context, VkCommandBuffer commands) const {
+    const auto& record = shared != nullptr ? shared->Record() : fault;
+    if (record.slab == nullptr || record.host == nullptr) return;
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    const VkBufferCopy region{record.offset, record.hostOffset, record.bytes};
+    context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, record.slab->Handle(), record.host->Handle(), 1, &region);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
 }
 
 VkDescriptorBufferInfo BdaResources::Table() const {

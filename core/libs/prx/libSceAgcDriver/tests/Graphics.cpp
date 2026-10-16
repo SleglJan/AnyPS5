@@ -2566,7 +2566,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    *requirements = {mock.bufferSizes.at(buffer), 1, 1};
+    *requirements = {mock.bufferSizes.at(buffer), 1, 0x7u};
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -2808,6 +2808,23 @@ VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer buffer,
     std::memcpy(memory.data() + offset, data, static_cast<std::size_t>(size));
 }
 
+VKAPI_ATTR void VKAPI_CALL mockCmdFillBuffer(VkCommandBuffer, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size, std::uint32_t data) {
+    auto memory = mockBufferMemory(buffer);
+    if (size == VK_WHOLE_SIZE) size = (memory.size() - offset) & ~VkDeviceSize{3};
+    Require(offset + size <= memory.size() && size % 4u == 0u, "a buffer fill exceeds its buffer");
+    for (VkDeviceSize at = 0; at < size; at += 4u) std::memcpy(memory.data() + offset + at, &data, sizeof(data));
+}
+
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer source, VkBuffer destination, std::uint32_t count, const VkBufferCopy* regions) {
+    const auto from = mockBufferMemory(source);
+    auto to = mockBufferMemory(destination);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto& region = regions[index];
+        Require(region.srcOffset + region.size <= from.size() && region.dstOffset + region.size <= to.size(), "a buffer copy exceeds its buffers");
+        std::memmove(to.data() + region.dstOffset, from.data() + region.srcOffset, static_cast<std::size_t>(region.size));
+    }
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* commands) {
     for (std::uint32_t index = 0; index < info->commandBufferCount; ++index) commands[index] = makeHandle<VkCommandBuffer>();
     mock.live += info->commandBufferCount;
@@ -2877,7 +2894,9 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBindPipeline)},
         {"vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPushConstants)},
         {"vkCmdDispatch", reinterpret_cast<PFN_vkVoidFunction>(mockCmdDispatch)},
-        {"vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdUpdateBuffer)}
+        {"vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdUpdateBuffer)},
+        {"vkCmdFillBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdFillBuffer)},
+        {"vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyBuffer)}
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -2887,8 +2906,10 @@ AgcDriver::Graphics::Context mockContext() {
     AgcDriver::Graphics::Context context{};
     context.deviceProc = mockProc;
     context.descriptorHeap = &MockDescriptorHeap();
-    context.memory.memoryTypeCount = 1;
+    context.memory.memoryTypeCount = 3;
     context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    context.memory.memoryTypes[1].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    context.memory.memoryTypes[2].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     context.limits.minStorageBufferOffsetAlignment = 1;
     context.limits.maxBoundDescriptorSets = 3;
     context.limits.maxStorageBufferRange = 16384;
