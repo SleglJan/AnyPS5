@@ -142,6 +142,11 @@ void Rewrite(std::uint32_t seed) {
     Require(VirtualProtect(const_cast<std::uint32_t*>(Mirrored.data()), static_cast<SIZE_T>(Bytes()), previous, &restored) != 0, "image mirrors: cannot restore the words' protection");
 }
 
+void ExpectDeviceCopy(const std::string& what) {
+    const auto stats = Graphics::MirrorCounters();
+    Expect(stats.bytes != 0u && stats.deviceBytes == stats.bytes, "image mirrors: " + what + ": " + std::to_string(stats.bytes - stats.deviceBytes) + " of " + std::to_string(stats.bytes) + " mirrored bytes are a host-side copy, not device memory");
+}
+
 void Mirrors(AgcDriver::VulkanDevice& device, const Graphics::Context& context) {
     MEMORY_BASIC_INFORMATION info{};
     Require(VirtualQuery(Mirrored.data(), &info, sizeof(info)) == sizeof(info) && info.Type == MEM_IMAGE && (info.Protect & 0xffu) == PAGE_READONLY, "image mirrors: the test's constant words are not read-only image pages");
@@ -156,6 +161,7 @@ void Mirrors(AgcDriver::VulkanDevice& device, const Graphics::Context& context) 
     const auto first = Serial(context);
     Expect(first != 0u && Graphics::HostImportSerial(context, Address(), static_cast<std::size_t>(Bytes()), false) == 0u, "image mirrors: the read-only range of the main image is not served by a mirror (mirror serial " + Hex(first) + ")");
     ExpectRead(device, "a dispatch reading a read-only range of the main image");
+    ExpectDeviceCopy("the first mirror");
     Build(context);
     Expect(Serial(context) == first, "image mirrors: a build with no mapping change built the mirror again (serial " + Hex(first) + ", now " + Hex(Serial(context)) + ")");
 
@@ -164,6 +170,7 @@ void Mirrors(AgcDriver::VulkanDevice& device, const Graphics::Context& context) 
     const auto rewritten = Serial(context);
     Expect(rewritten != 0u && rewritten != first, "image mirrors: after the guest rewrote the range under a protection change, the mirror kept its serial " + Hex(first));
     ExpectRead(device, "a dispatch reading the range after the guest rewrote it under a protection change");
+    ExpectDeviceCopy("the mirror rebuilt after the rewrite");
 
     Protect(false, [] {});
     Build(context);
@@ -173,6 +180,7 @@ void Mirrors(AgcDriver::VulkanDevice& device, const Graphics::Context& context) 
     const auto mappedAgain = Serial(context);
     Expect(mappedAgain != 0u && mappedAgain != first && mappedAgain != rewritten, "image mirrors: the range mapped for the GPU again did not get a new mirror (serial " + Hex(mappedAgain) + ")");
     ExpectRead(device, "a dispatch reading the range mapped for the GPU again");
+    ExpectDeviceCopy("the mirror of the range mapped again");
 
     GuestAllocations::Mutation().UnregisterImage(GetModuleHandleW(nullptr));
     Build(context);

@@ -166,6 +166,7 @@ struct MirrorStats {
     std::uint64_t bytes = 0;
     std::uint64_t rebuilds = 0;
     std::uint64_t sweeps = 0;
+    std::uint64_t deviceBytes = 0;
 };
 MirrorStats MirrorCounters();
 void ClearImageMirrors(VkDevice device);

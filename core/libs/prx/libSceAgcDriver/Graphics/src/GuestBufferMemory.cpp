@@ -1252,7 +1252,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
     mirror->base = range->address;
     mirror->bytes = range->bytes;
     mirror->range = range;
-    mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     {
         const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
         GuestMemory::Read(range->address, mirror->buffer->Bytes().first(static_cast<std::size_t>(mirror->bytes)));
@@ -1562,8 +1562,12 @@ MirrorStats MirrorCounters() {
     auto& state = Mirrors();
     std::lock_guard lock(state.mutex);
     std::uint64_t bytes = 0;
-    for (const auto& [base, mirror] : state.entries) bytes += mirror->bytes;
-    return {static_cast<std::uint64_t>(state.entries.size()), bytes, state.rebuilds, state.sweeps};
+    std::uint64_t deviceBytes = 0;
+    for (const auto& [base, mirror] : state.entries) {
+        bytes += mirror->bytes;
+        if ((mirror->buffer->Properties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) deviceBytes += mirror->bytes;
+    }
+    return {static_cast<std::uint64_t>(state.entries.size()), bytes, state.rebuilds, state.sweeps, deviceBytes};
 }
 
 void ClearImageMirrors(VkDevice device) {
