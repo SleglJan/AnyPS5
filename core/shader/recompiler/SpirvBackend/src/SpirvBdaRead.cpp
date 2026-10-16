@@ -259,14 +259,9 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
             state.module.AddFunction(spv::OpReturnValue, direct);
             EmitLabel(state, miss);
         };
-        returnIfCached();
-        RefreshBdaVectorCache(state, firstAddress);
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, ProbeBdaVectorCache(state, firstAddress, bytes).hit), [&] { RefreshBdaVectorCache(state, firstAddress); });
         returnIfCached();
     }
-    const auto physical = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, u64, physical, state.bdaProbeFunction, firstAddress, span, instruction);
-    const auto mapped = Binary(state, spv::OpINotEqual, boolean, physical, BdaConstant(state, 0u));
-    const auto wide = Binary(state, spv::OpLogicalAnd, boolean, mapped, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, physical)));
     const auto isUsed = [&](std::uint32_t dword) {
         return Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, used, ConstantU32(state, 1u << dword)), zero);
     };
@@ -275,11 +270,7 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
         state.module.AddFunction(spv::OpCompositeConstruct, values, value, parts[0], parts[1], parts[2], parts[3]);
         return value;
     };
-    const auto read = EmitValueIfElse(state, wide, values, [&] {
-        const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, values, loaded, loader, physical, firstBytes, used);
-        return loaded;
-    }, [&] {
+    const auto dwords = [&] {
         const auto entry = state.currentLabel;
         const auto header = state.module.AllocateId();
         const auto body = state.module.AllocateId();
@@ -322,7 +313,21 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
         state.module.AddFunction(spv::OpBranch, header);
         EmitLabel(state, merge);
         return gathered;
-    });
+    };
+    std::uint32_t read = 0;
+    if (BdaVectorCacheAvailable(state)) {
+        read = dwords();
+    } else {
+        const auto physical = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, u64, physical, state.bdaProbeFunction, firstAddress, span, instruction);
+        const auto mapped = Binary(state, spv::OpINotEqual, boolean, physical, BdaConstant(state, 0u));
+        const auto wide = Binary(state, spv::OpLogicalAnd, boolean, mapped, Unary(state, spv::OpLogicalNot, boolean, BdaAddressUnaligned(state, physical)));
+        read = EmitValueIfElse(state, wide, values, [&] {
+            const auto loaded = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFunctionCall, values, loaded, loader, physical, firstBytes, used);
+            return loaded;
+        }, dwords);
+    }
     auto returned = read;
     if (stops) {
         returned = state.module.AllocateId();
