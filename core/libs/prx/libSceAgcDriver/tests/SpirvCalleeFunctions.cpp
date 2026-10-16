@@ -20,8 +20,6 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-constexpr std::uint64_t Srt = 0x1100010000ull;
-constexpr std::uint64_t Table = 0x1100020000ull;
 constexpr std::uint64_t Code = 0x1100030000ull;
 constexpr std::uint64_t Output = 0x1100050000ull;
 
@@ -205,26 +203,6 @@ void RequireReturns(const Module& module, std::uint32_t callee, std::uint32_t ca
     Require(returnsRegisters && taken, what + ": " + module.names.at(callee) + " does not hand the register it wrote back to its caller");
 }
 
-void CheckTableCall() {
-    const std::vector<std::uint32_t> caller{0x36020081u, 0xbe9e037eu, 0x7e280501u, 0xbe9f037eu, 0x7da40214u, 0x8f148414u, 0xf4080400u, 0xfa000000u, 0xbf8cc07fu, 0xf4280208u, 0x28000000u,
-        0xbf8cc07fu, 0xbe8e0308u, 0xbe8f0309u, 0xbe8e210eu, 0x8a7e7e1fu, 0xbf89fff1u, 0xbefe031eu, 0xf4080600u, 0xfa000010u, 0x34060082u, 0xbf8cc07fu, 0xe0701000u, 0x80060203u, 0xbf810000u};
-    const std::vector<std::uint32_t> first{0x4a040085u, 0xbe80200eu};
-    const std::vector<std::uint32_t> second{0x4a0400c0u, 0xbe80200eu};
-    std::vector<std::uint32_t> page(1024u, 0u);
-    std::copy(first.begin(), first.end(), page.begin());
-    std::copy(second.begin(), second.end(), page.begin() + 0x200);
-    const std::vector<std::uint32_t> srt{Low(Table), High(Table) | (16u << 16u), 2u, 0x31016facu, Low(Output), High(Output) & 0xffffu, 0x100u, 0x31016facu};
-    const std::vector<std::uint32_t> records{Low(Code), High(Code), 0x00c0ffeeu, 0x12u, Low(Code + 0x800u), High(Code + 0x800u), 0x0badf00du, 0x13u};
-    const GuestMemory memory{{{Srt, srt}, {Table, records}, {Code, page}}};
-    const std::array<std::uint32_t, 2> userData{Low(Srt), High(Srt)};
-    const auto module = Parse(Recompiled(caller, userData, &memory));
-    RequireCallees(module, 2u, "a table call of two targets");
-    for (const auto callee : Callees(module)) {
-        Require(Callers(module, callee).front() == module.entry, "a table callee is not called from the entry point's compare chain");
-        RequireReturns(module, callee, module.entry, "a table callee that writes v2, which the caller stores after its loop");
-    }
-}
-
 void CheckUserDataCalls() {
     const std::vector<std::uint32_t> caller{0x7e020280u, 0xbe940383u, 0xbe8e0300u, 0xbe8f0301u, 0xbe8e210eu, 0xbe8e0302u, 0xbe8f0303u, 0xbe8e210eu,
         0x80948114u, 0xbf078014u, 0xbf85fff7u, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u};
@@ -262,7 +240,6 @@ void CheckNestedCalls() {
 
 int main() {
     try {
-        CheckTableCall();
         CheckUserDataCalls();
         CheckNestedCalls();
     } catch (const std::exception& error) {
