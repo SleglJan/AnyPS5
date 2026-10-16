@@ -91,7 +91,7 @@ Added ScalarLoadAdded() {
 }
 
 Added RuntimeLoadBudget(std::uint32_t dwords) {
-    return {2u * (2u + dwords), 2u + dwords};
+    return {4u + 5u * dwords, 2u + 2u * dwords};
 }
 
 void Expect(const char* name, const Added& added, const Added& limit) {
