@@ -1879,7 +1879,7 @@ void ShaderResources::buildComplete() {
                 std::array<std::uint32_t, 1> slot{};
                 if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
                     auto& image = *storageTextures[index];
-                    slot[0] = image.StorageSlot(storageAtomic64[index] ? image.Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? image.AtomicView(storageMips[index], storageLayers[index]) : image.StorageView(storageMips[index], storageLayers[index]));
+                    slot[0] = image.StorageSlot(storageMips[index], storageLayers[index], storageAtomic64[index] ? StorageTexture::StorageViewKind::Atomic64 : storageAtomic[index] ? StorageTexture::StorageViewKind::Atomic : StorageTexture::StorageViewKind::Storage);
                 } else {
                     const auto& texture = *textures[index];
                     const auto which = textureBaseLevel[index] ? Texture::SampledView::BaseLevel : textureFirstLayer[index] ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole;
@@ -2748,7 +2748,7 @@ DeviceTableStorage LookupDeviceTableStorage(const Context& context, std::span<co
         for (auto level = resource.baseLevel; level <= resource.lastLevel; ++level) views.push_back(image->StorageView(std::min(level, resource.mipCount - 1u), layers));
         result.slot = image->StorageSlotRun(views);
     } else {
-        result.slot = image->StorageSlot(view.atomic64 ? image->Atomic64View(mip, layers) : view.atomic ? image->AtomicView(mip, layers) : image->StorageView(mip, layers));
+        result.slot = image->StorageSlot(mip, layers, view.atomic64 ? StorageTexture::StorageViewKind::Atomic64 : view.atomic ? StorageTexture::StorageViewKind::Atomic : StorageTexture::StorageViewKind::Storage);
     }
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
