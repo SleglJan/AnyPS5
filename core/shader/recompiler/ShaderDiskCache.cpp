@@ -422,6 +422,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageDecodedCopy);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
+    writer.Values(std::span<const std::uint8_t>(binding.imageMemoryAccess));
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.samplerUnnormalized);
     writer.Flags(binding.imageUnnormalized);
@@ -449,6 +450,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageDecodedCopy);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
+    reader.Values(binding.imageMemoryAccess);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.samplerUnnormalized);
     reader.Flags(binding.imageUnnormalized);

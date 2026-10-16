@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -416,6 +417,9 @@ private:
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders);
+    void selectMemoryImages(std::span<const CompiledShader> shaders);
+    static constexpr std::size_t MemoryAllocation = std::numeric_limits<std::size_t>::max() - 1u;
+    std::set<std::pair<const ShaderRecompiler::DescriptorBinding*, std::uint32_t>> memoryImages;
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     std::pair<VkDeviceAddress, std::uint64_t> bufferAddress(Allocation& allocation);
     void patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes);

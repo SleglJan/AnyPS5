@@ -418,6 +418,7 @@ struct DescriptorBinding {
     std::vector<bool> imageDecodedCopy;
     std::vector<bool> imageAtomic;
     std::vector<bool> imageAtomic64;
+    std::vector<std::uint8_t> imageMemoryAccess;
     std::vector<DescriptorImageShape> imageShapes;
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;

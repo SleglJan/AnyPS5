@@ -2,6 +2,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
+#include "StorageImageMemory.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <atomic>
@@ -363,6 +364,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.emplace_back();
                 physical.imageAtomic64.push_back(image.atomic64);
+                physical.imageMemoryAccess.push_back(StorageImageMemory::ResourceThroughMemory(info, image) ? static_cast<std::uint8_t>(1u + static_cast<std::uint32_t>(StorageImageMemory::AccessOf(image))) : std::uint8_t{0});
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {
