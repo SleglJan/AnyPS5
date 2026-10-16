@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -30,9 +31,9 @@ alignas(256) constexpr std::array<std::uint32_t, 64> Caller{
     0xbf9f0000u, 0x30306c73u, 0x00000040u, 0x00000008u};
 alignas(256) constexpr std::array<std::uint32_t, 3> SelectSixteen{0x85159091u, 0x7e020215u, 0xbe80200eu};
 alignas(256) constexpr std::array<std::uint32_t, 3> SelectThirtyTwo{0x8515a0a1u, 0x7e020215u, 0xbe80200eu};
-alignas(16) std::array<std::uint32_t, 8> Table{};
-alignas(16) std::array<std::uint32_t, 4> Descriptors{};
-alignas(256) std::array<std::uint32_t, Threads> Output{};
+TestGuest::Array<std::uint32_t, 8> Table;
+TestGuest::Array<std::uint32_t, 4> Descriptors;
+TestGuest::Array<std::uint32_t, Threads> Output;
 
 void Fill() {
     const auto first = reinterpret_cast<std::uintptr_t>(SelectSixteen.data());
@@ -46,7 +47,7 @@ std::array<std::uint32_t, 8> UserData(std::uint32_t index, bool scc) {
     const auto descriptors = reinterpret_cast<std::uintptr_t>(Descriptors.data());
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     return {static_cast<std::uint32_t>(descriptors), static_cast<std::uint32_t>(descriptors >> 32u), index, scc ? 1u : 0u,
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(decltype(Output)::ByteSize), 0x31016facu};
 }
 
 std::vector<std::uint32_t> Commands(const std::array<std::uint32_t, 8>& data, bool wave32) {
@@ -117,7 +118,7 @@ std::string Dispatch(std::uint32_t index, bool scc, bool wave32) {
     } catch (const std::exception& error) {
         failure = error.what();
     }
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
     return log.Finish() + failure;
 }
 
