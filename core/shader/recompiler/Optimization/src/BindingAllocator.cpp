@@ -155,7 +155,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
     if (!samplers.empty()) {
-        if (samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader sampler pairs exceed runtime heap capacity");
         addBinding(next, DescriptorBindingKind::Samplers, std::move(samplers));
     }
     if (usesGds(program)) {
