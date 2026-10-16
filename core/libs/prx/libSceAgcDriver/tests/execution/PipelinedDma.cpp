@@ -23,6 +23,25 @@ std::array<std::uint32_t, 7> DmaData(bool immediate, std::uint64_t source, std::
     return {0xc0055000u, immediate ? (2u << 29u) : 0u, immediate ? data : static_cast<std::uint32_t>(source), immediate ? 0u : static_cast<std::uint32_t>(source >> 32u), static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), bytes};
 }
 
+struct alignas(8) ShaderHeader {
+    Shader shader{};
+    ShaderUserData userData{};
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
+
+void OpenDevice() {
+    static ShaderHeader header;
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(ShaderHeader);
+    header.shader.shader_size = static_cast<std::uint32_t>(sizeof(EndProgram));
+    header.shader.code = EndProgram.data();
+    header.shader.type = 1;
+    header.shader.user_data = &header.userData;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
 void Submit(TestGuest::Vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
@@ -31,14 +50,8 @@ void Submit(TestGuest::Vector<std::uint32_t>& words) {
 }
 
 int main() {
-#ifdef _WIN32
-    _putenv_s("APS5_PIPELINED_DRAWS", "1");
-    _putenv_s("APS5_PIPELINE_DMA", "1");
-#else
-    setenv("APS5_PIPELINED_DRAWS", "1", 1);
-    setenv("APS5_PIPELINE_DMA", "1", 1);
-#endif
     try {
+        OpenDevice();
         static TestGuest::Array<std::uint32_t, 1024> first;
         static TestGuest::Array<std::uint32_t, 1024> second;
         first.fill(0);
