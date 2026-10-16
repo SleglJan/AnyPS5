@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -22,8 +23,8 @@ using AgcDriver::DriverDetail::MatchMemoryValueBufferFill;
 alignas(256) constexpr std::array<std::uint32_t, 9> Code{0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
 constexpr std::uint32_t Format32Uint = 0x00014004u;
-alignas(256) std::array<std::uint32_t, 4> Value{};
-alignas(256) std::array<std::uint32_t, 1028> Output{};
+TestGuest::Array<std::uint32_t, 4> Value;
+TestGuest::Array<std::uint32_t, 1028> Output;
 
 void KeysFillMemoTests() {
     using AgcDriver::Graphics::DccKeys;
@@ -113,7 +114,7 @@ void Submit(const std::vector<std::uint32_t>& words) {
     Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
     AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
 }
 
 void Expect(std::size_t first, std::size_t count, std::uint32_t value, const std::string& what) {
