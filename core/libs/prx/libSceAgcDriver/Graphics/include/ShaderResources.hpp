@@ -126,6 +126,7 @@ struct DeviceTableView {
     bool atomic64 = false;
     bool mipRun = false;
     bool srgb = false;
+    bool written = false;
 };
 
 struct DeviceTableStorage {

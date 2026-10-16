@@ -2731,7 +2731,7 @@ DeviceTableStorage LookupDeviceTableStorage(const Context& context, std::span<co
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.baseAddress), static_cast<std::size_t>(guestBytes)) && GuestMemory::CommittedRanges(resource.baseAddress, static_cast<std::size_t>(guestBytes), false).empty()) throw std::runtime_error("AGC graphics: the table entry's storage surface at 0x" + HexText(resource.baseAddress) + " is not mapped");
     CompletePendingCpuWrites(context, resource.baseAddress, static_cast<std::size_t>(guestBytes));
     if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
-    auto image = cachedStorageTexture(context, words, resource, mip, guestBytes);
+    auto image = cachedStorageTexture(context, words, resource, mip, guestBytes, view.written);
     const auto layers = StorageTexture::LayersOf(resource, firstLayer);
     DeviceTableStorage result;
     if (view.mipRun) {
