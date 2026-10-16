@@ -1739,7 +1739,10 @@ void verifyPlanRoundTrip() {
         return std::any_of(plans.begin(), plans.end(), [&](const std::shared_ptr<const IrResourcePlan>& plan) { return predicate(*plan); });
     };
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value(); }); }), "no fixture plans a table column");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->address; }); }), "no fixture plans an image table through a pointer");
+    const auto pointerTable = std::find_if(fixtures.begin(), fixtures.end(), [](const auto& fixture) { return fixture.name == "pointer image table"; });
+    require(pointerTable != fixtures.end(), "the pointer image table fixture is missing");
+    const auto& pointerPlan = *plans[static_cast<std::size_t>(pointerTable - fixtures.begin())];
+    require(!pointerPlan.info.images.empty() && std::all_of(pointerPlan.info.images.begin(), pointerPlan.info.images.end(), [](const auto& image) { return image.deviceTable; }), "the image a table record's pointer leads to is not read through the device image table");
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.controlFlow.begin(), plan.controlFlow.end(), [](const ResourceBlock& block) { return block.condition != nullptr; }); }), "no fixture plans a control-flow condition");
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.valueStorage.begin(), plan.valueStorage.end(), [](const auto& value) { return value->IsPhi(); }); }), "no fixture plans a phi");
     require(covers([](const IrResourcePlan& plan) { return !plan.guardedSrtSlots.empty(); }), "no fixture plans a guarded SRT read");
