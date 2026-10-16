@@ -1540,7 +1540,15 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         for (const auto view : record.targetViews) objects.push_back({view, true});
         for (const auto& proxy : record.proxies) objects.push_back({proxy->Image(), true});
         for (const auto& texture : resources.SampledTextures()) {
-            if (texture != nullptr && texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+            if (texture == nullptr) continue;
+            if (texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+            if (texture->SampledImage() != VK_NULL_HANDLE && (!texture->ViewsStorageImage() || texture->SampledImage() != texture->StorageSource()->Image())) objects.push_back({texture->SampledImage(), false});
+        }
+        if (resources.UsesDeviceImages()) {
+            for (const auto& image : context.deviceImages->DispatchStorage()) objects.push_back({image->Image(), true});
+            for (const auto& texture : context.deviceImages->DispatchTextures()) {
+                if (texture->SampledImage() != VK_NULL_HANDLE) objects.push_back({texture->SampledImage(), false});
+            }
         }
         recorder->DeclareSection(objects);
     }

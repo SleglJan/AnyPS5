@@ -4086,10 +4086,15 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         if (workgroupMemory != nullptr) objects.push_back({workgroupMemory.get(), true});
         for (const auto& [image, written] : resources.StorageImages()) objects.push_back({image, written});
         for (const auto& texture : resources.SampledTextures()) {
-            if (texture != nullptr && texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+            if (texture == nullptr) continue;
+            if (texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+            if (texture->SampledImage() != VK_NULL_HANDLE && (!texture->ViewsStorageImage() || texture->SampledImage() != texture->StorageSource()->Image())) objects.push_back({texture->SampledImage(), false});
         }
         if (resources.UsesDeviceImages()) {
             for (const auto& image : context.deviceImages->DispatchStorage()) objects.push_back({image->Image(), true});
+            for (const auto& texture : context.deviceImages->DispatchTextures()) {
+                if (texture->SampledImage() != VK_NULL_HANDLE) objects.push_back({texture->SampledImage(), false});
+            }
         }
         recorder.DeclareSection(objects);
     }
