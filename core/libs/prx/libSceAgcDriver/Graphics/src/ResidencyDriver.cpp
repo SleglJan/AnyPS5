@@ -77,6 +77,10 @@ std::uint64_t ResidencyDriver::GuestBytes() {
     return guest.GuestBytes();
 }
 
+void ResidencyDriver::CollectWrites(std::uint64_t firstPage, std::uint64_t pages) {
+    guest.CollectWrites(firstPage << ResidencyPageShift, pages << ResidencyPageShift);
+}
+
 ResidencyWrites ResidencyDriver::PageWrites(std::uint64_t page, std::uint64_t generation) {
     return guest.PageWrites(page, generation);
 }

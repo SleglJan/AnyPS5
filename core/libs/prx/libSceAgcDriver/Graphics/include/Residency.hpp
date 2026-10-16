@@ -103,6 +103,10 @@ public:
     }
     virtual std::uint64_t Budget() { return ~std::uint64_t{0}; }
     virtual std::uint64_t GuestBytes() { return 0; }
+    virtual void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) {
+        static_cast<void>(firstPage);
+        static_cast<void>(pages);
+    }
     virtual ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) {
         static_cast<void>(page);
         static_cast<void>(generation);
@@ -135,6 +139,8 @@ struct ResidencyCounts {
     std::uint64_t touchDeferred = 0;
     std::uint64_t aliasDemoted = 0;
     std::uint64_t recordRefreshed = 0;
+    std::uint64_t hotRefreshed = 0;
+    std::uint64_t hotSweeps = 0;
     std::uint64_t chunksAllocated = 0;
     std::uint64_t chunksReleased = 0;
     std::uint32_t chunks = 0;
@@ -283,6 +289,8 @@ private:
     void admitEager();
     void rearm(std::uint32_t id);
     void coolHot(std::uint64_t first, std::span<const std::uint8_t> written);
+    void markHot(std::uint64_t page, std::uint64_t at);
+    void unmarkHot(std::uint64_t page);
     std::optional<MirrorSlot> acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks);
     void leave(std::uint32_t id, WriteBacks& writeBacks);
     void forget(std::uint32_t id);
@@ -326,6 +334,9 @@ private:
     std::unordered_set<std::uint64_t> changes;
     std::unordered_map<std::uint64_t, Cooling> hot;
     std::unordered_map<std::uint64_t, std::uint64_t> hotResident;
+    std::map<std::uint64_t, std::uint64_t> hotRuns;
+    std::deque<std::pair<std::uint64_t, std::uint64_t>> hotCooling;
+    std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
     std::uint64_t importsGeneration = 0;
     std::vector<ResidencyRange> pendingImports;

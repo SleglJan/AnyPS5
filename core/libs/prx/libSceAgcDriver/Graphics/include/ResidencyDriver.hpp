@@ -39,6 +39,10 @@ public:
     virtual void UnguardAccess(std::uint64_t page) = 0;
     virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) = 0;
     virtual std::uint64_t GuestBytes() = 0;
+    virtual void CollectWrites(std::uint64_t address, std::uint64_t bytes) {
+        static_cast<void>(address);
+        static_cast<void>(bytes);
+    }
     virtual ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) {
         static_cast<void>(page);
         static_cast<void>(generation);
@@ -120,6 +124,7 @@ public:
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t Budget() override;
     std::uint64_t GuestBytes() override;
+    void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) override;
     ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;
 
 private:

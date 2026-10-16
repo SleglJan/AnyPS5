@@ -98,6 +98,10 @@ ResidencyWrites ResidencyGuest::PageWrites(std::uint64_t page, std::uint64_t gen
     return {writes.cpuSubpages, writes.other, writes.generation};
 }
 
+void ResidencyGuest::CollectWrites(std::uint64_t address, std::uint64_t bytes) {
+    static_cast<void>(GuestMemory::CollectWritesUncached(address, static_cast<std::size_t>(bytes)));
+}
+
 std::uint64_t ResidencyGuest::GuestBytes() {
     return CommittedImportCounters().viewBytes;
 }

@@ -133,6 +133,8 @@ public:
     std::set<std::uint64_t> guardRefused;
     std::set<std::uint64_t> reported;
     std::set<std::uint64_t> accessUnguarded;
+    std::map<std::uint64_t, std::uint64_t> collected;
+    std::uint64_t collectedPages = 0;
     std::vector<std::vector<Contents>> mirrors;
     std::vector<bool> live;
     std::vector<std::uint64_t> slotOwner;
@@ -297,6 +299,18 @@ public:
     }
 
     std::uint64_t Budget() override { return measuredBudget; }
+
+    void CollectWrites(std::uint64_t firstPage, std::uint64_t count) override {
+        std::vector<std::uint64_t> written;
+        for (auto page = firstPage; page < firstPage + count; ++page) {
+            auto& seen = collected[page];
+            if (imports[page].stamp <= seen) continue;
+            seen = imports[page].stamp;
+            written.push_back(page);
+        }
+        collectedPages += count;
+        manager->QueueCpuWritten(written);
+    }
 
     std::uint64_t GuestBytes() override { return guestBytes; }
 
