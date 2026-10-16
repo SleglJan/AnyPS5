@@ -1875,7 +1875,8 @@ void ShaderResources::buildComplete() {
                     slot[0] = image.StorageSlot(storageAtomic64[index] ? image.Atomic64View(storageMips[index], storageLayers[index]) : storageAtomic[index] ? image.AtomicView(storageMips[index], storageLayers[index]) : image.StorageView(storageMips[index], storageLayers[index]));
                 } else {
                     const auto& texture = *textures[index];
-                    slot[0] = texture.SampledSlot(textureBaseLevel[index] ? Texture::SampledView::BaseLevel : textureFirstLayer[index] ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole);
+                    const auto which = textureBaseLevel[index] ? Texture::SampledView::BaseLevel : textureFirstLayer[index] ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole;
+                    slot[0] = textureSrgb[index] ? texture.SrgbSampledSlot(which) : texture.SampledSlot(which);
                 }
                 const auto position = binding.slotDwords[element] * 4u;
                 patchShaderData(binding.slotPushOffset >= 0 ? binding.slotPushOffset + static_cast<std::int32_t>(position) : -1, binding.slotDataAllocation, position, slot);
@@ -2386,7 +2387,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                 continue;
             }
             const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
-            RequireDegammaFormat(resource.format, binding.imageSamplers[element], shaderSamplers);
+            const bool forcedSrgb = ForcesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
             const bool firstLayer = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && resource.dimension == TextureDimension::k2DArray;
             if (!firstLayer && !MatchesGuestDimension(*binding.imageShape, resource.dimension)) throw std::runtime_error("AGC graphics: guest texture dimension disagrees with the shader's declared image shape (shape " + std::to_string(static_cast<int>(*binding.imageShape)) + ", dimension " + std::to_string(static_cast<int>(resource.dimension)) + ")");
@@ -2414,6 +2415,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             }
             RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers[element], shaderSamplers);
             RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers[element], shaderSamplers);
+            if (forcedSrgb && !texture->HasSrgbView()) Require(false, "a texture of guest format " + std::to_string(resource.format) + ", which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding, which is not implemented");
             if (!shaderSamplers.empty()) {
                 const bool singleLevel = DescriptorSingleLevel(words);
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
@@ -2432,6 +2434,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             textures.push_back(std::move(texture));
             textureFirstLayer.push_back(firstLayer);
             textureBaseLevel.push_back(baseLevel);
+            textureSrgb.push_back(forcedSrgb);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             item.imageAllocations.push_back(textures.size() - 1);
         }
@@ -2578,6 +2581,8 @@ void ShaderResources::resolveImageTables() {
             }
             textures.push_back(std::move(texture));
             textureFirstLayer.push_back(firstLayer);
+            textureBaseLevel.push_back(false);
+            textureSrgb.push_back(false);
             describedRanges.push_back({"texture", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
             table.elementTextures[element] = textures.size() - 1u;
         };
@@ -2701,8 +2706,10 @@ DeviceTableTexture LookupDeviceTableTexture(const Context& context, std::span<co
         if (!supported || (range.type != VK_IMAGE_VIEW_TYPE_1D && range.type != VK_IMAGE_VIEW_TYPE_2D)) throw std::runtime_error("AGC graphics: guest texture sampled with unnormalized coordinates is not a single-layer 1D or 2D view without a minimum LOD clamp, and is neither a single-level view nor read at its base level only");
         baseLevel = range.levels > 1u;
     }
+    if (view.srgb && !texture->HasSrgbView()) throw std::runtime_error("AGC graphics: a texture of guest format " + std::to_string(resource.format) + ", which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding, which is not implemented");
     DeviceTableTexture result;
-    result.slot = texture->SampledSlot(baseLevel ? Texture::SampledView::BaseLevel : firstLayer ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole);
+    const auto which = baseLevel ? Texture::SampledView::BaseLevel : firstLayer ? Texture::SampledView::FirstLayer : Texture::SampledView::Whole;
+    result.slot = view.srgb ? texture->SrgbSampledSlot(which) : texture->SampledSlot(which);
     result.address = resource.baseAddress;
     result.guestBytes = guestBytes;
     result.snapshot = looked != nullptr && looked->source == nullptr && looked->keys == DccKeys::Uncompressed && resource.dccAddress == 0 && looked->generation != 0;

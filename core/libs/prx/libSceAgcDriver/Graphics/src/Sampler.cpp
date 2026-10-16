@@ -131,11 +131,13 @@ namespace AgcDriver::Graphics {
         return requiresNonSeamlessCube;
     }
 
-    void RequireDegammaFormat(std::uint32_t guestFormat, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers) {
+    bool ForcesDegammaOn(std::uint32_t guestFormat, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers) {
+        bool forced = false;
         for (const auto element : samplerElements) {
             if (element >= samplers.size()) Require(false, "a sampled texture is paired with sampler element " + std::to_string(element) + ", which its shader does not bind");
-            if (samplers[element]->ForcesDegamma() && !IsSrgbTextureFormat(guestFormat)) Require(false, "a texture of guest format " + std::to_string(guestFormat) + ", which is not sRGB, is sampled through a sampler that forces sRGB decoding, which is not implemented");
+            forced = forced || samplers[element]->ForcesDegamma();
         }
+        return forced && !IsSrgbTextureFormat(guestFormat);
     }
 
     void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::span<const std::uint32_t> samplerElements, std::span<const std::shared_ptr<Sampler>> samplers) {

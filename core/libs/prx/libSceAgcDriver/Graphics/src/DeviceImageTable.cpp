@@ -305,6 +305,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
     try {
         auto samplerClass = key[Abi::SamplerClassWord];
         std::shared_ptr<Sampler> sampler;
+        bool forcedSrgb = false;
         if (runtimeSampler) {
             const auto descriptorWords = std::span<const std::uint32_t>(key).first(Abi::DescriptorWords);
             const bool singleLevel = DescriptorSingleLevel(descriptorWords);
@@ -314,10 +315,11 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
             if (const auto* mismatch = unnormalized ? ShaderRecompiler::ResourceMaterializer::UnnormalizedSampleMismatch(mode) : nullptr) return rejected(Reason::Unnormalized, std::string("an S# with unnormalized coordinates ") + mismatch + ", which is not implemented");
             if (!unnormalized && interface->image.foldTexelOffsetsOnly) return rejected(Reason::UnsupportedOperation, "a normalized S# is used with an image sample that has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
             sampler = ModeSampler(build, samplerWords, mode.depthCompare, IntegerMode(mode), true, unnormalized);
-            RequireDegammaFormat(DecodeTextureResource(descriptorWords).format, std::array<std::uint32_t, 1>{0u}, std::array<std::shared_ptr<Sampler>, 1>{sampler});
+            forcedSrgb = ForcesDegammaOn(DecodeTextureResource(descriptorWords).format, std::array<std::uint32_t, 1>{0u}, std::array<std::shared_ptr<Sampler>, 1>{sampler});
             samplerClass = DeviceTableSamplerClass(sampler.get(), samplerWords, unnormalized, IntegerMode(mode)) & ~Abi::SamplerAnisoOverride;
         }
-        const DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor), IntegerMode(mode), unnormalized, (key[Abi::SamplerClassWord] & Abi::SamplerExactAtBase) != 0u && (samplerWords[1] & 0xfffu) == 0u && (samplerWords[2] & 0xfffffu) == 0u};
+        DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor), IntegerMode(mode), unnormalized, (key[Abi::SamplerClassWord] & Abi::SamplerExactAtBase) != 0u && (samplerWords[1] & 0xfffu) == 0u && (samplerWords[2] & 0xfffffu) == 0u};
+        view.srgb = forcedSrgb;
         auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass, perUse);
         const auto samplerSlot = sampler != nullptr ? sampler->Slot() : 0u;
         auto modeWord = *match.mode;

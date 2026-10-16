@@ -120,6 +120,8 @@ public:
     VkImageView BaseLevelView() const;
     enum class SampledView : std::uint8_t { Whole, FirstLayer, BaseLevel };
     std::uint32_t SampledSlot(SampledView which) const;
+    bool HasSrgbView() const { return srgbInfo.has_value(); }
+    std::uint32_t SrgbSampledSlot(SampledView which) const;
     struct ViewRange {
         VkImageViewType type;
         std::uint32_t levels;
@@ -147,6 +149,7 @@ private:
     void release() noexcept;
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
     void prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
+    void prepareSrgbView(VkImageViewCreateInfo viewInfo);
     void startBaseLevelView() const;
     void recordDepthCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
     void recordDecodedCopy(VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept);
@@ -164,6 +167,10 @@ private:
     std::optional<VkImageViewCreateInfo> baseLevelInfo;
     mutable std::mutex baseLevelMutex;
     mutable PooledView baseLevelView;
+    std::optional<VkImageViewCreateInfo> srgbInfo;
+    std::optional<float> srgbMinLod;
+    mutable std::mutex srgbMutex;
+    mutable std::array<PooledView, 3> srgbViews;
     VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;

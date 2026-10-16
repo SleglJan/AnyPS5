@@ -301,7 +301,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto linearBytes = sliceLinearBytes * arrayLayers;
 
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageInfo.flags = descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u;
+        imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (!depthCompare && SrgbTwinFormat(context, vkFormat) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
         imageInfo.imageType = ImageTypeFor(descriptor.dimension);
         imageInfo.format = vkFormat;
         imageInfo.extent = {descriptor.width, descriptor.height, geometry.imageDepth};
@@ -491,6 +491,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
+        if (!depthCompare) prepareSrgbView(viewInfo);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -824,6 +825,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
         createFirstLayerView(descriptor, viewInfo);
         prepareBaseLevelView(descriptor, viewInfo);
+        prepareSrgbView(viewInfo);
         if (profile) {
             auto& totals = Profile();
             totals.view += timer.lap();
@@ -877,6 +879,47 @@ void Texture::prepareBaseLevelView(const GuestTextureResource& descriptor, VkIma
     baseLevelInfo = viewInfo;
 }
 
+void Texture::prepareSrgbView(VkImageViewCreateInfo viewInfo) {
+    const auto format = SrgbTwinFormat(context, viewInfo.format);
+    if (format == VK_FORMAT_UNDEFINED) return;
+    for (auto* next = static_cast<const VkBaseInStructure*>(viewInfo.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT) srgbMinLod = reinterpret_cast<const VkImageViewMinLodCreateInfoEXT*>(next)->minLod;
+    }
+    viewInfo.pNext = nullptr;
+    viewInfo.format = format;
+    srgbInfo = viewInfo;
+}
+
+std::uint32_t Texture::SrgbSampledSlot(SampledView which) const {
+    Require(context.descriptorHeap != nullptr, "a sampled image slot needs the descriptor heap");
+    Require(srgbInfo.has_value(), "AGC graphics: a texture of view format " + std::to_string(viewFormat) + " has no sRGB view for a sampler that forces sRGB decoding");
+    std::lock_guard lock(srgbMutex);
+    auto& chosen = srgbViews.at(static_cast<std::size_t>(which));
+    if (!chosen.Started()) {
+        auto info = *srgbInfo;
+        if (which == SampledView::BaseLevel) {
+            Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
+            info.viewType = baseLevelInfo->viewType;
+            info.subresourceRange = baseLevelInfo->subresourceRange;
+        } else if (which == SampledView::FirstLayer) {
+            Require(firstLayerView.Started(), "a sampled image slot needs a view");
+            info.viewType = firstLayerRange.type;
+            info.subresourceRange.layerCount = firstLayerRange.layers;
+        }
+        VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+        usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        info.pNext = &usage;
+        VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
+        if (which != SampledView::BaseLevel && srgbMinLod.has_value()) {
+            minLod.minLod = *srgbMinLod;
+            minLod.pNext = info.pNext;
+            info.pNext = &minLod;
+        }
+        chosen.Start(context, info, "vkCreateImageView sRGB");
+    }
+    return chosen.SampledSlot(layout);
+}
+
 void Texture::startBaseLevelView() const {
     Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
     std::lock_guard lock(baseLevelMutex);
@@ -909,6 +952,7 @@ void Texture::release() noexcept {
     view.Destroy();
     firstLayerView.Destroy();
     baseLevelView.Destroy();
+    for (auto& srgbView : srgbViews) srgbView.Destroy();
     copyViews.reset();
     // The image and its memory go with the last holder: this texture, or the batch still uploading it.
     owned.reset();
