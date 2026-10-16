@@ -91,7 +91,7 @@ std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const Dra
     const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request, &preparedAtUse);
     const auto& prepared = invocation.Request();
     if (preparedAtUse) RecordPreparedProgram(device, *program.snapshot, program.codeOffset, prepared);
-    require(prepared.shader.code.size() == request.shader.code.size() && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a graphics program that calls code through its user data is not implemented");
+    require((prepared.shader.code.size() == request.shader.code.size() || program.tailContinuation != nullptr) && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a graphics program that calls code through its user data is not implemented");
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a graphics program that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
     require(CacheableResult(*compiled), "a graphics program whose compile poisoned an SRT read or an image table entry is not implemented");
@@ -236,6 +236,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         mix(reinterpret_cast<std::uintptr_t>(program.snapshot.get()));
         mix(program.codeOffset);
         mix(reinterpret_cast<std::uintptr_t>(program.tailContinuation.get()));
+        if (program.tailContinuation != nullptr) {
+            mix(program.tailContinuation->codeAddress);
+            for (const auto word : program.tailContinuation->code) mix(word);
+        }
         mix(request.layout.descriptorSet);
         mix(request.layout.firstBinding);
         mix(request.layout.pushConstantOffsetBytes);
