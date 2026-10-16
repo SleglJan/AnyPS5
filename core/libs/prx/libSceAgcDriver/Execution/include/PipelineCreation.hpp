@@ -86,10 +86,15 @@ public:
     explicit CreationGate(std::size_t words) : words(words) {
         auto& gate = State();
         std::unique_lock lock(gate.mutex);
+        const auto fits = [&] { return gate.inFlight == 0 || gate.inFlight + words <= budgetWords(gate); };
         if (CreationAhead::Active()) {
             const auto ticket = gate.issued++;
-            gate.changed.wait(lock, [&] { return ticket == gate.admitted && (gate.inFlight == 0 || gate.inFlight + words <= budgetWords(gate)); });
+            gate.changed.wait(lock, [&] { return ticket == gate.admitted && gate.framesWaiting == 0 && fits(); });
             ++gate.admitted;
+        } else if (!fits()) {
+            ++gate.framesWaiting;
+            gate.changed.wait(lock, fits);
+            --gate.framesWaiting;
         }
         gate.inFlight += words;
         gate.peak = std::max(gate.peak, ++gate.creations);
@@ -156,6 +161,7 @@ private:
         std::size_t creations = 0;
         std::size_t peak = 0;
         std::size_t budgetBytes = 0;
+        std::size_t framesWaiting = 0;
     };
 
     static std::size_t budgetWords(const Shared& gate) {
