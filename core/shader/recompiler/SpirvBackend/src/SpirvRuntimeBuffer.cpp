@@ -70,6 +70,32 @@ void faultIf(SpirvValueEmitContext& context, const IrValue& instruction, std::ui
     EmitIfCondition(state, condition, [&] { RecordBdaFault(state, address, ConstantU32(state, bytes), BdaInstructionPc(state, instruction), reason); });
 }
 
+void recordInvalidBufferDescriptor(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t condition, const std::array<std::uint32_t, 4>& words) {
+    auto& state = context.state;
+    const auto& memory = context.Memory(instruction);
+    EmitIfCondition(state, condition, [&] {
+        const auto u32 = TypeU32(state);
+        const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
+        const auto previous = state.module.AllocateId();
+        const auto scope = ConstantU32(state, spv::ScopeDevice);
+        const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+        state.module.AddFunction(spv::OpAtomicCompareExchange, u32, previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
+        EmitIfCondition(state, Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u)), [&] {
+            const auto store = [&](std::uint32_t index, std::uint32_t value) {
+                state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
+            };
+            store(1, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultReason::InvalidBufferDescriptor)));
+            store(2, words[0]);
+            store(3, words[1]);
+            store(4, words[2]);
+            store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage) | memory.resource << BdaAbi::DescriptorFaultResourceShift));
+            store(6, BdaInstructionPc(state, instruction));
+            store(7, words[3]);
+            state.module.AddFunction(spv::OpAtomicStore, pointer, scope, ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
+        });
+    });
+}
+
 bool runtimeWords(const SpirvEmitterState& state, const MemoryInfo& memory) {
     return memory.gpuDescriptor || state.registrationModules;
 }
@@ -158,7 +184,7 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
             invalid = Binary(state, spv::OpLogicalOr, TypeBool(state), invalid, nonzero(state, field(state, word3, 23u, 1u)));
         }
     }
-    if (memory.gpuDescriptor && !scalar) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
+    if (memory.gpuDescriptor && !scalar) recordInvalidBufferDescriptor(context, instruction, invalid, {values.words[0], word1, values.words[2], word3});
     const auto stride = field(state, word1, 16u, 14u);
     const auto present = runtime ? both(state, nonzero(state, values.words[2]), Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, values.words[0]), nonzero(state, field(state, word1, 0u, 16u)))) : nonzero(state, specializedWord(state, memory, 2u));
     const auto valid = memory.gpuDescriptor ? both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), invalid), Binary(state, spv::OpINotEqual, TypeBool(state), base, BdaConstant(state, 0u))) : present;
