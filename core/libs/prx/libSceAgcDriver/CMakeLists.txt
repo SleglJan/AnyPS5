@@ -2677,3 +2677,18 @@ target_include_directories(agc_driver_per_thread_table_registers_tests PRIVATE $
 target_include_directories(agc_driver_descriptor_resolved_once_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_storage_image_through_memory_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
+add_test_executable(agc_driver_pipeline_cache_merge_tests EXCLUDE_FROM_ALL tests/PipelineCacheMerge.cpp ${agcPipelineCacheFillHeader})
+target_include_directories(agc_driver_pipeline_cache_merge_tests PRIVATE ${LIBS_INCLUDE_DIR} ${agcTestShaderGeneratedRoot} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_driver_pipeline_cache_merge_tests PRIVATE libSceAgcDriver libkernel SDL2-static libc)
+set_target_properties(agc_driver_pipeline_cache_merge_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_driver_pipeline_cache_merge_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_driver_pipeline_cache_merge_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_driver_pipeline_cache_merge COMMAND agc_driver_pipeline_cache_merge_tests)
+    set_tests_properties(agc_driver_pipeline_cache_merge PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_pipeline_cache_merge PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
