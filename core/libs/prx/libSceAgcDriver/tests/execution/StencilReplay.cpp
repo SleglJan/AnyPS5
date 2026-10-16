@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -51,9 +52,9 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 16;
 constexpr std::uint32_t WaveSize = 64;
 constexpr std::byte Kept{0x40};
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::byte, 128 * 128 * 4> DepthMemory{};
-alignas(256) std::array<std::byte, 256 * 256> StencilMemory{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::byte, 128 * 128 * 4> DepthMemory;
+TestGuest::Array<std::byte, 256 * 256> StencilMemory;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -71,10 +72,10 @@ alignas(256) constexpr std::array<std::uint32_t, 7> RowPixelCode{
     0x7e040f01, 0x7e0e02f2, 0xf8000082, 0x00000200, 0xf800180f, 0x07070707, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::array<float, 4>, 6> Vertices{{
+TestGuest::Array<std::array<float, 4>, 6> Vertices{
     {-1.0f, -1.0f, 0.25f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.25f, 1.0f},
     {-1.0f, -1.0f, 0.75f, 1.0f}, {3.0f, -1.0f, 0.75f, 1.0f}, {-1.0f, 3.0f, 0.75f, 1.0f},
-}};
+};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
@@ -238,8 +239,8 @@ int main() {
         Draw(*device, ordered, exported, instanceOrder, 6u, 2u);
         Draw(*device, PlainPixelCode, plain, equal(0u));
         Check(all, "primitive order within every instance");
-        alignas(256) constexpr std::array<std::uint32_t, 6> indices{0u, 1u, 2u, 3u, 4u, 5u};
-        alignas(256) std::array<std::array<float, 4>, 7> indexedVertices{};
+        TestGuest::Array<std::uint32_t, 6> indices{0u, 1u, 2u, 3u, 4u, 5u};
+        TestGuest::Array<std::array<float, 4>, 7> indexedVertices;
         std::copy(Vertices.begin(), Vertices.end(), indexedVertices.begin() + 1);
         Draw(*device, PlainPixelCode, plain, replace(0u));
         Draw(*device, ordered, exported, instanceOrder, 6u, 2u, false, {}, [&](AgcDriver::Pm4::DrawParameters& draw) {
@@ -251,7 +252,7 @@ int main() {
         }, indexedVertices);
         Draw(*device, PlainPixelCode, plain, equal(0u));
         Check(all, "indexed primitives preserve base vertex and nonzero first instance");
-        alignas(256) std::array<std::array<float, 4>, 72> instanceVertices{};
+        TestGuest::Array<std::array<float, 4>, 72> instanceVertices;
         std::copy(Vertices.begin(), Vertices.end(), instanceVertices.begin() + 56);
         std::copy(Vertices.begin() + 3, Vertices.end(), instanceVertices.begin() + 64);
         std::copy(Vertices.begin(), Vertices.begin() + 3, instanceVertices.begin() + 67);
@@ -352,8 +353,9 @@ int main() {
         auto guarded = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         *std::find(guarded.begin(), guarded.end(), 0x7e0e02f2u) = 0x7e0e020cu;
         guarded.insert(guarded.begin(), {0xf4040280u, 0xfa000018u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu});
-        alignas(256) std::array<std::uint32_t, 16> root{};
-        const std::uint32_t payload = 0x3f800000u;
+        TestGuest::Array<std::uint32_t, 16> root;
+        TestGuest::Array<std::uint32_t, 1> payloadWord{0x3f800000u};
+        const std::uint32_t& payload = payloadWord[0];
         const auto rootAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
         const std::array<std::uint32_t, 2> rootData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
         const auto payloadAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&payload));
