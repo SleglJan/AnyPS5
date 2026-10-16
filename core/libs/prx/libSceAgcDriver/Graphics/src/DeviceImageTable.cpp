@@ -167,13 +167,14 @@ void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder, s
         recorder.Keep(use.image);
         if (const auto held = entries.find(use.key); held != entries.end() && held->second.storage == use.image) held->second.storage.reset();
         if (!use.written) continue;
-        if (storeRecord != 0) use.image->MarkStoresRecorded(storeRecord);
-        else use.image->MarkDirty();
+        bool depthPlane = false;
         try {
-            static_cast<void>(DepthSurfaceStoreBack(build, *use.image));
+            depthPlane = DepthSurfaceStoreBack(build, *use.image);
         } catch (...) {
             if (!failure) failure = std::current_exception();
         }
+        if (storeRecord != 0 && !depthPlane) use.image->MarkStoresRecorded(storeRecord);
+        else use.image->MarkDirty();
     }
     if (failure) std::rethrow_exception(failure);
 }
