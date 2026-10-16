@@ -1,4 +1,6 @@
 #include "DeviceTableFixture.hpp"
+#include <spirv/unified1/spirv.hpp>
+#include <map>
 #include "prx/libc/include/GuestAllocations.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -174,6 +176,21 @@ std::size_t Faults(const Outcome& outcome) {
     return count;
 }
 
+std::size_t SegmentCallsFromMain(std::span<const std::uint32_t> words) {
+    std::map<std::uint32_t, std::string> names;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        if ((words[cursor] & 0xffffu) == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+    }
+    std::size_t calls = 0;
+    std::string function;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpFunction) function = names[words[cursor + 2]];
+        if (op == spv::OpFunctionCall && function == "main" && names[words[cursor + 3]] == "bda_segment") ++calls;
+    }
+    return calls;
+}
+
 Outcome Dispatch(AgcDriver::VulkanDevice& device, const Built& built, std::uint64_t pointer, std::uint32_t guard, const std::string& what) {
     Srt.fill(0u);
     const auto userData = SrtUserData();
@@ -182,6 +199,7 @@ Outcome Dispatch(AgcDriver::VulkanDevice& device, const Built& built, std::uint6
     Srt[GuardSlot] = guard;
     const auto compiled = Compile(device, built.program, userData);
     ExpectNothingCaptured(compiled, what);
+    Expect(SegmentCallsFromMain(compiled.result->spirv.Words()) != 0u, what + ": main reads its scalar loads without checking the invocation's cached read segment and refreshing it");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     return DeviceTable::Run(device, compiled, 1);
 }

@@ -822,6 +822,25 @@ std::uint32_t EmitBdaAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std
     });
 }
 
+namespace {
+
+bool ScalarAddressLoad(const SpirvEmitterState& state, const IrValue& inst) {
+    switch (inst.Opcode()) {
+    case IrOpcode::LoadAddressU32:
+    case IrOpcode::LoadAddressU32x2:
+    case IrOpcode::LoadAddressU32x3:
+    case IrOpcode::LoadAddressU32x4: {
+        const auto& memory = state.program.Resources().memoryInfo;
+        const auto index = inst.Flags<MemoryFlags>().index;
+        return index < memory.size() && memory[index].kind == ResourceKind::ScalarAddress;
+    }
+    default:
+        return false;
+    }
+}
+
+}
+
 // One probe of the span from the first to the last extracted dword replaces 4 lookups per dword (a
 // Bink DC pass spent ~450 dependent table levels per iteration on them). The span is loaded
 // dword-wise from the returned device address when it lies in one range and that address is
@@ -886,7 +905,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
         return loaded;
     };
     auto read = 0u;
-    if (BdaVectorCacheAvailable(state) && state.module.InHelperFunction()) {
+    if (BdaVectorCacheAvailable(state) && (state.module.InHelperFunction() || ScalarAddressLoad(state, inst))) {
         const auto u64 = TypeScalarU64(state);
         const auto boolean = TypeBool(state);
         const auto start = static_cast<std::int32_t>(offset + first * 4u);
