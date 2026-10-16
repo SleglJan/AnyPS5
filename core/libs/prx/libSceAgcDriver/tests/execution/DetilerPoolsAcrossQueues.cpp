@@ -23,7 +23,7 @@ constexpr std::uint32_t TileS64KBX = 0x19u;
 constexpr std::uint32_t Rounds = 40;
 constexpr std::uint32_t TexturesPerRound = 4;
 constexpr std::uint32_t Textures = Rounds * TexturesPerRound;
-constexpr std::uint32_t Queues = 2;
+constexpr std::array<std::uint32_t, 2> Queues{0u, 0x20u};
 constexpr std::uint32_t Untouched = 0xcafef00du;
 
 int failures = 0;
@@ -131,7 +131,7 @@ void Run() {
                 std::copy(buffer.begin(), buffer.end(), userData.begin() + 8);
                 commands.Dispatch(LoadProgram(), userData, Width, Height);
             }
-            commands.Submit(round % Queues);
+            commands.Submit(Queues[round % Queues.size()]);
         }
         WaitIdle();
     } catch (const std::exception& error) {
