@@ -578,6 +578,39 @@ ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::Recompi
     }
 }
 
+bool ReadSettledWords(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
+    const auto bytes = words.size() * sizeof(std::uint32_t);
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), bytes)) return false;
+    GuestMemory::FlushGpuWrites(address, bytes);
+    return ReadCalleeWords(context, address, words);
+}
+
+ShaderRecompiler::PreparedShaderInvocation PreparedInvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, bool matchCode, bool* preparedAtUse) {
+    auto invocationRequest = source;
+    struct PreparedKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
+    ShaderRecompiler::BuildPreparedShaderKey(source, key);
+    std::unique_lock lock(snapshot.prepared->mutex);
+    AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    for (const auto& entry : snapshot.prepared->entries) {
+        if (entry.codeOffset != codeOffset) continue;
+        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
+        invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*entry.handle);
+        if (matchCode && !std::ranges::equal(invocationRequest.shader.code, source.shader.code)) continue;
+        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
+    }
+    ReportPreparedAtUse(snapshot, source);
+    auto handle = PrepareShaderWithDiagnostics(source);
+    invocationRequest = source;
+    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+    invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*handle);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
+    snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
+    if (preparedAtUse != nullptr) *preparedAtUse = true;
+    return std::move(*invocation);
+}
+
 }
 
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse, std::vector<GuestMemory::UnchangedQuery>* linkReads) {
@@ -592,29 +625,32 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         source.shader.linkedLiterals = linked.linkedLiterals;
         source.context.linkedWords = linked.linkedWords;
     }
-    auto invocationRequest = source;
-    struct PreparedKeyStorage {};
-    auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
-    ShaderRecompiler::BuildPreparedShaderKey(source, key);
-    std::unique_lock lock(snapshot.prepared->mutex);
-    AwaitRegisteredPreparation(*snapshot.prepared, lock);
-    for (const auto& entry : snapshot.prepared->entries) {
-        if (entry.codeOffset != codeOffset) continue;
-        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
-        invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*entry.handle);
-        if (!linked.code.empty() && !std::ranges::equal(invocationRequest.shader.code, linked.code)) continue;
-        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
+    return PreparedInvocationFor(snapshot, codeOffset, source, !linked.code.empty(), preparedAtUse);
+}
+
+std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* reads) {
+    CalleeReads callees{request, reads};
+    const ShaderRecompiler::CalleeMemory memory{&callees, &ReadCalleeWords, &ReadCalleeWords, nullptr};
+    try {
+        return ShaderRecompiler::SplitTableCalls(request, memory);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("AGC driver: ") + error.what());
     }
-    ReportPreparedAtUse(snapshot, source);
-    auto handle = PrepareShaderWithDiagnostics(source);
-    invocationRequest = source;
-    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*handle);
-    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
-    if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
-    snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
-    if (preparedAtUse != nullptr) *preparedAtUse = true;
-    return std::move(*invocation);
+}
+
+std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads) {
+    CalleeReads callees{request, reads};
+    const ShaderRecompiler::CalleeMemory memory{&callees, &ReadSettledWords, &ReadSettledWords, nullptr};
+    try {
+        return ShaderRecompiler::ReadTableCallTargets(request, split, memory);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("AGC driver: ") + error.what());
+    }
+}
+
+ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& part, bool* preparedAtUse) {
+    require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
+    return PreparedInvocationFor(snapshot, codeOffset, part, true, preparedAtUse);
 }
 
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {

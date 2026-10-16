@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/src/Driver/Dispatch/TableCallDispatch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -33,6 +34,17 @@ struct PendingWrites {
         return Graphics::Recorder::SnapshotOverlaps(snapshot.get(), address, bytes);
     }
 };
+
+std::array<std::uint32_t, 3> DispatchGroups(std::span<const std::uint32_t> packet, std::uint64_t indirectArguments, const Registers& shader) {
+    std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
+    if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
+        for (std::uint32_t axis = 0; axis < 3; ++axis) {
+            const auto threads = std::max(readRegister(shader, 0x207 + axis) & 0xffffu, 1u);
+            groups[axis] = (groups[axis] + threads - 1) / threads;
+        }
+    }
+    return groups;
+}
 
 }
 
@@ -233,6 +245,48 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         throw std::runtime_error(where + reason);
     };
     if (program == nullptr) {
+        std::shared_ptr<TableCallProgram> tableCalls;
+        try {
+            tableCalls = TableCallProgramFor(programKey, request);
+        } catch (const std::exception& error) {
+            rethrow(error);
+        }
+        if (tableCalls != nullptr) {
+            auto groups = DispatchGroups(packet, indirectArguments, queue.shader);
+            if (indirectArguments != 0) {
+                require(!threadDimensions, "an indirect dispatch with thread dimensions of a program with table calls is not implemented");
+                recordQueuedLabelsBeforeRead(submission.queue);
+                const auto resolved = Pm4::ReadDispatchArguments(indirectArguments, packet[4]);
+                groups = {resolved[1], resolved[2], resolved[3]};
+            }
+            TableCallDispatch call;
+            call.device = localDevice;
+            call.snapshot = &snapshot;
+            call.codeOffset = codeOffset;
+            call.request = &request;
+            call.userData = userData;
+            call.groups = groups;
+            call.programAddress = address;
+            call.result = [&](const RunTimeProgram& part, std::span<const std::uint32_t> words) { return runTimeResult(part, words, request.shader.codeAddress); };
+            call.settle = [&] {
+                if (!recordQueuedLabelsAfterPrePass(submission.queue)) return false;
+                prePassReads().clear();
+                return true;
+            };
+            call.locked = [&](const std::function<void()>& body) {
+                GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
+                std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                recordLabelsForPacket(localDevice.get(), submission.queue);
+                body();
+            };
+            prePassReads().clear();
+            try {
+                RecordTableCallDispatch(*tableCalls, call);
+            } catch (const std::exception& error) {
+                rethrow(error);
+            }
+            return;
+        }
         try {
             const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey, userData);
             program = made.program;
@@ -252,13 +306,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     phaseTiming.Phase(PhaseLookup);
     const auto& compiled = *compiledResult;
-    std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
-    if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
-        for (std::uint32_t axis = 0; axis < 3; ++axis) {
-            const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
-            groups[axis] = (groups[axis] + threads - 1) / threads;
-        }
-    }
+    const auto groups = DispatchGroups(packet, indirectArguments, queue.shader);
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     const std::uint64_t linearThreads = indirectArguments != 0 || (packet[4] & 0x20u) != 0 || partialLastGroup || groups[1] != 1 || groups[2] != 1 ? 0 : std::uint64_t{groups[0]} * compute.numThreads[0];
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;

@@ -28,6 +28,8 @@ class ShaderPreparationContext;
 
 namespace ShaderRecompiler {
 struct SourceHandle;
+struct TableCallSplit;
+struct TableCallTarget;
 class PreparedShaderInvocation;
 }
 
@@ -134,6 +136,9 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
 std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request);
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse = nullptr, std::vector<GuestMemory::UnchangedQuery>* linkReads = nullptr);
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
+std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* reads);
+std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads);
+ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& part, bool* preparedAtUse);
 void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
 }
