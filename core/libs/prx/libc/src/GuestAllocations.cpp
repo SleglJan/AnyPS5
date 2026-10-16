@@ -85,7 +85,7 @@ private:
 };
 
 std::mutex pinReleaseMutex;
-std::condition_variable pinReleased;
+std::condition_variable& pinReleased = *new std::condition_variable;
 std::uint64_t pinReleases = 0;
 constexpr std::chrono::milliseconds pinRequestInterval{50};
 

@@ -115,7 +115,7 @@ static void InitializeDeferredModule(HMODULE native) {
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
     static std::mutex initializedLock;
-    static std::condition_variable initializedChanged;
+    static auto& initializedChanged = *new std::condition_variable;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
     const auto owner = GetCurrentThreadId();

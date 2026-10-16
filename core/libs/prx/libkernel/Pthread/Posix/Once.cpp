@@ -14,7 +14,7 @@ struct GuestOnce {
 };
 static_assert(offsetof(GuestOnce, mutex) == 8 && sizeof(GuestOnce) == 16);
 std::mutex onceMutex;
-std::condition_variable onceChanged;
+std::condition_variable& onceChanged = *new std::condition_variable;
 
 void APS5_VABI ResetOnce(void* control) {
     {

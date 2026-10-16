@@ -69,7 +69,7 @@ std::size_t CreationThread::Words() {
 }
 
 CreationGate::Shared& CreationGate::State() {
-    static Shared shared;
+    static auto& shared = *new Shared;
     return shared;
 }
 

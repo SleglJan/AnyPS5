@@ -1,11 +1,13 @@
 #pragma once
 
+#include "prx/libSceAgcDriver/Execution/include/ProcessTermination.hpp"
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -32,8 +34,10 @@ public:
 
 private:
     static CaptureTrace& instance() {
-        static CaptureTrace trace;
-        return trace;
+        static const std::unique_ptr<CaptureTrace, void (*)(CaptureTrace*)> trace(new CaptureTrace(), [](CaptureTrace* ending) {
+            if (!ProcessTerminating()) delete ending;
+        });
+        return *trace;
     }
 
     CaptureTrace() {

@@ -24,7 +24,7 @@ extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*),
 namespace {
 
 std::mutex shutdownMutex;
-std::condition_variable shutdownChanged;
+std::condition_variable& shutdownChanged = *new std::condition_variable;
 std::vector<void (*)()> shutdownCallbacks;
 std::thread::id shutdownThread;
 bool shutdownStarted = false;

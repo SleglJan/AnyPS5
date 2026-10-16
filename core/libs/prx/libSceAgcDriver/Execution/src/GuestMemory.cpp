@@ -43,6 +43,20 @@
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
+namespace AgcDriver {
+
+bool ProcessTerminating() {
+#ifdef _WIN32
+    using ShutdownInProgress = BOOLEAN(NTAPI*)();
+    const auto inProgress = reinterpret_cast<ShutdownInProgress>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlDllShutdownInProgress")));
+    return inProgress != nullptr && inProgress();
+#else
+    return false;
+#endif
+}
+
+}
+
 namespace AgcDriver::GuestMemory {
 namespace {
 void require(bool condition, const char* reason) {
