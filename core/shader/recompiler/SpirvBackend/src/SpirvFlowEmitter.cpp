@@ -2,6 +2,7 @@
 #include "Optimization/FloatIdioms.hpp"
 #include "PipelineSpecialization.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include "SpirvBackend/SpirvContinuation.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvImageEmitter.hpp"
@@ -343,6 +344,12 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::Reference: return Invoke(EmitReference, ctx, inst);
         case IrOpcode::ReferenceU32: return Invoke(EmitReferenceU32, ctx, inst);
         case IrOpcode::UnlinkedCall: return Invoke(EmitUnlinkedCall, ctx, inst);
+        case IrOpcode::ContinuationSpill: return Invoke(EmitContinuationSpill, ctx, inst);
+        case IrOpcode::ContinuationSpillLds: return Invoke(EmitContinuationSpillLds, ctx, inst);
+        case IrOpcode::TableCallBin: return Invoke(EmitTableCallBin, ctx, inst);
+        case IrOpcode::ContinuationSlot: return Invoke(EmitContinuationSlot, ctx, inst);
+        case IrOpcode::ContinuationLoad: return Invoke(EmitContinuationLoad, ctx, inst);
+        case IrOpcode::ContinuationRestoreLds: return Invoke(EmitContinuationRestoreLds, ctx, inst);
         case IrOpcode::GetUserData: return Invoke(EmitGetUserData, ctx, inst);
         case IrOpcode::GetLinkedWord: return Invoke(EmitVoid, ctx, inst);
         case IrOpcode::GetShaderBase: return Invoke(EmitGetShaderBase, ctx, inst);
