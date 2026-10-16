@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "BdaAbi.hpp"
+#include <vector>
 #include <array>
 #include <functional>
 
@@ -52,6 +53,8 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
 bool BdaByteReadsForced();
 std::uint32_t AddBdaAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t offset, bool subtract);
 std::uint32_t AddBdaImmediate(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::int32_t immediate);
+bool WaveUniformDescriptor(SpirvEmitterState& state, const std::vector<const IrValue*>& words);
+std::uint32_t BroadcastFirstLane(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value);
 
 }
 

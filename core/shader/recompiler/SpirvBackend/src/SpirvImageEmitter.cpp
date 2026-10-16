@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "PipelineSpecialization.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
@@ -2117,6 +2118,17 @@ std::array<std::uint32_t, 4> DeviceImageLookupOperands(SpirvEmitterState& state,
         CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3])};
 }
 
+std::vector<const IrValue*> DeviceImageWords(const DeviceImagePlan& plan) {
+    std::vector<const IrValue*> words(plan.handle->Arguments().begin(), plan.handle->Arguments().end());
+    if (plan.deviceSampler) words.insert(words.end(), plan.samplerHandle->Arguments().begin(), plan.samplerHandle->Arguments().end());
+    return words;
+}
+
+std::vector<const IrValue*> DescriptorInputs(const SpirvEmitterState& state, const IrValue& inst) {
+    const auto plan = PlanDeviceImage(state, inst);
+    return plan ? DeviceImageWords(*plan) : std::vector<const IrValue*>{};
+}
+
 bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImagePlan& plan) {
     const auto defined = [&](const IrValue* value) {
         const auto* resolved = value->Resolve();
@@ -2260,8 +2272,8 @@ void PlanDeviceImageAnchors(SpirvEmitterState& state) {
     }
     for (const IrBlock* block : blocks) {
         for (const IrValue* inst : block->Instructions()) {
-            const auto plan = PlanDeviceImage(state, *inst);
-            if (!plan) continue;
+            const auto inputs = DescriptorInputs(state, *inst);
+            if (inputs.empty()) continue;
             const IrValue* anchor = nullptr;
             std::pair<std::size_t, std::size_t> latest{};
             bool placed = true;
@@ -2278,28 +2290,28 @@ void PlanDeviceImageAnchors(SpirvEmitterState& state) {
                     latest = found->second;
                 }
             };
-            for (const auto* argument : plan->handle->Arguments()) consider(argument);
-            if (plan->deviceSampler) {
-                for (const auto* argument : plan->samplerHandle->Arguments()) consider(argument);
-            }
+            for (const auto* argument : inputs) consider(argument);
             if (placed && anchor != nullptr) state.deviceImageAnchors[anchor].push_back(inst);
         }
     }
+    if (!state.deviceImageAnchors.empty() && state.program.Resources().stage == IrShaderStage::Compute && state.sharedLaneValues.empty()) state.sharedLaneValues = WaveUniformValues(state.program);
 }
 
 void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& anchor) {
     auto& state = ctx.state;
     const auto anchored = state.deviceImageAnchors.find(&anchor);
-    if (anchored == state.deviceImageAnchors.end() || state.deviceImageLookupFunction == 0u || state.tableMapVariable == 0u) return;
+    if (anchored == state.deviceImageAnchors.end()) return;
     for (const IrValue* inst : anchored->second) {
         const auto plan = PlanDeviceImage(state, *inst);
-        if (!plan || !DeviceImageInputsDefined(ctx, *plan)) continue;
+        if (!plan) continue;
+        if (state.deviceImageLookupFunction == 0u || state.tableMapVariable == 0u || !DeviceImageInputsDefined(ctx, *plan)) continue;
         auto key = DeviceImageLookupKey(state, *plan, nullptr);
         if (state.deviceImageLookups.contains(key)) continue;
         const auto arguments = EmitDeviceImageArguments(ctx, *plan, true);
         const auto passed = DeviceImageLookupOperands(state, *plan, arguments, ConstantU32(state, inst->Flags<MemoryFlags>().pc));
-        const auto result = state.module.AllocateId();
+        auto result = state.module.AllocateId();
         state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, arguments.header, passed[0], passed[1], passed[2], passed[3], ConstantBool(state, false));
+        if (WaveUniformDescriptor(state, DeviceImageWords(*plan))) result = BroadcastFirstLane(state, TypeU32Vector(state, 4u), result);
         state.deviceImageLookups.emplace(std::move(key), result);
     }
 }

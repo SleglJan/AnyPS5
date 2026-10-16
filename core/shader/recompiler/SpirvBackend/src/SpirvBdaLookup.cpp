@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <stdexcept>
@@ -583,6 +584,29 @@ void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address) {
         state.module.AddFunction(spv::OpCompositeExtract, TypeScalarU64(state), value, segment, field);
         state.module.AddFunction(spv::OpStore, state.bdaVectorCache[field], value);
     }
+}
+
+bool WaveUniformDescriptor(SpirvEmitterState& state, const std::vector<const IrValue*>& words) {
+    const auto& program = state.program;
+    if (program.Resources().stage != IrShaderStage::Compute || state.laneCount != 1u || state.hostSubgroupSize < 2u || state.hostSubgroupSize > program.WaveSize()) return false;
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformBallot)) == state.supportedCapabilities.end()) return false;
+    bool anyLaneValue = false;
+    for (const auto* word : words) {
+        const auto* resolved = word->Resolve();
+        if (resolved == nullptr) return false;
+        if (resolved->HasImmediate()) continue;
+        if (!state.sharedLaneValues.contains(resolved)) return false;
+        anyLaneValue = true;
+    }
+    return anyLaneValue;
+}
+
+std::uint32_t BroadcastFirstLane(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value) {
+    state.module.EmitCapability(spv::CapabilityGroupNonUniform);
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, type, result, ConstantU32(state, spv::ScopeSubgroup), value);
+    return result;
 }
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {
