@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_TRANSLATION_INCLUDE_TRANSLATION_INSTRUCTIONTRANSLATOR_HPP
 #define CORE_SHADER_RECOMPILIER_TRANSLATION_INCLUDE_TRANSLATION_INSTRUCTIONTRANSLATOR_HPP
 
+#include "ContinuationAbi.hpp"
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
@@ -37,6 +38,7 @@ struct TranslateOptions {
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;
+    const ContinuationAbi::Shape* continuation = nullptr;
 };
 
 class InstructionTranslator {

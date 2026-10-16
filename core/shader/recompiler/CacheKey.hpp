@@ -55,6 +55,7 @@ public:
         append(key, request.context.floatMode);
         appendMesh(key, request);
         appendTessellation(key, request);
+        appendContinuation(key, request);
         std::uint64_t hash = 0xcbf29ce484222325ull;
         for (const auto value : key) {
             hash ^= value;
@@ -92,6 +93,7 @@ private:
         append(key, DebugProbeActive());
         append(key, RayTracingStrict());
         append(key, RayTracingMiss());
+        appendContinuation(key, request);
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
@@ -100,6 +102,26 @@ private:
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+    }
+
+    static void appendContinuation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        const auto& continuation = request.context.continuation;
+        if (!continuation.has_value()) return;
+        append(key, 0x434f4e54u);
+        append(key, continuation->role);
+        append(key, continuation->sites.size());
+        for (const auto& site : continuation->sites) {
+            append(key, site.programCounter);
+            append(key, site.callProgramCounter);
+            append(key, site.keyMask);
+            append(key, site.keyDwords);
+            append(key, site.recordRegisters);
+        }
+        append(key, continuation->scalarRegisters);
+        append(key, continuation->vectorRegisters);
+        append(key, continuation->ldsDwords);
+        append(key, continuation->userDataScalars);
+        append(key, continuation->entrySite);
     }
 
     static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {

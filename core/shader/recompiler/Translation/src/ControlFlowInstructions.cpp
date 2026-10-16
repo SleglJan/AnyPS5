@@ -1,5 +1,6 @@
 #include "Translation/ControlFlowInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -286,6 +287,64 @@ void TranslationContext::sSwappcB64(const RdnaInstruction& inst) {
 void TranslationContext::TranslateUnlinkedCall(const RdnaInstruction& inst) {
     const std::array<IrU32, 2> target = readU32Pair(inst.source0);
     (void)ir.Emit(IrOpcode::UnlinkedCall, IrType::Void, {&target[0].Value(), &target[1].Value(), &ir.Constant(inst.programCounter)});
+    program.Info().usesFaultBuffer = true;
+    sSwappcB64(inst);
+}
+
+void TranslationContext::TranslateTableCallBin(const RdnaInstruction& inst, const ContinuationAbi::Shape& shape, std::uint32_t site) {
+    const auto base = program.Resources().userDataBase + program.Resources().userDataCount - ContinuationAbi::UserDataWords;
+    const auto word = [&](std::uint32_t index) -> IrValue& { return ir.GetUserData(static_cast<ScalarReg>(base + index)); };
+    const auto builtin = [&](StageInputKind kind) -> IrValue& {
+        return ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(kind)), &ir.Constant(0u)});
+    };
+    IrValue& blockLow = word(ContinuationAbi::BlockLowWord);
+    IrValue& blockHigh = word(ContinuationAbi::BlockHighWord);
+    IrValue& group = builtin(StageInputKind::WorkgroupId);
+    IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+    IrValue* slot = nullptr;
+    if (shape.role == ContinuationAbi::Role::Head) {
+        const auto& threads = program.Resources().workgroupThreads;
+        const auto waveSize = program.WaveSize();
+        const auto total = std::max(threads[0], 1u) * std::max(threads[1], 1u) * std::max(threads[2], 1u);
+        IrValue& wave = ir.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&builtin(StageInputKind::LocalInvocationIndex), &ir.Constant(waveSize)});
+        slot = &ir.IAdd(ir.IMul(group, ir.Constant((total + waveSize - 1u) / waveSize)), wave);
+    } else {
+        slot = &ir.Emit(IrOpcode::ContinuationSlot, IrType::U32, {&blockLow, &blockHigh, &word(ContinuationAbi::BinWord), &group});
+    }
+    IrValue& first = ir.IEqual(lane, ir.Constant(0u));
+    const auto spill = [&](IrValue& index, IrValue& value, IrValue& store) {
+        static_cast<void>(ir.Emit(IrOpcode::ContinuationSpill, IrType::Void, {&blockLow, &blockHigh, slot, &index, &value, &store}));
+    };
+    const auto fixed = [&](std::uint32_t index, IrValue& value) { spill(ir.Constant(ContinuationAbi::FixedScalarRecordWord(index)), value, first); };
+    fixed(ContinuationAbi::SccWord, ir.Select(ir.GetScc(), ir.Constant(1u), ir.Constant(0u)));
+    fixed(ContinuationAbi::ExecLowWord, ir.GetExecLo());
+    fixed(ContinuationAbi::ExecHighWord, ir.GetExecHi());
+    fixed(ContinuationAbi::VccLowWord, ir.GetVccLo());
+    fixed(ContinuationAbi::VccHighWord, ir.GetVccHi());
+    fixed(ContinuationAbi::M0Word, ir.GetM0());
+    for (std::uint32_t index = 0; index < shape.scalarRegisters.size(); ++index) {
+        spill(ir.Constant(ContinuationAbi::ScalarRecordWord(index)), ir.GetScalarReg(static_cast<ScalarReg>(shape.scalarRegisters[index])), first);
+    }
+    const auto scalars = static_cast<std::uint32_t>(shape.scalarRegisters.size());
+    for (std::uint32_t index = 0; index < shape.vectorRegisters.size(); ++index) {
+        const auto reg = shape.vectorRegisters[index];
+        IrValue& value = reg < currentVectorLimit ? ir.GetVectorReg(static_cast<VectorReg>(reg)) : ir.Constant(0u);
+        spill(ir.IAdd(ir.Constant(ContinuationAbi::VectorRecordWord(scalars, program.WaveSize(), index)), lane), value, ir.ConstantBool(true));
+    }
+    if (shape.ldsDwords != 0u) {
+        const auto ldsWord = ContinuationAbi::LdsRecordWord(scalars, static_cast<std::uint32_t>(shape.vectorRegisters.size()), program.WaveSize());
+        static_cast<void>(ir.Emit(IrOpcode::ContinuationSpillLds, IrType::Void, {&blockLow, &blockHigh, slot, &lane, &ir.Constant(ldsWord), &ir.Constant(shape.ldsDwords)}));
+    }
+    std::array<IrValue*, ContinuationAbi::KeyWords> key{};
+    for (const auto entry : shape.sites[site].recordRegisters) {
+        if (entry == ContinuationAbi::NoRecordRegister) break;
+        const auto index = entry >> ContinuationAbi::KeyIndexShift;
+        if (key[index] == nullptr) key[index] = &ir.GetScalarReg(static_cast<ScalarReg>(entry & 0xffffu));
+    }
+    for (auto& word : key) {
+        if (word == nullptr) word = &ir.Constant(0u);
+    }
+    static_cast<void>(ir.Emit(IrOpcode::TableCallBin, IrType::Void, {&ir.Constant(site), &ir.Constant(shape.sites[site].callProgramCounter), key[0], key[1], key[2], key[3], &blockLow, &blockHigh, slot, &lane}));
     program.Info().usesFaultBuffer = true;
     sSwappcB64(inst);
 }

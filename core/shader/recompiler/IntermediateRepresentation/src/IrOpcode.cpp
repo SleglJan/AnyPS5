@@ -522,6 +522,12 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("InstPrefetch", Void),
     makeMeta("SelectU32", U32, U1, U32, U32),
     makeMeta("ImageBvhIntersectRay", U32x4, U32x4, ImageAddress, U1),
+    makeMeta("ContinuationSpill", Void, U32, U32, U32, U32, U32, U1),
+    makeMeta("ContinuationSpillLds", Void, U32, U32, U32, U32, U32, U32),
+    makeMeta("TableCallBin", Void, U32, U32, U32, U32, U32, U32, U32, U32, U32, U32),
+    makeMeta("ContinuationSlot", U32, U32, U32, U32, U32),
+    makeMeta("ContinuationLoad", U32, U32, U32, U32, U32),
+    makeMeta("ContinuationRestoreLds", Void, U32, U32, U32, U32, U32, U32),
 }};
 
 const OpcodeMeta& metaOf(IrOpcode opcode) {
@@ -916,6 +922,10 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::TtraceData:
         case IrOpcode::InstPrefetch:
         case IrOpcode::SetAttribute:
+        case IrOpcode::ContinuationSpill:
+        case IrOpcode::ContinuationSpillLds:
+        case IrOpcode::TableCallBin:
+        case IrOpcode::ContinuationRestoreLds:
             return true;
         default:
             return false;

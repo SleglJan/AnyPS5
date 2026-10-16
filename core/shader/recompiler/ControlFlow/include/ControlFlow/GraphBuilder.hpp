@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_CONTROLFLOW_INCLUDE_CONTROLFLOW_GRAPHBUILDER_HPP
 #define CORE_SHADER_RECOMPILIER_CONTROLFLOW_INCLUDE_CONTROLFLOW_GRAPHBUILDER_HPP
 
+#include "ContinuationAbi.hpp"
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
 #include <cstdint>
@@ -25,6 +26,7 @@ struct SwappcInfo {
     std::uint32_t userDataCount = 0;
     std::uint32_t waveSize = 0;
     bool callFunctions = false;
+    std::span<const std::uint32_t> listedCalls;
 };
 
 struct SwappcCall {
@@ -61,12 +63,6 @@ struct TableCall {
     std::vector<TableCallRegister> recordRegisters;
 };
 
-struct TableCallee {
-    std::uint64_t target = 0;
-    std::vector<std::uint32_t> record;
-    std::vector<std::uint32_t> code;
-};
-
 struct LinkedCode {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedLiterals;
@@ -78,8 +74,27 @@ struct LinkedCode {
 [[nodiscard]] std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister);
 [[nodiscard]] std::vector<std::uint32_t> LinkUserDataCalls(const RdnaProgram& program, std::span<const UserDataCall> calls, std::span<const std::vector<std::uint32_t>> callees);
 [[nodiscard]] std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcInfo& swappc);
-[[nodiscard]] LinkedCode LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees,
-    std::span<const TableCall> tableCalls, std::span<const std::vector<TableCallee>> tableCallees);
+[[nodiscard]] LinkedCode LinkCalls(const RdnaProgram& program, std::span<const UserDataCall> userDataCalls, std::span<const std::vector<std::uint32_t>> userDataCallees);
+
+struct SplitCode {
+    std::vector<std::uint32_t> code;
+    std::vector<ContinuationAbi::BinSite> sites;
+};
+
+struct TableCallAnalysis {
+    std::vector<std::uint32_t> scalarRegisters;
+    std::vector<std::uint32_t> vectorRegisters;
+    std::vector<std::uint32_t> writtenScalars;
+    bool sharedMemory = false;
+    bool barrier = false;
+    bool indexedRegisters = false;
+    std::uint32_t rounds = 0;
+};
+
+[[nodiscard]] SplitCode LinkTableCallHead(std::span<const std::uint32_t> linked, std::span<const TableCall> calls);
+[[nodiscard]] SplitCode LinkTableCallContinuation(std::span<const std::uint32_t> linked, std::span<const TableCall> calls, std::size_t site, std::span<const std::uint32_t> callee);
+[[nodiscard]] TableCallAnalysis AnalyzeTableCalls(std::span<const std::uint32_t> linked, std::span<const TableCall> calls, std::uint32_t waveSize);
+[[nodiscard]] TableCallAnalysis AnalyzeTableCallee(std::span<const std::uint32_t> callee);
 
 class GraphBuilder {
 public:

@@ -1,6 +1,7 @@
 #ifndef CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 #define CORE_SHADER_RECOMPILIER_INCLUDE_SHADER_RECOMPILIER_RECOMPILER_HPP
 
+#include "ContinuationAbi.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
@@ -224,6 +225,7 @@ struct GuestContext {
     std::span<const MemoryRegion> memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedWords;
+    std::optional<ContinuationAbi::Shape> continuation;
 };
 
 struct MeshTargetLimits {

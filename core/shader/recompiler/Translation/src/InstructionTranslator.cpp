@@ -90,6 +90,14 @@ bool isUnlinkedCall(const ControlFlowGraph& cfg, std::uint32_t programCounter) {
     return std::find(cfg.unlinkedCallProgramCounters.begin(), cfg.unlinkedCallProgramCounters.end(), programCounter) != cfg.unlinkedCallProgramCounters.end();
 }
 
+std::optional<std::uint32_t> binSite(const TranslateOptions& options, std::uint32_t programCounter) {
+    if (options.continuation == nullptr) return std::nullopt;
+    const auto& sites = options.continuation->sites;
+    const auto found = std::ranges::find(sites, programCounter, &ContinuationAbi::BinSite::programCounter);
+    if (found == sites.end()) return std::nullopt;
+    return static_cast<std::uint32_t>(found - sites.begin());
+}
+
 bool isCodeTableLoad(const ControlFlowGraph& cfg, std::uint32_t programCounter) {
     return std::find(cfg.codeTableLoadProgramCounters.begin(), cfg.codeTableLoadProgramCounters.end(), programCounter) != cfg.codeTableLoadProgramCounters.end();
 }
@@ -163,6 +171,62 @@ void includeInstructionVectorRegisters(const RdnaInstruction& instruction, std::
     }
 }
 
+void emitContinuationResume(IrProgram& program, IrBlock& entryBlock, const TranslateOptions& options, std::uint32_t vectorLimit) {
+    const auto& shape = *options.continuation;
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(entryBlock);
+    const auto word = [&](std::uint32_t index) -> IrValue& { return ir.GetUserData(static_cast<ScalarReg>(options.userDataBaseRegister + options.userDataCount - ContinuationAbi::UserDataWords + index)); };
+    IrValue& blockLow = word(ContinuationAbi::BlockLowWord);
+    IrValue& blockHigh = word(ContinuationAbi::BlockHighWord);
+    IrValue& group = ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::WorkgroupId)), &ir.Constant(0u)});
+    IrValue& slot = ir.Emit(IrOpcode::ContinuationSlot, IrType::U32, {&blockLow, &blockHigh, &word(ContinuationAbi::BinWord), &group});
+    IrValue& lane = ir.Emit(IrOpcode::LaneId, IrType::U32, {});
+    const auto load = [&](IrValue& index) -> IrValue& { return ir.Emit(IrOpcode::ContinuationLoad, IrType::U32, {&blockLow, &blockHigh, &slot, &index}); };
+    const auto fixed = [&](std::uint32_t index) -> IrValue& { return load(ir.Constant(ContinuationAbi::FixedScalarRecordWord(index))); };
+    const auto laneBit = [&](IrValue& low, IrValue& high) -> IrValue& {
+        IrValue& mask = options.waveSize == 64u ? ir.Select(ir.ULessThan(lane, ir.Constant(32u)), low, high) : low;
+        return ir.INotEqual(ir.BitwiseAnd(ir.ShiftRightLogical(mask, ir.BitwiseAnd(lane, ir.Constant(31u))), ir.Constant(1u)), ir.Constant(0u));
+    };
+    ir.SetScc(ir.INotEqual(fixed(ContinuationAbi::SccWord), ir.Constant(0u)));
+    IrValue& execLow = fixed(ContinuationAbi::ExecLowWord);
+    IrValue& execHigh = fixed(ContinuationAbi::ExecHighWord);
+    ir.SetExecLo(execLow);
+    ir.SetExecHi(execHigh);
+    ir.SetExec(laneBit(execLow, execHigh));
+    IrValue& vccLow = fixed(ContinuationAbi::VccLowWord);
+    IrValue& vccHigh = fixed(ContinuationAbi::VccHighWord);
+    ir.SetVccLo(vccLow);
+    ir.SetVccHi(vccHigh);
+    ir.SetVcc(laneBit(vccLow, vccHigh));
+    ir.SetM0(fixed(ContinuationAbi::M0Word));
+    for (std::uint32_t index = 0; index < shape.scalarRegisters.size(); ++index) {
+        const auto reg = static_cast<ScalarReg>(shape.scalarRegisters[index]);
+        ir.SetScalarReg(reg, load(ir.Constant(ContinuationAbi::ScalarRecordWord(index))));
+        ir.SetScalarMaskTag(reg, ir.ConstantBool(false));
+    }
+    for (const auto reg : shape.userDataScalars) {
+        ir.SetScalarReg(static_cast<ScalarReg>(reg), ir.GetUserData(static_cast<ScalarReg>(reg)));
+        ir.SetScalarMaskTag(static_cast<ScalarReg>(reg), ir.ConstantBool(false));
+    }
+    if (shape.entrySite >= shape.sites.size()) throw std::runtime_error("a table call continuation names an entry site its program does not have");
+    for (const auto entry : shape.sites[shape.entrySite].recordRegisters) {
+        if (entry == ContinuationAbi::NoRecordRegister) break;
+        const auto reg = static_cast<ScalarReg>(entry & 0xffffu);
+        ir.SetScalarReg(reg, word(ContinuationAbi::KeyWord + (entry >> ContinuationAbi::KeyIndexShift)));
+        ir.SetScalarMaskTag(reg, ir.ConstantBool(false));
+    }
+    const auto scalars = static_cast<std::uint32_t>(shape.scalarRegisters.size());
+    for (std::uint32_t index = 0; index < shape.vectorRegisters.size(); ++index) {
+        if (shape.vectorRegisters[index] >= vectorLimit) continue;
+        IrValue& offset = ir.Constant(ContinuationAbi::VectorRecordWord(scalars, options.waveSize, index));
+        ir.SetVectorReg(static_cast<VectorReg>(shape.vectorRegisters[index]), load(ir.IAdd(offset, lane)));
+    }
+    if (shape.ldsDwords != 0u) {
+        const auto ldsWord = ContinuationAbi::LdsRecordWord(scalars, static_cast<std::uint32_t>(shape.vectorRegisters.size()), options.waveSize);
+        static_cast<void>(ir.Emit(IrOpcode::ContinuationRestoreLds, IrType::Void, {&blockLow, &blockHigh, &slot, &lane, &ir.Constant(ldsWord), &ir.Constant(shape.ldsDwords)}));
+    }
+}
+
 void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateOptions& options) {
     IrBuilder entryIr(program);
     entryIr.SetInsertionPoint(entryBlock);
@@ -188,6 +252,25 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     const auto tessellationBase = [&entryIr](TessellationBaseKind kind) -> IrValue& {
         return entryIr.Emit(IrOpcode::TessellationBase, IrOpcodeType(IrOpcode::TessellationBase), {&entryIr.Constant(static_cast<std::uint32_t>(kind))});
     };
+    const bool head = options.continuation != nullptr && options.continuation->role == ContinuationAbi::Role::Head;
+    const auto groupId = [&](std::uint32_t component) -> IrValue& {
+        if (!head) return builtin(StageInputKind::WorkgroupId, component);
+        const auto word = [&](std::uint32_t index) -> IrValue& { return entryIr.GetUserData(static_cast<ScalarReg>(options.userDataBaseRegister + options.userDataCount - ContinuationAbi::UserDataWords + index)); };
+        const auto divided = [&](IrValue& value, IrValue& divisor) -> IrValue& { return entryIr.Emit(IrOpcode::UDiv32, IrOpcodeType(IrOpcode::UDiv32), {&value, &divisor}); };
+        IrValue& groupsX = word(ContinuationAbi::GroupsXWord);
+        IrValue& groupsY = word(ContinuationAbi::GroupsYWord);
+        IrValue& flat = entryIr.IAdd(word(ContinuationAbi::FirstGroupWord), builtin(StageInputKind::WorkgroupId, 0u));
+        IrValue& rows = divided(flat, groupsX);
+        if (component == 0u) return entryIr.ISub(flat, entryIr.IMul(rows, groupsX));
+        IrValue& planes = divided(rows, groupsY);
+        if (component == 1u) return entryIr.ISub(rows, entryIr.IMul(planes, groupsY));
+        return planes;
+    };
+    const auto globalInvocation = [&](std::uint32_t component) -> IrValue& {
+        if (!head) return builtin(StageInputKind::GlobalInvocationId, component);
+        const auto threads = std::max(options.inputInfo.compute->threadsNum[component], 1u);
+        return entryIr.IAdd(entryIr.IMul(groupId(component), entryIr.Constant(threads)), builtin(StageInputKind::LocalInvocationId, component));
+    };
 
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
@@ -211,7 +294,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     if (options.stage == ShaderStageKind::Compute && options.inputInfo.compute->partialGroups) {
         program.Info().dispatchThreadLimitInMemory = options.inputInfo.compute->threadsFromMemory;
         for (std::uint32_t axis = 0; axis < 3u; axis++) {
-            initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(builtin(StageInputKind::GlobalInvocationId, axis), builtin(StageInputKind::DispatchThreadLimit, axis)));
+            initialExec = &entryIr.LogicalAnd(*initialExec, entryIr.ULessThan(globalInvocation(axis), builtin(StageInputKind::DispatchThreadLimit, axis)));
         }
     }
     entryIr.SetExec(*initialExec);
@@ -228,7 +311,7 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         std::uint32_t regOffset = 0;
         for (std::uint32_t index = 0; index < 3u; index++) {
             if (cs->groupId[index]) {
-                entryIr.SetScalarReg(static_cast<ScalarReg>(cs->workgroupRegister + regOffset++), builtin(StageInputKind::WorkgroupId, index));
+                entryIr.SetScalarReg(static_cast<ScalarReg>(cs->workgroupRegister + regOffset++), groupId(index));
             }
         }
         if (cs->tgSizeEn) {
@@ -523,6 +606,10 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     if (program.Metadata().vectorWindowSize != 0u) {
         vectorLimit = program.Metadata().vectorWindowBase + program.Metadata().vectorWindowSize;
     }
+    if (options.continuation != nullptr && options.continuation->role == ContinuationAbi::Role::Continuation) {
+        if (program.Metadata().vectorWindowSize != 0u) throw std::runtime_error("a table call continuation cannot restore registers a program indexes dynamically");
+        emitContinuationResume(program, *blocks.front(), options, vectorLimit);
+    }
     if (ancillaryWindow) {
         for (const IrValue* instruction : blocks.front()->Instructions()) {
             if (instruction->Opcode() == IrOpcode::SetVectorRegister) {
@@ -548,7 +635,8 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 continue;
             }
             if (isUnlinkedCall(cfg, instruction.programCounter)) {
-                context.TranslateUnlinkedCall(instruction);
+                if (const auto site = binSite(options, instruction.programCounter)) context.TranslateTableCallBin(instruction, *options.continuation, *site);
+                else context.TranslateUnlinkedCall(instruction);
                 continue;
             }
             if (options.embeddedFetch != nullptr) {

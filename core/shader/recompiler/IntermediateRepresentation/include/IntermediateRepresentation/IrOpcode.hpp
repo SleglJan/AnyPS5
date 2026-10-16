@@ -481,6 +481,12 @@ enum class IrOpcode : std::uint16_t {
     InstPrefetch,
     SelectU32,
     ImageBvhIntersectRay,
+    ContinuationSpill,
+    ContinuationSpillLds,
+    TableCallBin,
+    ContinuationSlot,
+    ContinuationLoad,
+    ContinuationRestoreLds,
     Count
 };
 

@@ -155,6 +155,12 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
         tessellationCopy->drawParameters = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDrawParameters)) != capabilities.end();
     }
     const auto* tessellation = tessellationCopy ? &*tessellationCopy : nullptr;
+    if (request.context.continuation.has_value()) {
+        if (request.context.userData.size() < ContinuationAbi::UserDataWords) throw std::invalid_argument("a split table-call program's user data has no continuation words");
+        auto context = request.context;
+        context.userData = context.userData.first(context.userData.size() - ContinuationAbi::UserDataWords);
+        return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), context, HostSubgroupSize(request), mesh, tessellation);
+    }
     return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation);
 }
 
@@ -166,11 +172,24 @@ std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
 
 std::atomic<std::uint64_t> frontEndBuilds{0};
 
+std::vector<std::uint32_t> ListedCalls(const RecompileRequest& request) {
+    std::vector<std::uint32_t> listed;
+    if (request.context.continuation.has_value()) {
+        for (const auto& site : request.context.continuation->sites) listed.push_back(site.programCounter);
+    }
+    return listed;
+}
+
+SwappcInfo WithListedCalls(SwappcInfo swappc, std::span<const std::uint32_t> listed) {
+    swappc.listedCalls = listed;
+    return swappc;
+}
+
 }
 
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
-        : stage(request.shader.stage), swappc(swappcInfo), code(request.shader.code.begin(), request.shader.code.end()),
+        : stage(request.shader.stage), listedCalls(ListedCalls(request)), swappc(WithListedCalls(swappcInfo, listedCalls)), code(request.shader.code.begin(), request.shader.code.end()),
           linkedLiterals(request.shader.linkedLiterals.begin(), request.shader.linkedLiterals.end()),
           decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, linkedLiterals)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
@@ -183,10 +202,11 @@ struct PreparedControlFlow {
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
         return stage == request.shader.stage && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
                swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount &&
-               std::ranges::equal(code, request.shader.code) && std::ranges::equal(linkedLiterals, request.shader.linkedLiterals);
+               std::ranges::equal(code, request.shader.code) && std::ranges::equal(linkedLiterals, request.shader.linkedLiterals) && listedCalls == ListedCalls(request);
     }
 
     ShaderStage stage;
+    std::vector<std::uint32_t> listedCalls;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedLiterals;
@@ -247,6 +267,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.inputInfo = inputInfo;
+    translateOptions.continuation = request.context.continuation.has_value() ? &*request.context.continuation : nullptr;
 
     constexpr InstructionTranslator translator;
 
