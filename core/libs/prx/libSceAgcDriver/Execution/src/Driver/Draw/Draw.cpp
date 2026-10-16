@@ -251,7 +251,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             std::string reason = error.what();
             if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
             char where[64];
-            std::snprintf(where, sizeof(where), "graphics program 0x%llx: ", static_cast<unsigned long long>(program.binary.codeAddress));
+            std::snprintf(where, sizeof(where), "shader 0x%llx stage %u: ", static_cast<unsigned long long>(program.binary.codeAddress), static_cast<unsigned>(program.binary.stage));
             throw std::runtime_error(where + reason);
         }
     };
