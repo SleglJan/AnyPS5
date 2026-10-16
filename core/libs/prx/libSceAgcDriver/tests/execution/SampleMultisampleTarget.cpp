@@ -6,16 +6,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -70,34 +64,16 @@ alignas(256) constexpr std::array<std::uint32_t, 26> LoadCode{
     0x80001301, 0xbf810000,
 };
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {0.83f, -1.0f, 0.5f, 1.0f}, {-1.0f, 0.71f, 0.5f, 1.0f}
-}};
+};
 
-alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
+TestGuest::Array<std::uint32_t, Threads * Words> Buffer;
 
 struct Block {
     explicit Block(std::size_t bytes) : bytes(bytes) {
-#ifdef _WIN32
-        data = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-        data = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, bytes));
-#endif
-        Require(data != nullptr, "cannot allocate the multisampled color target");
+        data = reinterpret_cast<std::uint8_t*>(TestGuest::Allocate(bytes, BlockBytes));
         std::memset(data, 0, bytes);
-        GuestAllocations::Mutation mutation;
-        mutation.Add(data, bytes, true, true, true);
-    }
-    ~Block() {
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(data);
-        }
-#ifdef _WIN32
-        VirtualFree(data, 0, MEM_RELEASE);
-#else
-        std::free(data);
-#endif
     }
     Block(const Block&) = delete;
     Block& operator=(const Block&) = delete;
