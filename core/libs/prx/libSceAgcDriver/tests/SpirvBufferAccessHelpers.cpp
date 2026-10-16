@@ -36,6 +36,8 @@ struct Module {
     std::size_t mainBufferMemoryLoads = 0;
     std::map<std::uint32_t, std::size_t> mainBuiltinLoads;
     std::size_t mainPrivateWideLoads = 0;
+    std::size_t mainSegmentRefreshes = 0;
+    std::size_t mainSegmentTranslations = 0;
 };
 
 std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
@@ -76,6 +78,12 @@ Module Parse(std::span<const std::uint32_t> words) {
     std::set<std::uint32_t> wideTypes;
     std::set<std::uint32_t> privateWidePointers;
     std::set<std::uint32_t> privateWide;
+    std::uint32_t segmentFunction = 0;
+    std::map<std::uint32_t, std::set<std::size_t>> segmentValues;
+    std::set<std::size_t> refreshingCalls;
+    std::size_t segmentCalls = 0;
+    std::uint32_t lastSegmentPointer = 0;
+    std::size_t lastSegmentCall = 0;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = words[cursor] & 0xffffu;
@@ -86,6 +94,7 @@ Module Parse(std::span<const std::uint32_t> words) {
         if (op == spv::OpName) {
             std::string name(reinterpret_cast<const char*>(operands + 1), (count - 2u) * 4u);
             module.functions[operands[0]].name = name.c_str();
+            if (module.functions[operands[0]].name == "bda_segment") segmentFunction = operands[0];
         }
         if (op == spv::OpTypePointer && operands[1] == spv::StorageClassPhysicalStorageBuffer) physicalPointerTypes.insert(operands[0]);
         if (op == spv::OpTypeInt && operands[1] == 64u) wideTypes.insert(operands[0]);
@@ -120,9 +129,31 @@ Module Parse(std::span<const std::uint32_t> words) {
             if ((op == spv::OpLoad || op == spv::OpAtomicLoad) && physicalPointers.contains(operands[2])) ++module.mainBufferMemoryLoads;
             if (op == spv::OpLoad && builtins.contains(operands[2])) ++module.mainBuiltinLoads[builtins.at(operands[2])];
             if (op == spv::OpLoad && privateWide.contains(operands[2])) ++module.mainPrivateWideLoads;
+            const std::uint32_t pointer = lastSegmentPointer;
+            lastSegmentPointer = 0;
+            if (op == spv::OpFunctionCall && operands[2] == segmentFunction) {
+                const auto call = segmentCalls++;
+                segmentValues[operands[1]].insert(call);
+                if (count > 5u) {
+                    lastSegmentPointer = operands[count - 2u];
+                    lastSegmentCall = call;
+                }
+            } else if (op == spv::OpLoad && pointer != 0u && operands[2] == pointer) {
+                segmentValues[operands[1]].insert(lastSegmentCall);
+            } else if (op == spv::OpStore) {
+                if (privateWide.contains(operands[0]) && segmentValues.contains(operands[1])) refreshingCalls.insert(segmentValues[operands[1]].begin(), segmentValues[operands[1]].end());
+            } else if (count >= 3u) {
+                std::set<std::size_t> calls;
+                for (std::uint32_t operand = 2; operand < count - 1u; ++operand) {
+                    if (const auto found = segmentValues.find(operands[operand]); found != segmentValues.end()) calls.insert(found->second.begin(), found->second.end());
+                }
+                if (!calls.empty()) segmentValues[operands[1]].insert(calls.begin(), calls.end());
+            }
         }
         cursor += count;
     }
+    module.mainSegmentRefreshes = refreshingCalls.size();
+    module.mainSegmentTranslations = segmentCalls - refreshingCalls.size();
     return module;
 }
 
@@ -205,11 +236,8 @@ int main() {
             if (function.name == "bda_segment") segment = id;
         }
         Expect(segment != 0u, "the module has no bda_segment function");
-        const auto mainRefreshes = [&](const Module& checked) {
-            const auto found = checked.callsFromMain.find(segment);
-            return found == checked.callsFromMain.end() ? 0u : found->second;
-        };
-        Expect(mainRefreshes(module) == 0u, "main refreshes the read segment " + std::to_string(mainRefreshes(module)) + " times for its three consecutive s_buffer_load_dword, expected their helpers to refill it");
+        Expect(module.mainSegmentRefreshes == 0u, "main refreshes the read segment " + std::to_string(module.mainSegmentRefreshes) + " times for its three consecutive s_buffer_load_dword, expected their helpers to refill it");
+        Expect(module.mainSegmentTranslations <= 3u, "main translates the run-time V#s " + std::to_string(module.mainSegmentTranslations) + " times where they are loaded, expected at most once for each of its three V#s");
         std::size_t spanReaders = 0;
         for (const auto& [id, function] : module.functions) {
             if (!function.name.starts_with("read_bda_span")) continue;
@@ -256,8 +284,9 @@ int main() {
         for (const auto& [id, function] : wideModule.functions) {
             if (function.name == "bda_segment") wideSegment = id;
         }
-        const auto wideRefreshes = wideModule.callsFromMain.contains(wideSegment) ? wideModule.callsFromMain.at(wideSegment) : 0u;
+        const auto wideRefreshes = wideModule.mainSegmentRefreshes;
         Expect(wideSegment != 0u && wideRefreshes == 1u, "main refreshes the read segment " + std::to_string(wideRefreshes) + " times for an s_buffer_load_dwordx8, expected one refresh before the eight dwords fall back to their helpers");
+        Expect(wideModule.mainSegmentTranslations <= 1u, "main translates the run-time V# of an s_buffer_load_dwordx8 " + std::to_string(wideModule.mainSegmentTranslations) + " times where it is loaded, expected at most once");
         const auto wideScalars = Calls(wideModule, "load_scalar_buffer_");
         Expect(wideScalars.size() == 1u && wideScalars[0] == 8u, "expected one scalar load helper called by the eight dwords of the s_buffer_load_dwordx8 on their fallback path, found " + Describe(wideScalars));
     } catch (const std::exception& error) {
