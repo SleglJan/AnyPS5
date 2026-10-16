@@ -177,7 +177,7 @@ public:
             page->guarded = true;
             for (const auto alias : page->aliases) {
                 auto& view = views.at(alias);
-                const auto arming = static_cast<std::uint8_t>(allSubpages & ~view.armed);
+                const auto arming = static_cast<std::uint8_t>(allSubpages & ~view.armed & ~page->accessGuarded);
                 if (!writable(view.protection) || arming == 0) continue;
                 protectSubpages(alias, arming, view.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY, "arm a guest write guard");
                 view.armed |= arming;
@@ -195,6 +195,64 @@ public:
         std::lock_guard lock(mutex);
         const auto view = views.find(address & ~(pageBytes - 1));
         return view != views.end() && view->second.page->guarded;
+    }
+
+    bool IsView(std::uintptr_t address) {
+        std::lock_guard lock(mutex);
+        return views.find(address & ~(pageBytes - 1)) != views.end();
+    }
+
+    bool GuardAccess(std::uintptr_t address, std::size_t bytes) {
+        if (address % subpageBytes != 0 || bytes % subpageBytes != 0) throw std::invalid_argument("guest access guards cover whole 4 KiB pages");
+        std::lock_guard lock(mutex);
+        const auto end = address + bytes;
+        std::vector<std::pair<std::shared_ptr<SharedPage>, std::uint8_t>> pages;
+        for (auto piece = address & ~(pageBytes - 1); piece < end; piece += pageBytes) {
+            const auto view = views.find(piece);
+            if (view == views.end() || view->second.resident || view->second.page->pins != 0) return false;
+            for (const auto alias : view->second.page->aliases) {
+                if (views.at(alias).hostWrites != 0) return false;
+            }
+            pages.emplace_back(view->second.page, subpagesOf(piece, address, end));
+        }
+        for (const auto& [page, mask] : pages) {
+            const auto adding = static_cast<std::uint8_t>(mask & ~page->accessGuarded);
+            if (adding == 0) continue;
+            page->accessGuarded |= adding;
+            for (const auto alias : page->aliases) {
+                auto& view = views.at(alias);
+                protectSubpages(alias, adding, PAGE_NOACCESS, "arm a guest access guard");
+                view.armed &= static_cast<std::uint8_t>(~adding);
+            }
+        }
+        return true;
+    }
+
+    bool AccessGuarded(std::uintptr_t address) {
+        std::lock_guard lock(mutex);
+        const auto base = address & ~(pageBytes - 1);
+        const auto view = views.find(base);
+        return view != views.end() && (view->second.page->accessGuarded & subpagesOf(base, address, address + 1)) != 0;
+    }
+
+    void UnguardAccess(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        const auto end = address + bytes;
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) {
+            auto& page = *it->second.page;
+            const auto dropping = static_cast<std::uint8_t>(page.accessGuarded & subpagesOf(it->first, address, end));
+            if (dropping == 0) continue;
+            page.accessGuarded &= static_cast<std::uint8_t>(~dropping);
+            for (const auto alias : page.aliases) {
+                auto& view = views.at(alias);
+                if (page.guarded && writable(view.protection)) {
+                    protectSubpages(alias, dropping, view.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY, "drop a guest access guard behind a write guard");
+                    view.armed |= dropping;
+                } else {
+                    protectSubpages(alias, dropping, view.protection, "drop a guest access guard");
+                }
+            }
+        }
     }
 
     Guarded TakeGuardReports() {
@@ -511,7 +569,7 @@ public:
                     for (const auto alias : view.page->aliases) {
                         auto& other = views.at(alias);
                         if (other.resident) continue;
-                        const auto arming = static_cast<std::uint8_t>(settled & ~other.armed);
+                        const auto arming = static_cast<std::uint8_t>(settled & ~other.armed & ~view.page->accessGuarded);
                         if (!writable(other.protection) || arming == 0) continue;
                         if (other.hostWrites != 0) {
                             untracked |= arming;
@@ -598,6 +656,7 @@ private:
         std::vector<std::uintptr_t> aliases;
         std::uint32_t pins = 0;
         bool guarded = false;
+        std::uint8_t accessGuarded = 0;
         std::uintptr_t section = 0;
         std::uint64_t offset = 0;
     };

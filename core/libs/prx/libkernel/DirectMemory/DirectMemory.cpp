@@ -143,9 +143,20 @@ static int mprotect(void* addr, size_t len, int prot) {
             throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualQuery failed");
         const auto regionEnd = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
         if (memory.State == MEM_COMMIT) {
-            DWORD old;
-            if (!VirtualProtect(reinterpret_cast<void*>(cursor), regionEnd - cursor, WinProtFromPosix(prot), &old))
-                throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualProtect failed");
+            constexpr std::uintptr_t guardBytes = 0x1000;
+            for (auto piece = cursor; piece < regionEnd;) {
+                const auto guardEnd = std::min(regionEnd, (piece & ~(guardBytes - 1)) + guardBytes);
+                if (GuestArena::GuestArenaAccessGuarded_nid_postfix(piece & ~(guardBytes - 1))) {
+                    piece = guardEnd;
+                    continue;
+                }
+                auto runEnd = guardEnd;
+                while (runEnd < regionEnd && !GuestArena::GuestArenaAccessGuarded_nid_postfix(runEnd)) runEnd = std::min(regionEnd, runEnd + guardBytes);
+                DWORD old;
+                if (!VirtualProtect(reinterpret_cast<void*>(piece), runEnd - piece, WinProtFromPosix(prot), &old))
+                    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualProtect failed");
+                piece = runEnd;
+            }
         } else if (prot != PROT_NONE) {
             throw std::runtime_error("mprotect of uncommitted memory outside the guest arena");
         }

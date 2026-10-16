@@ -36,6 +36,7 @@ void notifyMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t gene
 }
 
 std::atomic<void (*)(const std::uintptr_t*, std::size_t)> writeGuardObserver{nullptr};
+std::atomic<void (*)(std::uintptr_t)> accessGuardObserver{nullptr};
 
 void notifyGuarded(const std::vector<std::uintptr_t>& pages) {
     if (pages.empty()) return;
@@ -376,6 +377,32 @@ void GuestArenaUnguardWrites_nid_postfix(std::uintptr_t address, std::size_t byt
 
 bool GuestArenaWriteGuarded_nid_postfix(std::uintptr_t page) {
     return WindowsMappings::Get().IsGuarded(page);
+}
+
+bool GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    if (!Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) throw OutsideArena("access guard", reinterpret_cast<const void*>(address), bytes);
+    return WindowsMappings::Get().GuardAccess(address, bytes);
+}
+
+void GuestArenaUnguardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().UnguardAccess(address, bytes);
+}
+
+bool GuestArenaAccessGuarded_nid_postfix(std::uintptr_t page) {
+    return WindowsMappings::Get().AccessGuarded(page);
+}
+
+bool GuestArenaHandleAccess_nid_postfix(std::uintptr_t address, bool write) {
+    static_cast<void>(write);
+    if (!Arena::Get().Contains(reinterpret_cast<const void*>(address), 1) || !WindowsMappings::Get().AccessGuarded(address)) return false;
+    const auto observer = accessGuardObserver.load(std::memory_order_acquire);
+    if (observer == nullptr) return false;
+    observer(address);
+    return !WindowsMappings::Get().AccessGuarded(address);
+}
+
+void GuestArenaSetAccessGuardObserver_nid_postfix(void (*callback)(std::uintptr_t page)) {
+    accessGuardObserver.store(callback, std::memory_order_release);
 }
 
 void GuestArenaSetWriteGuardObserver_nid_postfix(void (*callback)(const std::uintptr_t*, std::size_t)) {
