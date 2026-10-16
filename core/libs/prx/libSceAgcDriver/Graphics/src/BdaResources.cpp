@@ -5,7 +5,6 @@
 #include "DeviceImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -161,11 +160,8 @@ void BdaResources::UseRecord(const Context& context, std::shared_ptr<BatchFaultR
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory, std::span<const ShaderRecompiler::BdaAbi::Range> overrides, std::shared_ptr<BatchFaultRecord> shared) : BdaResources(context, std::move(shared)) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     std::vector<Abi::Range> mapped(overrides.begin(), overrides.end());
-    mapped.insert(mapped.end(), memory.ShadowOverrides().begin(), memory.ShadowOverrides().end());
     std::sort(mapped.begin(), mapped.end(), [](const Abi::Range& left, const Abi::Range& right) { return left.begin < right.begin; });
     pages = mapped.empty() ? memory.PageTable(context) : memory.PageTableWith(context, mapped);
-    shadowRanges.assign(memory.ShadowOverrides().begin(), memory.ShadowOverrides().end());
-    shadowSlabs = memory.ShadowSlabs();
     ownRanges = memory.OwnRanges();
     writeGrants = memory.WriteGrants();
     Require(ownRanges.size() <= std::numeric_limits<std::uint32_t>::max() && writeGrants.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
@@ -263,7 +259,6 @@ void BdaResources::CheckFault() const {
     const bool recorded = ownRecord != 0 && StorageTexture::StoresRecordedFor(ownRecord);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
     markWrittenPages(words, std::span(&self, 1));
-    markExactWrites(std::span(&self, 1));
     if (recorded) StorageTexture::ResolveRecordedStores(ownRecord, images ? &*images : nullptr);
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault.data, sizeof(report));
@@ -358,11 +353,8 @@ void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     const bool recorded = StorageTexture::StoresRecordedFor(id);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
     BdaResources::applyWrittenPages(words, sharing);
-    BdaResources::markExactWrites(sharing);
     if (recorded) StorageTexture::ResolveRecordedStores(id, images ? &*images : nullptr);
     if (words[Abi::WrittenOverflowWord] != 0) {
-        std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-        if (BdaResources::shadowed(sharing)) gpu.lock();
         for (const auto& user : users) {
             for (const auto& [begin, end] : user.writes) {
                 if (end > begin) BdaResources::markWrittenRange(begin, static_cast<std::size_t>(end - begin), sharing);
@@ -403,10 +395,6 @@ void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     }
 }
 
-bool BdaResources::shadowed(std::span<const BdaResources* const> users) {
-    return std::any_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->shadowRanges.empty(); });
-}
-
 void BdaResources::markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
@@ -417,8 +405,6 @@ void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaRe
     namespace Abi = ShaderRecompiler::BdaAbi;
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
-    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-    if (shadowed(users)) gpu.lock();
     Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) { markWrittenRange(begin, bytes, users); }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];
@@ -428,19 +414,9 @@ void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaRe
     words[Abi::WrittenCountWord] = 0;
 }
 
-void BdaResources::markExactWrites(std::span<const BdaResources* const> users) {
-    if (std::none_of(users.begin(), users.end(), [](const BdaResources* user) { return !user->exactWrites.empty(); })) return;
-    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
-    if (shadowed(users)) gpu.lock();
-    for (const auto* user : users) {
-        for (const auto& [begin, end] : user->exactWrites) markWrittenRange(begin, static_cast<std::size_t>(end - begin), users, false);
-    }
-}
-
-void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users, bool mirrored) {
-    namespace Abi = ShaderRecompiler::BdaAbi;
+void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users) {
     const auto end = begin + bytes;
-    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && mirrored) residency->NoteRecordedWrites(begin, bytes);
+    if (auto* residency = ResidencyDriver::Active()) residency->NoteRecordedWrites(begin, bytes);
     for (const auto* user : users) {
         for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
             const auto [base, size] = user->imageTableRanges[index];
@@ -455,16 +431,7 @@ void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std:
             }
         }
     }
-    const auto generation = GuestMemory::MarkWritten(begin, bytes);
-    if (generation == 0) return;
-    for (const auto* user : users) {
-        for (std::size_t index = 0; index < user->shadowRanges.size(); ++index) {
-            const auto& range = user->shadowRanges[index];
-            const auto low = std::max(begin, range.begin);
-            const auto high = std::min(end, range.end);
-            if (low < high && (range.permissions & Abi::Write) != 0u) KeepShadowed(low, high, *user->shadowSlabs[index], generation);
-        }
-    }
+    GuestMemory::MarkWritten(begin, bytes);
 }
 
 }

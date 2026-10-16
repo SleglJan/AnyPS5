@@ -4,7 +4,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include <algorithm>
 #include <atomic>
@@ -248,9 +247,7 @@ bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uin
         std::memset(seed->Bytes().data(), 0xff, seed->Bytes().size());
         CountStore(Scans().gpuSplitStores);
     }
-    // A unit shadow's results in the key range's edge units reach the import before the fill
-    // lands over part of them (the stamp below then makes those units stale).
-    if (AnyShadowedOverlaps(begin, count)) PublishShadow(begin, count, PublishScope::PartialUnits, PublishReason::Keys);
+    PrepareImportWrite(begin, count);
     // Queued on the open batch and recorded with the batch's other key stores as one run (or before
     // a later command writing the keys; see Recorder::QueueKeyStore).
     recorder.QueueKeyStore(import->buffer, first, last, std::move(seed), begin, begin + count);
@@ -351,10 +348,6 @@ std::optional<DccKeys> PendingStoreKeys(Recorder& recorder, std::uint64_t begin,
             keys = store.keys;
             break;
         }
-    }
-    if (AnyShadowedOverlaps(begin, count)) {
-        PublishShadow(begin, count, PublishScope::Whole, PublishReason::Keys);
-        if (AnyShadowedOverlaps(begin, count)) return std::nullopt;
     }
     if (note != 0 && recorder.NewestWriteNote(begin, count) == note) return keys;
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), count)) return std::nullopt;
@@ -495,19 +488,12 @@ DccKeys readDccKeys(std::uint64_t metaAddress, std::size_t count, bool& memoized
         memoized = true;
         return *memo;
     }
-    // Keys under a unit shadow's fresh results (metadata aliased with a surface): under the
-    // device lock they are published and waited for; a build's unlocked stage answers "unstable"
-    // so its stage B reads them under the lock.
-    if (AnyShadowedOverlaps(metaAddress, count)) {
+    if (MirrorsMayBeDirty(metaAddress, metaAddress + count)) {
         if (!GuestMemory::GpuMutex().HeldByThisThread()) {
             memoized = true;
             return DccKeys::Mixed;
         }
-        PublishShadow(metaAddress, count, PublishScope::Whole, PublishReason::Keys);
-        if (auto* recorder = Recorder::Active()) {
-            Recorder::CountSync(2);
-            recorder->Sync();
-        }
+        FlushMirrorsForCpuRead(metaAddress, metaAddress + count);
     }
     const auto* keys = reinterpret_cast<const std::uint8_t*>(metaAddress);
     const auto first = keys[0];
@@ -756,7 +742,7 @@ DccKeys EncodedKeys(const GuestTextureResource& resource, DccKeys keys) {
 
 bool PendingFillsLeaveUncompressed(const Recorder& recorder, const GuestTextureResource& resource, std::size_t count) {
     const auto begin = resource.dccAddress;
-    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), count) || AnyShadowedOverlaps(begin, count)) return false;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), count)) return false;
     const auto landed = KeysAfterPendingWrites(recorder, begin, count);
     return landed.mixed || (landed.value >= 0 && EncodedKeys(resource, ByteKeys(static_cast<std::uint8_t>(landed.value))) == DccKeys::Uncompressed);
 }

@@ -18,7 +18,6 @@
 namespace AgcDriver::Graphics {
 
 class BdaPageTable;
-struct ShadowSlab;
 
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
 struct HostImport {
@@ -198,8 +197,6 @@ public:
         VkDeviceSize offset;
     };
     std::vector<ImportSegment> WritableImportSegments(std::uint64_t begin, std::uint64_t end) const;
-    std::span<const ShaderRecompiler::BdaAbi::Range> ShadowOverrides() const { return shadowOverrides; }
-    const std::vector<std::shared_ptr<ShadowSlab>>& ShadowSlabs() const { return shadowSlabs; }
     void SetAccessRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges, bool unbounded) {
         accessRanges = std::move(ranges);
         accessUnbounded = unbounded;
@@ -234,11 +231,7 @@ private:
     GuestAllocations::Lease lease;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessRanges;
     bool accessUnbounded = true;
-    std::vector<ShaderRecompiler::BdaAbi::Range> shadowOverrides;
-    std::vector<std::shared_ptr<ShadowSlab>> shadowSlabs;
-    void mapShadows();
     std::shared_ptr<const BdaPageTable> buildWith(const Context& context, std::span<const ShaderRecompiler::BdaAbi::Range> overrides) const;
-    bool writableOver(std::uint64_t begin, std::uint64_t end) const;
     std::shared_ptr<const AddressSpace> space;
     std::shared_ptr<const void> retiredSince;
     std::uint64_t importsEpoch = 0;

@@ -19,7 +19,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -319,10 +318,7 @@ private:
         heap.reset();
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
-        if (context.device != VK_NULL_HANDLE) {
-            DestroyShadows(context.device);
-            function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
-        }
+        if (context.device != VK_NULL_HANDLE) function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
         if (instance != VK_NULL_HANDLE) function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
         if (library != nullptr) SDL_UnloadObject(library);
     }
@@ -1796,196 +1792,6 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder) {
     Require(range.reused && !range.highest.has_value(), "an empty in-place index range was scanned again");
 }
 
-// Unit shadows (UnitShadow.hpp) over a host import of write-watched arena memory: a retile piece's
-// slab destination and its seeds, freshness from the tracker (a publish never stamps, a CPU write
-// makes the unit stale), the scopes, the slab boundary, and the retire publish. With
-// APS5_UNIT_SHADOW_MIB=8 (one slab) the second slab's allocation evicts the first with a publish;
-// with APS5_NO_UNIT_SHADOW=1 every primitive is inert.
-void unitShadowTests(const Device& device, Recorder& recorder) {
-    using namespace AgcDriver::GuestMemory;
-    const auto& context = device.GetContext();
-    if (!UnitShadowEnabled()) {
-        Require(!AnyShadowedOverlaps(0x10000, 16) && PublishShadow(0x10000, 16, PublishScope::Whole, PublishReason::Hook) == 0, "unit shadows are off but not inert");
-        std::cout << "unit shadows off (APS5_NO_UNIT_SHADOW, or no write watching): primitives inert\n";
-        return;
-    }
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: unit shadows not tested\n";
-        return;
-    }
-    constexpr std::uint64_t unit = 65536;
-    // Three slabs at the default 8 MiB: units 0..127, 128..255, 256..271.
-    constexpr std::size_t bytes = (17u << 20u);
-    void* block = AllocateWatched(bytes, 65536);
-    Require(block != nullptr, "unit shadows are on without write watching");
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, bytes); }
-    } release{block};
-    std::memset(block, 0x11, bytes);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true, true);
-    }
-    struct Unregister {
-        const Context& context;
-        void* block;
-        std::uint64_t address;
-        bool armed = true;
-        ~Unregister() {
-            if (!armed) return;
-            {
-                GuestAllocations::Mutation mutation;
-                mutation.Remove(block);
-            }
-            HostImportFor(context, address, bytes);
-        }
-    } unregister{context, block, address};
-    const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the shadow test block refused: unit shadows not tested\n";
-        return;
-    }
-    if (!Watched(address, bytes)) {
-        std::cout << "host imports are compared, not watched: unit shadows not tested\n";
-        return;
-    }
-    Require(import->base == address && import->bytes == bytes, "the import does not cover the block");
-    CollectWritesUncached(address, bytes);
-    const auto* words = static_cast<const std::uint8_t*>(block);
-    const auto unit3 = address + 3 * unit;
-    const auto unit4 = unit3 + unit;
-    const auto unit5 = unit4 + unit;
-    // A half-unit piece seeds its unit from the import; a whole-unit piece does not; both land in
-    // one slab at one offset.
-    auto half = ShadowDestinationFor(context, *import, unit3, unit3 + unit / 2);
-    Require(half.has_value() && half->seedUnits.size() == 1 && half->seedUnits[0].first == unit3 && half->seedUnits[0].second == unit4, "a half-unit retile piece does not seed its unit");
-    auto whole = ShadowDestinationFor(context, *import, unit3, unit4);
-    Require(whole.has_value() && whole->seedUnits.empty() && whole->slab == half->slab && whole->offset == half->offset && whole->buffer == half->buffer, "a whole-unit retile piece seeds, or lands elsewhere");
-    Require(!AnyShadowedOverlaps(unit3, unit), "a destination alone counts as shadowed");
-    const auto firstSlab = half->slab;
-    Require(firstSlab->pins.load() == 2 && half->pin != nullptr, "destinations do not pin their slab");
-    // The retile as writeBackWindows records it: the seed, then the piece's bytes over its half.
-    const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
-    const auto retile = [&](const ShadowDestination& destination, std::uint64_t begin, std::uint64_t length, std::uint8_t value, bool seed) {
-        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(length), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
-        const auto commands = recorder.Commands();
-        recorder.Keep(pattern);
-        recorder.Keep(destination.slab);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        if (seed) {
-            const VkBufferCopy seedCopy{begin - import->base, SlabOffset(*import, *destination.slab, begin), unit};
-            copyBuffer(commands, import->buffer, destination.buffer, 1, &seedCopy);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        }
-        const VkBufferCopy piece{0, SlabOffset(*import, *destination.slab, begin), length};
-        copyBuffer(commands, pattern->Handle(), destination.buffer, 1, &piece);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        const ShadowedRange range{begin & ~(unit - 1), (begin & ~(unit - 1)) + unit, destination.slab};
-        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
-    };
-    retile(*half, unit3, unit / 2, 0x22, true);
-    Require(AnyShadowedOverlaps(unit3, 1) && AnyShadowedOverlaps(unit4 - 1, 1) && AnyShadowedOverlaps(unit3 + 1000, 64), "a fresh unit is not seen as shadowed");
-    Require(!AnyShadowedOverlaps(unit3 - 1, 1) && !AnyShadowedOverlaps(unit4, unit) && !AnyShadowedOverlaps(address, 3 * unit), "a range outside the unit is seen as shadowed");
-    {
-        // An upload's runs over units 2..4 split at unit 3's freshness; the fresh piece reads the slab.
-        const std::pair<std::uint64_t, std::uint64_t> run{2 * unit, 5 * unit};
-        const auto sources = ShadowSources(context, *import, address, std::span(&run, 1), {});
-        Require(sources.size() == 3, "an upload run is not split at the fresh unit");
-        Require(!sources[0].shadow && sources[0].begin == 2 * unit && sources[0].end == 3 * unit && sources[0].buffer == import->buffer && sources[0].offset == 2 * unit, "the import piece before the fresh unit is wrong");
-        Require(sources[1].shadow && sources[1].begin == 3 * unit && sources[1].end == 4 * unit && sources[1].buffer == half->buffer && sources[1].offset == half->offset && sources[1].slab == half->slab, "the fresh unit's piece does not read the slab");
-        Require(!sources[2].shadow && sources[2].begin == 4 * unit && sources[2].end == 5 * unit, "the import piece after the fresh unit is wrong");
-    }
-    // A whole publish: the untouched half keeps the seed (the import's bytes), the other the
-    // retile's; the copy stamps nothing, and a second publish copies nothing.
-    const auto pre = CollectWritesUncached(address, bytes);
-    Require(PublishShadow(unit3, unit, PublishScope::Whole, PublishReason::Hook) == 1, "the whole publish did not copy the unit");
-    Require(recorder.PendingWriteOverlaps(unit3, unit), "the publish noted no pending write");
-    recorder.Sync();
-    Require(words[3 * unit] == 0x22 && words[3 * unit + unit / 2 - 1] == 0x22 && words[3 * unit + unit / 2] == 0x11 && words[4 * unit - 1] == 0x11 && words[3 * unit - 1] == 0x11 && words[4 * unit] == 0x11, "the published bytes are wrong");
-    Require(!AnyShadowedOverlaps(unit3, unit), "a published unit still counts as shadowed");
-    Require(PublishShadow(unit3, unit, PublishScope::Whole, PublishReason::Hook) == 0, "a second publish copied the unit again");
-    Require(UnchangedSince(unit3, unit, pre), "the publish stamped the unit");
-    {
-        // The published unit still reads from the slab (both hold the bytes).
-        const std::pair<std::uint64_t, std::uint64_t> run{3 * unit, 4 * unit};
-        const auto sources = ShadowSources(context, *import, address, std::span(&run, 1), {});
-        Require(sources.size() == 1 && sources[0].shadow, "a published unit does not read from the slab");
-    }
-    // Partial-unit scope over unit 3 (partly, fresh again) and unit 4 (wholly, fresh): unit 3 only.
-    retile(*whole, unit3, unit, 0x33, false);
-    auto four = ShadowDestinationFor(context, *import, unit4, unit5);
-    Require(four.has_value() && four->seedUnits.empty() && four->slab == half->slab, "unit 4's destination is not in the same slab");
-    retile(*four, unit4, unit, 0x44, false);
-    Require(AnyShadowedOverlaps(unit3, unit) && AnyShadowedOverlaps(unit4, unit), "re-marked units are not shadowed");
-    Require(PublishShadow(unit3 + 100, static_cast<std::size_t>(2 * unit - 100), PublishScope::PartialUnits, PublishReason::Fill) == 1, "the partial publish did not copy exactly the partly covered unit");
-    Require(!AnyShadowedOverlaps(unit3, unit) && AnyShadowedOverlaps(unit4, unit), "the partial publish copied the wrong unit");
-    recorder.Sync();
-    Require(words[3 * unit] == 0x33 && words[4 * unit - 1] == 0x33 && words[4 * unit] == 0x11, "the partial publish's bytes are wrong");
-    // A CPU write into a page of unit 4 makes it stale: the publish collects the unit itself (no
-    // walk saw the store before it), copies nothing and drops it.
-    static_cast<void>(CollectWritesUncached(unit4, unit));
-    *static_cast<volatile std::uint8_t*>(static_cast<void*>(static_cast<std::uint8_t*>(block) + 4 * unit + 4096)) = 0x55;
-    Require(PublishShadow(unit4, unit, PublishScope::Whole, PublishReason::Hook) == 0, "a stale unit was published");
-    Require(!AnyShadowedOverlaps(unit4, unit), "a stale unit still counts as shadowed after its publish");
-    recorder.Sync();
-    Require(words[4 * unit + 4096] == 0x55 && words[4 * unit] == 0x11, "a stale unit's publish overwrote the CPU's bytes");
-    // The slab boundary: a piece over units 127 and 128 is refused, each alone lands in its slab.
-    const auto unit127 = address + 127 * unit;
-    const auto unit128 = unit127 + unit;
-    Require(SlabBoundary(*import, unit127) == unit128 && SlabBoundary(*import, address) == unit128 && SlabBoundary(*import, unit128) == unit128 + 128 * unit, "the slab boundary is wrong");
-    Require(!ShadowDestinationFor(context, *import, unit127, unit128 + unit).has_value(), "a piece across a slab boundary was accepted");
-    auto low = ShadowDestinationFor(context, *import, unit127, unit128);
-    Require(low.has_value() && low->slab == firstSlab && low->offset == 127 * unit, "unit 127 does not land in the first slab");
-    retile(*low, unit127, unit, 0x66, false);
-    auto high = ShadowDestinationFor(context, *import, unit128, unit128 + unit);
-    const char* budgetText = std::getenv("APS5_UNIT_SHADOW_MIB");
-    const auto budgetMiB = budgetText != nullptr ? std::strtoull(budgetText, nullptr, 10) : 1024ull;
-    if (budgetMiB < 16) {
-        // One slab fits: while destinations pin the first slab the second is refused (a
-        // write-back in progress must keep its slab); with the pins released, the second slab's
-        // allocation evicts the first after publishing its fresh unit 127 (the eviction publish is
-        // recorded, so the bytes land at the sync).
-        Require(!high.has_value(), "a pinned slab was evicted for a second slab");
-        half.reset();
-        whole.reset();
-        four.reset();
-        low.reset();
-        Require(firstSlab->pins.load() == 0, "a released destination left its pin");
-        high = ShadowDestinationFor(context, *import, unit128, unit128 + unit);
-        Require(high.has_value() && high->slab != firstSlab && high->offset == 0, "unit 128 does not land in a second slab under the one-slab budget");
-        recorder.Sync();
-        Require(words[127 * unit] == 0x66 && !AnyShadowedOverlaps(unit127, unit), "the evicted slab's fresh unit was not published");
-        std::cout << "unit shadow eviction under APS5_UNIT_SHADOW_MIB=" << budgetMiB << " verified\n";
-    } else {
-        Require(high.has_value() && high->slab != firstSlab && high->offset == 0 && AnyShadowedOverlaps(unit127, unit), "unit 128 does not land in a second slab beside the first");
-        half.reset();
-        whole.reset();
-        four.reset();
-        low.reset();
-    }
-    retile(*high, unit128, unit, 0x77, false);
-    Require(AnyShadowedOverlaps(unit128, unit), "the second slab's unit is not shadowed");
-    high.reset();
-    retile(*ShadowDestinationFor(context, *import, unit5, unit5 + unit), unit5, unit, 0x88, false);
-    retile(*ShadowDestinationFor(context, *import, address + 2 * unit, unit3), address + 2 * unit, unit, 0x99, false);
-    Require(AnyShadowedOverlaps(unit5, unit) && AnyShadowedOverlaps(address + 2 * unit, unit), "units 2 and 5 are not shadowed before the retire");
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Remove(block);
-        mutation.Add(block, static_cast<std::size_t>(5 * unit), true, true, true);
-    }
-    Require(HostImportFor(context, address, bytes) == nullptr, "a shrunk registration still imports the old range");
-    Require(!AnyShadowedOverlaps(address, bytes), "the retired import's shadow survived");
-    recorder.Sync();
-    Require(words[2 * unit] == 0x99 && words[3 * unit - 1] == 0x99, "the retire did not publish the unit still registered");
-    Require(words[5 * unit] == 0x88 && words[5 * unit + unit - 1] == 0x88, "the retire did not publish a unit covered by the old registration");
-    Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
-}
-
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -2039,8 +1845,6 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     }
     if (watched && !AgcDriver::GuestMemory::Watched(address, bytes)) std::cout << "host imports are compared, not watched: storage refresh in watched memory runs as unwatched\n";
     watched = watched && AgcDriver::GuestMemory::Watched(address, bytes);
-    Require(watched || !ShadowDestinationFor(base, *import, address, address + 65536).has_value(), "a unit shadow was offered for memory the write tracker does not watch");
-    if (!AgcDriver::GuestMemory::WriteWatched()) Require(!UnitShadowEnabled(), "unit shadows are on without write watching");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
@@ -2793,7 +2597,7 @@ void splitWriteBackTests(const Device& device, Recorder& recorder) {
         {"64 KiB R_X 200x150, 3 mips, off a 64 KiB boundary, ranges split at 132 KiB", TextureTileMode::kR64KBX, 3, 4096, 135168, true, true, false, false},
         {"linear 200x150, ranges split at 64 KiB", TextureTileMode::kLinear, 1, 0, 65536, true, true, false, false},
         {"64 KiB R_X 200x150, 3 mips, second range of another access", TextureTileMode::kR64KBX, 3, 0, 131072, false, false, false, false},
-        {"64 KiB R_X 200x150, 3 mips, ranges split inside a 64 KiB unit", TextureTileMode::kR64KBX, 3, 0, 135168, true, !UnitShadowEnabled(), false, false},
+        {"64 KiB R_X 200x150, 3 mips, ranges split inside a 64 KiB unit", TextureTileMode::kR64KBX, 3, 0, 135168, true, true, false, false},
         {"64 KiB R_X 200x150, 3 mips, two adjacent allocations split at 128 KiB", TextureTileMode::kR64KBX, 3, 0, 131072, true, true, true, false},
         {"64 KiB R_X 200x150, 3 mips, ranges split at 128 KiB, a second store outside the write watch", TextureTileMode::kR64KBX, 3, 0, 131072, true, true, false, true},
         {"linear 200x150, ranges split at 64 KiB, a second store outside the write watch", TextureTileMode::kLinear, 1, 0, 65536, true, true, false, true},
@@ -4219,101 +4023,6 @@ void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
     Require(CurrentDccKeys(address, displayBytes, displayKeys) == DccKeys::Uncompressed && !recorder.PendingWriteOverlaps(address + 40000, 1), "a later writer of key 40000 over a pending 1920x1080 store was not waited for");
     Require(std::all_of(keys, keys + consoleKeys, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store over a 1920x1080 surface did not land on all 49152 keys");
     recorder.Sync();
-}
-
-bool shadowedKeyStoreTests(const Device& device, Recorder& recorder) {
-    using namespace AgcDriver::GuestMemory;
-    const auto& context = device.GetContext();
-    if (!UnitShadowEnabled() || context.hostImportAlignment == 0) {
-        std::cout << "unit shadows or host imports unavailable: keys under a unit shadow not tested\n";
-        return false;
-    }
-    constexpr std::uint64_t unit = 65536;
-    constexpr std::size_t bytes = 2 * unit;
-    constexpr std::size_t surfaceBytes = 65536;
-    constexpr std::size_t keyCount = surfaceBytes / 256;
-#ifdef _WIN32
-    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, unit);
-    Require(block != nullptr, "cannot reserve the shadowed key block");
-    const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(bytes), nullptr);
-    Require(section != nullptr, "cannot create the shadowed key block");
-    GuestArena::GuestArenaMap_nid_postfix(block, bytes, section, 0, PAGE_READWRITE);
-    CloseHandle(section);
-#else
-    void* block = AllocateWatched(bytes, unit);
-    Require(block != nullptr, "cannot allocate the shadowed key block");
-#endif
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, bytes); }
-    } release{block};
-    auto* keys = static_cast<std::uint8_t*>(block);
-    std::memset(block, 0xff, bytes);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true, true);
-    }
-    struct Unregister {
-        const Context& context;
-        void* block;
-        std::uint64_t address;
-        ~Unregister() {
-            {
-                GuestAllocations::Mutation mutation;
-                mutation.Remove(block);
-            }
-            HostImportFor(context, address, bytes);
-        }
-    } unregister{context, block, address};
-    const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr || !Watched(address, bytes)) {
-        std::cout << "the shadowed key block is not imported and watched: keys under a unit shadow not tested\n";
-        return false;
-    }
-    recorder.Sync();
-    CollectWritesUncached(address, bytes);
-    const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
-    const auto shadow = [&](std::uint8_t value) {
-        auto destination = ShadowDestinationFor(context, *import, address, address + unit);
-        Require(destination.has_value() && destination->seedUnits.empty(), "the key unit has no unit shadow destination");
-        auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
-        const auto commands = recorder.Commands();
-        recorder.Keep(pattern);
-        recorder.Keep(destination->slab);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        const VkBufferCopy piece{0, destination->offset, unit};
-        copyBuffer(commands, pattern->Handle(), destination->buffer, 1, &piece);
-        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-        const ShadowedRange range{address, address + unit, destination->slab};
-        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
-        Require(AnyShadowedOverlaps(address, keyCount), "the key unit is not shadowed");
-    };
-    recorder.NotePendingFill(address, unit, 0x00);
-    MarkWritten(address, unit);
-    shadow(0x40);
-    Require(CurrentDccKeys(address, surfaceBytes) == DccKeys::Clear0001 && !recorder.PendingWriteOverlaps(address, keyCount), "the keys under a fresh unit shadow were not read from its published bytes after a wait");
-    Require(keys[0] == 0x40 && keys[unit - 1] == 0x40 && keys[unit] == 0xff && !AnyShadowedOverlaps(address, unit), "the fresh unit's publish did not land");
-    recorder.Sync();
-    shadow(0x22);
-    recorder.NotePendingFill(address, unit, 0xc0);
-    MarkWritten(address, unit);
-    Require(CurrentDccKeys(address, surfaceBytes) == DccKeys::Clear1111 && recorder.PendingWriteOverlaps(address, keyCount), "the keys of a pending fill over a stale unit shadow were not read as the fill's keys without a wait");
-    Require(!AnyShadowedOverlaps(address, unit), "the stale unit still counts as shadowed after the key read");
-    recorder.Sync();
-    GuestTextureResource resource{};
-    resource.baseAddress = address + unit;
-    resource.format = 56;
-    resource.dccAddress = address;
-    shadow(0x22);
-    recorder.NotePendingFill(address, unit, 0xc0);
-    MarkWritten(address, unit);
-    Require(!WaitForKeyWriters(resource, surfaceBytes).has_value() && recorder.PendingWriteOverlaps(address, keyCount), "the key writers over a stale unit shadow were waited for");
-    recorder.Sync();
-    Require(keys[0] == 0x40 && keys[unit - 1] == 0x40, "a stale unit's slab bytes were published");
-    return true;
 }
 
 void sampleDumpTests(const Device& device, Recorder& recorder) {
@@ -6273,14 +5982,6 @@ int main(int argc, char** argv) {
             importWatchTests(device);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
-            if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
-                std::cout << "skipped, unit shadows or host imports are unavailable\n";
-                return 77;
-            }
-            unitShadowTests(device, recorder);
-            return 0;
-        }
         if (argc == 2 && std::string_view(argv[1]) == "--split-writeback-only") {
             if (device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, host imports are unavailable\n";
@@ -6319,14 +6020,6 @@ int main(int argc, char** argv) {
             }
             sampleDumpTests(device, recorder);
             std::cout << "Occlusion counter dump tests passed\n";
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--shadowed-key-stores-only") {
-            if (!shadowedKeyStoreTests(device, recorder)) {
-                std::cout << "skipped, the device imports no watched host memory under a unit shadow\n";
-                return 77;
-            }
-            std::cout << "DCC keys under unit shadows tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-in-place-only") {
@@ -6418,7 +6111,6 @@ int main(int argc, char** argv) {
         keysFillTests(device, recorder);
         integerClearTests(device);
         denormalClearTests(device, recorder);
-        unitShadowTests(device, recorder);
         storageRefreshTests(device, recorder, false);
         storageRefreshTests(device, recorder, true);
         static_cast<void>(writtenBufferOrderTests(device, recorder));
@@ -6441,7 +6133,6 @@ int main(int argc, char** argv) {
         metadataPassTests(device, recorder);
         cmaskPassTests(device, recorder);
         pendingKeyStoreTests(device, recorder);
-        shadowedKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         gpu.unlock();
         hostImportUnmapTests(device, recorder);

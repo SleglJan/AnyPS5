@@ -1,5 +1,4 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "BdaTouchAbi.hpp"
 #include <algorithm>
@@ -193,21 +192,7 @@ void ResidencyDriver::UseForRead(std::span<const std::pair<std::uint64_t, std::u
     const std::lock_guard lock(GuestMemory::GpuMutex());
     for (const auto& [begin, end] : ranges) {
         if (end <= begin || end - begin > largest) continue;
-        if (!AnyShadowedOverlaps(begin, static_cast<std::size_t>(end - begin))) {
-            manager.Use(begin, end - begin, ResidencyAccess::Read);
-            continue;
-        }
-        auto mappings = ShadowMappings(begin, static_cast<std::size_t>(end - begin));
-        std::sort(mappings.begin(), mappings.end(), [](const ShadowMapping& left, const ShadowMapping& right) { return left.begin < right.begin; });
-        auto cursor = begin;
-        for (const auto& mapping : mappings) {
-            const auto low = std::max(mapping.begin, begin);
-            const auto high = std::min(mapping.end, end);
-            if (high <= low) continue;
-            if (low > cursor) manager.Use(cursor, low - cursor, ResidencyAccess::Read);
-            cursor = std::max(cursor, high);
-        }
-        if (cursor < end) manager.Use(cursor, end - cursor, ResidencyAccess::Read);
+        manager.Use(begin, end - begin, ResidencyAccess::Read);
     }
 }
 

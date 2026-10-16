@@ -247,8 +247,6 @@ public:
     void FinishDeviceRecords(VkCommandBuffer commands) const;
     static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
-    bool StagesWrites() const { return staging != nullptr; }
-    void RecordStagingOut(VkCommandBuffer commands) const;
     void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push);
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
@@ -436,11 +434,7 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> storeRanges;
-    std::vector<GuestBufferMemory::ImportSegment> stagedSegments;
-    std::vector<VkDeviceSize> stagedOffsets;
-    std::shared_ptr<Buffer> staging;
     std::optional<std::pair<std::uint64_t, std::uint64_t>> linearStoreRange() const;
-    std::pair<std::uint64_t, std::uint64_t> stagedRange{};
     bool usesFaultBuffer = false;
     bool faultChecks = false;
     bool imageStoresRecorded = false;

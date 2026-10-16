@@ -96,24 +96,18 @@ public:
         std::vector<std::string> messages;
     };
     void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
-    void NoteExactWrites(std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) { exactWrites = std::move(ranges); }
 
 private:
     friend class BatchFaultRecord;
     static void markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
     static void applyWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
-    static void markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users, bool mirrored = true);
-    static void markExactWrites(std::span<const BdaResources* const> users);
-    static bool shadowed(std::span<const BdaResources* const> users);
+    static void markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users);
     static bool published(const ShaderRecompiler::BdaAbi::Fault& report);
     bool owns(const ShaderRecompiler::BdaAbi::Fault& report) const;
     [[noreturn]] void throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const;
     std::shared_ptr<const BdaPageTable> pages;
-    std::vector<ShaderRecompiler::BdaAbi::Range> shadowRanges;
-    std::vector<std::shared_ptr<ShadowSlab>> shadowSlabs;
     std::vector<ShaderRecompiler::BdaAbi::Range> ownRanges;
     std::vector<ShaderRecompiler::BdaAbi::Grant> writeGrants;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> exactWrites;
     BdaArena::Slice table;
     std::uint32_t tableStreams = 0;
     BdaArena::Slice fault;

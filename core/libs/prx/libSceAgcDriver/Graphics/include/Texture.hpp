@@ -6,7 +6,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -27,6 +26,7 @@ class ResidentColor;
 class CommandBatch;
 class StorageTexture;
 struct HostImport;
+enum class PublishScope : std::uint8_t { None, Whole, PartialUnits };
 
 // The Vulkan format storage images of a guest format use (sRGB formats store as their UNORM form).
 // Throws when the format has no storage form; the query is cached per format (a lookup cost a
@@ -290,7 +290,7 @@ public:
     // short hold, no GPU wait), the collect before it.
     static constexpr std::size_t ClassifyLimit = 1u << 20u;
     static bool AccessKeptByCpu(std::uint64_t address, std::size_t bytes, std::size_t* images = nullptr, std::size_t* evicted = nullptr);
-    static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access");
+    static bool WriteBackMirrors(std::uint64_t address, std::size_t bytes, PublishScope scope);
     // For the [hooksync] recorded-store line: images a FlushPending stored after a hook skip of
     // theirs (AccessKeptByCpu), of which by the hook for the same read site as the last skip; 10 s deltas.
     struct HookSkipCounts {

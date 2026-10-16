@@ -1,6 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommittedImports.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #ifdef _WIN32
@@ -525,11 +524,6 @@ void ReleaseRetiredCommittedImports() {
     }
     auto* recorder = Recorder::Active();
     for (auto& node : retired) {
-        const auto memory = node.mapped().chunk;
-        RetireShadow(device, node.mapped(), [&](std::uint64_t begin, std::uint64_t end) {
-            const auto* live = CommittedImportCovering(device, begin, end);
-            return live != nullptr && live->chunk == memory;
-        });
         auto holder = std::make_shared<RetiredView>(device, destroyBuffer, std::move(node));
         RetainRetiredImport(holder, &holder->node.mapped());
         if (recorder != nullptr) recorder->KeepThroughHold(std::move(holder));

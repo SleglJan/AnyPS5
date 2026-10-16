@@ -3100,20 +3100,9 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::linearSt
     return std::pair{linear.base, linear.base + bytes};
 }
 
-void ShaderResources::RecordStagingOut(VkCommandBuffer commands) const {
-    const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
-    for (std::size_t index = 0; index < stagedSegments.size(); ++index) {
-        const auto& segment = stagedSegments[index];
-        const VkBufferCopy region{stagedOffsets[index], segment.offset, segment.end - segment.begin};
-        copy(commands, staging->Handle(), segment.buffer, 1, &region);
-    }
-    RefreshImportWritten(stagedRange.first, stagedRange.second - stagedRange.first);
-}
-
 void ShaderResources::PatchLinearStoreBase(const ShaderRecompiler::RecompileResult& program, std::span<std::byte, PipelinePushConstantBytes> push) {
     if (program.linearStoreBaseDword == ShaderRecompiler::NoLinearStoreBaseDword) return;
-    const auto address = staging != nullptr ? staging->DeviceAddress() : VkDeviceAddress{0};
-    const std::array<std::uint32_t, 2> words{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const std::array<std::uint32_t, 2> words{0u, 0u};
     const auto position = program.linearStoreBaseDword * 4u;
     if (!program.pushConstants.empty()) {
         Require(position + sizeof(words) <= program.pushConstants.size() && position + sizeof(words) <= push.size(), "a linear store base lies outside the shader's push constants");

@@ -148,9 +148,7 @@ public:
         double syncMs;
         // DestinationPending: an unsignaled batch writes the destination; DestinationUnsettled:
         // every writer signaled but a completion store of one is still to land (as for the source).
-        // Shadow: a unit shadow holds unpublished results over either range (the GPU path
-        // publishes them; see UnitShadow.hpp).
-        enum Refusal { None = 0, Size, Image, SourcePending, SourceUnsettled, DestinationPending, DestinationUnsettled, Label, Reader, Shadow, Refusals };
+        enum Refusal { None = 0, Size, Image, SourcePending, SourceUnsettled, DestinationPending, DestinationUnsettled, Label, Reader, Mirror, Refusals };
         int reason;
         // Path 0 taken although a batch had written the source: every such batch had signaled.
         bool sourceSettledBySignal;

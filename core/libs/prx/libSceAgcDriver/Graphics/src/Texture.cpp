@@ -3881,8 +3881,7 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
     if (outstanding()) recorder->Sync();
 }
 
-bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason) {
-    static_cast<void>(reason);
+bool StorageTexture::WriteBackMirrors(std::uint64_t address, std::size_t bytes, PublishScope scope) {
     return scope != PublishScope::None && writeBackMirrors(address, bytes);
 }
 

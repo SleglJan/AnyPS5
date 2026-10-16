@@ -11,7 +11,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -191,7 +190,7 @@ void recordDccKeyClear(const Context& context, const ColorTarget& color, const s
         enabled |= 1u << index;
     }
     StorageTexture::FlushPending(descriptor.dccAddress, keyCount, nullptr, "fast-clear materialization");
-    if (AnyShadowedOverlaps(descriptor.dccAddress, keyCount)) PublishShadow(descriptor.dccAddress, keyCount, PublishScope::Whole, PublishReason::Keys);
+    PrepareImportWrite(descriptor.dccAddress, keyCount);
     recorder->FlushKeyStoresOverlapping(descriptor.dccAddress, keyCount);
     recorder->FlushStoresOverlapping(descriptor.dccAddress, keyCount);
     auto decision = std::make_shared<Buffer>(context, 8 * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
@@ -245,14 +244,6 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
         Recorder::CountSync(2);
         recorder->SyncThrough(address, bytes);
     }
-    if (AnyShadowedOverlaps(address, bytes)) {
-        Require(locked, "a CMASK under a unit shadow must be read under the device lock");
-        PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
-        if (recorder != nullptr) {
-            Recorder::CountSync(2);
-            recorder->Sync();
-        }
-    }
     std::vector<std::byte> mask(bytes);
     GuestMemory::Read(address, mask, CmaskLayout::Alignment);
     const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
@@ -295,7 +286,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     const auto address = color.cmaskAddress;
     const auto bytes = layout.Bytes();
     StorageTexture::FlushPending(address, bytes, nullptr, "fast-clear materialization");
-    if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+    PrepareImportWrite(address, bytes);
     recorder.FlushKeyStoresOverlapping(address, bytes);
     const auto commands = recorder.Commands();
     recorder.Keep(resident);

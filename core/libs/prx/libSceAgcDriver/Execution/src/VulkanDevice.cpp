@@ -691,17 +691,14 @@ struct VulkanDevice::State {
                 slot.dumpBuffer.reset();
                 slot.dumpScaler.reset();
             }
-            // Results still in the unit shadows reach guest memory before the device goes; the
-            // slabs (kept by the publishing batch) are freed by the recorder's teardown.
             if (recorder) {
                 try {
-                    Graphics::PublishAllShadows(context, Graphics::PublishReason::Teardown);
+                    Graphics::WriteBackAllMirrors();
                     recorder->Sync();
                 } catch (const std::exception& error) {
-                    std::fprintf(stderr, "[gpu] unit shadow teardown: %s\n", error.what());
+                    std::fprintf(stderr, "[gpu] residency mirror teardown: %s\n", error.what());
                 }
             }
-            Graphics::DestroyShadows(device);
             if (residency != nullptr) Graphics::RemoveResidencyHooks();
             residency.reset();
             residencyGuest.reset();
@@ -1912,9 +1909,8 @@ void VulkanDevice::PrepareForReplacement() {
     GuestMemory::AssertGpuLockHeld("VulkanDevice::PrepareForReplacement");
     require(state->recorder != nullptr && Graphics::Recorder::Active() == state->recorder.get(), "device replacement requires its active recorder");
     Graphics::FlushCachedTextures(state->device);
-    Graphics::PublishAllShadows(state->context, Graphics::PublishReason::Teardown);
+    Graphics::WriteBackAllMirrors();
     WaitIdle();
-    Graphics::DestroyShadows(state->device);
     Graphics::RemoveResidencyHooks();
     state->residency.reset();
     state->residencyGuest.reset();
@@ -2043,7 +2039,7 @@ void VulkanDevice::OrderAfterBatch(std::uint32_t stream, std::uint64_t value) {
 
 bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) const {
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
-    if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::AnyShadowedOverlaps(range)) return true;
+    if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::MirrorsDirty(address, address + bytes)) return true;
     return state->recorder && (state->recorder->PendingWriteOverlaps(address, bytes) || state->recorder->PendingLabelIn(address, bytes));
 }
 
@@ -2065,10 +2061,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     const auto& context = readyContext();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
     if (import == nullptr) return 3;
-    // A unit shadow's results in the label's unit reach the import before the store lands over
-    // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
-    // FlushPending of their own.
-    if (Graphics::AnyShadowedOverlaps(address, bytes.size())) Graphics::PublishShadow(address, bytes.size(), Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
+    Graphics::PrepareImportWrite(address, bytes.size());
     // The store on the GPU, into the open batch: everything recorded so far completes before it,
     // and it is visible to the host after. The barriers belong to the recorder's store run: one
     // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
@@ -2131,7 +2124,7 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "occlusion counter dump", Graphics::PublishScope::PartialUnits);
     const auto* import = Graphics::HostImportFor(context, address, bytes);
     if (import == nullptr || import->address == 0) return false;
-    if (Graphics::AnyShadowedOverlaps(address, bytes)) Graphics::PublishShadow(address, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
+    Graphics::PrepareImportWrite(address, bytes);
     if (!recorder.QueuesSampleDumps()) recorder.FlushStoresOverlapping(address, bytes);
     recorder.FlushKeyStoresOverlapping(address, bytes);
     if (!recorder.DumpSamples(import->address + (address - import->base), address)) return false;
@@ -2411,8 +2404,7 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
         // waiting for the GPU mutex) still stores over the range once this hold ends.
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> ranges{{{source, source + bytes}, {destination, destination + bytes}}};
         if (Graphics::StorageTexture::AnyPendingOverlaps(ranges)) return CopyOutcome::Image;
-        // Results retiled into a unit shadow are not in the import's bytes: the GPU path publishes them.
-        if (Graphics::AnyShadowedOverlaps(ranges)) return CopyOutcome::Shadow;
+        if (Graphics::MirrorsDirty(source, source + bytes) || Graphics::MirrorsDirty(destination, destination + bytes)) return CopyOutcome::Mirror;
         if (recorder.PendingWriteOverlaps(source, bytes)) {
             if (!recorder.PendingWriteSettled(source, bytes)) return CopyOutcome::SourcePending;
             if (completionStoreOverlaps(source) || recorder.PendingLabelIn(source, bytes)) return CopyOutcome::SourceUnsettled;
@@ -4207,10 +4199,6 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
     Graphics::Recorder::CountBarriers(CommandClass::DispatchTrailing);
-    if (resources.StagesWrites()) {
-        resources.RecordStagingOut(commands);
-        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
-    }
     recorder.EndGpuTiming(trailingTiming);
     recorder.MarkCovered(dispatchedAccess);
     recordStep(PhaseRecordBind);

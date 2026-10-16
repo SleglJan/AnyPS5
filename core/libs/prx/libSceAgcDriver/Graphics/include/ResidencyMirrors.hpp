@@ -84,6 +84,9 @@ private:
 };
 
 bool MirrorsDirty(std::uint64_t begin, std::uint64_t end);
+void WriteBackAllMirrors();
+bool MirrorsMayBeDirty(std::uint64_t begin, std::uint64_t end);
+void FlushMirrorsForCpuRead(std::uint64_t begin, std::uint64_t end);
 
 }
 

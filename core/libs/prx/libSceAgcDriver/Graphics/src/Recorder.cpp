@@ -1028,7 +1028,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     std::size_t images = 0, evicted = 0;
     const bool kept = !HookFlushCpuBlocks() && StorageTexture::AccessKeptByCpu(address, bytes, &images, &evicted);
     if (kept || (images == 0 && !HookFlushCpuBlocks())) {
-        published = StorageTexture::PublishShadowsOnly(address, bytes, scope);
+        published = StorageTexture::WriteBackMirrors(address, bytes, scope);
         if (kept && HookSyncProfiled()) CountRecordedStoreSkip(RecordedStoreKey(), evicted);
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published);

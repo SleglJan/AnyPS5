@@ -8,7 +8,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
@@ -252,10 +251,6 @@ bool joinedCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std
 
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease, bool hold = true) {
     Require(state.retireAllowed, "a host import was retired outside the device lock");
-    // Results shadowed for the import reach its (old) buffer first where the memory is still a
-    // readable registered range (the import retires because its registration vanished or changed
-    // size); the holder below outlives the batch that copies them.
-    RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)) || GuestAllocations::GuestAllocationsStillMapped_nid_postfix(begin, end); });
     ++state.epoch;
     state.liveBytes -= it->second.bytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
@@ -2363,80 +2358,12 @@ void GuestBufferMemory::UploadFinish() {
         Require(entry != nullptr, unservedView(region.begin, region.end, "no import covers it"));
         region.direct = entry;
     }
-    shadowOverrides.clear();
-    shadowSlabs.clear();
     if (space != nullptr || !lease.empty()) {
         if (accessUnbounded) StorageTexture::FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, "page-table build", PublishScope::None);
         else for (const auto& [begin, end] : accessRanges) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "page-table access", PublishScope::None);
-        for (const auto& [begin, end] : writes) StorageTexture::PublishShadowsOnly(begin, static_cast<std::size_t>(end - begin), PublishScope::Whole, "page-table build");
     }
     const auto regionScope = space != nullptr || !lease.empty() ? PublishScope::None : PublishScope::Whole;
     for (const auto& region : regions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region", regionScope);
-    if (space != nullptr || !lease.empty()) mapShadows();
-}
-
-namespace {
-
-struct ShadowSnapshot {
-    VkDevice device = VK_NULL_HANDLE;
-    std::uint64_t serial = 0;
-    std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
-    std::vector<std::weak_ptr<ShadowSlab>> slabs;
-};
-
-struct ShadowSnapshotTag {};
-
-}
-
-void GuestBufferMemory::mapShadows() {
-    constexpr auto everything = std::numeric_limits<std::size_t>::max();
-    if (!AnyShadowedOverlaps(0, everything)) return;
-    auto& snapshot = HostThreadLocal<ShadowSnapshot, ShadowSnapshotTag>();
-    std::vector<std::shared_ptr<ShadowSlab>> slabs;
-    const bool current = !ShadowWritesQueued() && snapshot.device == context.device && snapshot.serial == ShadowSerial() && std::all_of(snapshot.slabs.begin(), snapshot.slabs.end(), [&](const std::weak_ptr<ShadowSlab>& slab) {
-        slabs.push_back(slab.lock());
-        return slabs.back() != nullptr;
-    });
-    if (!current) {
-        std::lock_guard gpu(GuestMemory::GpuMutex());
-        const auto mappings = ShadowMappings(0, everything);
-        snapshot.ranges.clear();
-        snapshot.slabs.clear();
-        slabs.clear();
-        for (const auto& mapping : mappings) {
-            snapshot.ranges.push_back({mapping.begin, mapping.end, mapping.device, ShaderRecompiler::BdaAbi::Read, 0u});
-            snapshot.slabs.push_back(mapping.slab);
-            slabs.push_back(mapping.slab);
-        }
-        snapshot.serial = ShadowSerial();
-        snapshot.device = context.device;
-    }
-    for (std::size_t index = 0; index < snapshot.ranges.size(); ++index) {
-        auto range = snapshot.ranges[index];
-        if (writableOver(range.begin, range.end)) range.permissions |= ShaderRecompiler::BdaAbi::Write;
-        shadowOverrides.push_back(range);
-        shadowSlabs.push_back(std::move(slabs[index]));
-    }
-}
-
-bool GuestBufferMemory::writableOver(std::uint64_t begin, std::uint64_t end) const {
-    std::vector<ShaderRecompiler::BdaAbi::Range> local;
-    std::span<const ShaderRecompiler::BdaAbi::Range> ranges;
-    if (space != nullptr) {
-        ranges = space->ranges;
-    } else {
-        for (const auto& region : regions) local.push_back(addressRange(region));
-        std::sort(local.begin(), local.end(), [](const auto& left, const auto& right) { return left.begin < right.begin; });
-        ranges = local;
-    }
-    auto found = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t address, const ShaderRecompiler::BdaAbi::Range& range) { return address < range.begin; });
-    if (found == ranges.begin()) return false;
-    auto cursor = begin;
-    for (--found; found != ranges.end() && found->begin <= cursor && cursor < end; ++found) {
-        if (found->end <= cursor || (found->permissions & ShaderRecompiler::BdaAbi::Write) == 0u) return false;
-        cursor = found->end;
-    }
-    return cursor >= end;
 }
 
 VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {

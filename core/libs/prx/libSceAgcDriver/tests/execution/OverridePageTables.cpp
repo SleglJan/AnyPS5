@@ -5,7 +5,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "Recompiler.hpp"
@@ -263,87 +262,6 @@ void SplicesAndSharing(const Graphics::Context& context) {
     memory.Release();
 }
 
-TestGuest::Array<std::uint32_t, 8> PointerReader{0x7e040200u, 0x7e060201u, 0xdc308000u, 0x017d0002u, 0xbf8c3f70u, 0xe0700000u, 0x80010100u, 0xbf810000u};
-TestGuest::Array<std::uint32_t, 4> Output;
-
-std::array<std::uint32_t, 4> BufferDescriptor(std::uint64_t address, std::uint32_t bytes) {
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
-}
-
-std::uint32_t ReadThrough(AgcDriver::VulkanDevice& device, std::uint64_t pointer) {
-    std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u), 0u, 0u};
-    const auto output = BufferDescriptor(reinterpret_cast<std::uintptr_t>(Output.data()), static_cast<std::uint32_t>(decltype(Output)::ByteSize));
-    userData.insert(userData.end(), output.begin(), output.end());
-    const std::span<const std::uint32_t> program(PointerReader.data(), PointerReader.size());
-    const auto address = reinterpret_cast<std::uintptr_t>(program.data());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{address, std::as_bytes(program)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
-    ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, address, program, 0, {}},
-        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
-        {0, 0, 0, 128}
-    };
-    request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
-    Require(result.unboundedReads && !result.unboundedWrites, "override page tables: the pointer reader does not read through the page table");
-    Output.fill(0u);
-    device.Dispatch(result, 1, 1, 1, address);
-    device.WaitIdle();
-    return Output[0];
-}
-
-void Shadow(const Graphics::Context& context, const Graphics::HostImport& import, std::uint64_t unit, std::uint8_t value) {
-    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    auto* recorder = Graphics::Recorder::Active();
-    Require(recorder != nullptr, "override page tables: the driver opened no recorder");
-    auto destination = Graphics::ShadowDestinationFor(context, import, unit, unit + Unit);
-    Require(destination.has_value() && destination->seedUnits.empty(), "override page tables: no slab destination for a whole unit");
-    auto pattern = std::make_shared<Graphics::Buffer>(context, static_cast<std::size_t>(Unit), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    std::memset(pattern->Bytes().data(), value, pattern->Bytes().size());
-    const auto commands = recorder->Commands();
-    recorder->Keep(pattern);
-    recorder->Keep(destination->slab);
-    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-    const VkBufferCopy piece{0, Graphics::SlabOffset(import, *destination->slab, unit), Unit};
-    context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, pattern->Handle(), destination->buffer, 1, &piece);
-    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-    recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-    const Graphics::ShadowedRange range{unit, unit + Unit, destination->slab};
-    Graphics::MarkShadowed(import, std::span(&range, 1), AgcDriver::GuestMemory::TrackerGeneration());
-}
-
-void ExpectRead(AgcDriver::VulkanDevice& device, std::uint64_t pointer, std::uint8_t byte, const std::string& what) {
-    const auto read = ReadThrough(device, pointer);
-    const auto expected = 0x01010101u * byte;
-    Expect(read == expected, "override page tables: " + what + " read " + Hex(read) + ", expected " + Hex(expected));
-}
-
-void ShadowSetChanges(AgcDriver::VulkanDevice& device, const Graphics::Context& context) {
-    if (!Graphics::UnitShadowEnabled()) {
-        std::puts("override page tables: unit shadows are off, the dispatch case is skipped");
-        return;
-    }
-    Reservation units;
-    units.Register(0, 4, true);
-    const auto address = units.Address(0);
-    const auto* import = Graphics::HostImportFor(context, address, 4u * Unit);
-    Require(import != nullptr && AgcDriver::GuestMemory::Watched(address, 4u * Unit), "override page tables: the shadowed block is not imported and watched");
-    AgcDriver::GuestMemory::CollectWritesUncached(address, 4u * Unit);
-    const auto first = units.Address(1);
-    const auto second = units.Address(2);
-    ExpectRead(device, first + 64u, ImportByte, "the first unit before any shadow");
-    Shadow(context, *import, first, 0x22);
-    ExpectRead(device, first + 64u, 0x22, "the first unit through its shadow");
-    ExpectRead(device, second + 64u, ImportByte, "the second unit beside the shadowed one");
-    Shadow(context, *import, second, 0x33);
-    ExpectRead(device, second + 64u, 0x33, "the second unit after it joined the shadow set");
-    ExpectRead(device, first + 64u, 0x22, "the first unit after the shadow set grew");
-    std::memset(reinterpret_cast<void*>(first), 0x55, static_cast<std::size_t>(Unit));
-    ExpectRead(device, first + 64u, 0x55, "the first unit after a CPU store left the shadow set");
-    ExpectRead(device, second + 64u, 0x33, "the second unit after the first left the shadow set");
-}
-
 }
 
 int main() {
@@ -356,7 +274,6 @@ int main() {
             return VulkanTestSkipped;
         }
         SplicesAndSharing(context);
-        ShadowSetChanges(*device, context);
     } catch (const std::exception& error) {
         Expect(false, std::string("exception: ") + error.what());
     }

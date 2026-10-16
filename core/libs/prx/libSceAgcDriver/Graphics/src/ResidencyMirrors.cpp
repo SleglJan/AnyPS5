@@ -191,4 +191,26 @@ bool MirrorsDirty(std::uint64_t begin, std::uint64_t end) {
     return false;
 }
 
+void WriteBackAllMirrors() {
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr) return;
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    auto& manager = residency->Manager();
+    for (const auto& run : manager.ResidentRanges()) manager.FlushForCpuRead(run.address, run.bytes);
+}
+
+bool MirrorsMayBeDirty(std::uint64_t begin, std::uint64_t end) {
+    auto* residency = ResidencyDriver::Active();
+    return residency != nullptr && end > begin && residency->Manager().AnyDirty() && residency->Manager().AnyResident(begin, end - begin);
+}
+
+void FlushMirrorsForCpuRead(std::uint64_t begin, std::uint64_t end) {
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr || end <= begin) return;
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    residency->Manager().FlushForCpuRead(begin, end - begin);
+}
+
 }
