@@ -1225,6 +1225,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             const auto& modes = variant.info.info.runtimeImageModes.at(expectation.image);
             auto match = ResourceMaterializer::TryRuntimeImageMode(images.at(expectation.image), descriptor, modes);
             if (match.mode.has_value()) {
+                const auto* samplerWords = runtimeSampler ? expectation.key.data() + DeviceImageTableAbi::SamplerWord : expectation.mapSampler < snapshot.samplers.size() && snapshot.samplers[expectation.mapSampler].dwordCount == 4u ? snapshot.samplers[expectation.mapSampler].dwords.data() : nullptr;
+                if (samplerWords != nullptr) {
+                    if (const auto* mismatch = ResourceMaterializer::VolumePlaneBiasSamplerMismatch(images.at(expectation.image), modes.at(*match.mode), std::span<const std::uint32_t, 4>(samplerWords, 4u))) throw std::runtime_error(mismatch);
+                }
                 if ((modes.at(*match.mode).emulatedCompare & EmulatedCompare::Enabled) != 0u) {
                     if (!runtimeSampler) throw std::runtime_error("comparison sampling of a color texture through a sampler the device image table does not read is not implemented");
                     static_cast<void>(ResourceMaterializer::ColorCompareState(images.at(expectation.image), descriptor, std::span<const std::uint32_t, 4>(expectation.key.data() + DeviceImageTableAbi::SamplerWord, DeviceImageTableAbi::SamplerWords)));

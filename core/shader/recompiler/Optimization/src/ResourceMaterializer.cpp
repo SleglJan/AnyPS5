@@ -1696,6 +1696,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
     return modes;
 }
 
+const char* ResourceMaterializer::VolumePlaneBiasSamplerMismatch(const ImageResource& image, const ImageResource& mode, std::span<const std::uint32_t, 4> sampler) {
+    if (!image.singleMipPlaneBiasCompatible || image.dimension != RdnaImageDimension::Dim2D || mode.dimension != RdnaImageDimension::Dim3D) return nullptr;
+    constexpr std::uint32_t forceUnnormalized = 1u << 15u;
+    if ((sampler[0] & forceUnnormalized) != 0u || ((sampler[0] >> 29u) & 3u) > 2u || ((sampler[2] >> 20u) & 0xfu) != 0u || ((sampler[2] >> 26u) & 3u) > 1u) return "2D biased sampling of a one-slice volume requires a normalized point sampler";
+    return nullptr;
+}
+
 const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource& image) {
     if (image.table != NoTable && !image.deviceTable) return "samples an image selected at run time";
     if (image.constantSwizzle) return nullptr;
