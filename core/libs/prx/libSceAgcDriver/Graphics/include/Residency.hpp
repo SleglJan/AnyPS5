@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -171,6 +172,7 @@ public:
     void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
     void WriteBackAll();
+    bool DirtyIn(std::uint64_t address, std::uint64_t bytes) const;
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
@@ -193,7 +195,12 @@ public:
 
 private:
     static constexpr std::uint32_t None = ~std::uint32_t{0};
+    static constexpr std::uint32_t DirtyLeafShift = 16;
+    static constexpr std::size_t DirtyLeaves = std::size_t{1} << (47 - ResidencyPageShift - DirtyLeafShift);
 
+    struct DirtyLeaf {
+        std::array<std::atomic<ResidencyMask>, std::size_t{1} << DirtyLeafShift> masks{};
+    };
     static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
 
     using Run = std::pair<std::uint32_t, std::uint32_t>;
@@ -283,6 +290,7 @@ private:
     void markDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void clearDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void clearAllDirty(std::uint32_t id);
+    void publishDirty(std::uint64_t page, ResidencyMask mask);
     void appendDirty(std::uint32_t id, std::vector<ResidencyCopy>& copies) const;
     void appendClean(std::uint32_t id, std::uint32_t begin, std::uint32_t end, std::vector<ResidencyCopy>& copies) const;
     void copyIn(std::span<const Fill> fills);
@@ -329,6 +337,7 @@ private:
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;
     std::atomic<std::uint32_t> dirtyPages{0};
+    std::unique_ptr<std::atomic<DirtyLeaf*>[]> dirtyLeaves;
     std::uint64_t touchFrame = 0;
     ResidencyCounts counts;
     mutable std::mutex residentMutex;

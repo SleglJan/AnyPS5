@@ -918,6 +918,26 @@ void ExactDirtyRanges() {
     fixture.gpu.Drain();
 }
 
+void DirtyQueryWithoutLock() {
+    scope = "dirty query without the lock";
+    Fixture fixture(4, 1);
+    fixture.Share(BasePage + 0);
+    fixture.Use(0, BasePage + 0, 2);
+    fixture.gpu.Drain();
+    Expect(!fixture.manager->DirtyIn(Address(BasePage), 2 * ResidencyPageBytes), "nothing is dirty before a grant");
+    fixture.manager->NoteGpuWritten(Address(BasePage + 0, 5) + 8, 16);
+    Expect(fixture.manager->DirtyIn(Address(BasePage + 0, 5), ResidencySubpageBytes), "the subpage holding the granted bytes answers dirty");
+    Expect(fixture.manager->DirtyIn(Address(BasePage), 2 * ResidencyPageBytes), "a range over the page answers dirty");
+    Expect(!fixture.manager->DirtyIn(Address(BasePage + 0, 4), ResidencySubpageBytes) && !fixture.manager->DirtyIn(Address(BasePage + 0, 6), 2 * ResidencySubpageBytes), "the clean subpages around it answer clean");
+    Expect(!fixture.manager->DirtyIn(Address(BasePage + 1), ResidencyPageBytes), "the clean page beside it answers clean");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
+    Expect(!fixture.manager->DirtyIn(Address(BasePage), 2 * ResidencyPageBytes), "a write-back makes the range answer clean");
+    fixture.manager->NoteGpuWritten(Address(BasePage + 0, 2), ResidencySubpageBytes);
+    fixture.manager->Demote(Address(BasePage + 0), ResidencyPageBytes);
+    Expect(!fixture.manager->DirtyIn(Address(BasePage), ResidencyPageBytes), "a page that left residency answers clean");
+    fixture.gpu.Drain();
+}
+
 void WriteBackAllAtTeardown() {
     scope = "write-back of every dirty page at teardown";
     Fixture fixture(8, 1);
@@ -1481,6 +1501,7 @@ int main() {
         DirtyMirrorsOnSharedPages();
         CpuReadWritesDirtyBytesBack();
         ExactDirtyRanges();
+        DirtyQueryWithoutLock();
         WriteBackAllAtTeardown();
         GrantDemotesPrivatePage();
         GrantThroughAliasDemotesMirror();

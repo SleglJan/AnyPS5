@@ -59,7 +59,7 @@ ResidencyMask SubpageMask(std::uint64_t page, std::uint64_t address, std::uint64
 }
 
 ResidencyManager::ResidencyManager(IResidencyDevice& device, const ResidencyPolicy& policy)
-    : device(device), chunkSlots(policy.chunkSlots), hotFaults(policy.hotFaults), hotEpochs(policy.hotEpochs) {
+    : device(device), chunkSlots(policy.chunkSlots), hotFaults(policy.hotFaults), hotEpochs(policy.hotEpochs), dirtyLeaves(new std::atomic<DirtyLeaf*>[DirtyLeaves]()) {
     if (chunkSlots == 0 || chunkSlots > (std::numeric_limits<std::uint32_t>::max() >> ResidencyPageShift))
         throw std::invalid_argument("residency: a chunk holds 1 to 65535 pages, not " + std::to_string(chunkSlots));
     if (hotEpochs == 0 || hotEpochs > 64 || hotFaults == 0 || hotFaults > hotEpochs)
@@ -78,6 +78,36 @@ ResidencyManager::~ResidencyManager() {
     for (std::uint32_t chunk = 0; chunk < chunks.size(); ++chunk) {
         if (chunks[chunk].live) device.ReleaseChunk(chunk);
     }
+    for (std::size_t leaf = 0; leaf < DirtyLeaves; ++leaf) delete dirtyLeaves[leaf].load(std::memory_order_relaxed);
+}
+
+void ResidencyManager::publishDirty(std::uint64_t page, ResidencyMask mask) {
+    const auto leafIndex = page >> DirtyLeafShift;
+    if (leafIndex >= DirtyLeaves) throw std::out_of_range("residency: page " + std::to_string(page) + " lies past the 47-bit guest address space");
+    auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+    if (leaf == nullptr) {
+        if (mask == 0) return;
+        leaf = new DirtyLeaf();
+        dirtyLeaves[leafIndex].store(leaf, std::memory_order_release);
+    }
+    leaf->masks[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].store(mask, std::memory_order_release);
+}
+
+bool ResidencyManager::DirtyIn(std::uint64_t address, std::uint64_t bytes) const {
+    const auto span = PagesOf(address, bytes);
+    if (span.empty || dirtyPages.load(std::memory_order_acquire) == 0) return false;
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto leafIndex = page >> DirtyLeafShift;
+        if (leafIndex >= DirtyLeaves) return false;
+        const auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+        if (leaf == nullptr) {
+            page |= (std::uint64_t{1} << DirtyLeafShift) - 1;
+            continue;
+        }
+        const auto mask = leaf->masks[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].load(std::memory_order_acquire);
+        if ((mask & SubpageMask(page, address, bytes)) != 0) return true;
+    }
+    return false;
 }
 
 void ResidencyManager::WriteBackAll() {
@@ -223,7 +253,10 @@ void ResidencyManager::forget(std::uint32_t id) {
         const std::lock_guard lock(residentMutex);
         resident.erase(page);
     }
-    if (!pages[id].dirtyRuns.empty()) --dirtyPages;
+    if (!pages[id].dirtyRuns.empty()) {
+        --dirtyPages;
+        publishDirty(page, 0);
+    }
     hotResident.erase(page);
     writers.erase(page);
     if (const auto key = aliasKeys.find(page); key != aliasKeys.end()) {
@@ -249,6 +282,7 @@ void ResidencyManager::markDirty(std::uint32_t id, std::uint32_t begin, std::uin
     at = runs.erase(at, last);
     runs.insert(at, Run{begin, end});
     page.dirty = static_cast<ResidencyMask>(page.dirty | RunMask(begin, end));
+    publishDirty(page.index, page.dirty);
 }
 
 void ResidencyManager::clearDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end) {
@@ -267,6 +301,7 @@ void ResidencyManager::clearDirty(std::uint32_t id, std::uint32_t begin, std::ui
     page.dirtyRuns = std::move(kept);
     page.dirty = 0;
     for (const auto& run : page.dirtyRuns) page.dirty = static_cast<ResidencyMask>(page.dirty | RunMask(run.first, run.second));
+    publishDirty(page.index, page.dirty);
     if (page.dirtyRuns.empty()) --dirtyPages;
 }
 
@@ -275,6 +310,7 @@ void ResidencyManager::clearAllDirty(std::uint32_t id) {
     if (page.dirtyRuns.empty()) return;
     page.dirtyRuns.clear();
     page.dirty = 0;
+    publishDirty(page.index, 0);
     --dirtyPages;
 }
 
