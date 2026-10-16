@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -63,9 +64,9 @@ alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0x7e0002f2, 0x7e0202f2, 0x7e0402f2, 0x7e0602f2, 0xf800080f, 0x03020100, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::array<float, 4>, 3> Vertices{{
+TestGuest::Array<std::array<float, 4>, 3> Vertices{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f},
-}};
+};
 
 struct Step {
     const char* name;
