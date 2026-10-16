@@ -97,7 +97,7 @@ void Run(AgcDriver::VulkanDevice& device, bool registrationModules) {
 void ScalarReads(AgcDriver::VulkanDevice& device) {
     constexpr std::array<std::uint32_t, 8> scalarCode{0x34020082u, 0xf4200200u, 0xfa000004u, 0xbf8cc07fu, 0x7e040208u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     std::array<std::uint32_t, 8> userData{};
-    const auto output = BufferDescriptor(Output.data(), sizeof(Output));
+    const auto output = BufferDescriptor(Output.data(), decltype(Output)::ByteSize);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     auto request = Request(userData, device.ComputeTarget(Lanes), {});
     request.shader.code = scalarCode;
