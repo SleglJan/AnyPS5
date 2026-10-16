@@ -265,6 +265,24 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
     }
 }
 
+namespace {
+
+constexpr std::uint32_t GuestFormatRgba8UInt = 60u;
+constexpr std::uint32_t GuestFormatRgba8Srgb = 130u;
+
+std::string forcedDegammaWords(const ShaderRecompiler::DeviceImageInterface& interface, const DeviceImageKeys::Key& key, ShaderRecompiler::DescriptorValue& descriptor) {
+    auto& words = descriptor.dwords;
+    if ((key[Abi::SamplerClassWord] & Abi::RuntimeSampler) == 0u || (key[Abi::SamplerWord] & (1u << 20u)) == 0u) return {};
+    if (((words[1] >> 20u) & 0x1ffu) != GuestFormatRgba8UInt) return {};
+    const auto& image = interface.image;
+    if (!image.singleMipPlaneBiasCompatible || image.dimension != ShaderRecompiler::RdnaImageDimension::Dim2D || image.resourceClass != ShaderRecompiler::ImageResourceClass::Sampled || image.depthCompare || image.packed) return "FORCE_DEGAMMA on RGBA8_UINT requires a direct plain biased pixel sample";
+    if ((words[3] >> 28u) != 10u || (words[4] & 0x1fffu) != 0u || (words[3] & 0xff000u) != 0u || (words[5] & 0xf0u) != 0u) return "FORCE_DEGAMMA on RGBA8_UINT requires a one-slice volume at mip zero";
+    words[1] = (words[1] & ~(0x1ffu << 20u)) | (GuestFormatRgba8Srgb << 20u);
+    return {};
+}
+
+}
+
 DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report) {
     using Reason = ShaderRecompiler::ImageTableAbi::PoisonReason;
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
@@ -278,6 +296,13 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         const auto text = runtimeSampler ? message + " (S# " + HexWords(std::span<const std::uint32_t>(key).subspan(Abi::SamplerWord, Abi::SamplerWords)) + ")" : message;
         return DeviceImageValue{0u, 0u, reject(key, pc, static_cast<std::uint32_t>(reason), text, report) + 1u};
     };
+    if (((key[1] >> 20u) & 0x1ffu) == GuestFormatRgba8UInt && (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u) {
+        const auto mixed = std::ranges::any_of(current, [&](const DeviceImageKeys::Key& other) {
+            return (other[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u && ((other[Abi::SamplerWord] ^ key[Abi::SamplerWord]) & (1u << 20u)) != 0u && other[Abi::InterfaceWord] == key[Abi::InterfaceWord] && other[Abi::InterfaceWord + 1u] == key[Abi::InterfaceWord + 1u] && std::equal(key.begin(), key.begin() + Abi::DescriptorWords, other.begin());
+        });
+        if (mixed) return rejected(Reason::DriverRejected, "FORCE_DEGAMMA on RGBA8_UINT with mixed sampler states is not implemented");
+    }
+    if (const auto forced = forcedDegammaWords(*interface, key, descriptor); !forced.empty()) return rejected(Reason::DriverRejected, forced);
     const auto match = ShaderRecompiler::ResourceMaterializer::TryRuntimeImageMode(interface->image, descriptor, interface->modes);
     if (!match.mode.has_value()) return rejected(match.reason, match.detail);
     const auto& mode = interface->modes.at(*match.mode);
@@ -291,7 +316,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
             view.atomic64 = mode.atomic64;
             view.mipRun = mode.mipMode == ShaderRecompiler::ImageMipMode::DynamicStorage;
             view.written = interface->image.written || interface->image.atomic;
-            auto storage = LookupDeviceTableStorage(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view);
+            auto storage = LookupDeviceTableStorage(build, std::span<const std::uint32_t, 8>(descriptor.dwords), view);
             entry = {};
             entry.address = storage.address;
             entry.guestBytes = storage.guestBytes;
@@ -316,7 +341,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         std::shared_ptr<Sampler> sampler;
         bool forcedSrgb = false;
         if (runtimeSampler) {
-            const auto descriptorWords = std::span<const std::uint32_t>(key).first(Abi::DescriptorWords);
+            const auto descriptorWords = std::span<const std::uint32_t>(descriptor.dwords);
             const bool singleLevel = DescriptorSingleLevel(descriptorWords);
             if (const auto paired = SingleLevelSamplerWords(samplerWords, singleLevel, !singleLevel)) samplerWords = *paired;
             if (PointSampled(mode)) samplerWords[2] = ShaderRecompiler::PointFilteredSamplerWord(samplerWords[0], samplerWords[2]);
@@ -329,7 +354,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         }
         DeviceTableView view{ShaderRecompiler::ImageShapeForResource(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits, ShaderRecompiler::ResourceMaterializer::BindsDecodedCopy(mode, descriptor), IntegerMode(mode), unnormalized, (key[Abi::SamplerClassWord] & Abi::SamplerExactAtBase) != 0u && (samplerWords[1] & 0xfffu) == 0u && (samplerWords[2] & 0xfffffu) == 0u};
         view.srgb = forcedSrgb;
-        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(key.data(), Abi::DescriptorWords), view, samplerClass, perUse);
+        auto texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, 8>(descriptor.dwords), view, samplerClass, perUse);
         const auto samplerSlot = sampler != nullptr ? sampler->Slot() : 0u;
         auto modeWord = *match.mode;
         if ((mode.emulatedCompare & ShaderRecompiler::EmulatedCompare::Enabled) != 0u) {
