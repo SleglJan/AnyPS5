@@ -95,7 +95,7 @@ TestGuest::Array<Vertex, 3 * Triangles> Ordered;
 TestGuest::Array<Vertex, 2 * Columns + 2> Strip;
 
 constexpr std::uint32_t LineStrips = 4;
-alignas(256) std::array<Vertex, 3 * LineStrips> LineStripVertices{};
+TestGuest::Array<Vertex, 3 * LineStrips> LineStripVertices;
 
 std::uint32_t LineStripRow(std::uint32_t strip) {
     return 16u + 28u * strip;
