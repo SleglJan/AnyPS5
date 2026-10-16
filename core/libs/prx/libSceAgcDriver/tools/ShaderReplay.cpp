@@ -8,6 +8,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "SpirvBackend/SpirvModule.hpp"
 
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "spirv-tools/libspirv.hpp"
@@ -176,6 +177,8 @@ bool Replay(const char* path) {
         if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
+        const auto local = ShaderRecompiler::CountLocalMemoryUsers(result.spirv.Words());
+        std::printf("  local memory: %u users (%u dynamically indexed, %u passed to calls, %u volatile, %u shared Private)\n", local.total, local.dynamicallyIndexed, local.passedToCalls, local.volatileAccess, local.sharedPrivate);
         if (g_spirv) {
             std::string name(path);
             name = name.substr(name.find_last_of("/\\") + 1) + ".spv";
