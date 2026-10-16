@@ -962,6 +962,7 @@ struct PooledView::State {
     VkImageView view = VK_NULL_HANDLE;
     std::string failure;
     std::optional<std::uint32_t> slot;
+    DescriptorHeap::Array slotArray = DescriptorHeap::Array::SampledImages;
     VkImageLayout slotLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     DescriptorHeap* heap = nullptr;
     VkDevice device = VK_NULL_HANDLE;
@@ -1009,7 +1010,7 @@ void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info
                     target->view = made;
                     if (target->slot) {
                         try {
-                            target->heap->WriteImage(DescriptorHeap::Array::SampledImages, *target->slot, made, target->slotLayout);
+                            target->heap->WriteImage(target->slotArray, *target->slot, made, target->slotLayout);
                         } catch (const std::exception& error) {
                             failure = label + ": " + error.what();
                         }
@@ -1041,14 +1042,22 @@ VkImageView PooledView::Get() const {
 }
 
 std::uint32_t PooledView::SampledSlot(VkImageLayout layout) const {
-    Require(state != nullptr && state->heap != nullptr, "a sampled image slot needs a view and the descriptor heap");
+    return Slot(DescriptorHeap::Array::SampledImages, layout);
+}
+
+std::uint32_t PooledView::Slot(DescriptorHeap::Array array, VkImageLayout layout) const {
+    Require(state != nullptr && state->heap != nullptr, "an image slot needs a view and the descriptor heap");
     std::lock_guard lock(state->mutex);
-    if (state->slot) return *state->slot;
+    if (state->slot) {
+        Require(state->slotArray == array, "a pooled view holds its slot in one descriptor array");
+        return *state->slot;
+    }
     Require(state->failure.empty(), state->failure);
+    state->slotArray = array;
     if (state->finished) {
-        state->slot = state->heap->AllocateImage(DescriptorHeap::Array::SampledImages, state->view, layout);
+        state->slot = state->heap->AllocateImage(array, state->view, layout);
     } else {
-        state->slot = state->heap->ReserveImage(DescriptorHeap::Array::SampledImages, layout);
+        state->slot = state->heap->ReserveImage(array, layout);
         state->slotLayout = layout;
     }
     return *state->slot;
@@ -1059,7 +1068,7 @@ void PooledView::Destroy() noexcept {
     {
         std::unique_lock lock(state->mutex);
         state->created.wait(lock, [&] { return state->finished; });
-        if (state->slot) state->heap->ReleaseImage(DescriptorHeap::Array::SampledImages, *state->slot);
+        if (state->slot) state->heap->ReleaseImage(state->slotArray, *state->slot);
         if (state->view != VK_NULL_HANDLE) state->destroy(state->device, state->view, nullptr);
         state->slot.reset();
         state->view = VK_NULL_HANDLE;
@@ -1703,22 +1712,44 @@ StorageTexture::ViewLayers StorageTexture::LayersOf(const GuestTextureResource& 
     return {viewed.baseArray, (layered ? viewed.depthOrLastArray + 1u : 1u) - viewed.baseArray, false};
 }
 
-VkImageView StorageTexture::createView(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
+VkImageViewCreateInfo StorageTexture::viewInfo(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
     Require(mip < descriptor.mipCount, "storage texture mip level is outside the texture");
     Require(!layers.flat || descriptor.dimension == TextureDimension::k2DArray, "a first-layer storage view needs a 2D array surface");
     Require(layers.count != 0 && layers.first + layers.count <= geometry.imageLayers, "storage view layers lie outside the storage image");
+    VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    info.image = image;
+    info.viewType = layers.flat ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    info.format = format;
+    info.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, layers.first, layers.count};
+    return info;
+}
+
+VkImageView StorageTexture::createView(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
+    auto info = viewInfo(mip, layers, format);
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
-    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.pNext = format == storageFormat ? nullptr : &usage;
-    viewInfo.image = image;
-    viewInfo.viewType = layers.flat ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    viewInfo.format = format;
-    viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, layers.first, layers.count};
+    if (format != storageFormat) info.pNext = &usage;
     VkImageView created = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView storage");
+    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &created), "vkCreateImageView storage");
     return created;
+}
+
+bool StorageTexture::defaultView(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
+    return mip == defaultMip && format == storageFormat && layers == LayersOf(descriptor, false);
+}
+
+PooledView& StorageTexture::pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format) {
+    const auto key = std::tuple{mip, layers.first, layers.count, layers.flat, format};
+    std::lock_guard lock(viewMutex);
+    if (const auto found = pooledViews.find(key); found != pooledViews.end()) return *found->second;
+    auto info = viewInfo(mip, layers, format);
+    VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    if (format != storageFormat) info.pNext = &usage;
+    auto pooled = std::make_unique<PooledView>();
+    pooled->Start(context, info, "vkCreateImageView storage");
+    return *pooledViews.emplace(key, std::move(pooled)).first->second;
 }
 
 bool StorageTexture::singlePass() {
@@ -1867,38 +1898,38 @@ void StorageTexture::RecordAttachmentProxyStore(VkCommandBuffer commands, VkImag
 }
 
 VkImageView StorageTexture::View(std::uint32_t mip) {
-    if (mip == defaultMip) return view;
-    const auto found = extraViews.find(mip);
-    if (found != extraViews.end()) return found->second;
-    const auto created = createView(mip, LayersOf(descriptor, false), storageFormat);
-    extraViews.emplace(mip, created);
-    return created;
+    return layerView(mip, LayersOf(descriptor, false), storageFormat);
 }
 
 VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
-    const auto found = firstLayerViews.find(mip);
-    if (found != firstLayerViews.end()) return found->second;
-    const auto created = createView(mip, LayersOf(descriptor, true), storageFormat);
-    firstLayerViews.emplace(mip, created);
-    return created;
+    return layerView(mip, LayersOf(descriptor, true), storageFormat);
 }
 
 VkImageView StorageTexture::layerView(std::uint32_t mip, ViewLayers layers, VkFormat format) {
-    if (format == storageFormat && layers == LayersOf(descriptor, layers.flat)) return layers.flat ? FirstLayerView(mip) : View(mip);
-    const auto key = std::tuple{mip, layers.first, layers.count, layers.flat, format};
-    const auto found = layerViews.find(key);
-    if (found != layerViews.end()) return found->second;
-    const auto created = createView(mip, layers, format);
-    layerViews.emplace(key, created);
-    return created;
+    if (defaultView(mip, layers, format)) return view;
+    return pooledView(mip, layers, format).Get();
+}
+
+VkFormat StorageTexture::storageViewFormat(StorageViewKind kind) const {
+    if (kind == StorageViewKind::Atomic) {
+        if (storageFormat == VK_FORMAT_R32_UINT) return storageFormat;
+        Require(storageFormat == VK_FORMAT_R32_SINT || storageFormat == VK_FORMAT_R32_SFLOAT, "storage image atomics need a surface of one 32-bit component");
+        return VK_FORMAT_R32_UINT;
+    }
+    if (kind == StorageViewKind::Atomic64) {
+        if (storageFormat == VK_FORMAT_R64_UINT) return storageFormat;
+        Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
+        return VK_FORMAT_R64_UINT;
+    }
+    const auto format = UintFormatOfSint(storageFormat);
+    if (format == VK_FORMAT_UNDEFINED) return storageFormat;
+    if (format == VK_FORMAT_R32_UINT) return storageViewFormat(StorageViewKind::Atomic);
+    Require(StorageFormatOrUndefined(context, format) == format, "storage image of format " + std::to_string(storageFormat) + " has no storage view of its UINT format " + std::to_string(format));
+    return format;
 }
 
 VkImageView StorageTexture::StorageView(std::uint32_t mip, ViewLayers layers) {
-    const auto format = UintFormatOfSint(storageFormat);
-    if (format == VK_FORMAT_UNDEFINED) return layerView(mip, layers, storageFormat);
-    if (format == VK_FORMAT_R32_UINT) return AtomicView(mip, layers);
-    Require(StorageFormatOrUndefined(context, format) == format, "storage image of format " + std::to_string(storageFormat) + " has no storage view of its UINT format " + std::to_string(format));
-    return layerView(mip, layers, format);
+    return layerView(mip, layers, storageViewFormat(StorageViewKind::Storage));
 }
 
 VkImageView StorageTexture::ElementView() {
@@ -1930,15 +1961,11 @@ VkImageView StorageTexture::DecodeSourceView(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::AtomicView(std::uint32_t mip, ViewLayers layers) {
-    if (storageFormat == VK_FORMAT_R32_UINT) return layerView(mip, layers, storageFormat);
-    Require(storageFormat == VK_FORMAT_R32_SINT || storageFormat == VK_FORMAT_R32_SFLOAT, "storage image atomics need a surface of one 32-bit component");
-    return layerView(mip, layers, VK_FORMAT_R32_UINT);
+    return layerView(mip, layers, storageViewFormat(StorageViewKind::Atomic));
 }
 
 VkImageView StorageTexture::Atomic64View(std::uint32_t mip, ViewLayers layers) {
-    if (storageFormat == VK_FORMAT_R64_UINT) return layerView(mip, layers, storageFormat);
-    Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
-    return layerView(mip, layers, VK_FORMAT_R64_UINT);
+    return layerView(mip, layers, storageViewFormat(StorageViewKind::Atomic64));
 }
 
 const char* LookupOutcomes::Name(Kind kind) {
@@ -5424,6 +5451,12 @@ StorageTexture::~StorageTexture() {
     release();
 }
 
+std::uint32_t StorageTexture::StorageSlot(std::uint32_t mip, ViewLayers layers, StorageViewKind kind) {
+    const auto format = storageViewFormat(kind);
+    if (defaultView(mip, layers, format)) return StorageSlot(view);
+    return pooledView(mip, layers, format).Slot(DescriptorHeap::Array::StorageImages, VK_IMAGE_LAYOUT_GENERAL);
+}
+
 std::uint32_t StorageTexture::StorageSlot(VkImageView imageView) {
     Require(imageView != VK_NULL_HANDLE && context.descriptorHeap != nullptr, "a storage image slot needs a view and the descriptor heap");
     std::lock_guard lock(slotMutex);
@@ -5450,12 +5483,8 @@ void StorageTexture::release() noexcept {
         for (std::uint32_t index = 0; index < key.second; ++index) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + index);
     }
     storageRuns.clear();
-    for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
-    extraViews.clear();
-    for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
-    firstLayerViews.clear();
-    for (const auto& [key, layered] : layerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, layered, nullptr);
-    layerViews.clear();
+    for (const auto& [key, pooled] : pooledViews) pooled->Destroy();
+    pooledViews.clear();
     if (elementView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, elementView, nullptr);
     elementView = VK_NULL_HANDLE;
     for (const auto& [key, element] : elementLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, element, nullptr);

@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -76,6 +77,7 @@ public:
     bool Started() const { return state != nullptr; }
     VkImageView Get() const;
     std::uint32_t SampledSlot(VkImageLayout layout) const;
+    std::uint32_t Slot(DescriptorHeap::Array array, VkImageLayout layout) const;
     void Destroy() noexcept;
     static void Settle();
 
@@ -212,6 +214,8 @@ public:
     VkImageView DecodeSourceView(std::uint32_t mip);
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
+    enum class StorageViewKind : std::uint8_t { Storage, Atomic, Atomic64 };
+    std::uint32_t StorageSlot(std::uint32_t mip, ViewLayers layers, StorageViewKind kind);
     std::uint32_t StorageSlot(VkImageView view);
     std::uint32_t StorageSlotRun(std::span<const VkImageView> views);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
@@ -543,7 +547,11 @@ private:
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
+    VkImageViewCreateInfo viewInfo(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
     VkImageView createView(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
+    VkFormat storageViewFormat(StorageViewKind kind) const;
+    bool defaultView(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
+    PooledView& pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format);
     VkImageView layerView(std::uint32_t mip, ViewLayers layers, VkFormat format);
     bool singlePass();
     VkImageView elementLayerView(std::uint32_t level, std::uint32_t layer);
@@ -610,9 +618,8 @@ private:
     std::map<VkImageView, std::uint32_t> storageSlots;
     std::map<std::pair<VkImageView, std::uint32_t>, std::uint32_t> storageRuns;
     std::uint32_t defaultMip = 0;
-    std::map<std::uint32_t, VkImageView> extraViews;
-    std::map<std::uint32_t, VkImageView> firstLayerViews;
-    std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, bool, VkFormat>, VkImageView> layerViews;
+    std::mutex viewMutex;
+    std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, bool, VkFormat>, std::unique_ptr<PooledView>> pooledViews;
     VkImageView elementView = VK_NULL_HANDLE;
     std::map<std::uint32_t, VkImageView> elementLayerViews;
     std::map<std::uint32_t, VkImageView> decodeSourceViews;
