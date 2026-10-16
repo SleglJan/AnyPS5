@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -25,7 +26,7 @@ alignas(256) constexpr std::array<std::uint32_t, 6> MinusSixteenCode{0xd7460000u
 alignas(256) constexpr std::array<std::uint32_t, 6> FloatHalfCode{0xd7460000u, 0x04010c04u, 0x7e0202f0u, 0xe0102000u, 0x80000100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 6> VgprCode{0xd7460000u, 0x04010c04u, 0x7e020300u, 0xe0102000u, 0x80000100u, 0xbf810000u};
 constexpr std::uint32_t Untouched = 0xcafebabeu;
-alignas(256) std::array<std::uint32_t, 1028> Output{};
+TestGuest::Array<std::uint32_t, 1028> Output;
 
 std::vector<std::uint32_t> UserData(void* output, std::uint32_t records, std::uint32_t stride = 4, std::uint32_t format = 0x00014204u) {
     const auto address = reinterpret_cast<std::uintptr_t>(output);
@@ -114,7 +115,7 @@ void ExecuteTests() {
         Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
         AgcDriverWaitIdle_nid_postfix();
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
         const auto launched = item.partial ? item.threads : item.groups * 64u;
         const auto filled = std::min(launched, item.records);
         const auto step = item.stride / 4u;
@@ -131,7 +132,7 @@ void ExecuteTests() {
         Packet packet{const_cast<std::uint32_t*>(words.data()), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
         AgcDriverWaitIdle_nid_postfix();
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), sizeof(Output));
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output.data()), decltype(Output)::ByteSize);
         const auto filled = std::min(item.groups * 64u, item.records);
         for (std::uint32_t i = 0; i < Output.size(); ++i) {
             const auto expected = i < filled ? item.value : Untouched;
