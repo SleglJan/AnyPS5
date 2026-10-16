@@ -131,6 +131,11 @@ public:
         if (m_bdaTraces > bdaTraceLimit) std::fprintf(stderr, "[bda] %u more address accesses in this program not shown\n", m_bdaTraces - bdaTraceLimit);
         CheckTableStores();
         AssignTables();
+        for (const auto& image : m_info.images) {
+            if (!MemoryPathImage(image)) continue;
+            m_info.usesDma = true;
+            m_info.bdaWrites = m_info.bdaWrites || image.resourceClass == ImageResourceClass::Storage;
+        }
         for (const auto& patch : m_handlePatches) {
             patch.handle->SetFlags<std::uint32_t>(patch.resource);
         }

@@ -87,6 +87,23 @@ struct ImageResource {
     bool operator==(const ImageResource& other) const = default;
 };
 
+inline bool MemoryPathImage(const ImageResource& image) {
+    if (image.table != NoTable || image.deviceTable || image.r128 || image.packed || image.byElements != 0u) return false;
+    switch (image.dimension) {
+        case RdnaImageDimension::Dim1D:
+        case RdnaImageDimension::Dim1DArray:
+        case RdnaImageDimension::Dim2D:
+        case RdnaImageDimension::Dim2DArray:
+        case RdnaImageDimension::Dim3D:
+            break;
+        default:
+            return false;
+    }
+    if (image.resourceClass == ImageResourceClass::Storage) return image.written || image.atomic;
+    if (image.resourceClass == ImageResourceClass::Sampled) return image.read && !image.written && !image.atomic && image.fmaskCompatible && image.srgbDecodeCompatible && !image.depthCompare && image.emulatedCompare == 0u;
+    return false;
+}
+
 enum SamplerUse : std::uint16_t {
     SamplerUseExplicitLod = 1u << 0u,
     SamplerUseImplicitLod = 1u << 1u,
