@@ -52,6 +52,7 @@ const Program& SampleAcrossBranchProgram() {
 struct MainCalls {
     std::uint32_t lookups = 0;
     std::uint32_t misses = 0;
+    std::uint32_t tables = 0;
 };
 
 MainCalls CallsFromMain(std::span<const std::uint32_t> words) {
@@ -68,6 +69,7 @@ MainCalls CallsFromMain(std::span<const std::uint32_t> words) {
         const auto& callee = names[words[cursor + 3]];
         if (callee == "device_image_lookup") ++calls.lookups;
         if (callee == "device_image_record_miss") ++calls.misses;
+        if (callee.starts_with("table_image_")) ++calls.tables;
     }
     return calls;
 }
@@ -86,6 +88,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     ExpectRouted(compiled, "same texture");
     const auto calls = CallsFromMain(compiled.result->spirv.Words());
     Expect(calls.lookups == 1u && calls.misses == 2u, "same texture: main calls device_image_lookup " + std::to_string(calls.lookups) + " times and device_image_record_miss " + std::to_string(calls.misses) + " times, expected one lookup where the descriptor is loaded and each sample recording its own miss");
+    Expect(calls.tables == 0u, "same texture: main calls table image functions " + std::to_string(calls.tables) + " times, expected each sample to switch over its image modes where it reads");
     const auto missed = Run(device, compiled, Height);
     const auto read = ExpectFirstUse(missed, twice, 2, "same texture: first dispatch, both samples recording their misses");
     const auto hit = Run(device, Compile(device, SampleTwiceProgram(), userData), Height);
@@ -96,6 +99,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     ExpectRouted(across, "same texture across a branch");
     const auto acrossCalls = CallsFromMain(across.result->spirv.Words());
     Expect(acrossCalls.lookups == 1u && acrossCalls.misses == 2u, "same texture across a branch: main calls device_image_lookup " + std::to_string(acrossCalls.lookups) + " times and device_image_record_miss " + std::to_string(acrossCalls.misses) + " times, expected one lookup where the descriptor is loaded for the samples before and after the branch and each sample recording its own miss");
+    Expect(acrossCalls.tables == 0u, "same texture across a branch: main calls table image functions " + std::to_string(acrossCalls.tables) + " times, expected each sample to switch over its image modes where it reads");
     const auto acrossMissed = Run(device, across, Height);
     const auto acrossRead = ExpectFirstUse(acrossMissed, twice, 2, "same texture across a branch: first dispatch, both samples recording their misses");
     const auto acrossHit = Run(device, Compile(device, SampleAcrossBranchProgram(), userData), Height);

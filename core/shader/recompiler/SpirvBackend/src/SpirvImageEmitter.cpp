@@ -1842,10 +1842,10 @@ bool SingleTableImageUse(const SpirvEmitterState& state, const IrValue& inst, co
     return uses == 1u;
 }
 
-void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, std::uint32_t selector, bool tableSampler) {
+void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, std::uint32_t selector, bool tableSampler, bool atAccess) {
     auto& state = ctx.state;
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
-    if (state.laneCount == 1u && !state.module.InHelperFunction() && SingleTableImageUse(state, inst, memory)) {
+    if (state.laneCount == 1u && !state.module.InHelperFunction() && (atAccess || SingleTableImageUse(state, inst, memory))) {
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
         EmitModeSwitch(ctx, inst, memory, modes, true, selector, result);
         if (returnsValue) ctx.Define(inst, result);
@@ -2209,7 +2209,7 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
         state.tableAccess.compare = Binary(state, spv::OpShiftRightLogical, u32, mode, ConstantU32(state, Abi::ModeCompareShift));
         selector = Binary(state, spv::OpBitwiseAnd, u32, mode, ConstantU32(state, (1u << Abi::ModeCompareShift) - 1u));
     }
-    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), plan->deviceSampler);
+    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), plan->deviceSampler, true);
     state.tableAccess = {};
 }
 
@@ -2449,7 +2449,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         }
         if (base.table != NoTable) {
             const auto mode = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), access.flags, ConstantU32(state, ImageTableAbi::ModeShift)), ConstantU32(state, ImageTableAbi::ModeMask));
-            EmitTableImageCall(ctx, inst, memory, modes, Select(state, TypeU32(state), access.valid, mode, ConstantU32(state, InvalidTableSelector)), tableSampler);
+            EmitTableImageCall(ctx, inst, memory, modes, Select(state, TypeU32(state), access.valid, mode, ConstantU32(state, InvalidTableSelector)), tableSampler, false);
             state.tableAccess = {};
             return;
         }
