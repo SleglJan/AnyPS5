@@ -12,6 +12,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -53,9 +54,9 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-constexpr std::array<std::array<float, 4>, 3> Triangle{{
+TestGuest::Array<std::array<float, 4>, 3> Triangle{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 constexpr std::array<std::array<std::uint8_t, 4>, 4> UnormDestinations{{
     {64, 128, 32, 200}, {255, 0, 16, 128}, {32, 224, 96, 0}, {128, 64, 192, 255}
