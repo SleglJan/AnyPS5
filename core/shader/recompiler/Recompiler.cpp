@@ -568,6 +568,17 @@ std::optional<LinearStore> MaterializeLinearStore(const ShaderInfo& info, std::s
     return LinearStore{static_cast<std::uint64_t>(words[0]) | static_cast<std::uint64_t>(words[1] & 0xffffu) << 32u, stride, records, elementBytes};
 }
 
+namespace {
+
+void RefuseUnsupportedBufferType(const DescriptorValue& value, const BufferStoreSite& site, bool memory) {
+    if (memory || site.scalar || site.address || value.dwordCount < 4u || (value.dwords[3] >> 30u) < 2u) return;
+    char text[160];
+    std::snprintf(text, sizeof(text), "buffer descriptor uses an unsupported type (buffer %u V# %08x %08x %08x %08x)", site.source, value.dwords[0], value.dwords[1], value.dwords[2], value.dwords[3]);
+    throw std::runtime_error(text);
+}
+
+}
+
 void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> stores, std::span<const DescriptorValue> loads, bool memory, ShaderInvocation& result) {
     const auto apply = [&](const std::vector<BufferStoreSite>& sites, std::span<const DescriptorValue> values, bool infoUnbounded, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, bool& unbounded, bool& fixedUnbounded, std::size_t& memoryRanges) {
         if (memory) {
@@ -582,6 +593,7 @@ void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> 
         const auto first = ranges.size();
         for (std::size_t index = 0; index < values.size() && index < sites.size(); ++index) {
             if (sites[index].fromMemory != memory) continue;
+            RefuseUnsupportedBufferType(values[index], sites[index], memory);
             const auto range = BufferStoreExtent(values[index], sites[index]);
             if (!range.has_value()) unbounded = true;
             else if (range->second > range->first) ranges.push_back(*range);
