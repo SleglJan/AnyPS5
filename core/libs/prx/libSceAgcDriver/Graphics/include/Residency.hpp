@@ -46,6 +46,12 @@ struct ResidencyImport {
     std::uint64_t serial = 0;
 };
 
+struct ResidencyWrites {
+    ResidencyMask cpu = ResidencyWholePage;
+    bool other = true;
+    std::uint64_t generation = 0;
+};
+
 struct ResidencyRange {
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
@@ -96,6 +102,11 @@ public:
     }
     virtual std::uint64_t Budget() { return ~std::uint64_t{0}; }
     virtual std::uint64_t GuestBytes() { return 0; }
+    virtual ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) {
+        static_cast<void>(page);
+        static_cast<void>(generation);
+        return {};
+    }
 };
 
 struct ResidencyCounts {

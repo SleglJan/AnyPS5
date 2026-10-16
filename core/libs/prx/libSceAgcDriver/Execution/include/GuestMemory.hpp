@@ -233,6 +233,12 @@ struct PageBacking {
     bool resident = false;
 };
 PageBacking Backing(std::uint64_t page);
+struct PageWrites {
+    std::uint16_t cpuSubpages = 0;
+    bool other = false;
+    std::uint64_t generation = 0;
+};
+PageWrites ResidencyPageWrites(std::uint64_t page, std::uint64_t generation);
 
 void SetMappingListener(void (*listener)(std::uint64_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection));
 void ConsumeImportMarks(std::uint64_t address, std::size_t bytes);

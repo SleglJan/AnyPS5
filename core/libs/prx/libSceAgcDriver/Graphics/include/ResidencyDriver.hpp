@@ -39,6 +39,11 @@ public:
     virtual void UnguardAccess(std::uint64_t page) = 0;
     virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) = 0;
     virtual std::uint64_t GuestBytes() = 0;
+    virtual ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) {
+        static_cast<void>(page);
+        static_cast<void>(generation);
+        return {};
+    }
 };
 
 struct ResidencyPublishedPage {
@@ -114,6 +119,7 @@ public:
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t Budget() override;
     std::uint64_t GuestBytes() override;
+    ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;
 
 private:
     struct TouchReadback {

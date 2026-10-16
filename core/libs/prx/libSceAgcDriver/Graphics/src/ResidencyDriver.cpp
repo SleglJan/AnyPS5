@@ -78,6 +78,10 @@ std::uint64_t ResidencyDriver::GuestBytes() {
     return guest.GuestBytes();
 }
 
+ResidencyWrites ResidencyDriver::PageWrites(std::uint64_t page, std::uint64_t generation) {
+    return guest.PageWrites(page, generation);
+}
+
 VkDeviceAddress ResidencyDriver::TouchTableAddress() const {
     return touchAddress.load(std::memory_order_acquire);
 }

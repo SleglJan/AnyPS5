@@ -93,6 +93,11 @@ std::vector<ResidencyRange> ResidencyGuest::WholeImports(std::uint64_t& generati
     return ranges;
 }
 
+ResidencyWrites ResidencyGuest::PageWrites(std::uint64_t page, std::uint64_t generation) {
+    const auto writes = GuestMemory::ResidencyPageWrites(page, generation);
+    return {writes.cpuSubpages, writes.other, writes.generation};
+}
+
 std::uint64_t ResidencyGuest::GuestBytes() {
     return CommittedImportCounters().viewBytes;
 }

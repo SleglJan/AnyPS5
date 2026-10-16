@@ -24,6 +24,7 @@ public:
     void UnguardAccess(std::uint64_t page) override;
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t GuestBytes() override;
+    ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;
 
 private:
     VkDevice device;

@@ -2338,6 +2338,39 @@ std::vector<std::pair<std::uint64_t, std::size_t>> Aliases(std::uint64_t address
     return ranges;
 }
 
+PageWrites ResidencyPageWrites(std::uint64_t page, std::uint64_t generation) {
+    static_assert(WriteBlockBytes == (std::size_t{1} << ResidencyPageShift) && WritePagesPerBlock == 16);
+    const auto address = page << ResidencyPageShift;
+    static_cast<void>(SettleWrites(address, WriteBlockBytes));
+    PageWrites writes;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    writes.generation = tracker.generation.load(std::memory_order_relaxed);
+    if (!tracker.watched || !tracker.covers(address, WriteBlockBytes)) {
+        writes.cpuSubpages = 0xffffu;
+        writes.other = true;
+        return writes;
+    }
+    const auto block = tracker.blockOf(address);
+    const auto stamp = tracker.stampOf(block);
+    if (stamp <= generation) return writes;
+    const auto cpuStamp = tracker.cpuStampOf(block);
+    if (const auto found = tracker.cpuPages.find(block); found != tracker.cpuPages.end()) {
+        for (std::size_t sub = 0; sub < WritePagesPerBlock; ++sub) {
+            if (found->second.pages[sub] > generation) writes.cpuSubpages = static_cast<std::uint16_t>(writes.cpuSubpages | (1u << sub));
+        }
+    } else if (cpuStamp > generation) {
+        writes.cpuSubpages = 0xffffu;
+    }
+    writes.other = stamp > cpuStamp;
+    if (const auto found = tracker.driverPieces.find(block); !writes.other && found != tracker.driverPieces.end()) {
+        const auto& entry = found->second;
+        writes.other = entry.whole > generation || entry.dropped > generation || std::any_of(entry.pieces.begin(), entry.pieces.end(), [&](const auto& piece) { return piece.generation > generation; });
+    }
+    return writes;
+}
+
 PageBacking Backing(std::uint64_t page) {
     PageBacking backing;
     backing.offset = page << ResidencyPageShift;

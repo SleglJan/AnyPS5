@@ -522,11 +522,13 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
     const auto window = hotEpochs >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << hotEpochs) - 1;
     const auto now = Epoch();
     std::vector<Fill> fills;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> partial;
     for (const auto index : written) {
         const auto id = find(index);
         if (!id) continue;
         auto& page = pages[*id];
         ++counts.faults;
+        bool rearmed = false;
         const auto distance = now - page.faultEpoch;
         page.faultHistory = (distance >= 64 ? 0 : page.faultHistory << distance) | 1u;
         page.faultEpoch = now;
@@ -541,10 +543,29 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
             ++counts.unguardable;
             page.guarded = false;
             hotResident.emplace(index, now);
+        } else {
+            rearmed = page.guarded;
         }
-        fills.push_back({*id});
+        if (!rearmed) {
+            fills.push_back({*id});
+            continue;
+        }
+        const auto writes = device.PageWrites(index, page.generation);
+        if (writes.other) {
+            fills.push_back({*id});
+            continue;
+        }
+        std::uint32_t bits = writes.cpu;
+        while (bits != 0) {
+            const auto first = static_cast<std::uint32_t>(std::countr_zero(bits));
+            const auto run = static_cast<std::uint32_t>(std::countr_one(bits >> first));
+            fills.push_back({*id, first << ResidencySubpageShift, (first + run) << ResidencySubpageShift});
+            bits &= run >= 32 ? 0u : ~(((1u << run) - 1u) << first);
+        }
+        partial.emplace_back(*id, writes.generation);
     }
     refresh(fills);
+    for (const auto& [id, generation] : partial) pages[id].generation = std::max(pages[id].generation, generation);
 }
 
 void ResidencyManager::coolHot(std::uint64_t first, std::span<const std::uint8_t> written) {
