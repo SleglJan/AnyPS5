@@ -1,14 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -32,26 +26,11 @@ constexpr std::size_t BlockBytes = 65536;
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-#else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
-#endif
-        Require(block != nullptr, "gpu buffer format: cannot allocate the guest block");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        block = reinterpret_cast<std::uint8_t*>(TestGuest::Allocate(BlockBytes, BlockBytes));
         const std::array<std::uint32_t, 4 * Lanes> initialData{
             0x807fff01u, 0x3c00bc00u, 0x3f800000u, 0xc0490fdbu, 0xfc007c00u, 0x7fff8000u, 0x7fc00001u, 0x00000001u
         };
         std::copy(initialData.begin(), initialData.end(), Data().begin());
-    }
-
-    ~GuestBlock() {
-        GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
-        VirtualFree(block, 0, MEM_RELEASE);
-#else
-        std::free(block);
-#endif
     }
 
     GuestBlock(const GuestBlock&) = delete;
