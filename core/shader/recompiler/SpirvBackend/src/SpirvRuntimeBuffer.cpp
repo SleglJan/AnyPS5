@@ -147,7 +147,8 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, field(state, values.words[1], 0u, 16u)), BdaConstant(state, 32u));
         base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, values.words[0]), high);
     }
-    auto invalid = nonzero(state, field(state, word3, 30u, 2u));
+    const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
+    auto invalid = scalar ? ConstantBool(state, false) : nonzero(state, field(state, word3, 30u, 2u));
     auto index = ConstantU32(state, 0u);
     if (memory.kind == ResourceKind::Buffer) {
         index = values.index;
@@ -157,7 +158,7 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
             invalid = Binary(state, spv::OpLogicalOr, TypeBool(state), invalid, nonzero(state, field(state, word3, 23u, 1u)));
         }
     }
-    if (memory.gpuDescriptor) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
+    if (memory.gpuDescriptor && !scalar) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
     const auto stride = field(state, word1, 16u, 14u);
     const auto present = runtime ? both(state, nonzero(state, values.words[2]), Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, values.words[0]), nonzero(state, field(state, word1, 0u, 16u)))) : nonzero(state, specializedWord(state, memory, 2u));
     const auto valid = memory.gpuDescriptor ? both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), invalid), Binary(state, spv::OpINotEqual, TypeBool(state), base, BdaConstant(state, 0u))) : present;
