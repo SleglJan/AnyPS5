@@ -158,7 +158,7 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, values.words[0]), high);
     }
     const bool scalar = memory.kind == ResourceKind::ScalarBuffer;
-    auto invalid = scalar ? ConstantBool(state, false) : nonzero(state, field(state, word3, 30u, 2u));
+    auto invalid = scalar ? ConstantBool(state, false) : Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, field(state, word3, 30u, 2u)), nonzero(state, field(state, word1, 30u, 1u)));
     auto index = ConstantU32(state, 0u);
     if (memory.kind == ResourceKind::Buffer) {
         index = values.index;
