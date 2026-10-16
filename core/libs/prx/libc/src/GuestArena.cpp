@@ -35,6 +35,14 @@ void notifyMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t gene
     if (const auto callback = mappingObserver.load(std::memory_order_acquire)) callback(address, bytes, generation, change, protection);
 }
 
+void notifyDemoted() {
+    for (const auto& run : WindowsMappings::Get().TakeDemoted()) {
+        const auto generation = commitGeneration.load(std::memory_order_acquire);
+        notifyMapping(run.begin, run.end - run.begin, generation, MappingChange::Released, 0);
+        notifyMapping(run.begin, run.end - run.begin, generation, MappingChange::Mapped, run.protection);
+    }
+}
+
 std::atomic<void (*)(const std::uintptr_t*, std::size_t)> writeGuardObserver{nullptr};
 std::atomic<void (*)(std::uintptr_t)> accessGuardObserver{nullptr};
 
@@ -499,12 +507,14 @@ void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_
     const auto created = WindowsMappings::Get().Commit(pointer, bytes, protection, granule, Arena::Get().WriteWatched());
     notifyGuarded(WindowsMappings::Get().TakeGuardReports());
     for (const auto& [address, size] : created) notifyMapping(address, size, generation, MappingChange::Committed, protection);
+    notifyDemoted();
 }
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     WindowsMappings::Get().Reset(pointer, bytes);
     notifyMapping(reinterpret_cast<std::uintptr_t>(pointer), bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
+    notifyDemoted();
 }
 
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
@@ -513,6 +523,7 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, 
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), false);
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Mapped, protection);
+    notifyDemoted();
 }
 
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
@@ -521,10 +532,13 @@ void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* sec
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
     WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), true);
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Mapped, protection);
+    notifyDemoted();
 }
 
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes) {
-    return WindowsMappings::Get().MapAlias(address, bytes);
+    auto* alias = WindowsMappings::Get().MapAlias(address, bytes);
+    static_cast<void>(WindowsMappings::Get().TakeDemoted());
+    return alias;
 }
 
 void GuestArenaUnmapAlias_nid_postfix(void* alias) {

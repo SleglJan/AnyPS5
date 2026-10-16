@@ -262,6 +262,19 @@ public:
         return reports;
     }
 
+    struct Demoted {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        DWORD protection;
+    };
+
+    std::vector<Demoted> TakeDemoted() {
+        std::lock_guard lock(mutex);
+        std::vector<Demoted> runs;
+        runs.swap(demotedRuns);
+        return runs;
+    }
+
     std::vector<std::pair<std::uintptr_t, std::size_t>> Aliases(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         std::vector<std::pair<std::uintptr_t, std::size_t>> ranges;
@@ -800,6 +813,7 @@ private:
         DWORD previous;
         if (!VirtualProtect(reinterpret_cast<void*>(start), stop - start, PAGE_READONLY, &previous)) fail("fence resident guest pages");
         const auto section = views.at(start).section;
+        demotedRuns.push_back({start, stop, views.at(start).protection});
         auto window = open(section->handle, views.at(start).offset, stop - start);
         if (query(reinterpret_cast<std::uintptr_t>(window.bytes)).State == MEM_RESERVE && !VirtualAlloc(window.bytes, stop - start, MEM_COMMIT, PAGE_READWRITE)) fail("commit direct memory pages");
         std::memcpy(window.bytes, reinterpret_cast<const void*>(start), stop - start);
@@ -1063,6 +1077,7 @@ private:
     }
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::shared_ptr<Physical>> physical;
     std::map<std::uintptr_t, Run> residentRuns;
+    std::vector<Demoted> demotedRuns;
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
