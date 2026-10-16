@@ -343,6 +343,18 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     } catch (const std::exception& error) {
         rethrow(error);
     }
+    std::optional<Graphics::DepthPlaneClear> depthPlaneClear;
+    if (indirectArguments == 0 && !partialLastGroup) {
+        if (const auto clear = Graphics::MatchStorageImageClear(std::span(snapshot.code).subspan(codeOffset), userData, compute, groups)) {
+            const auto clearAddress = Graphics::StorageImageClearAddress(*clear);
+            if (clearAddress != 0 && Graphics::DepthSurfaceAt(clearAddress)) {
+                GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Dispatch);
+                std::lock_guard clearLock(GuestMemory::GpuMutex());
+                recordLabelsForPacket(localDevice.get(), submission.queue);
+                depthPlaneClear.emplace(*clear);
+            }
+        }
+    }
     const auto probe = compiled.deviceImagesComplete ? nullptr : ShaderRecompiler::DeviceImageProbeResult(compiled);
     std::shared_ptr<PreparedDispatch> preparedProbe;
     std::shared_ptr<PreparedDispatch> prepared;
