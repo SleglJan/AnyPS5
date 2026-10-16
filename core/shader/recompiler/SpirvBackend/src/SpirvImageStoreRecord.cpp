@@ -18,15 +18,12 @@ namespace {
 
 namespace Pages = StorageImagePages;
 
-std::uint32_t PrivateTable(SpirvEmitterState& state, std::span<const std::uint32_t> values) {
-    const auto u32 = TypeU32(state);
-    const auto array = state.module.Type(spv::OpTypeArray, u32, ConstantU32(state, static_cast<std::uint32_t>(values.size())));
-    std::vector<std::uint32_t> words;
-    for (const auto value : values) words.push_back(ConstantU32(state, value));
-    const auto initializer = state.module.Constant(spv::OpConstantComposite, array, std::span<const std::uint32_t>(words));
-    const auto variable = state.module.AllocateId();
-    state.module.EmitGlobalVariable({spv::OpVariable, TypePointer(state, spv::StorageClassPrivate, array), variable, spv::StorageClassPrivate, initializer});
-    return variable;
+std::uint32_t ConstantAt(SpirvEmitterState& state, std::span<const std::uint32_t> values, std::uint32_t index, std::uint32_t first = 0u) {
+    if (values.size() == 1u) return ConstantU32(state, values.front());
+    const auto half = static_cast<std::uint32_t>(values.size() / 2u);
+    const auto low = ConstantAt(state, values.first(half), index, first);
+    const auto high = ConstantAt(state, values.subspan(half), index, first + half);
+    return Select(state, TypeU32(state), Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, first + half)), low, high);
 }
 
 template<typename TBody>
@@ -80,10 +77,8 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);
     const auto formats = Pages::FormatTable();
-    const auto formatTable = PrivateTable(state, formats);
     std::array<std::uint32_t, 60> locations{};
     for (std::uint32_t element = 0; element < 5u; ++element) std::copy(Pages::TailLocations64KB[element].begin(), Pages::TailLocations64KB[element].end(), locations.begin() + element * 12u);
-    const auto tailTable = PrivateTable(state, locations);
     const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
     const auto wide = [&](std::uint64_t value) { return BdaConstant(state, value); };
     const auto op = [&](spv::Op code, std::uint32_t type, std::uint32_t left, std::uint32_t right) { return Binary(state, code, type, left, right); };
@@ -112,11 +107,6 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, type, value, pointer);
         return value;
-    };
-    const auto tableAt = [&](std::uint32_t table, std::uint32_t index) {
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, u32), pointer, table, index);
-        return load(u32, pointer);
     };
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end(); };
     const bool shared = !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformBallot) && supports(spv::CapabilityGroupNonUniformArithmetic);
@@ -195,7 +185,7 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto arrayPitch = andBits(w5, 0xfu);
     const auto maxMip = field(w5, 4u, 0xfu);
     const auto formatIndex = umin(format, constant(Pages::FormatTableEntries - 1u));
-    const auto sizeCode = pick(u32, less(format, constant(Pages::FormatTableEntries)), andBits(shr(tableAt(formatTable, shr(formatIndex, constant(3u))), shl(andBits(formatIndex, 7u), constant(2u))), 0xfu), constant(0u));
+    const auto sizeCode = pick(u32, less(format, constant(Pages::FormatTableEntries)), andBits(shr(ConstantAt(state, formats, shr(formatIndex, constant(3u))), shl(andBits(formatIndex, 7u), constant(2u))), 0xfu), constant(0u));
     const auto linear = is(tileMode, 0u);
     const auto block256 = any(tileMode, {1u, 2u});
     const auto block4KB = any(tileMode, {5u, 6u, 21u, 22u});
@@ -260,7 +250,7 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto blockIndex = add(op(spv::OpIMul, u32, shr(y, heightLog2), shr(padded, widthLog2)), shr(x, widthLog2));
     const auto blockStart = op(spv::OpIAdd, u64, layerStart, pick(u64, inTail, wide(0u), op(spv::OpIAdd, u64, levelOffset, op(spv::OpShiftLeftLogical, u64, widen(blockIndex), widen(blockLog2)))));
     const auto tailIndex = umin(sub(level, umin(firstTail, level)), constant(11u));
-    const auto location = tableAt(tailTable, add(op(spv::OpIMul, u32, umin(elementLog2, constant(4u)), constant(12u)), tailIndex));
+    const auto location = ConstantAt(state, locations, add(op(spv::OpIMul, u32, umin(elementLog2, constant(4u)), constant(12u)), tailIndex));
     const auto swizzleX = pick(u32, inTail, add(x, shr(location, constant(16u))), x);
     const auto swizzleY = pick(u32, inTail, add(y, andBits(location, 0xffffu)), y);
     std::array<std::uint32_t, 2> groups{};

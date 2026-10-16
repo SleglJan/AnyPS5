@@ -5,12 +5,14 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <span>
 #include <string>
 
@@ -49,6 +51,19 @@ ShaderRecompiler::RecompileResult Recompile(AgcDriver::VulkanDevice& device, std
     return ShaderRecompiler::Recompile(request);
 }
 
+std::size_t PrivateArrays(std::span<const std::uint32_t> words) {
+    std::set<std::uint32_t> arrays;
+    std::set<std::uint32_t> pointers;
+    std::size_t variables = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpTypeArray) arrays.insert(words[cursor + 1]);
+        if (op == spv::OpTypePointer && words[cursor + 2] == spv::StorageClassPrivate && arrays.contains(words[cursor + 3])) pointers.insert(words[cursor + 1]);
+        if (op == spv::OpVariable && pointers.contains(words[cursor + 1])) ++variables;
+    }
+    return variables;
+}
+
 bool BindsFaultBuffer(const ShaderRecompiler::RecompileResult& result) {
     return std::ranges::any_of(result.bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
 }
@@ -76,6 +91,7 @@ int main() {
         const auto result = Recompile(*device, CopyCode, userData, copy, 64);
         Require(result.imageStoresRecorded, "image store records: an image copy kernel was not marked as recording its image stores");
         Require(BindsFaultBuffer(result), "image store records: an image copy kernel recording its stores binds no fault buffer");
+        Require(PrivateArrays(result.spirv.Words()) == 0u, "image store records: the image copy kernel keeps " + std::to_string(PrivateArrays(result.spirv.Words())) + " Private arrays, expected the record's format and tail tables selected from constants");
         device->Dispatch(result, Size / 8u, Size / 8u, 1, reinterpret_cast<std::uintptr_t>(CopyCode.data()));
         device->WaitIdle();
         AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(destination), bytes, nullptr, "test");
