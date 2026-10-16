@@ -15,6 +15,7 @@ constexpr std::uint32_t Texels = Width * Height;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Rounds = 6;
 constexpr std::uint32_t WaitEqual = 3;
+constexpr std::uint32_t ReaderQueue = 0x20u;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 
 int failures = 0;
@@ -110,7 +111,7 @@ void Run() {
     };
     for (std::uint32_t texel = 0; texel < Texels; ++texel) texels.Words()[texel] = 0x0f000000u + texel;
     for (std::uint32_t warm = 0; warm < 2u; ++warm) {
-        read(1, std::nullopt);
+        read(ReaderQueue, std::nullopt);
         WaitIdle();
     }
     for (std::uint32_t round = 0; round < Rounds; ++round) {
@@ -126,7 +127,7 @@ void Run() {
             writer.Barrier();
             writer.WriteData(labels.Address(), {round + 1u});
             writer.Submit(0);
-            read(1, round + 1u);
+            read(ReaderQueue, round + 1u);
             WaitIdle();
         } catch (const std::exception& error) {
             failure = error.what();
@@ -142,7 +143,7 @@ void Run() {
             if (loaded == wanted) continue;
             if (wrong++ == 0u) first = "texel " + std::to_string(texel) + " read " + Hex(loaded) + ", expected " + Hex(wanted);
         }
-        Expect(wrong == 0u, what + ": a dispatch on queue 1 waiting for the label queue 0 writes after its image store read " + std::to_string(wrong) + " texels the store had not written, first " + first);
+        Expect(wrong == 0u, what + ": a dispatch on the second queue waiting for the label queue 0 writes after its image store read " + std::to_string(wrong) + " texels the store had not written, first " + first);
     }
 }
 
