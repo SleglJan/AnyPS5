@@ -45,8 +45,8 @@ void Require(bool condition) {
     if (!condition) std::abort();
 }
 
-void InsertPixelDefaultsAfterFrontFace(std::vector<std::uint8_t>& bytes) {
-    bytes.insert(bytes.begin() + 261u, {0x0fu, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0u, 0u, 0u, 0u});
+void InsertPixelDefaultsAfterLayer(std::vector<std::uint8_t>& bytes) {
+    bytes.insert(bytes.begin() + 259u, {0x0fu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0u, 0u, 0u, 0u});
 }
 
 std::vector<std::uint8_t> DecodeBase64(std::string_view text) {
@@ -206,11 +206,11 @@ int main() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 31u;
-            if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
-            if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
+            upgraded[4] = 32u;
+            if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, 0u);
+            if (fixture.pixel) InsertPixelDefaultsAfterLayer(upgraded);
             if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 5u, 0u);
-            upgraded.insert(upgraded.end(), sizeof(std::uint64_t), 0u);
+            upgraded.insert(upgraded.end(), 2u * sizeof(std::uint64_t), 0u);
             Require(serializer.Serialize(request) == EncodeBase64(upgraded));
             auto truncated = bytes;
             truncated.pop_back();
@@ -245,11 +245,10 @@ int main() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 31u;
-                layered.insert(layered.begin() + 259u, {0u, 0u});
-                InsertPixelDefaultsAfterFrontFace(layered);
+                layered[4] = 32u;
+                InsertPixelDefaultsAfterLayer(layered);
                 if (fixture.tessellation) layered.insert(layered.end() - 35u, 5u, 0u);
-                layered.insert(layered.end(), sizeof(std::uint64_t), 0u);
+                layered.insert(layered.end(), 2u * sizeof(std::uint64_t), 0u);
                 Require(serializer.Serialize(layerReplay.request) == EncodeBase64(layered));
             }
         }
@@ -270,10 +269,9 @@ int main() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 31u;
-            bytes.insert(bytes.begin() + 259u, {0u, 0u});
-            InsertPixelDefaultsAfterFrontFace(bytes);
-            bytes.insert(bytes.end(), sizeof(std::uint64_t), 0u);
+            bytes[4] = 32u;
+            InsertPixelDefaultsAfterLayer(bytes);
+            bytes.insert(bytes.end(), 2u * sizeof(std::uint64_t), 0u);
             Require(serializer.Serialize(replay.request) == EncodeBase64(bytes));
 
             auto truncated23 = DecodeBase64(encoded23);
@@ -288,134 +286,33 @@ int main() {
         }
     }
 
-    struct Main24Fixture {
-        bool pixel;
-        bool tessellation;
-        std::string_view encoded;
-    };
-    static constexpr std::array<Main24Fixture, 4> canonicalMain24{{
-        {true, false,
-            "NVNQQRgAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAgAAAADAAAAAAAAAN+bVxPgrGgk776t3gAB"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAJAAAAAAAAAOQAAAAAAAAAAAAAAAAAAAAAAQEDAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAkAAAANAAAAAQUKBQABAAAAAAAAAAAABQAAAAAABAAAAAAAAAABAwUHAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAACwAAABAAAABAAAAAAQYAAAAAAAAAAAAAAAAAADTvzasAAAA5"
-            "AAAABAAAAAkAAAAAAXhWNBIBAQE5MAAAAAE="
-        },
-        {true, true,
-            "NVNQQRgAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAgAAAADAAAAAAAAAN+bVxPgrGgk776t3gAB"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAJAAAAAAAAAOQAAAAAAAAAAAAAAAAAAAAAAQEDAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAkAAAANAAAAAQUKBQABAAAAAAAAAAAABQAAAAAABAAAAAAAAAABAwUHAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAACwAAABAAAABAAAAAAQYAAAAAAAAAAAAAAAABBAAAAAQAAAAC"
-            "AAAAAgAAAAMAAAA/AAAAJQAAAAEANO/NqwAAADkAAAAEAAAACQAAAAABeFY0EgEBATkwAAAAAQ=="
-        },
-        {false, false,
-            "NVNQQRgAAAABAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAgAAAADAAAAAAAAAN+bVxPgrGgk776t3gAA"
-            "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQAAAA0AAAABBQoFAAEAAAAAAAAA"
-            "AAAFAAAAAAAEAAAAAAAAAAEDBQcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAIAAAALAAAAEAAAAEAAAAABBgAAAAAAAAAAAAAAAAAANO/NqwAAADkAAAAEAAAACQAAAAABeFY0EgEBATkwAAAAAQ=="
-        },
-        {false, true,
-            "NVNQQRgAAAABAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAgAAAADAAAAAAAAAN+bVxPgrGgk776t3gAA"
-            "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQAAAA0AAAABBQoFAAEAAAAAAAAA"
-            "AAAFAAAAAAAEAAAAAAAAAAEDBQcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            "AAIAAAALAAAAEAAAAEAAAAABBgAAAAAAAAAAAAAAAAEEAAAABAAAAAIAAAACAAAAAwAAAD8AAAAlAAAAAQA0782rAAAAOQAAAAQA"
-            "AAAJAAAAAAF4VjQSAQEBOTAAAAAB"
-        },
-    }};
-    for (const auto& fixture : canonicalMain24) {
-        for (const bool preserve : {false, true}) {
-            for (const bool layer : {false, true}) {
-                if (!fixture.pixel && layer) continue;
-                auto bytes = DecodeBase64(fixture.encoded);
-                bytes.back() = static_cast<std::uint8_t>(preserve);
-                if (fixture.pixel) bytes[258] = static_cast<std::uint8_t>(layer);
-                const auto replay = serializer.Deserialize(EncodeBase64(bytes));
-                const auto& request = replay.request;
-                Require(request.context.pixel.has_value() == fixture.pixel && request.context.vertex.has_value());
-                Require(!fixture.pixel || (request.context.pixel->layerExported == layer && !request.context.pixel->ditheredAlphaToCoverage && request.context.pixel->reversedBlend == 0u));
-                Require(request.graphics.has_value() && request.graphics->tessellation.has_value() == fixture.tessellation);
-                Require(!fixture.tessellation || (request.graphics->tessellation->patchesPerGroup == 63u && request.graphics->tessellation->primitiveGroupSize == 37u && request.graphics->tessellation->breakAtInstance));
-                Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
-                Require(request.target.float16DenormPreserve == preserve);
-                auto upgraded = bytes;
-                upgraded[4] = 31u;
-                if (fixture.pixel) upgraded.insert(upgraded.begin() + 259u, {0u, 0u});
-                if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
-                upgraded.insert(upgraded.end(), sizeof(std::uint64_t), 0u);
-                Require(serializer.Serialize(request) == EncodeBase64(upgraded));
-                for (const bool dither : {false, true}) {
-                    if (!fixture.pixel && dither) continue;
-                    auto main25 = bytes;
-                    main25[4] = 25u;
-                    if (fixture.pixel) main25.insert(main25.begin() + 259u, static_cast<std::uint8_t>(dither));
-                    const auto replay25 = serializer.Deserialize(EncodeBase64(main25));
-                    Require(!fixture.pixel || (replay25.request.context.pixel->layerExported == layer && replay25.request.context.pixel->ditheredAlphaToCoverage == dither && replay25.request.context.pixel->reversedBlend == 0u));
-                    Require(replay25.request.target.float16DenormPreserve == preserve && (!fixture.tessellation || replay25.request.graphics->tessellation->primitiveGroupSize == 37u));
-                    main25[4] = 31u;
-                    if (fixture.pixel) {
-                        main25.insert(main25.begin() + 260u, 0u);
-                        InsertPixelDefaultsAfterFrontFace(main25);
-                    }
-                    main25.insert(main25.end(), sizeof(std::uint64_t), 0u);
-                    Require(serializer.Serialize(replay25.request) == EncodeBase64(main25));
-                }
+    for (const auto& fixture : canonicalMain22) {
+        const auto replay = serializer.Deserialize(fixture.encoded);
+        for (const bool dither : {false, true}) {
+            auto modern = replay.request;
+            if (fixture.tessellation) {
+                modern.graphics->tessellation->primitiveGroupSize = 37u;
+                modern.graphics->tessellation->breakAtInstance = true;
             }
+            if (fixture.pixel) {
+                modern.context.pixel->layerExported = dither;
+                modern.context.pixel->ditheredAlphaToCoverage = dither;
+                modern.context.pixel->frontFaceAllBits = !dither;
+                modern.context.pixel->quadPixelMask = 0x5u;
+                modern.context.pixel->quadSampleMask = {0x1u, 0x2u, 0x4u, 0x8u};
+                modern.context.pixel->reversedBlend = 0x3u;
+            }
+            const auto encoded = serializer.Serialize(modern);
+            const auto back = serializer.Deserialize(encoded);
+            Require(back.request.graphics.has_value() && back.request.graphics->tessellation.has_value() == fixture.tessellation);
+            Require(!fixture.tessellation || (back.request.graphics->tessellation->patchesPerGroup == 63u && back.request.graphics->tessellation->primitiveGroupSize == 37u && back.request.graphics->tessellation->breakAtInstance));
+            Require(back.request.context.pixel.has_value() == fixture.pixel);
+            if (fixture.pixel) {
+                const auto& pixel = *back.request.context.pixel;
+                Require(pixel.layerExported == dither && pixel.ditheredAlphaToCoverage == dither && pixel.frontFaceAllBits == !dither && pixel.quadPixelMask == 0x5u);
+                Require(pixel.quadSampleMask[0] == 0x1u && pixel.quadSampleMask[1] == 0x2u && pixel.quadSampleMask[2] == 0x4u && pixel.quadSampleMask[3] == 0x8u && pixel.reversedBlend == 0x3u);
+            }
+            Require(serializer.Serialize(back.request) == encoded);
         }
     }
 
@@ -426,16 +323,18 @@ int main() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 31u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
-        auto future = bytes;
-        future[4] = 32u;
-        bool futureRejected = false;
-        try {
-            static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
-        } catch (const std::runtime_error& error) {
-            futureRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+        Require(bytes.size() >= 8u && bytes[4] == 32u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        for (const std::uint8_t refusedVersion : {27u, 28u, 29u, 30u, 31u, 33u}) {
+            auto refused = bytes;
+            refused[4] = refusedVersion;
+            bool versionRejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(refused)));
+            } catch (const std::runtime_error& error) {
+                versionRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+            }
+            Require(versionRejected);
         }
-        Require(futureRejected);
         bytes.pop_back();
         bool rejected = false;
         try {
