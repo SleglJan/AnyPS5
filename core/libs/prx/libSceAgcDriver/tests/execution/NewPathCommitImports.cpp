@@ -202,7 +202,7 @@ int main() {
         ImportedAtCommit(reader);
         ReleaseAndRecommit(reader);
         SharedAliases(reader);
-        Residency();
+        Locked([] { Residency().Manager().SetBudget(std::uint64_t{1} << 30); });
         DriverStoreToUnguardedResidentPage(reader);
         DriverWritesBeforeDispatch(reader);
         AgcDriverShutdown_nid_postfix();
