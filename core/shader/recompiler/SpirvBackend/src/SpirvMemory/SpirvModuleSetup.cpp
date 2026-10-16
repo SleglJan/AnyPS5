@@ -229,6 +229,7 @@ void DefineModule(SpirvEmitterState& state) {
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
         state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
+        if (narrowWindow && state.vectorWindowIndexed == 0u && window <= MaxIndexedWindowSlots && state.program.Metadata().callFunctions.empty()) state.vectorWindowIndexed = window;
         const bool indexedSlots = state.vectorWindowIndexed != 0u && state.vectorWindowIndexed <= MaxIndexedWindowSlots && state.program.Metadata().callFunctions.empty();
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
