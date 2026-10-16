@@ -86,27 +86,25 @@ void DmaFill(const GuestBlock& htile, std::uint32_t bytes, std::uint32_t pattern
 
 constexpr std::array<std::uint32_t, 12> BufferPatternFillKernel{0xd7460004u, 0x04010c08u, 0xf4280302u, 0xfa000000u, 0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e04020eu, 0x7e06020fu, 0xe01c2000u, 0x80000004u, 0xbf810000u};
 
-void DispatchFill(const GuestBlock& code, const GuestBlock& htile, std::uint32_t bytes, const GuestBlock* patternBuffer = nullptr) {
+void DispatchFill(AgcDriver::VulkanDevice& device, const GuestBlock& code, std::size_t codeWords, const GuestBlock& htile, std::uint32_t bytes, const GuestBlock* patternBuffer = nullptr) {
     const auto kernel = code.Address();
     const auto base = htile.Address();
     const auto source = patternBuffer != nullptr ? patternBuffer->Address() : 0;
-    Submit({
-        Pm4Packet(0x76, {0x20c, Low(kernel >> 8u)}),
-        Pm4Packet(0x76, {0x20d, High(kernel >> 8u) & 0xffu}),
-        Pm4Packet(0x76, {0x207, 64}),
-        Pm4Packet(0x76, {0x208, 1}),
-        Pm4Packet(0x76, {0x209, 1}),
-        Pm4Packet(0x76, {0x213, (8u << 1u) | 0x80u}),
-        Pm4Packet(0x76, {0x240, Low(base)}),
-        Pm4Packet(0x76, {0x241, (High(base) & 0xffffu) | (16u << 16u)}),
-        Pm4Packet(0x76, {0x242, bytes / 16u}),
-        Pm4Packet(0x76, {0x243, 0x4bfacu}),
-        Pm4Packet(0x76, {0x244, Low(source)}),
-        Pm4Packet(0x76, {0x245, source != 0 ? (High(source) & 0xffffu) | (16u << 16u) : 0}),
-        Pm4Packet(0x76, {0x246, source != 0 ? 1u : 0}),
-        Pm4Packet(0x76, {0x247, source != 0 ? 0x4dfacu : 0}),
-        Pm4Packet(0x15, {bytes / 1024u, 1, 1, 0x41}),
-    });
+    const std::array<std::uint32_t, 8> userData{
+        Low(base), (High(base) & 0xffffu) | (16u << 16u), bytes / 16u, 0x4bfacu,
+        Low(source), source != 0 ? (High(source) & 0xffffu) | (16u << 16u) : 0, source != 0 ? 1u : 0, source != 0 ? 0x4dfacu : 0,
+    };
+    const std::span<const std::uint32_t> words(reinterpret_cast<const std::uint32_t*>(kernel), codeWords);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{kernel, std::as_bytes(words)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {true, false, false}, false, 1u};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, kernel, words, 0u, {}},
+        {64u, 0u, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(), {0u, 0u, 0u, 128u}};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, bytes / 1024u, 1u, 1u, kernel);
+    device.WaitIdle();
 }
 
 constexpr std::array<std::uint32_t, 10> UnknownFillKernel{0xbf800000u, 0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
@@ -152,10 +150,10 @@ void DispatchBufferPatternFillClearsDepth(AgcDriver::VulkanDevice& device, const
     const Surface surface{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT};
     Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
     std::memset(pattern.Data(), 0xff, 16);
-    DispatchFill(code, htile, HtileFillBytes, &pattern);
+    DispatchFill(device, code, BufferPatternFillKernel.size(), htile, HtileFillBytes, &pattern);
     Require(Draw(device, shaders, surface, {}) == 0u, "a compute fill with the buffer pattern 0xffffffff (ZMask 0xf) cleared the depth");
     std::memset(pattern.Data(), 0, 16);
-    DispatchFill(code, htile, HtileFillBytes, &pattern);
+    DispatchFill(device, code, BufferPatternFillKernel.size(), htile, HtileFillBytes, &pattern);
     Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a compute fill with the buffer pattern 0 over the HTILE did not clear the depth to DB_DEPTH_CLEAR (1.0)");
 }
 
@@ -181,7 +179,7 @@ void UnknownKernelClearsTwice(AgcDriver::VulkanDevice& device, const Shaders& sh
     const Surface surface{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT};
     Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
     for (const char* frame : {"first", "second"}) {
-        DispatchFill(code, htile, HtileFillBytes);
+        DispatchFill(device, code, UnknownFillKernel.size(), htile, HtileFillBytes);
         Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, std::string("the ") + frame + " clear an unrecognized kernel wrote into the HTILE was not taken");
         Require(Draw(device, shaders, surface, {}) == 0u, std::string("the depth written after the ") + frame + " kernel clear was lost");
     }
