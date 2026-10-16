@@ -1864,9 +1864,28 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
     return merge;
 }
 
+bool SingleTableImageUse(const SpirvEmitterState& state, const IrValue& inst, const MemoryInfo& memory) {
+    const auto& infos = state.program.Resources().memoryInfo;
+    std::size_t uses = 0;
+    for (const IrBlock* block : state.program.BlockOrder()) {
+        for (const IrValue* other : block->Instructions()) {
+            if (other->Opcode() != inst.Opcode()) continue;
+            const auto index = other->Flags<MemoryFlags>().index;
+            if (index < infos.size() && infos[index] == memory && ++uses > 1u) return false;
+        }
+    }
+    return uses == 1u;
+}
+
 void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, std::uint32_t selector, bool tableSampler) {
     auto& state = ctx.state;
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
+    if (state.laneCount == 1u && !state.module.InHelperFunction() && SingleTableImageUse(state, inst, memory)) {
+        const auto result = returnsValue ? state.module.AllocateId() : 0u;
+        EmitModeSwitch(ctx, inst, memory, modes, true, selector, result);
+        if (returnsValue) ctx.Define(inst, result);
+        return;
+    }
     const auto resultType = returnsValue ? TypeId(state, inst.Type()) : TypeVoid(state);
     const std::size_t addressIndex = ImageOpcodeInfoOf(inst.Opcode()).needsSampler ? 2u : 1u;
     const auto* address = ctx.ImageAddress(inst.Argument(addressIndex));

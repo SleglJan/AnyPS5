@@ -5,6 +5,10 @@
 #include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
+#include <span>
+#include <spirv/unified1/spirv.hpp>
+#include <string>
+#include <string_view>
 #include <cstring>
 #include <iostream>
 
@@ -23,6 +27,14 @@ struct alignas(4096) GuestData {
 alignas(256) std::array<std::array<std::uint32_t, 64>, 2> textures{};
 TestGuest::Array<GuestData, 12> guest;
 constexpr std::array<std::uint32_t, 23> code{0xbf068002u, 0xbf850013u, 0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u, 0xbf800000u};
+
+std::size_t TableImageFunctions(std::span<const std::uint32_t> words) {
+    std::size_t functions = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        if ((words[cursor] & 0xffffu) == spv::OpName && std::string_view(reinterpret_cast<const char*>(&words[cursor + 2])).starts_with("table_image_")) ++functions;
+    }
+    return functions;
+}
 
 std::array<std::uint32_t, 4> Buffer(const void* pointer, std::uint32_t stride, std::uint32_t records) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
@@ -60,6 +72,7 @@ void Run(AgcDriver::VulkanDevice& device) {
             const ShaderComputeStageInfo compute{{threads, 1u, 1u}, 0u, {false, false, false}, false, 1u};
             RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, device.Target(), {0u, 0u, 0u, 128u}};
             const auto shader = Recompile(request);
+            Require(TableImageFunctions(shader.spirv.Words()) == 0u, "bindless images: the program's one table image access was emitted as " + std::to_string(TableImageFunctions(shader.spirv.Words())) + " out-of-line functions, expected its mode switch inline");
             if (artifact.variantId == 0u) artifact = shader;
             else Require(shader.cacheHit && shader.variantId == artifact.variantId, "bindless table changed the compiled artifact");
             if (iteration == 1u) {
