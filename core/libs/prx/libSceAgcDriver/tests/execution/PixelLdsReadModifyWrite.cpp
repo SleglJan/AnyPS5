@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,8 +24,8 @@ constexpr std::uint32_t Factor = 0x00a5c3e1u;
 constexpr std::uint32_t Counter = 0x1234u;
 constexpr std::uint32_t Slots = 64;
 constexpr std::uint32_t CounterOffset = Slots * 16u;
-alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-alignas(256) std::array<std::uint32_t, Width * Height * Results> Outputs{};
+TestGuest::Array<std::byte, Width * Height * 4> Pixels;
+TestGuest::Array<std::uint32_t, Width * Height * Results> Outputs;
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -92,9 +93,9 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-constexpr std::array<std::array<float, 4>, 3> Triangles{{
+TestGuest::Array<std::array<float, 4>, 3> Triangles{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
-}};
+};
 
 void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     const auto& triangles = Triangles;
