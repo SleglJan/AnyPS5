@@ -65,7 +65,7 @@ Counts Count(std::span<const std::uint32_t> words) {
         if (opcode == spv::OpTypePointer && operands[1] == spv::StorageClassPhysicalStorageBuffer && byteTypes.contains(operands[2])) bytePointerTypes.insert(operands[0]);
         if (opcode == spv::OpFunction) function = names[operands[1]];
         if ((opcode == spv::OpConvertUToPtr || opcode == spv::OpAccessChain) && bytePointerTypes.contains(operands[0])) bytePointers.insert(operands[1]);
-        if (opcode == spv::OpAtomicCompareExchange && function != "record_bda_fault" && function != "note_bda_write") ++counts.storeCompareExchanges;
+        if (opcode == spv::OpAtomicCompareExchange && function != "record_bda_fault" && function != "note_bda_write" && function != "note_bda_touch") ++counts.storeCompareExchanges;
         if (opcode == spv::OpStore && bytePointers.contains(operands[0])) {
             ++counts.byteStores[function];
             if (count > 3 && (operands[2] & spv::MemoryAccessVolatileMask) != 0u) ++counts.volatileByteStores[function];
