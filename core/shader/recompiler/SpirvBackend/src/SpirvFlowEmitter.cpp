@@ -4,11 +4,13 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <span>
 #include <string>
 #include <spirv/unified1/spirv.hpp>
@@ -784,6 +786,7 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
     // and a read from the next write. The block may be entered right after a write.
     bool ldsWritten = true;
     bool ldsRead = false;
+    std::vector<const IrValue*> phiAnchors;
     for (const IrValue* inst : block->Instructions()) {
         if (inst->Opcode() == IrOpcode::Phi) {
             if (emittedNonPhi) {
@@ -791,6 +794,8 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
         } else {
             emittedNonPhi = true;
+            for (const IrValue* anchor : phiAnchors) EmitAnchoredDeviceImageLookups(ctx, *anchor);
+            phiAnchors.clear();
         }
         if (state.waveLdsScope != 0) {
             const auto access = SharedAccessOf(inst->Opcode());
@@ -826,7 +831,12 @@ void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& fu
             }
         }
         state.laneHalf = 0;
+        if (state.laneCount == 1u && state.deviceImageAnchors.contains(inst)) {
+            if (inst->Opcode() == IrOpcode::Phi) phiAnchors.push_back(inst);
+            else EmitAnchoredDeviceImageLookups(ctx, *inst);
+        }
     }
+    for (const IrValue* anchor : phiAnchors) EmitAnchoredDeviceImageLookups(ctx, *anchor);
 }
 
 void PatchStructuredPhis(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState) {
@@ -891,7 +901,8 @@ struct CalleeStateScope {
           bdaStopValue(state.bdaStopValue), bdaPcOverride(state.bdaPcOverride), calleeStopValue(state.calleeStopValue), memoryByteOffsets(state.memoryByteOffsets),
           bufferAddresses(state.bufferAddresses), bufferDwords(state.bufferDwords), ldsBufferBase(state.ldsBufferBase), gdsLength(state.gdsLength),
           scratchVariable(state.scratchVariable), vectorWindowVariable(state.vectorWindowVariable), ldsVariable(state.ldsVariable), laneHalf(state.laneHalf),
-          entryInvocationId(state.entryInvocationId), entryInvocationIndex(state.entryInvocationIndex) {
+          entryInvocationId(state.entryInvocationId), entryInvocationIndex(state.entryInvocationIndex), deviceImageLookups(std::move(state.deviceImageLookups)) {
+        state.deviceImageLookups.clear();
     }
     CalleeStateScope(const CalleeStateScope&) = delete;
     CalleeStateScope& operator=(const CalleeStateScope&) = delete;
@@ -914,6 +925,7 @@ struct CalleeStateScope {
         state.laneHalf = laneHalf;
         state.entryInvocationId = entryInvocationId;
         state.entryInvocationIndex = entryInvocationIndex;
+        state.deviceImageLookups = std::move(deviceImageLookups);
     }
 
     SpirvEmitterState& state;
@@ -935,6 +947,7 @@ struct CalleeStateScope {
     std::uint32_t laneHalf;
     std::uint32_t entryInvocationId;
     std::uint32_t entryInvocationIndex;
+    std::map<std::vector<std::uint64_t>, std::uint32_t> deviceImageLookups;
 };
 
 FunctionLayout PlanFunctions(SpirvValueEmitContext& ctx, const IrProgram& program) {

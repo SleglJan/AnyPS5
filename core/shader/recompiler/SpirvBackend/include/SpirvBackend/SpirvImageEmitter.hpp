@@ -16,6 +16,10 @@ void EmitImageOperation(SpirvValueEmitContext& context, const IrValue& value, st
 
 void DefineDeviceImageLookup(SpirvEmitterState& state);
 
+void PlanDeviceImageAnchors(SpirvEmitterState& state);
+
+void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& anchor);
+
 bool ImageStoresRecorded(const IrProgram& program, std::span<const std::uint32_t> capabilities);
 
 void DefineImageStoreRecord(SpirvEmitterState& state);

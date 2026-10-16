@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -2014,6 +2015,117 @@ std::uint32_t CompositeU32x4(SpirvEmitterState& state, std::uint32_t x, std::uin
     return value;
 }
 
+struct DeviceImagePlan {
+    const MemoryInfo* memory = nullptr;
+    const ImageResource* base = nullptr;
+    std::vector<ImageResource> modes;
+    const IrValue* handle = nullptr;
+    const IrValue* samplerHandle = nullptr;
+    bool needsSampler = false;
+    bool deviceSampler = false;
+    bool levelZero = false;
+    std::uint64_t id = 0;
+};
+
+std::optional<DeviceImagePlan> PlanDeviceImage(const SpirvEmitterState& state, const IrValue& inst) {
+    namespace Abi = DeviceImageTableAbi;
+    const auto info = ImageOpcodeInfoOf(inst.Opcode());
+    if (info.access == ImageAccess::None || inst.ArgumentCount() == 0u) return std::nullopt;
+    const auto& infos = state.program.Resources().memoryInfo;
+    const auto index = inst.Flags<MemoryFlags>().index;
+    if (index >= infos.size()) return std::nullopt;
+    DeviceImagePlan plan;
+    plan.memory = &infos[index];
+    plan.base = &ImageResourceOf(state, *plan.memory);
+    if (!plan.base->deviceTable) return std::nullopt;
+    plan.modes = plan.base->table != NoTable ? state.program.Info().runtimeImageModes.at(plan.memory->resource) : ResourceMaterializer::RuntimeImageModes(*plan.base);
+    if (plan.base->tableOperation == TableOperation::Unsupported || plan.modes.empty()) return std::nullopt;
+    plan.handle = inst.Argument(0)->Resolve();
+    if (plan.handle == nullptr || plan.handle->ArgumentCount() != Abi::DescriptorWords) return std::nullopt;
+    plan.needsSampler = info.needsSampler;
+    if (info.needsSampler) {
+        const auto& samplers = state.program.Info().samplers;
+        if (plan.memory->sampler >= samplers.size() || samplers[plan.memory->sampler].table != NoTable) return std::nullopt;
+        if (samplers[plan.memory->sampler].deviceTable) {
+            plan.samplerHandle = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
+            if (plan.samplerHandle == nullptr || plan.samplerHandle->ArgumentCount() != Abi::SamplerWords) return std::nullopt;
+            plan.deviceSampler = true;
+            plan.levelZero = HasFlag(*plan.memory, RdnaImageSampleFlagLevelZero);
+        }
+    }
+    plan.id = ResourceMaterializer::DeviceImageInterfaceId(*plan.base, plan.modes);
+    return plan;
+}
+
+std::vector<std::uint64_t> DeviceImageLookupKey(const SpirvEmitterState& state, const DeviceImagePlan& plan, const IrBlock* block) {
+    std::vector<std::uint64_t> key{reinterpret_cast<std::uintptr_t>(block), state.laneHalf, plan.id, plan.needsSampler ? 1u : 0u, plan.needsSampler ? plan.memory->sampler : 0u, plan.levelZero ? 1u : 0u, plan.deviceSampler ? 1u : 0u};
+    const auto word = [&](const IrValue* value) {
+        const auto* resolved = value->Resolve();
+        key.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
+        key.push_back(resolved->HasImmediate() ? resolved->ImmediateU32() : 0u);
+    };
+    for (const auto* argument : plan.handle->Arguments()) word(argument);
+    if (plan.deviceSampler) {
+        for (const auto* argument : plan.samplerHandle->Arguments()) word(argument);
+    }
+    return key;
+}
+
+struct DeviceImageArguments {
+    std::array<std::uint32_t, DeviceImageTableAbi::DescriptorWords> words{};
+    std::array<std::uint32_t, DeviceImageTableAbi::SamplerWords> samplerWords{};
+    std::uint32_t header = 0;
+    std::uint32_t samplerClass = 0;
+    std::uint32_t unnormalized = 0;
+};
+
+void CompleteDeviceImageArguments(SpirvEmitterState& state, const DeviceImagePlan& plan, DeviceImageArguments& arguments) {
+    namespace Abi = DeviceImageTableAbi;
+    const auto u32 = TypeU32(state);
+    const auto zero = ConstantU32(state, 0u);
+    arguments.header = DeviceAddress(state, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceLow)), LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceHigh)));
+    arguments.samplerClass = zero;
+    if (plan.deviceSampler) {
+        arguments.samplerClass = ConstantU32(state, Abi::RuntimeSampler);
+        if (plan.levelZero) arguments.samplerClass = Select(state, u32, Binary(state, spv::OpINotEqual, TypeBool(state), arguments.unnormalized, zero), ConstantU32(state, Abi::RuntimeSampler | Abi::SamplerExactAtBase), arguments.samplerClass);
+    } else if (plan.needsSampler) {
+        arguments.samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, plan.memory->sampler)));
+    }
+}
+
+DeviceImageArguments EmitDeviceImageArguments(SpirvValueEmitContext& ctx, const DeviceImagePlan& plan, bool complete) {
+    namespace Abi = DeviceImageTableAbi;
+    auto& state = ctx.state;
+    const auto u32 = TypeU32(state);
+    const auto zero = ConstantU32(state, 0u);
+    DeviceImageArguments arguments;
+    for (std::uint32_t word = 0; word < arguments.words.size(); ++word) arguments.words[word] = ctx.Def(plan.handle->Argument(word));
+    arguments.samplerWords.fill(zero);
+    if (plan.deviceSampler) {
+        for (std::uint32_t word = 0; word < arguments.samplerWords.size(); ++word) arguments.samplerWords[word] = ctx.Def(plan.samplerHandle->Argument(word));
+        arguments.unnormalized = Binary(state, spv::OpBitwiseAnd, u32, arguments.samplerWords[0], ConstantU32(state, Abi::SamplerUnnormalized));
+    }
+    if (complete) CompleteDeviceImageArguments(state, plan, arguments);
+    return arguments;
+}
+
+std::array<std::uint32_t, 4> DeviceImageLookupOperands(SpirvEmitterState& state, const DeviceImagePlan& plan, const DeviceImageArguments& arguments, std::uint32_t pc) {
+    const auto& words = arguments.words;
+    const auto& samplerWords = arguments.samplerWords;
+    return std::array{CompositeU32x4(state, words[0], words[1], words[2], words[3]), CompositeU32x4(state, words[4], words[5], words[6], words[7]),
+        CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(plan.id)), ConstantU32(state, static_cast<std::uint32_t>(plan.id >> 32u)), arguments.samplerClass, pc),
+        CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3])};
+}
+
+bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImagePlan& plan) {
+    const auto defined = [&](const IrValue* value) {
+        const auto* resolved = value->Resolve();
+        return resolved->HasImmediate() || ctx.definitions.contains(resolved);
+    };
+    if (!std::ranges::all_of(plan.handle->Arguments(), defined)) return false;
+    return !plan.deviceSampler || std::ranges::all_of(plan.samplerHandle->Arguments(), defined);
+}
+
 void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, const std::vector<ImageResource>& modes, bool tableSampler) {
     namespace Abi = DeviceImageTableAbi;
     auto& state = ctx.state;
@@ -2034,63 +2146,38 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
         if (inst.Type() != IrType::Void) ctx.Define(inst, ZeroResult(ctx, inst));
         return;
     }
-    const IrValue* handle = inst.Argument(0)->Resolve();
-    if (handle->ArgumentCount() != Abi::DescriptorWords) ctx.Fail(inst, "has a device-table image handle without its eight descriptor dwords");
-    std::array<std::uint32_t, Abi::DescriptorWords> words{};
-    for (std::uint32_t word = 0; word < words.size(); ++word) words[word] = ctx.Def(handle->Argument(word));
+    if (inst.Argument(0)->Resolve()->ArgumentCount() != Abi::DescriptorWords) ctx.Fail(inst, "has a device-table image handle without its eight descriptor dwords");
+    const auto plan = PlanDeviceImage(state, inst);
+    if (!plan) ctx.Fail(inst, "has a device-table sampler handle without its four descriptor dwords");
+    auto arguments = EmitDeviceImageArguments(ctx, *plan, false);
+    const auto& words = arguments.words;
     const auto null = both(equal(words[0], zero), equal(Binary(state, spv::OpBitwiseAnd, u32, words[1], ConstantU32(state, 0xffu)), zero));
-    const auto header = DeviceAddress(state, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceLow)), LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderDeviceHigh)));
-    auto samplerClass = zero;
-    std::array<std::uint32_t, Abi::SamplerWords> samplerWords{zero, zero, zero, zero};
-    std::uint32_t unnormalized = 0;
-    bool deviceSampler = false;
-    if (ImageOpcodeInfoOf(inst.Opcode()).needsSampler) {
-        const auto& sampler = state.program.Info().samplers.at(memory.sampler);
-        if (sampler.deviceTable) {
-            const IrValue* samplerHandle = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
-            if (samplerHandle == nullptr || samplerHandle->ArgumentCount() != Abi::SamplerWords) ctx.Fail(inst, "has a device-table sampler handle without its four descriptor dwords");
-            for (std::uint32_t word = 0; word < samplerWords.size(); ++word) samplerWords[word] = ctx.Def(samplerHandle->Argument(word));
-            samplerClass = ConstantU32(state, Abi::RuntimeSampler);
-            unnormalized = Binary(state, spv::OpBitwiseAnd, u32, samplerWords[0], ConstantU32(state, Abi::SamplerUnnormalized));
-            if (HasFlag(memory, RdnaImageSampleFlagLevelZero)) samplerClass = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, unnormalized, zero), ConstantU32(state, Abi::RuntimeSampler | Abi::SamplerExactAtBase), samplerClass);
-            deviceSampler = true;
-        } else {
-            samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, memory.sampler)));
-        }
-    }
-    const auto id = ResourceMaterializer::DeviceImageInterfaceId(base, modes);
     const auto record = both(exec, Unary(state, spv::OpLogicalNot, boolean, null));
-    const auto arguments = [&] {
-        return std::array{CompositeU32x4(state, words[0], words[1], words[2], words[3]), CompositeU32x4(state, words[4], words[5], words[6], words[7]),
-            CompositeU32x4(state, ConstantU32(state, static_cast<std::uint32_t>(id)), ConstantU32(state, static_cast<std::uint32_t>(id >> 32u)), samplerClass, pc),
-            CompositeU32x4(state, samplerWords[0], samplerWords[1], samplerWords[2], samplerWords[3])};
-    };
-    std::vector<std::uint64_t> lookupKey{reinterpret_cast<std::uintptr_t>(inst.Parent()), state.laneHalf, id, memory.sampler, HasFlag(memory, RdnaImageSampleFlagLevelZero) ? 1u : 0u, deviceSampler ? 1u : 0u};
-    const auto keyWord = [&](const IrValue* value) {
-        const auto* resolved = value->Resolve();
-        lookupKey.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
-        lookupKey.push_back(resolved->HasImmediate() ? resolved->ImmediateU32() : 0u);
-    };
-    for (std::uint32_t word = 0; word < words.size(); ++word) keyWord(handle->Argument(word));
-    if (deviceSampler) {
-        const IrValue* samplerHandle = inst.Argument(1)->Resolve();
-        for (std::uint32_t word = 0; word < Abi::SamplerWords; ++word) keyWord(samplerHandle->Argument(word));
-    }
-    const auto earlier = state.module.InHelperFunction() ? state.deviceImageLookups.end() : state.deviceImageLookups.find(lookupKey);
-    std::uint32_t result = 0;
-    if (earlier != state.deviceImageLookups.end()) {
-        result = earlier->second;
+    const auto missed = [&](std::uint32_t lookup) {
         const auto missing = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, missing, result, 3u);
+        state.module.AddFunction(spv::OpCompositeExtract, u32, missing, lookup, 3u);
         EmitIfCondition(state, both(record, equal(missing, zero)), [&] {
-            const auto passed = arguments();
-            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.deviceImageMissFunction, header, passed[0], passed[1], passed[2], passed[3]);
+            CompleteDeviceImageArguments(state, *plan, arguments);
+            const auto passed = DeviceImageLookupOperands(state, *plan, arguments, pc);
+            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.deviceImageMissFunction, arguments.header, passed[0], passed[1], passed[2], passed[3]);
         });
+    };
+    std::uint32_t result = 0;
+    const auto anchored = state.deviceImageLookups.find(DeviceImageLookupKey(state, *plan, nullptr));
+    auto blockKey = DeviceImageLookupKey(state, *plan, inst.Parent());
+    const auto earlier = state.module.InHelperFunction() ? state.deviceImageLookups.end() : state.deviceImageLookups.find(blockKey);
+    if (anchored != state.deviceImageLookups.end()) {
+        result = anchored->second;
+        missed(result);
+    } else if (earlier != state.deviceImageLookups.end()) {
+        result = earlier->second;
+        missed(result);
     } else {
-        const auto passed = arguments();
+        CompleteDeviceImageArguments(state, *plan, arguments);
+        const auto passed = DeviceImageLookupOperands(state, *plan, arguments, pc);
         result = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, header, passed[0], passed[1], passed[2], passed[3], record);
-        if (!state.module.InHelperFunction()) state.deviceImageLookups.emplace(std::move(lookupKey), result);
+        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, arguments.header, passed[0], passed[1], passed[2], passed[3], record);
+        if (!state.module.InHelperFunction()) state.deviceImageLookups.emplace(std::move(blockKey), result);
     }
     const auto extract = [&](std::uint32_t index) {
         const auto value = state.module.AllocateId();
@@ -2111,10 +2198,10 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     state.tableAccess.element = Select(state, u32, valid, slot, zero);
     DecorateTableNonUniform(state, state.tableAccess.element);
     state.tableAccess.dword3 = words[3];
-    if (deviceSampler) {
+    if (plan->deviceSampler) {
         state.tableAccess.samplerElement = Select(state, u32, valid, Binary(state, spv::OpISub, u32, found, ConstantU32(state, 1u)), zero);
         DecorateTableNonUniform(state, state.tableAccess.samplerElement);
-        state.tableAccess.unnormalized = unnormalized;
+        state.tableAccess.unnormalized = arguments.unnormalized;
     }
     state.tableAccess.active = true;
     auto selector = mode;
@@ -2122,7 +2209,7 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
         state.tableAccess.compare = Binary(state, spv::OpShiftRightLogical, u32, mode, ConstantU32(state, Abi::ModeCompareShift));
         selector = Binary(state, spv::OpBitwiseAnd, u32, mode, ConstantU32(state, (1u << Abi::ModeCompareShift) - 1u));
     }
-    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), deviceSampler);
+    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), plan->deviceSampler);
     state.tableAccess = {};
 }
 
@@ -2160,6 +2247,61 @@ void EmitImageStoreRecord(SpirvValueEmitContext& ctx, const IrValue& inst, const
     });
 }
 
+}
+
+void PlanDeviceImageAnchors(SpirvEmitterState& state) {
+    state.deviceImageAnchors.clear();
+    if (state.laneCount != 1u) return;
+    std::unordered_map<const IrValue*, std::pair<std::size_t, std::size_t>> positions;
+    const auto& blocks = state.program.BlockOrder();
+    for (std::size_t block = 0; block < blocks.size(); ++block) {
+        std::size_t index = 0;
+        for (const IrValue* inst : blocks[block]->Instructions()) positions.emplace(inst, std::pair{block, index++});
+    }
+    for (const IrBlock* block : blocks) {
+        for (const IrValue* inst : block->Instructions()) {
+            const auto plan = PlanDeviceImage(state, *inst);
+            if (!plan) continue;
+            const IrValue* anchor = nullptr;
+            std::pair<std::size_t, std::size_t> latest{};
+            bool placed = true;
+            const auto consider = [&](const IrValue* argument) {
+                const auto* resolved = argument->Resolve();
+                if (resolved->HasImmediate()) return;
+                const auto found = positions.find(resolved);
+                if (found == positions.end()) {
+                    placed = false;
+                    return;
+                }
+                if (anchor == nullptr || found->second > latest) {
+                    anchor = resolved;
+                    latest = found->second;
+                }
+            };
+            for (const auto* argument : plan->handle->Arguments()) consider(argument);
+            if (plan->deviceSampler) {
+                for (const auto* argument : plan->samplerHandle->Arguments()) consider(argument);
+            }
+            if (placed && anchor != nullptr) state.deviceImageAnchors[anchor].push_back(inst);
+        }
+    }
+}
+
+void EmitAnchoredDeviceImageLookups(SpirvValueEmitContext& ctx, const IrValue& anchor) {
+    auto& state = ctx.state;
+    const auto anchored = state.deviceImageAnchors.find(&anchor);
+    if (anchored == state.deviceImageAnchors.end() || state.deviceImageLookupFunction == 0u || state.tableMapVariable == 0u) return;
+    for (const IrValue* inst : anchored->second) {
+        const auto plan = PlanDeviceImage(state, *inst);
+        if (!plan || !DeviceImageInputsDefined(ctx, *plan)) continue;
+        auto key = DeviceImageLookupKey(state, *plan, nullptr);
+        if (state.deviceImageLookups.contains(key)) continue;
+        const auto arguments = EmitDeviceImageArguments(ctx, *plan, true);
+        const auto passed = DeviceImageLookupOperands(state, *plan, arguments, ConstantU32(state, inst->Flags<MemoryFlags>().pc));
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 4u), result, state.deviceImageLookupFunction, arguments.header, passed[0], passed[1], passed[2], passed[3], ConstantBool(state, false));
+        state.deviceImageLookups.emplace(std::move(key), result);
+    }
 }
 
 void DefineDeviceImageLookup(SpirvEmitterState& state) {

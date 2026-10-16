@@ -28,6 +28,27 @@ const Program& SampleTwiceProgram() {
     return program;
 }
 
+const Program& SampleAcrossBranchProgram() {
+    static const Program program = [] {
+        using namespace Asm;
+        constexpr std::uint32_t VCmpGtU32LaneBound = 0x7d8800c0u;
+        constexpr std::uint32_t SCbranchVcczOver1 = 0xbf860001u;
+        Program built;
+        LoadSrt(built, {{28, OutputSlot}, {32, SamplerSlot}, {36, ImageSlot}});
+        TexelCenter(built, 2);
+        built << Mimg(ImageSampleLz, 1u, true, 4, 1, 36, 32)
+              << VCmpGtU32LaneBound
+              << SCbranchVcczOver1
+              << Vop1(VMovB32, 6, InlineInteger(1))
+              << Mimg(ImageSampleLz, 1u, true, 5, 1, 36, 32)
+              << Vop1(VMovB32, 6, InlineInteger(0))
+              << Vop1(VMovB32, 7, InlineInteger(0));
+        StoreLane(built, 2, 28);
+        return built;
+    }();
+    return program;
+}
+
 struct MainCalls {
     std::uint32_t lookups = 0;
     std::uint32_t misses = 0;
@@ -64,12 +85,22 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto compiled = Compile(device, SampleTwiceProgram(), userData);
     ExpectRouted(compiled, "same texture");
     const auto calls = CallsFromMain(compiled.result->spirv.Words());
-    Expect(calls.lookups == 1u && calls.misses == 1u, "same texture: main calls device_image_lookup " + std::to_string(calls.lookups) + " times and device_image_record_miss " + std::to_string(calls.misses) + " times, expected one lookup for both samples of one descriptor and the miss record of the second sample");
+    Expect(calls.lookups == 1u && calls.misses == 2u, "same texture: main calls device_image_lookup " + std::to_string(calls.lookups) + " times and device_image_record_miss " + std::to_string(calls.misses) + " times, expected one lookup where the descriptor is loaded and each sample recording its own miss");
     const auto missed = Run(device, compiled, Height);
     const auto read = ExpectFirstUse(missed, twice, 2, "same texture: first dispatch, both samples recording their misses");
     const auto hit = Run(device, Compile(device, SampleTwiceProgram(), userData), Height);
     ExpectHit(hit, twice, "same texture: second dispatch");
     ExpectResolved(missed, read, hit, 1, "same texture");
+
+    const auto across = Compile(device, SampleAcrossBranchProgram(), userData);
+    ExpectRouted(across, "same texture across a branch");
+    const auto acrossCalls = CallsFromMain(across.result->spirv.Words());
+    Expect(acrossCalls.lookups == 1u && acrossCalls.misses == 2u, "same texture across a branch: main calls device_image_lookup " + std::to_string(acrossCalls.lookups) + " times and device_image_record_miss " + std::to_string(acrossCalls.misses) + " times, expected one lookup where the descriptor is loaded for the samples before and after the branch and each sample recording its own miss");
+    const auto acrossMissed = Run(device, across, Height);
+    const auto acrossRead = ExpectFirstUse(acrossMissed, twice, 2, "same texture across a branch: first dispatch, both samples recording their misses");
+    const auto acrossHit = Run(device, Compile(device, SampleAcrossBranchProgram(), userData), Height);
+    ExpectHit(acrossHit, twice, "same texture across a branch: second dispatch");
+    ExpectResolved(acrossMissed, acrossRead, acrossHit, 1, "same texture across a branch");
 }
 
 }

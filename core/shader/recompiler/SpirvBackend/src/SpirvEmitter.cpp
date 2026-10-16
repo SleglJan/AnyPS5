@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterState.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
+#include "SpirvBackend/SpirvImageEmitter.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvModuleSetup.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvRuntimeBuffer.hpp"
@@ -319,6 +320,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     // Stopped invocations would leave the wave LDS barriers incomplete.
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.waveExchange && BdaInvocationsMayStop(program);
     EmitModuleHeader(state, bindings);
+    PlanDeviceImageAnchors(state);
     EmitProgram(state);
     DefineFormatCodecs(state);
     state.module.ReturnThroughResultPointers();
