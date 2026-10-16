@@ -323,7 +323,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     PlanDeviceImageAnchors(state);
     EmitProgram(state);
     DefineFormatCodecs(state);
-    state.module.ReturnThroughResultPointers();
+    state.module.SpillCallResults();
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     return state.module.Finalize();
 }

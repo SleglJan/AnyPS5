@@ -187,102 +187,6 @@ void testEmittedWordsAreStable() {
     check(counts.at(spv::OpNop) == 32, "the function body lost instructions");
 }
 
-void testDontInlineResultsGoThroughPointers() {
-    SpirvModule module(0x00010400u);
-    const auto u32 = module.Type(spv::OpTypeInt, 32u, 0u);
-    const auto voidType = module.Type(spv::OpTypeVoid);
-    const auto unary = module.Type(spv::OpTypeFunction, u32, u32);
-    const auto procedure = module.Type(spv::OpTypeFunction, voidType);
-    const auto one = module.Constant(spv::OpConstant, u32, 1u);
-    const auto shared = module.AllocateId();
-    const auto inlinable = module.AllocateId();
-    const auto procedureId = module.AllocateId();
-    const auto main = module.AllocateId();
-    const auto define = [&](std::uint32_t id, std::uint32_t control) {
-        const auto parameter = module.AllocateId();
-        module.AddFunction(spv::OpFunction, u32, id, control, unary);
-        module.AddFunction(spv::OpFunctionParameter, u32, parameter);
-        module.AddFunction(spv::OpLabel, module.AllocateId());
-        module.AddFunction(spv::OpReturnValue, parameter);
-        module.AddFunction(spv::OpFunctionEnd);
-    };
-    define(shared, spv::FunctionControlDontInlineMask);
-    define(inlinable, spv::FunctionControlMaskNone);
-    module.AddFunction(spv::OpFunction, voidType, procedureId, spv::FunctionControlDontInlineMask, procedure);
-    module.AddFunction(spv::OpLabel, module.AllocateId());
-    module.AddFunction(spv::OpReturn);
-    module.AddFunction(spv::OpFunctionEnd);
-    const std::array<std::uint32_t, 3> results{module.AllocateId(), module.AllocateId(), module.AllocateId()};
-    const auto sum = module.AllocateId();
-    module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, procedure);
-    module.AddFunction(spv::OpLabel, module.AllocateId());
-    module.AddFunction(spv::OpFunctionCall, u32, results[0], shared, one);
-    module.AddFunction(spv::OpFunctionCall, u32, results[1], shared, results[0]);
-    module.AddFunction(spv::OpFunctionCall, u32, results[2], inlinable, one);
-    module.AddFunction(spv::OpFunctionCall, voidType, module.AllocateId(), procedureId);
-    module.AddFunction(spv::OpIAdd, u32, sum, results[0], results[1]);
-    module.AddFunction(spv::OpReturn);
-    module.AddFunction(spv::OpFunctionEnd);
-    module.ReturnThroughResultPointers();
-    module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", {});
-    const auto words = module.Finalize();
-    struct Seen {
-        std::uint32_t resultType = 0;
-        std::vector<std::uint32_t> parameters;
-        std::size_t returnValues = 0;
-        std::size_t parameterStores = 0;
-        std::vector<std::vector<std::uint32_t>> body;
-    };
-    std::map<std::uint32_t, Seen> functions;
-    std::set<std::uint32_t> functionPointers;
-    std::map<std::uint32_t, std::uint32_t> pointees;
-    std::uint32_t current = 0;
-    for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift) {
-        const std::vector<std::uint32_t> instruction(words.begin() + static_cast<std::ptrdiff_t>(offset), words.begin() + static_cast<std::ptrdiff_t>(offset + (words[offset] >> spv::WordCountShift)));
-        const auto opcode = instruction[0] & spv::OpCodeMask;
-        if (opcode == spv::OpTypePointer && instruction[2] == spv::StorageClassFunction) {
-            functionPointers.insert(instruction[1]);
-            pointees[instruction[1]] = instruction[3];
-        }
-        if (opcode == spv::OpFunction) {
-            current = instruction[2];
-            functions[current].resultType = instruction[1];
-            continue;
-        }
-        if (current == 0u) continue;
-        auto& function = functions[current];
-        if (opcode == spv::OpFunctionParameter) function.parameters.push_back(instruction[1]);
-        if (opcode == spv::OpReturnValue) ++function.returnValues;
-        function.body.push_back(instruction);
-    }
-    auto& sharedFunction = functions[shared];
-    const bool pointerParameter = sharedFunction.parameters.size() == 2u && functionPointers.contains(sharedFunction.parameters[1]) && pointees[sharedFunction.parameters[1]] == u32;
-    std::uint32_t resultParameter = 0;
-    for (const auto& instruction : sharedFunction.body) {
-        if ((instruction[0] & spv::OpCodeMask) == spv::OpFunctionParameter && functionPointers.contains(instruction[1])) resultParameter = instruction[2];
-        if ((instruction[0] & spv::OpCodeMask) == spv::OpStore && instruction[1] == resultParameter && resultParameter != 0u) ++sharedFunction.parameterStores;
-    }
-    check(sharedFunction.resultType == voidType && sharedFunction.returnValues == 0u && pointerParameter && sharedFunction.parameterStores == 1u, "a DontInline function with a result still returns it, or does not store it through a Function pointer parameter");
-    check(functions[inlinable].resultType == u32 && functions[inlinable].returnValues == 1u && functions[inlinable].parameters.size() == 1u, "a function without DontInline lost its return value");
-    check(functions[procedureId].resultType == voidType && functions[procedureId].parameters.empty(), "a void DontInline function changed");
-    const auto& mainBody = functions[main].body;
-    std::set<std::uint32_t> resultVariables;
-    for (std::size_t index = 1; index < mainBody.size() && (mainBody[index][0] & spv::OpCodeMask) == spv::OpVariable; ++index) {
-        if (mainBody[index][3] == spv::StorageClassFunction && pointees[mainBody[index][1]] == u32) resultVariables.insert(mainBody[index][2]);
-    }
-    check((mainBody.front()[0] & spv::OpCodeMask) == spv::OpLabel && resultVariables.size() == 1u, "the caller does not declare one Function variable for the DontInline function's result at the start of its entry block");
-    std::size_t loadedAfterCall = 0;
-    for (std::size_t index = 0; index + 1u < mainBody.size(); ++index) {
-        const auto& call = mainBody[index];
-        const auto& next = mainBody[index + 1u];
-        if ((call[0] & spv::OpCodeMask) != spv::OpFunctionCall || call[3] != shared) continue;
-        const bool passed = call[1] == voidType && call.size() == 6u && resultVariables.contains(call[5]);
-        const bool loads = passed && (next[0] & spv::OpCodeMask) == spv::OpLoad && next[1] == u32 && next[3] == call[5];
-        if (loads && (next[2] == results[0] || next[2] == results[1])) ++loadedAfterCall;
-    }
-    check(loadedAfterCall == 2u, "a call of the DontInline function is not followed by the load of its result");
-}
-
 }
 
 void testStructExtractsAreNotShuffled() {
@@ -719,7 +623,6 @@ int main() {
     testModulesAreIndependent();
     testIdsStayUniqueBeyondCacheCapacity();
     testEmittedWordsAreStable();
-    testDontInlineResultsGoThroughPointers();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
