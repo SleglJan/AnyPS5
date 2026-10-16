@@ -5275,6 +5275,10 @@ void pipelineDescriptionTests() {
         {"tessellation", [](PipelineDescription& d) { d.state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 1, 2, 2, 64}; }},
         {"mesh shading", [](PipelineDescription& d) { d.state.stages.mesh = ShaderRecompiler::MeshConfiguration{4, 1, 3, 3, 1, 64, 128, 0, 4}; }},
         {"the attachment layout", [](PipelineDescription& d) { d.attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; }},
+        {"per-sample shading", [](PipelineDescription& d) { d.state.perSampleShading = true; }},
+        {"the sample location grid", [](PipelineDescription& d) { d.state.sampleLocationGrid = true; }},
+        {"the stencil replay", [](PipelineDescription& d) { d.state.stencilReplayReference = 5u; }},
+        {"a uniform quad sample mask", [](PipelineDescription& d) { d.state.quadSampleMask = {0x3u, 0x3u, 0x3u, 0x3u}; }},
     };
     const auto original = described(base, input, VK_IMAGE_LAYOUT_GENERAL);
     for (const auto& [field, change] : changes) {

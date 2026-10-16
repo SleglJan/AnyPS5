@@ -1110,7 +1110,7 @@ void ClearCachedPipelines(VkDevice device) {
 
 namespace {
 
-constexpr std::uint32_t DescriptionVersion = 1;
+constexpr std::uint32_t DescriptionVersion = 2;
 
 class DescriptionWriter {
 public:
@@ -1256,6 +1256,13 @@ std::vector<std::byte> EncodePipelineDescription(const State& state, const Verte
     writer.Value(state.sampleLocations);
     writer.Flag(state.customSampleLocations);
     writer.Value(state.paClVsOutCntl);
+    writer.Optional(state.stencilReplayReference);
+    writer.Value(state.reversedBlend);
+    writer.Flag(state.ditheredAlphaToCoverage);
+    writer.Flag(state.perSampleShading);
+    writer.Flag(state.sampleLocationGrid);
+    writer.Value(state.quadSampleMask);
+    writer.Flag(state.pixelEarlyZ);
     writer.List(vertexInput.bindings, [&](const VkVertexInputBindingDescription& binding) { writer.Value(binding); });
     writer.List(vertexInput.attributes, [&](const VkVertexInputAttributeDescription& attribute) { writer.Value(attribute); });
     writer.Value(attachmentLayout);
@@ -1289,6 +1296,8 @@ std::optional<PipelineDescription> DecodePipelineDescription(std::span<const std
         && reader.Value(state.topology) && reader.Flag(state.primitiveRestart) && reader.Flag(state.negativeOneToOne) && reader.Flag(state.depthClamp) && reader.Flag(state.alphaToCoverage)
         && reader.Value(state.conservativeRasterization) && reader.Value(state.cullMode) && reader.Value(state.frontFace) && reader.Value(state.provokingVertexMode) && reader.Value(state.blendConstants)
         && reader.Value(state.samples) && reader.Value(state.sampleLocations) && reader.Flag(state.customSampleLocations) && reader.Value(state.paClVsOutCntl)
+        && reader.Optional(state.stencilReplayReference) && reader.Value(state.reversedBlend) && reader.Flag(state.ditheredAlphaToCoverage) && reader.Flag(state.perSampleShading)
+        && reader.Flag(state.sampleLocationGrid) && reader.Value(state.quadSampleMask) && reader.Flag(state.pixelEarlyZ)
         && reader.List(result.vertexInput.bindings, sizeof(VkVertexInputBindingDescription), [&](VkVertexInputBindingDescription& binding) { return reader.Value(binding); })
         && reader.List(result.vertexInput.attributes, sizeof(VkVertexInputAttributeDescription), [&](VkVertexInputAttributeDescription& attribute) { return reader.Value(attribute); })
         && reader.Value(result.attachmentLayout);
