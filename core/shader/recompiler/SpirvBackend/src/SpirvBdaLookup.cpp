@@ -609,6 +609,85 @@ std::uint32_t BroadcastFirstLane(SpirvEmitterState& state, std::uint32_t type, s
     return result;
 }
 
+namespace {
+
+constexpr std::uint64_t FormatCheckTag = ~std::uint64_t{1};
+
+bool BufferLoadOpcode(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::LoadBufferU8:
+    case IrOpcode::LoadBufferU16:
+    case IrOpcode::LoadBufferU32:
+    case IrOpcode::LoadBufferU32x2:
+    case IrOpcode::LoadBufferU32x3:
+    case IrOpcode::LoadBufferU32x4:
+        return true;
+    default:
+        return false;
+    }
+}
+
+const IrValue* RuntimeFormatHandle(const SpirvEmitterState& state, const IrValue& inst) {
+    if (!state.bdaStopsInvocations || !BufferLoadOpcode(inst.Opcode()) || inst.ArgumentCount() < 2u) return nullptr;
+    const auto& infos = state.program.Resources().memoryInfo;
+    const auto index = inst.Flags<MemoryFlags>().index;
+    if (index >= infos.size()) return nullptr;
+    const auto& memory = infos[index];
+    if (!memory.gpuDescriptor || !memory.formatted || memory.typed || memory.kind != ResourceKind::Buffer) return nullptr;
+    const auto* handle = inst.Argument(0)->Resolve();
+    if (handle == nullptr || handle->Opcode() != IrOpcode::GetBufferResource || handle->ArgumentCount() != 4u) return nullptr;
+    return handle->Argument(3)->Resolve()->HasImmediate() ? nullptr : handle;
+}
+
+}
+
+std::vector<const IrValue*> InvalidFormatInputs(const SpirvEmitterState& state, const IrValue& inst) {
+    const auto* handle = RuntimeFormatHandle(state, inst);
+    if (handle == nullptr) return {};
+    return {handle->Argument(0), handle->Argument(1), handle->Argument(3), inst.Argument(inst.ArgumentCount() - 1u)};
+}
+
+void EmitInvalidFormatStop(SpirvValueEmitContext& ctx, const IrValue& inst, const IrValue& anchor) {
+    auto& state = ctx.state;
+    const auto* handle = RuntimeFormatHandle(state, inst);
+    if (handle == nullptr || state.module.InHelperFunction() || anchor.Parent() != inst.Parent() || inst.Parent() == nullptr) return;
+    const auto inputs = InvalidFormatInputs(state, inst);
+    for (const auto* input : inputs) {
+        const auto* resolved = input->Resolve();
+        if (!resolved->HasImmediate() && !ctx.definitions.contains(resolved)) return;
+    }
+    bool between = false;
+    for (const IrValue* other : inst.Parent()->Instructions()) {
+        if (other == &anchor) {
+            between = true;
+            continue;
+        }
+        if (other == &inst) break;
+        if (between && IrOpcodeHasSideEffects(other->Opcode())) return;
+    }
+    if (!between) return;
+    std::vector<std::uint64_t> key{FormatCheckTag};
+    for (const auto* input : inputs) {
+        const auto* resolved = input->Resolve();
+        key.push_back(resolved->HasImmediate() ? 0u : reinterpret_cast<std::uintptr_t>(resolved));
+        key.push_back(resolved->HasImmediate() ? resolved->ImmediateU32() : 0u);
+    }
+    if (state.deviceImageLookups.contains(key)) return;
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto format = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, ctx.Def(inputs[2]), ConstantU32(state, 12u)), ConstantU32(state, 0x7fu));
+    const auto unsupported = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpIEqual, boolean, format, ConstantU32(state, 0u)), Binary(state, spv::OpUGreaterThan, boolean, format, ConstantU32(state, static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float))));
+    const auto stops = Binary(state, spv::OpLogicalAnd, boolean, ctx.Def(inputs[3]), unsupported);
+    EmitIfCondition(state, stops, [&] {
+        const auto high = Binary(state, spv::OpBitwiseAnd, u32, ctx.Def(inputs[1]), ConstantU32(state, 0xffffu));
+        const auto u64 = TypeScalarU64(state);
+        const auto base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, ctx.Def(inputs[0])), Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, high), BdaConstant(state, 32u)));
+        RecordBdaFault(state, base, ConstantU32(state, 0u), BdaInstructionPc(state, inst), BdaAbi::FaultReason::InvalidDescriptor);
+    });
+    StopBdaInvocationIf(state, stops);
+    state.deviceImageLookups.emplace(std::move(key), 0u);
+}
+
 void DefineGetBdaPointer(SpirvEmitterState& state) {
     if (state.faultBufferVariable != 0) DefineBdaFaultFunction(state);
     if (!state.program.Info().usesDma) return;

@@ -55,6 +55,8 @@ std::uint32_t AddBdaAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std
 std::uint32_t AddBdaImmediate(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::int32_t immediate);
 bool WaveUniformDescriptor(SpirvEmitterState& state, const std::vector<const IrValue*>& words);
 std::uint32_t BroadcastFirstLane(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value);
+std::vector<const IrValue*> InvalidFormatInputs(const SpirvEmitterState& state, const IrValue& inst);
+void EmitInvalidFormatStop(SpirvValueEmitContext& ctx, const IrValue& inst, const IrValue& anchor);
 
 }
 
