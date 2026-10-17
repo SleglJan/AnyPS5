@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
@@ -4676,7 +4677,7 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
 }
 
 std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::size_t bytes) {
-    std::size_t ownedDiscarded = 0;
+    std::size_t ownedDiscarded = DiscardDepthInside(address, bytes);
     for (auto& texture : ownedImages(address, bytes)) {
         if (texture.get() == refreshing || !texture->ownedPending.load(std::memory_order_acquire)) continue;
         std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);

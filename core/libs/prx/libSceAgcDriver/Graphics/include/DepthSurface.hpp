@@ -39,6 +39,7 @@ struct MemoryValueFill {
 std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads, const std::array<std::uint32_t, 3>& groups);
 void NoteMemoryValueFill(const MemoryValueFill& fill);
 bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resource, const Texture* texture);
+std::size_t DiscardDepthInside(std::uint64_t address, std::size_t bytes);
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::uint64_t HtileStoreBackReads();
 VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile);

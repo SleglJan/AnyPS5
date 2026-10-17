@@ -595,6 +595,38 @@ public:
         if (marked && htileOwned) residency->Manager().MarkStale(target.htileAddress, htileBytes(), this);
     }
 
+    bool DiscardInside(std::uint64_t address, std::uint64_t bytes) {
+        auto* residency = ResidencyDriver::Active();
+        if (!residencyOwned || residency == nullptr || residency->Device() != context.device) return false;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+        for (std::size_t plane = 0; plane < published.size(); ++plane) {
+            if (published[plane].owned) ranges.emplace_back(planeAddress(plane), planeAddress(plane) + planeBytes(plane));
+        }
+        if (htileOwned) ranges.emplace_back(target.htileAddress, target.htileAddress + htileBytes());
+        const auto end = address + bytes;
+        const auto dead = [&](std::uint64_t subpage) {
+            const auto stop = subpage + ResidencySubpageBytes;
+            return std::all_of(ranges.begin(), ranges.end(), [&](const auto& range) {
+                const auto from = std::max(subpage, range.first);
+                const auto to = std::min(stop, range.second);
+                return from >= to || (from >= address && to <= end);
+            });
+        };
+        auto& manager = residency->Manager();
+        bool discarded = false;
+        for (const auto& [begin, stop] : ranges) {
+            const auto from = std::max(begin, address);
+            const auto to = std::min(stop, end);
+            for (auto subpage = from & ~std::uint64_t{ResidencySubpageBytes - 1u}; subpage < to; subpage += ResidencySubpageBytes) {
+                const auto bit = static_cast<ResidencyMask>(1u << ((subpage >> ResidencySubpageShift) & ((1u << (ResidencyPageShift - ResidencySubpageShift)) - 1u)));
+                if ((manager.Stale(subpage >> ResidencyPageShift) & bit) == 0 || !dead(subpage)) continue;
+                manager.ClearStale(subpage, ResidencySubpageBytes, this);
+                discarded = true;
+            }
+        }
+        return discarded;
+    }
+
     bool PlaneOwned(VkImageAspectFlagBits aspect) const {
         return published[aspect == VK_IMAGE_ASPECT_STENCIL_BIT ? StencilPlane : DepthPlane].owned;
     }
@@ -2321,6 +2353,18 @@ std::uint64_t HtileMetadataBytes(VkExtent2D extent) {
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes) {
     if (htile == 0 || htile < address || htile >= address + bytes) return false;
     return address + bytes - htile >= HtileMetadataBytes(extent);
+}
+
+std::size_t DiscardDepthInside(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return 0;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    std::lock_guard lock(surfacesMutex());
+    std::size_t discarded = 0;
+    for (const auto& surface : surfaces()) {
+        if (surface->active->load(std::memory_order_acquire) && surface->DiscardInside(address, bytes)) ++discarded;
+    }
+    return discarded;
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {

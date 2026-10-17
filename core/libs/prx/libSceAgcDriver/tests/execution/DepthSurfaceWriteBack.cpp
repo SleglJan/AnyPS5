@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HtileEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "DepthFastClearHarness.hpp"
@@ -507,6 +508,36 @@ void StorageWriteMarksPlaneStale(AgcDriver::VulkanDevice& device, const Shaders&
     std::printf("%s marks the plane and its HTILE stale for its owner\n", what.c_str());
 }
 
+void HtileFillStoresNothing(AgcDriver::VulkanDevice& device, const Shaders& flat) {
+    GuestPlane depth;
+    GuestPlane htile;
+    const auto htileBytes = static_cast<std::size_t>(Graphics::HtileMetadataBytes({Width, Height}));
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(htile.data);
+    for (std::size_t word = 0; word < htileBytes / 4u; ++word) words[word] = 0x00000105u;
+    const Planes planes{depth.address, 0, VK_FORMAT_D32_SFLOAT, 1u, htile.address};
+    const std::string what = "a fill over the whole HTILE of a drawn depth surface";
+    for (std::uint32_t frame = 0; frame < 3u; ++frame) {
+        const auto at = what + ", frame " + std::to_string(frame);
+        DrawPlanes(device, flat, planes, true, false);
+        Require(Owned(htile.address) && Stale(htile.address) != 0u && Stale(depth.address) != 0u, at + ": the draw left the HTILE or the plane without stale subpages");
+        static_cast<void>(Graphics::StorageTexture::DiscardPendingInside(htile.address, htileBytes));
+        Require(!Graphics::StorageTexture::FlushPending(htile.address, htileBytes, nullptr, "buffer fill", Graphics::PublishScope::PartialUnits), at + ": the store ahead of the fill wrote the surface back although the fill overwrites every HTILE byte");
+        Require(Stale(htile.address) == 0u, at + ": the HTILE the fill overwrites is still stale");
+        Require(Stale(depth.address) != 0u, at + ": the fill over the HTILE published the depth plane");
+        const std::array<std::uint32_t, 4> pattern{0x0000fff0u, 0x0000fff0u, 0x0000fff0u, 0x0000fff0u};
+        Require(device.FillBuffer(htile.address, htileBytes, pattern), at + ": the device did not store the fill");
+        device.WaitIdle();
+        CheckDepth(depth.address, planes.format, 1u, false, at + ", depth plane read after the fill");
+        Require(Stale(depth.address) == 0u, at + ": the CPU read left the plane stale");
+        std::vector<std::uint32_t> read(htileBytes / 4u);
+        AgcDriver::GuestMemory::Read(htile.address, std::as_writable_bytes(std::span(read)));
+        std::size_t wrong = 0;
+        for (const auto word : read) wrong += word != pattern[0] ? 1u : 0u;
+        Require(wrong == 0u, at + ": " + std::to_string(wrong) + " HTILE words lost the fill's value after the plane was read");
+    }
+    std::printf("%s stores nothing ahead of the fill and keeps the plane's results\n", what.c_str());
+}
+
 void StencilSwizzle(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
     GuestPlane depth;
     GuestPlane stencil;
@@ -555,6 +586,7 @@ int main() {
         HtileWithStencil(*device, sloped);
         PartialHtilePublication(*device, sloped);
         StorageWriteMarksPlaneStale(*device, flat);
+        HtileFillStoresNothing(*device, flat);
         StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
         LibcRunShutdown_nid_postfix();
