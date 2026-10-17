@@ -28,23 +28,27 @@ constexpr std::uint32_t DecrementS9 = 0x80898109u;
 constexpr std::uint32_t CompareS9NotZero = 0xbf078009u;
 constexpr std::uint32_t BranchBackWhileNotZero = 0xbf85fff7u;
 
+constexpr std::uint32_t SpinAttempts = 4;
+
 Program Opener;
-Program Spinner;
+std::array<Program, SpinAttempts> Spinners;
 
 void BuildPrograms() {
     using namespace Isa;
     Opener << Vop2(VLshlRevB32, 1, InlineInteger(2), 0) << Mubuf(BufferStoreDword, 0, 1, 0) << EndProgram;
-    Spinner << Vop2(VAddNcU32, 1, InlineInteger(1), 0) << MoveLiteralToS9 << SpinRounds
-            << Vop2(VLshlRevB32, 2, InlineInteger(13), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
-            << Vop2(VLshrRevB32, 2, InlineInteger(17), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
-            << Vop2(VLshlRevB32, 2, InlineInteger(5), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
-            << DecrementS9 << CompareS9NotZero << BranchBackWhileNotZero
-            << Vop2(VLshlRevB32, 3, InlineInteger(2), 0) << Mubuf(BufferStoreDword, 1, 3, 0) << EndProgram;
+    for (std::uint32_t attempt = 0; attempt < SpinAttempts; ++attempt) {
+        Spinners[attempt] << Vop2(VAddNcU32, 1, InlineInteger(1), 0) << MoveLiteralToS9 << (SpinRounds << attempt)
+                          << Vop2(VLshlRevB32, 2, InlineInteger(13), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+                          << Vop2(VLshrRevB32, 2, InlineInteger(17), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+                          << Vop2(VLshlRevB32, 2, InlineInteger(5), 1) << Vop2(VXorB32, 1, Vgpr(1), 2)
+                          << DecrementS9 << CompareS9NotZero << BranchBackWhileNotZero
+                          << Vop2(VLshlRevB32, 3, InlineInteger(2), 0) << Mubuf(BufferStoreDword, 1, 3, 0) << EndProgram;
+    }
 }
 
-std::uint32_t Spun(std::uint32_t lane) {
+std::uint32_t Spun(std::uint32_t lane, std::uint32_t attempt) {
     std::uint32_t value = lane + 1u;
-    for (std::uint32_t round = 0; round < SpinRounds; ++round) {
+    for (std::uint32_t round = 0; round < (SpinRounds << attempt); ++round) {
         value ^= value << 13u;
         value ^= value >> 17u;
         value ^= value << 5u;
@@ -103,9 +107,9 @@ public:
         }
     }
 
-    void Spin(Commands& commands) const {
+    void Spin(Commands& commands, std::uint32_t attempt) const {
         const auto output = BufferResource(Slot(SpinOutput), SpinLanes * 4u);
-        commands.Dispatch(Spinner, output, SpinLanes);
+        commands.Dispatch(Spinners[attempt], output, SpinLanes);
     }
 
     void CopyTail(Commands& commands) const {
@@ -138,34 +142,38 @@ private:
 };
 
 void GpuSideWait(Memory& memory) {
-    memory.Reset();
-    const auto label = memory.Slot(0);
-    const auto target = memory.Slot(1);
-    Commands waiter;
-    waiter.Wait(label, Equal, 1u, 0xffffffffu);
-    waiter.WriteData(target, {Later});
-    memory.CopyTail(waiter);
-    waiter.Submit(WaiterQueue);
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    Expect(!Recorded(target), "GPU-side wait: the work after a wait was recorded before any writer of its label existed");
-    Commands spin;
-    memory.Spin(spin);
-    spin.Submit(WriterQueue);
-    Commands writer;
-    memory.SlowWrites(writer);
-    writer.WriteData(label, {1u});
-    writer.Submit(WriterQueue);
-    const auto seen = WatchRecord(target, memory.SlotWords(0), 0u);
-    Expect(seen.recorded, "GPU-side wait: the waiter never recorded the work after its wait");
-    Expect(seen.beforeLanding, "GPU-side wait: the waiter recorded the work after a wait on another queue's recorded label only once the label was in memory (a CPU wait)");
-    WaitIdle();
-    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 2 * 64u);
-    AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(SpinOutput), SpinLanes * 4u);
-    Expect(memory.SlotWords(1)[0] == Later, "GPU-side wait: the store after the wait did not land");
-    Expect(memory.SlotWords(SpinOutput)[SpinLanes - 1u] == Spun(SpinLanes - 1u), "GPU-side wait: the writer's spinning dispatch stored " + Hex(memory.SlotWords(SpinOutput)[SpinLanes - 1u]) + ", expected " + Hex(Spun(SpinLanes - 1u)));
-    if (const auto byte = memory.TailMismatch()) {
-        Expect(false, "GPU-side wait: the GPU copy after the wait read byte " + std::to_string(*byte) + " of the writer's last copy as " + Hex(memory.Checked(*byte)) + ", before the writer's copy in the label's batch landed (" + Hex(memory.Source(*byte)) + ")");
+    for (std::uint32_t attempt = 0; attempt < SpinAttempts; ++attempt) {
+        memory.Reset();
+        const auto label = memory.Slot(0);
+        const auto target = memory.Slot(1);
+        Commands waiter;
+        waiter.Wait(label, Equal, 1u, 0xffffffffu);
+        waiter.WriteData(target, {Later});
+        memory.CopyTail(waiter);
+        waiter.Submit(WaiterQueue);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        Expect(!Recorded(target), "GPU-side wait: the work after a wait was recorded before any writer of its label existed");
+        Commands spin;
+        memory.Spin(spin, attempt);
+        spin.Submit(WriterQueue);
+        Commands writer;
+        memory.SlowWrites(writer);
+        writer.WriteData(label, {1u});
+        writer.Submit(WriterQueue);
+        const auto seen = WatchRecord(target, memory.SlotWords(0), 0u);
+        Expect(seen.recorded, "GPU-side wait: the waiter never recorded the work after its wait");
+        WaitIdle();
+        if (seen.recorded && !seen.beforeLanding) continue;
+        AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(0), 2 * 64u);
+        AgcDriver::GuestMemory::FlushGpuWrites(memory.Slot(SpinOutput), SpinLanes * 4u);
+        Expect(memory.SlotWords(1)[0] == Later, "GPU-side wait: the store after the wait did not land");
+        Expect(memory.SlotWords(SpinOutput)[SpinLanes - 1u] == Spun(SpinLanes - 1u, attempt), "GPU-side wait: the writer's spinning dispatch stored " + Hex(memory.SlotWords(SpinOutput)[SpinLanes - 1u]) + ", expected " + Hex(Spun(SpinLanes - 1u, attempt)));
+        if (const auto byte = memory.TailMismatch()) {
+            Expect(false, "GPU-side wait: the GPU copy after the wait read byte " + std::to_string(*byte) + " of the writer's last copy as " + Hex(memory.Checked(*byte)) + ", before the writer's copy in the label's batch landed (" + Hex(memory.Source(*byte)) + ")");
+        }
+        return;
     }
+    Expect(false, "GPU-side wait: in all " + std::to_string(SpinAttempts) + " attempts, the writer's spin of up to " + std::to_string(SpinRounds << (SpinAttempts - 1u)) + " rounds finished and its label landed before the waiter recorded the work after its wait (a CPU wait, or a waiter too slow to tell)");
 }
 
 void CpuWrittenLabel(Memory& memory) {
