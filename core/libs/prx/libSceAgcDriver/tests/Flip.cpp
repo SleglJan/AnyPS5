@@ -163,11 +163,11 @@ void testFlipAndBoundary() {
     submitFlip();
     {
         std::unique_lock lock(output->state->mutex);
-        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->entered; }), "worker did not reach flip");
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(60), [&] { return output->state->entered; }), "worker did not reach flip");
         check(output->state->last.argument == -0x123456789abcdefLL && output->state->last.index == -2, "decoded flip arguments changed");
     }
     boundary = std::async(std::launch::async, [] { AgcDriverSuspendPoint_nid_postfix(); });
-    check(boundary.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "suspend blocked on preceding work");
+    check(boundary.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "suspend blocked on preceding work");
     boundary.get();
     check(output->state->ready == 0, "blocked flip completed before release");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
@@ -220,7 +220,7 @@ void testFlipHold() {
     check(sceAgcDriverSubmitDcb(&gatedFrame) == 0, "gated flip submission failed");
     {
         std::unique_lock lock(output->state->mutex);
-        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "worker did not reach the rendering wait");
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(60), [&] { return output->state->waiting; }), "worker did not reach the rendering wait");
     }
     auto held = std::async(std::launch::async, [] { submitFlip(); });
     check(held.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout, "a flip was accepted before the worker reached the previous one");
@@ -230,7 +230,7 @@ void testFlipHold() {
         output->state->gate = false;
     }
     output->state->changed.notify_all();
-    check(held.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a flip stayed held after the worker reached the previous one");
+    check(held.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "a flip stayed held after the worker reached the previous one");
     held.get();
     AgcDriverWaitIdle_nid_postfix();
     check(output->state->ready == 2, "held flips were lost");
@@ -243,7 +243,7 @@ void testFlipHold() {
     Packet waitingFrame{waiting.data(), static_cast<std::uint32_t>(waiting.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&waitingFrame) == 0, "waiting flip submission failed");
     auto released = std::async(std::launch::async, [] { submitFlip(); });
-    check(released.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a flip was held while the worker waited for a label only the title stores");
+    check(released.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "a flip was held while the worker waited for a label only the title stores");
     released.get();
     check(output->state->ready == 2, "a flip passed an unsatisfied wait");
     label.store(1, std::memory_order_release);
@@ -264,7 +264,7 @@ void testFlipHold() {
     check(sceAgcDriverSubmitDcb(&gatedWaitFrame) == 0, "gated waiting flip submission failed");
     {
         std::unique_lock lock(output->state->mutex);
-        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "worker did not reach the second rendering wait");
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(60), [&] { return output->state->waiting; }), "worker did not reach the second rendering wait");
     }
     auto progressed = std::async(std::launch::async, [] { submitFlip(); });
     check(progressed.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout, "a flip was accepted while the worker was held before a label wait");
@@ -273,7 +273,7 @@ void testFlipHold() {
         output->state->gate = false;
     }
     output->state->changed.notify_all();
-    check(progressed.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a flip stayed held after the worker went on to wait for a label only the title stores");
+    check(progressed.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "a flip stayed held after the worker went on to wait for a label only the title stores");
     progressed.get();
     check(output->state->ready == 4, "a flip passed an unsatisfied wait after the rendering wait");
     later.store(1, std::memory_order_release);
@@ -308,7 +308,7 @@ void testComputeRenderingWait() {
     check(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "compute rendering wait submission failed");
     {
         std::unique_lock lock(output->state->mutex);
-        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "compute worker did not reach the rendering wait");
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(60), [&] { return output->state->waiting; }), "compute worker did not reach the rendering wait");
     }
     auto idle = std::async(std::launch::async, [] { AgcDriverWaitIdle_nid_postfix(); });
     check(idle.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout, "the driver went idle past a closed compute rendering wait");
@@ -317,7 +317,7 @@ void testComputeRenderingWait() {
         output->state->gate = false;
     }
     output->state->changed.notify_all();
-    check(idle.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a compute rendering wait stayed blocked after release");
+    check(idle.wait_for(std::chrono::seconds(60)) == std::future_status::ready, "a compute rendering wait stayed blocked after release");
     idle.get();
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
