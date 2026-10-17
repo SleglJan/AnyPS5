@@ -124,10 +124,34 @@ public:
     std::uint32_t Records() const { return records; }
     Kind MemoryKind() const { return pages.MemoryKind(); }
 
-    void ExpectHeld(std::uint64_t elements, const AgcDriver::Graphics::ResidencyCounts& before, const std::string& what) const {
+    void ExpectHeld(std::uint64_t elements, const AgcDriver::Graphics::ResidencyCounts& before, const std::string& what, std::span<const MirrorChecks::Range> cpuWritten = {}) const {
         const std::array<MirrorChecks::Range, 1> stored{{{Base(), Base() + elements * ElementBytes}}};
-        const auto failure = MirrorChecks::StoresHeld(MemoryKind(), {pages.Address(), pages.Address() + pages.Bytes()}, stored, stored, before);
+        const auto failure = MirrorChecks::StoresHeld(MemoryKind(), {pages.Address(), pages.Address() + pages.Bytes()}, stored, stored, before, cpuWritten);
         Expect(failure.empty(), what + ": " + failure);
+    }
+
+    MirrorChecks::Range Elements(std::uint64_t firstElement, std::uint64_t elements) const {
+        return {Base() + firstElement * ElementBytes, Base() + (firstElement + elements) * ElementBytes};
+    }
+
+    void ExpectRefreshed(MirrorChecks::Range written, const std::string& what) const {
+        const auto firstSubpage = (written.first + SubpageBytes - 1u) / SubpageBytes;
+        const auto endSubpage = written.second / SubpageBytes;
+        for (auto page = firstSubpage * SubpageBytes / PageBytes; page * PageBytes < endSubpage * SubpageBytes; ++page) {
+            bool resident = false;
+            Locked([&] { resident = Residency().Manager().Slot(page).has_value(); });
+            if (!resident) continue;
+            MirrorReader reader;
+            const auto lanes = reader.Read(page * PageBytes, 1);
+            for (std::uint32_t subpage = 0; subpage < SubpagesPerPage; ++subpage) {
+                const auto address = page * PageBytes + std::uint64_t{subpage} * SubpageBytes;
+                if (address / SubpageBytes < firstSubpage || address / SubpageBytes >= endSubpage) continue;
+                const auto word = (address - pages.Address()) / 4u;
+                if (lanes[subpage] == Written(word)) continue;
+                Expect(false, what + ": page " + Hex(page * PageBytes) + " kept its mirror after the CPU wrote it but the GPU reads " + Hex(lanes[subpage]) + " at " + Hex(address) + ", the CPU wrote " + Hex(Written(word)) + "; a used page's mirror is refreshed");
+                return;
+            }
+        }
     }
 
     void Dispatch(Commands& commands, std::uint32_t groups, const Value& value) {
@@ -294,9 +318,11 @@ void TailWrittenBehindSpin(Kind kind, std::uint32_t rounds, std::uint32_t groups
     Expect(failure.empty(), what + ": the submission failed: " + failure);
     Expect(recorded, what + ": the dispatch's label was never recorded");
     Expect(running, what + ": the spin had finished when the CPU wrote the records past the stores' last 4 KiB subpage, so the writes did not meet a running batch");
-    target.ExpectHeld(stored, before, what);
+    const std::array<MirrorChecks::Range, 1> cpuWritten{target.Elements(boundary, stored + tail - boundary)};
+    target.ExpectHeld(stored, before, what, cpuWritten);
     if (kind == Kind::Shared) target.CpuWrite(stored, boundary - stored);
     target.Check(what);
+    if (kind == Kind::Shared) target.ExpectRefreshed(cpuWritten[0], what);
 }
 
 }

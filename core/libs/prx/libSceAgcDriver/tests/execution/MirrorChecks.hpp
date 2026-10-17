@@ -67,7 +67,11 @@ inline std::uint32_t StoredMask(std::uint64_t page, std::span<const Range> store
     return mask;
 }
 
-inline std::string StoresHeld(Kind kind, Range area, std::span<const Range> stored, std::span<const Range> allowed, const AgcDriver::Graphics::ResidencyCounts& before) {
+inline bool Overlaps(std::uint64_t page, std::span<const Range> ranges) {
+    return std::ranges::any_of(ranges, [&](const Range& range) { return range.first < (page + 1u) * PageBytes && page * PageBytes < range.second; });
+}
+
+inline std::string StoresHeld(Kind kind, Range area, std::span<const Range> stored, std::span<const Range> allowed, const AgcDriver::Graphics::ResidencyCounts& before, std::span<const Range> cpuWritten = {}) {
     std::string failure;
     Locked([&] {
         auto& manager = Residency().Manager();
@@ -81,7 +85,12 @@ inline std::string StoresHeld(Kind kind, Range area, std::span<const Range> stor
             const auto permitted = kind == Kind::Shared ? StoredMask(page, allowed) | required : 0u;
             const auto resident = manager.Slot(page).has_value();
             const auto dirty = static_cast<std::uint32_t>(manager.Dirty(page));
-            if (kind == Kind::Shared && !resident) {
+            const auto dropped = kind == Kind::Shared && required == 0u && Overlaps(page, cpuWritten);
+            if (dropped && resident) {
+                failure = "page " + Hex(page * PageBytes) + " of the shared view keeps its mirror after the CPU wrote it, though no GPU work used it";
+                return;
+            }
+            if (kind == Kind::Shared && !dropped && !resident) {
                 failure = "page " + Hex(page * PageBytes) + " of the shared view has no mirror after the dispatch";
                 return;
             }

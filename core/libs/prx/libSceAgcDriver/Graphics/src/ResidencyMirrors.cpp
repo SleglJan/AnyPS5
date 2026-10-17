@@ -117,12 +117,12 @@ MirrorSpan::MirrorSpan(ResidencyDriver* residency, std::uint64_t begin, std::uin
     const auto last = (end - 1) >> ResidencyPageShift;
     pages.resize(static_cast<std::size_t>(last - first + 1));
     for (auto index = first; index <= last;) {
-        if (!manager.Slot(index)) {
+        if (!manager.Used(index)) {
             ++index;
             continue;
         }
         auto next = index + 1;
-        while (next <= last && manager.Slot(next)) ++next;
+        while (next <= last && manager.Used(next)) ++next;
         manager.Use(index << ResidencyPageShift, (next - index) << ResidencyPageShift, access);
         index = next;
     }
@@ -131,7 +131,7 @@ MirrorSpan::MirrorSpan(ResidencyDriver* residency, std::uint64_t begin, std::uin
     for (std::size_t k = 0; k < pages.size(); ++k) {
         const auto index = first + k;
         const auto slot = access == ResidencyAccess::Write ? manager.WriteSlot(index) : manager.Slot(index);
-        if (!slot) continue;
+        if (!slot || !manager.Used(index)) continue;
         const auto chunk = residency->Mirrors().Chunk(slot->chunk);
         pages[k] = {chunk->buffer, VkDeviceSize{slot->slot} << ResidencyPageShift};
         if (recorder != nullptr && kept.insert(slot->chunk).second) recorder->Keep(chunk);

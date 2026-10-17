@@ -152,6 +152,7 @@ struct ResidencyCounts {
     std::uint64_t inadmissible = 0;
     std::uint64_t evicted = 0;
     std::uint64_t demoted = 0;
+    std::uint64_t unusedDemoted = 0;
     std::uint64_t dropped = 0;
     std::uint64_t refreshed = 0;
     std::uint64_t faults = 0;
@@ -242,6 +243,7 @@ public:
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
     std::optional<MirrorSlot> WriteSlot(std::uint64_t page);
+    bool Used(std::uint64_t page);
     std::optional<std::uint64_t> Translate(std::uint64_t page);
     ResidencyMask Dirty(std::uint64_t page);
     bool AnyResident(std::uint64_t address, std::uint64_t bytes);
@@ -290,6 +292,7 @@ private:
         bool shared = false;
         bool importSettled = false;
         bool guarded = false;
+        bool used = false;
         bool accessGuarded = false;
         ResidencyMask accessMask = 0;
         std::uint64_t importSerial = 0;
@@ -407,6 +410,7 @@ private:
     void applyRecorded(std::uint64_t address, std::uint64_t bytes);
     void evictDraining();
     void demote(std::span<const std::uint32_t> ids);
+    std::vector<Fill> demoteUnused(std::span<const Fill> fills);
     void changed(std::uint64_t page);
     void waitFor(const ResidencyToken& token);
     bool flushForCpuRead(std::uint64_t address, std::uint64_t bytes, bool unlocked);

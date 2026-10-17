@@ -287,6 +287,7 @@ void ResidencyManager::Own(std::uint64_t address, std::uint64_t bytes, IResidenc
         ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
     }
     admit(span.first, span.last);
+    for (const auto id : residentIn(address, bytes)) pages[id].used = true;
 }
 
 void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner) {
@@ -1048,7 +1049,7 @@ void ResidencyManager::applyQueued() {
 }
 
 void ResidencyManager::applyRecorded(std::uint64_t address, std::uint64_t bytes) {
-    const auto fills = withAliases(address, bytes);
+    const auto fills = demoteUnused(withAliases(address, bytes));
     if (fills.empty()) return;
     counts.recordRefreshed += fills.size();
     refreshOrdered(fills);
@@ -1061,10 +1062,15 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
     const auto now = Epoch();
     std::vector<Fill> fills;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> partial;
+    std::vector<Fill> unused;
     for (const auto index : written) {
         const auto id = find(index);
         if (!id) continue;
         auto& page = pages[*id];
+        if (!page.used) {
+            unused.push_back({*id});
+            continue;
+        }
         ++counts.faults;
         if (hotResident.contains(index)) ++counts.hotRefreshed;
         const auto distance = now - page.faultEpoch;
@@ -1098,6 +1104,7 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
     }
     refresh(fills);
     for (const auto& [id, generation] : partial) pages[id].generation = std::max(pages[id].generation, generation);
+    demoteUnused(unused);
 }
 
 void ResidencyManager::coolHot(std::uint64_t first, std::span<const std::uint8_t> written) {
@@ -1232,6 +1239,7 @@ void ResidencyManager::evictDraining() {
 void ResidencyManager::Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token) {
     for (const auto id : residentIn(address, bytes)) {
         auto& page = pages[id];
+        page.used = true;
         page.pin = MergeTokens(page.pin, token);
         if (access == ResidencyAccess::Write) {
             addUnsettled(writers, page.index, token, UnsettledWriter);
@@ -1295,6 +1303,7 @@ void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
             continue;
         }
         pages[*id].touchFrame = touchFrame;
+        pages[*id].used = true;
         unlink(*id);
         linkNewest(*id);
     }
@@ -1369,6 +1378,7 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
         if (import.cpuWritable && import.section != 0) guarded = device.Guard(page);
         else if (import.cpuWritable) device.SettleWrites(page);
         const auto id = newPage(page, *slot, import, guarded);
+        pages[id].used = !sharedOnly;
         if (import.cpuWritable && !guarded) {
             if (import.section != 0) ++counts.unguardable;
             else ++counts.unsettledGuards;
@@ -1407,6 +1417,21 @@ void ResidencyManager::demote(std::span<const std::uint32_t> ids) {
     recordWriteBacks(writeBacks);
 }
 
+std::vector<ResidencyManager::Fill> ResidencyManager::demoteUnused(std::span<const Fill> fills) {
+    std::vector<Fill> kept;
+    std::vector<std::uint32_t> unused;
+    for (const auto& fill : fills) {
+        if (pages[fill.id].used) kept.push_back(fill);
+        else unused.push_back(fill.id);
+    }
+    if (unused.empty()) return kept;
+    std::sort(unused.begin(), unused.end());
+    unused.erase(std::unique(unused.begin(), unused.end()), unused.end());
+    counts.unusedDemoted += unused.size();
+    demote(unused);
+    return kept;
+}
+
 void ResidencyManager::Demote(std::uint64_t address, std::uint64_t bytes) {
     applyQueued();
     std::vector<std::uint32_t> ids;
@@ -1432,7 +1457,7 @@ void ResidencyManager::DropRange(std::uint64_t address, std::uint64_t bytes) {
 
 void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t bytes) {
     applyQueued();
-    const auto fills = withAliases(address, bytes);
+    const auto fills = demoteUnused(withAliases(address, bytes));
     waitWriters(fills);
     for (const auto& fill : fills) clearDirty(fill.id, fill.begin, fill.end);
     refresh(fills);
@@ -1446,8 +1471,13 @@ std::vector<ResidencyMirrorStore> ResidencyManager::StoreThroughMirrors(std::uin
     auto spans = device.Aliases(address, bytes);
     spans.push_back({address, bytes});
     std::vector<Fill> fills;
+    std::vector<Fill> unused;
     for (const auto& range : spans) {
         for (const auto id : residentIn(range.address, range.bytes)) {
+            if (!pages[id].used) {
+                unused.push_back({id});
+                continue;
+            }
             const auto base = pages[id].index << ResidencyPageShift;
             const auto first = std::max(range.address, base);
             const auto last = std::min(range.address + range.bytes, base + ResidencyPageBytes);
@@ -1462,12 +1492,13 @@ std::vector<ResidencyMirrorStore> ResidencyManager::StoreThroughMirrors(std::uin
         clearDirty(fill.id, fill.begin, fill.end);
         pages[fill.id].pin = MergeTokens(pages[fill.id].pin, lands);
     }
+    demoteUnused(unused);
     return stores;
 }
 
 void ResidencyManager::RefreshImportWritten(std::uint64_t address, std::uint64_t bytes) {
     applyQueued();
-    const auto fills = withAliases(address, bytes);
+    const auto fills = demoteUnused(withAliases(address, bytes));
     for (const auto& fill : fills) clearDirty(fill.id, fill.begin, fill.end);
     refreshOrdered(fills);
 }
@@ -1753,6 +1784,12 @@ std::optional<MirrorSlot> ResidencyManager::WriteSlot(std::uint64_t page) {
     const auto id = find(page);
     if (!id || !dirtyable(pages[*id])) return std::nullopt;
     return pages[*id].slot;
+}
+
+bool ResidencyManager::Used(std::uint64_t page) {
+    applyDrops();
+    const auto id = find(page);
+    return id && pages[*id].used;
 }
 
 std::optional<std::uint64_t> ResidencyManager::Translate(std::uint64_t page) {
