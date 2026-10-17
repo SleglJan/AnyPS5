@@ -684,7 +684,7 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
 }
 
 bool StencilReplaySafe(const IrProgram& program) {
-    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites) return false;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && !program.Info().usesDma && program.Resources().guardedSrtSlots.empty())) return false;
     if ((program.Info().usesFaultBuffer || program.Info().usesDma) && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
     bool masks = false;
