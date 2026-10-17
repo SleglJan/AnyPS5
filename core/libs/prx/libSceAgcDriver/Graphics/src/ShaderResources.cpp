@@ -161,7 +161,8 @@ struct TextureCache {
         std::uint64_t stale = 0;
     } counts;
     std::chrono::steady_clock::time_point countsReported = std::chrono::steady_clock::now();
-    VkPhysicalDevice budgetDevice = VK_NULL_HANDLE;
+    VkDevice budgetDevice = VK_NULL_HANDLE;
+    VkPhysicalDevice budgetPhysical = VK_NULL_HANDLE;
     std::chrono::steady_clock::time_point budgetRead{};
     std::uint64_t budget = 0;
     std::uint64_t reportedBudget = 0;
@@ -504,24 +505,33 @@ std::uint64_t forcedCacheBudget() {
     return forced;
 }
 
+struct StorageBudgetCache {
+    std::mutex mutex;
+    VkDevice device{VK_NULL_HANDLE};
+    VkPhysicalDevice physical{VK_NULL_HANDLE};
+    std::chrono::steady_clock::time_point read{};
+    std::uint64_t budget{0};
+};
+
+StorageBudgetCache& StorageBudget() {
+    static StorageBudgetCache cache;
+    return cache;
+}
+
 std::uint64_t storageBudget(const Context& context) {
     const auto forced = forcedCacheBudget();
     if (forced != 0) return forced;
     if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
-    static struct {
-        std::mutex mutex;
-        VkPhysicalDevice device{VK_NULL_HANDLE};
-        std::chrono::steady_clock::time_point read{};
-        std::uint64_t budget{0};
-    } cached;
+    auto& cached = StorageBudget();
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard lock(cached.mutex);
-    if (cached.device == context.physical && now - cached.read < std::chrono::seconds(1)) return cached.budget;
+    if (cached.device == context.device && cached.physical == context.physical && now - cached.read < std::chrono::seconds(1)) return cached.budget;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
-    cached.device = context.physical;
+    cached.device = context.device;
+    cached.physical = context.physical;
     cached.read = now;
     cached.budget = StorageTextureBudget(context.memory, &reported);
     return cached.budget;
@@ -531,7 +541,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     if (const auto forced = forcedCacheBudget(); forced != 0) return forced;
     if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
     const auto now = std::chrono::steady_clock::now();
-    if (cache.budgetDevice == context.physical && now - cache.budgetRead < std::chrono::seconds(1)) return cache.budget;
+    if (cache.budgetDevice == context.device && cache.budgetPhysical == context.physical && now - cache.budgetRead < std::chrono::seconds(1)) return cache.budget;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
@@ -539,7 +549,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
     const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage);
-    const bool fresh = cache.budgetDevice != context.physical;
+    const bool fresh = cache.budgetDevice != context.device || cache.budgetPhysical != context.physical;
     if (const auto heap = largestDeviceLocalHeap(context.memory); heap && (fresh || SampledBudgetReportDue(cache.reportedBudget, budget, now - cache.reportedAt))) {
         char was[48] = "";
         if (!fresh) std::snprintf(was, sizeof(was), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedBudget >> 20u));
@@ -547,7 +557,8 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
         cache.reportedBudget = budget;
         cache.reportedAt = now;
     }
-    cache.budgetDevice = context.physical;
+    cache.budgetDevice = context.device;
+    cache.budgetPhysical = context.physical;
     cache.budgetRead = now;
     cache.budget = budget;
     return budget;
@@ -996,6 +1007,10 @@ std::uint64_t SampledTextureCacheBudget(const Context& context) {
     return sampledBudget(context, cache);
 }
 
+std::uint64_t StorageTextureCacheBudget(const Context& context) {
+    return storageBudget(context);
+}
+
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words) {
     const auto resource = DecodeTextureResource(words);
     return cachedTexture(context, words, resource, ViewComponents(resource));
@@ -1030,6 +1045,18 @@ void ClearCachedTextures(VkDevice device) {
         for (auto it = sampled.entries.begin(); it != sampled.entries.end();) {
             if (it->key.device == device) eraseTexture(sampled, it++);
             else ++it;
+        }
+        if (sampled.budgetDevice == device) {
+            sampled.budgetDevice = VK_NULL_HANDLE;
+            sampled.budgetPhysical = VK_NULL_HANDLE;
+        }
+    }
+    {
+        auto& budget = StorageBudget();
+        std::lock_guard lock(budget.mutex);
+        if (budget.device == device) {
+            budget.device = VK_NULL_HANDLE;
+            budget.physical = VK_NULL_HANDLE;
         }
     }
     auto& storage = StorageTextures();

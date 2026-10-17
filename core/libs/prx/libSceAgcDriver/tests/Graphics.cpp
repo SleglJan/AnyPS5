@@ -6968,6 +6968,11 @@ int main(int argc, char** argv) {
             std::cout << "Existing undithered alpha-to-coverage states passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--device-cache-lifetime") {
+            RunDeviceCacheLifetimeTests();
+            std::cout << "Device caches end with their device\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-layout-flags") {
             descriptorLayoutFlagTests();
             std::cout << "Descriptor layout native and captured binding flags passed\n";

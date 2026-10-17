@@ -1549,6 +1549,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         tests/MockDescriptorHeap.cpp
         tests/TextureDetiler.cpp
         tests/DepthSurfaceReuse.cpp
+        tests/DeviceCacheLifetime.cpp
 )
 
 target_include_directories(agc_driver_graphics_tests PRIVATE
@@ -1659,6 +1660,9 @@ target_include_directories(agc_driver_alpha_to_coverage_tests PRIVATE $<TARGET_P
 target_include_directories(agc_driver_sample_multisample_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_device_cache_lifetime COMMAND agc_driver_graphics_tests --device-cache-lifetime)
+    set_tests_properties(agc_driver_device_cache_lifetime PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_undithered_alpha_to_coverage_state COMMAND agc_driver_graphics_tests --undithered-alpha-to-coverage-state)
     set_tests_properties(agc_driver_undithered_alpha_to_coverage_state PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
@@ -1669,7 +1673,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_dithered_alpha_to_coverage PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_alpha_to_coverage_state agc_driver_undithered_alpha_to_coverage_state PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_device_cache_lifetime agc_driver_alpha_to_coverage_state agc_driver_undithered_alpha_to_coverage_state PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         set_tests_properties(agc_driver_dithered_alpha_to_coverage PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

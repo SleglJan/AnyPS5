@@ -1722,6 +1722,16 @@ std::mutex& surfacesMutex() {
     return mutex;
 }
 
+struct HostDepthFormats {
+    std::mutex mutex;
+    std::map<std::pair<VkDevice, VkPhysicalDevice>, VkFormat> chosen;
+};
+
+HostDepthFormats& hostDepthFormats() {
+    static HostDepthFormats formats;
+    return formats;
+}
+
 std::vector<std::unique_ptr<DepthSurface>>& surfaces() {
     static auto* list = new std::vector<std::unique_ptr<DepthSurface>>();
     return *list;
@@ -2030,10 +2040,10 @@ bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std
 
 VkFormat HostDepthFormat(const Context& context, VkFormat format) {
     if (format != VK_FORMAT_D16_UNORM_S8_UINT) return format;
-    static std::mutex mutex;
-    static std::map<VkPhysicalDevice, VkFormat> chosen;
-    std::lock_guard lock(mutex);
-    if (const auto found = chosen.find(context.physical); found != chosen.end()) return found->second;
+    auto& formats = hostDepthFormats();
+    std::lock_guard lock(formats.mutex);
+    const std::pair key{context.device, context.physical};
+    if (const auto found = formats.chosen.find(key); found != formats.chosen.end()) return found->second;
     constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
     auto host = format;
     for (const auto candidate : {VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
@@ -2043,7 +2053,7 @@ VkFormat HostDepthFormat(const Context& context, VkFormat format) {
         host = candidate;
         break;
     }
-    chosen.emplace(context.physical, host);
+    formats.chosen.emplace(key, host);
     return host;
 }
 
@@ -2201,6 +2211,10 @@ void ClearDepthSurfaces(VkDevice device) {
     std::erase_if(depthGuards(), [&](const auto& range) { return range.device == device; });
     anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
     UpdateResidentImageUnmapObserver_nid_no_patch();
+    guardLock.unlock();
+    auto& formats = hostDepthFormats();
+    std::lock_guard formatLock(formats.mutex);
+    std::erase_if(formats.chosen, [&](const auto& entry) { return entry.first.first == device; });
 }
 
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components) {
