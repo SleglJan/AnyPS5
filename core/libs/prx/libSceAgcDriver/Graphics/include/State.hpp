@@ -80,6 +80,7 @@ struct DepthTarget {
     bool htileStencil = false;
     std::uint32_t samples = 1;
     std::uint32_t depthSwizzle = 0;
+    std::uint32_t stencilSwizzle = 0;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t firstSlice = 0;
     std::uint32_t lastSlice = 0;

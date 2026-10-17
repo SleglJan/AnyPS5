@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSampleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
@@ -96,6 +97,7 @@ struct Planes {
     VkFormat format = VK_FORMAT_D32_SFLOAT;
     std::uint32_t samples = 1;
     std::uint64_t htile = 0;
+    std::uint32_t stencilSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
 };
 
 void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Planes& planes, bool depthWrite, bool stencilWrite) {
@@ -118,6 +120,7 @@ void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const 
     state.samples = planes.samples;
     state.depth = Graphics::DepthTarget{planes.depth, planes.stencil, {Width, Height}, planes.format, 1.0f, 0, planes.htile, false, planes.samples};
     state.depth->depthSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
+    state.depth->stencilSwizzle = planes.stencilSwizzle;
     if (planes.htile != 0u) state.depth->htileDepthOnly = state.depth->iterate256 = state.depth->htilePipeAligned = true;
     state.depthTest = true;
     state.depthWrite = depthWrite;
@@ -153,9 +156,19 @@ Graphics::ResidencyMask Stale(std::uint64_t address) {
     return residency->Manager().Stale(address >> Graphics::ResidencyPageShift);
 }
 
-std::uint64_t GuestOffset(std::uint32_t x, std::uint32_t y, std::uint32_t sample, std::uint32_t elementBytes, std::uint32_t samples) {
+const std::array<std::uint32_t, 16>& EquationFor(std::uint32_t swizzle, std::uint32_t elementBytes, std::uint32_t samples) {
+    if (samples == 1u) {
+        for (const auto& equation : Graphics::kTextureSwizzleEquations) {
+            if (equation.swizzleMode == swizzle && equation.elementBytes == elementBytes) return equation.bits;
+        }
+    }
     const auto* equation = Graphics::FindDepthSampleEquation(samples, elementBytes);
-    Require(equation != nullptr, "depth write-back: no equation for the plane");
+    Require(equation != nullptr && swizzle == static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX), "depth write-back: no equation for the plane");
+    return equation->bits;
+}
+
+std::uint64_t GuestOffset(std::uint32_t x, std::uint32_t y, std::uint32_t sample, std::uint32_t elementBytes, std::uint32_t samples, std::uint32_t swizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX)) {
+    const auto& bits = EquationFor(swizzle, elementBytes, samples);
     const auto sampleBits = static_cast<std::uint32_t>(std::countr_zero(samples));
     const auto pixelBits = 16u - static_cast<std::uint32_t>(std::countr_zero(elementBytes)) - sampleBits;
     const auto widthBits = (pixelBits + ((sampleBits & 1u) == 0u ? 1u : 0u)) / 2u;
@@ -164,7 +177,7 @@ std::uint64_t GuestOffset(std::uint32_t x, std::uint32_t y, std::uint32_t sample
     const auto block = (y >> heightBits) * blocksPerRow + (x >> widthBits);
     std::uint32_t offset = 0;
     for (std::uint32_t bit = 0; bit < 16u; ++bit) {
-        const auto mask = equation->bits[bit];
+        const auto mask = bits[bit];
         const auto selected = (x & mask & 0xfffu) ^ ((y << 12u) & mask & 0xfff000u) ^ ((sample << 24u) & mask & 0xff000000u);
         offset |= static_cast<std::uint32_t>(std::popcount(selected) & 1) << bit;
     }
@@ -242,14 +255,14 @@ void CheckDepth(std::uint64_t address, VkFormat format, std::uint32_t samples, b
     CheckUntouched(read, element, what);
 }
 
-void CheckStencil(std::uint64_t address, std::uint32_t samples, const std::string& what) {
+void CheckStencil(std::uint64_t address, std::uint32_t samples, const std::string& what, std::uint32_t swizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX)) {
     const auto read = ReadPlane(address);
     std::vector<bool> element(read.size(), false);
     std::size_t wrong = 0;
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             for (std::uint32_t sample = 0; sample < samples; ++sample) {
-                const auto offset = GuestOffset(x, y, sample, 1u, samples);
+                const auto offset = GuestOffset(x, y, sample, 1u, samples, swizzle);
                 element[offset] = true;
                 if (read[offset] != std::byte{StencilValue}) ++wrong;
             }
@@ -334,6 +347,19 @@ void NativeMultisampledDepth(AgcDriver::VulkanDevice& device, const Shaders& slo
     std::printf("%s reaches guest memory, its HTILE stays refused\n", what.c_str());
 }
 
+void StencilSwizzle(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
+    GuestPlane depth;
+    GuestPlane stencil;
+    Planes planes{depth.address, stencil.address, VK_FORMAT_D32_SFLOAT_S8_UINT, 1u};
+    planes.stencilSwizzle = 25u;
+    const std::string what = "stencil in the 64 KiB S swizzle under Z-swizzled depth";
+    DrawPlanes(device, sloped, planes, true, true);
+    Require(Owned(stencil.address), what + ": the stencil plane is not owned");
+    CheckDepth(depth.address, planes.format, 1u, true, what + ", depth plane");
+    CheckStencil(stencil.address, 1u, what + ", stencil plane", planes.stencilSwizzle);
+    std::printf("%s reaches guest memory\n", what.c_str());
+}
+
 void ConvertedDepth(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
     GuestPlane depth;
     GuestPlane stencil;
@@ -366,6 +392,7 @@ int main() {
         MultisampledDepthReachesMemory(*device, sloped, VK_FORMAT_D16_UNORM);
         DepthAndStencilReachMemory(*device, sloped, 4u);
         NativeMultisampledDepth(*device, sloped);
+        StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
         LibcRunShutdown_nid_postfix();
         std::puts("depth surface write-back tests passed");

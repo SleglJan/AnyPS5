@@ -272,6 +272,7 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
     depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
+    depth.stencilSwizzle = (read(cx, 0x011) >> 4u) & 31u;
     depth.iterate256 = (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
     depth.lastSlice = (view >> 13u) & 0x7ffu;

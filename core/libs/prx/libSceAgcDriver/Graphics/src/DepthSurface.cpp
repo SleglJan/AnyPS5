@@ -472,10 +472,28 @@ public:
         return target.samples == 1u ? DepthSliceBytes(target.extent, elementBytes) : MultisampledDepthBytes_nid_no_patch(target.extent, elementBytes, target.samples);
     }
 
+    std::uint32_t planeSwizzle(std::size_t plane) const {
+        return plane == StencilPlane ? target.stencilSwizzle : target.depthSwizzle;
+    }
+
+    const std::array<std::uint32_t, 16>* planeEquation(std::size_t plane) const {
+        const auto swizzle = planeSwizzle(plane);
+        const auto elementBytes = planeElementBytes(plane);
+        if (target.samples == 1u) {
+            if (swizzle < static_cast<std::uint32_t>(ColorTileMode::Z64KBX) || swizzle > static_cast<std::uint32_t>(ColorTileMode::RenderTarget)) return nullptr;
+            for (const auto& equation : kTextureSwizzleEquations) {
+                if (equation.swizzleMode == swizzle && equation.elementBytes == elementBytes) return &equation.bits;
+            }
+            return nullptr;
+        }
+        if (swizzle != static_cast<std::uint32_t>(ColorTileMode::Z64KBX)) return nullptr;
+        const auto* equation = FindDepthSampleEquation(target.samples, elementBytes);
+        return equation != nullptr ? &equation->bits : nullptr;
+    }
+
     std::string PlaneRefusal(std::size_t plane) const {
         if (planeAddress(plane) == 0u) return "the plane has no guest memory";
-        if (static_cast<ColorTileMode>(target.depthSwizzle) != ColorTileMode::Z64KBX) return "the swizzle mode is not the 64 KiB Z layout";
-        if (FindDepthSampleEquation(target.samples, planeElementBytes(plane)) == nullptr) return "no address equation for its sample count";
+        if (planeEquation(plane) == nullptr) return "no 64 KiB address equation for its swizzle mode and sample count";
         if (target.samples != 1u && (target.firstSlice != 0u || target.lastSlice != 0u)) return "a multisampled array slice";
         if (target.samples != 1u && !sampleable) return "the device cannot sample the multisampled plane";
         if (plane == DepthPlane && hostFormat != target.format) {
@@ -593,10 +611,9 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
         for (const auto& entry : work) {
             const auto elementBytes = planeElementBytes(entry.plane);
-            const auto* equation = FindDepthSampleEquation(target.samples, elementBytes);
             const auto blockLog2 = DepthBlockLog2(elementBytes, target.samples);
             DepthPublishPush push{};
-            push.equation = equation->bits;
+            push.equation = *planeEquation(entry.plane);
             push.width = target.extent.width;
             push.height = target.extent.height;
             push.elementBytes = elementBytes;
