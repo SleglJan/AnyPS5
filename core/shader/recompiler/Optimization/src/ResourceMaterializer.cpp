@@ -1995,13 +1995,21 @@ void ownPlanValues(IrResourcePlan& plan) {
         if (clones.emplace(value, nullptr).second) order.push_back(value);
         const auto reads = closure ? Detail::EvaluatorReads::Closure : Detail::Evaluator::Reads(plan, *value);
         if (reads == Detail::EvaluatorReads::Nothing || closed.contains(value)) continue;
-        if (reads == Detail::EvaluatorReads::Closure) {
+        if (closure) {
             closed.insert(value);
         } else if (!opened.insert(value).second) {
             continue;
         }
         for (const auto* argument : value->Arguments()) {
-            if (argument != nullptr) pending.emplace_back(argument, reads == Detail::EvaluatorReads::Closure);
+            if (argument != nullptr) pending.emplace_back(argument, closure);
+        }
+        if (!closure && reads == Detail::EvaluatorReads::Closure && value->ArgumentCount() != 0u && value->Argument(0) != nullptr) {
+            const auto* handle = value->Argument(0)->Resolve();
+            if (opened.insert(handle).second) {
+                for (const auto* argument : handle->Arguments()) {
+                    if (argument != nullptr) pending.emplace_back(argument, false);
+                }
+            }
         }
     }
     for (const auto* value : order) {
