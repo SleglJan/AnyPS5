@@ -11,6 +11,7 @@ constexpr std::uint32_t RoundPages = 2;
 constexpr std::uint32_t CpuBase = 0x6c000000u;
 constexpr std::uint32_t CpuSubpage = 3;
 constexpr std::uint32_t DirtyCpuSubpage = 5;
+constexpr std::uint32_t UnsettledCpuSubpage = 7;
 
 bool ImportSettled(std::uint64_t address) {
     bool settled = false;
@@ -35,12 +36,15 @@ void Round(MirrorReader& reader, std::uint32_t round) {
     Expect(Resident(pages.Address()) && Resident(pages.Address(PageBytes)), what + ": the read did not admit both pages");
     Expect(!AgcDriver::GuestMemory::WriteGuarded(PageOf(pages.Address())), what + ": page 0 is guarded before a submission issued after its import completed");
     ExpectRead(reader.Read(pages.Address(), RoundPages), RoundPages, initial, what + ": a read issued after the admission");
+    pages.Words()[UnsettledCpuSubpage * WordsPerSubpage] = CpuBase + 0x20000u + round;
+    const auto admitted = [&](std::uint64_t page, std::uint32_t subpage) { return page == 0 && subpage == UnsettledCpuSubpage ? CpuBase + 0x20000u + round : initial(page, subpage); };
     Settle();
     Expect(ImportSettled(pages.Address()) && ImportSettled(pages.Address(PageBytes)), what + ": the imports did not settle after a completed submission issued after them");
+    ExpectRead(reader.Read(pages.Address(), RoundPages), RoundPages, admitted, what + ": the read after the settling ordering point missed a CPU store made between the admission and the settle");
     Expect(AgcDriver::GuestMemory::WriteGuarded(PageOf(pages.Address())) && AgcDriver::GuestMemory::WriteGuarded(PageOf(pages.Address(PageBytes))), what + ": a settled CPU-writable private page has no write guard");
     Store(pages.Address(PageBytes));
     Expect(Resident(pages.Address(PageBytes)) && DirtyMask(pages.Address(PageBytes)) == 0xffffu, what + ": page 1 is not resident with 16 dirty subpages after the GPU store (mask " + Hex(DirtyMask(pages.Address(PageBytes))) + ")");
-    const auto stored = [&](std::uint64_t page, std::uint32_t subpage) { return page == 1 ? WrittenBase + subpage : initial(page, subpage); };
+    const auto stored = [&](std::uint64_t page, std::uint32_t subpage) { return page == 1 ? WrittenBase + subpage : admitted(page, subpage); };
     ExpectRead(reader.Read(pages.Address(), RoundPages), RoundPages, stored, what + ": the GPU read of the dirty mirror");
     pages.Words()[CpuSubpage * WordsPerSubpage] = CpuBase + round;
     pages.Words()[WordsPerPage + DirtyCpuSubpage * WordsPerSubpage] = CpuBase + 0x10000u + round;
