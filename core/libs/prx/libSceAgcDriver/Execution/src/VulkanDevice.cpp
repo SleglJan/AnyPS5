@@ -3977,9 +3977,7 @@ std::uint64_t VulkanDevice::PresyncDraw(const Graphics::State& graphics) {
 
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads, std::uint64_t linearThreads) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
-    // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
-    static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
-    if (lockedBuild || shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
+    if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = std::chrono::steady_clock::now();
     const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &shader, 0};
