@@ -176,20 +176,6 @@ void DecodeRdnaProgram(std::span<const std::uint32_t> code, RdnaProgram& program
     throw std::out_of_range("RDNA program decode reached the code boundary before s_endpgm");
 }
 
-void LinkRdnaLiterals(RdnaProgram& program, std::span<const std::uint32_t> programCounters) {
-    for (const auto programCounter : programCounters) {
-        const auto found = std::lower_bound(program.instructions.begin(), program.instructions.end(), programCounter, [](const RdnaInstruction& instruction, std::uint32_t pc) { return instruction.programCounter < pc; });
-        if (found == program.instructions.end() || found->programCounter != programCounter) throw std::invalid_argument("a linked literal names program counter " + toHexString(programCounter) + ", which starts no instruction");
-        std::uint32_t literals = 0;
-        for (auto* operand : {&found->source0, &found->source1, &found->source2, &found->source3}) {
-            if (operand->kind != RdnaOperandKind::LiteralConstant) continue;
-            operand->kind = RdnaOperandKind::LinkedWord;
-            ++literals;
-        }
-        if (literals != 1u) throw std::invalid_argument("a linked literal names the instruction at program counter " + toHexString(programCounter) + ", which has " + std::to_string(literals) + " literal operands");
-    }
-}
-
 RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCounter) {
     RdnaOperand operand;
 
@@ -347,7 +333,6 @@ std::string RdnaOperandToString(const RdnaOperand& operand) {
         case RdnaOperandKind::SrcSharedLimit: return "src_shared_limit";
         case RdnaOperandKind::SrcPrivateBase: return "src_private_base";
         case RdnaOperandKind::SrcPrivateLimit: return "src_private_limit";
-        case RdnaOperandKind::LinkedWord: return "linked_word[" + std::to_string(operand.value) + "]";
     }
 
     throw std::invalid_argument("unsupported operand kind for string conversion");

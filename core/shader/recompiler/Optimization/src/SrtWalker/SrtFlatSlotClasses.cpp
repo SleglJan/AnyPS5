@@ -22,7 +22,6 @@ std::vector<std::uint8_t> ComputePureFlatSlots(const IrResourcePlan& plan) {
     for (std::uint32_t slot = 0; slot < plan.srtReads.size(); ++slot) {
         if (plan.srtReads[slot].value == nullptr) continue;
         readSlots.emplace(plan.srtReads[slot].value->Resolve(), slot);
-        if (plan.srtReads[slot].value->Resolve()->Opcode() == IrOpcode::GetLinkedWord) pure[slot] = 0u;
     }
     std::unordered_set<const IrValue*> visited;
     std::vector<IrValue*> pending;

@@ -79,7 +79,6 @@ void ShowCallTable(void* context, const ShaderRecompiler::TableCall& call, std::
 
 const ShaderRecompiler::LinkedCode* LinkRequestCallees(ShaderRecompiler::DeserializedRequest& request) {
     static ShaderRecompiler::LinkedCode linked;
-    if (!request.request.shader.linkedLiterals.empty()) return nullptr;
     ShaderRecompiler::RequestMemoryView view(request.request.context.memory);
     auto runtime = view.MakeRuntime(request.request.context.userData, request.request.shader.codeAddress);
     const ShaderRecompiler::CalleeMemory memory{&runtime, &ReadRequestWords, &ReadRequestWords, &ShowCallTable};
@@ -92,15 +91,13 @@ const ShaderRecompiler::LinkedCode* LinkRequestCallees(ShaderRecompiler::Deseria
         return nullptr;
     }
     request.request.shader.code = linked.code;
-    request.request.shader.linkedLiterals = linked.linkedLiterals;
-    request.request.context.linkedWords = linked.linkedWords;
-    std::printf("  linked callees: %zu code words, %zu linked literals, %zu linked words\n", linked.code.size(), linked.linkedLiterals.size(), linked.linkedWords.size());
+    std::printf("  linked callees: %zu code words\n", linked.code.size());
     return &linked;
 }
 
 std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedRequest& recorded) {
     const auto& request = recorded.request;
-    if (!request.shader.linkedLiterals.empty() || !request.context.compute.has_value()) return std::nullopt;
+    if (!request.context.compute.has_value()) return std::nullopt;
     ShaderRecompiler::RequestMemoryView view(request.context.memory);
     auto runtime = view.MakeRuntime(request.context.userData, request.shader.codeAddress);
     const ShaderRecompiler::CalleeMemory memory{&runtime, &ReadRequestWords, &ReadRequestWords, nullptr};
@@ -121,8 +118,6 @@ std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedReq
         auto source = request;
         source.shader.code = part.code;
         source.context.userData = userData;
-        source.shader.linkedLiterals = {};
-        source.context.linkedWords = {};
         if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
             auto compute = *request.context.compute;
             compute.numThreads = {request.context.waveSize, 1u, 1u};
@@ -157,9 +152,7 @@ bool ReplaySplit(const char* path, const ShaderRecompiler::RecompileRequest& lin
         userData.resize(userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
         auto source = whole;
         source.shader.code = part.code;
-        source.shader.linkedLiterals = {};
         source.context.userData = userData;
-        source.context.linkedWords = {};
         if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
             auto compute = *whole.context.compute;
             compute.numThreads = {whole.context.waveSize, 1u, 1u};

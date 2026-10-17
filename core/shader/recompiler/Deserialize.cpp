@@ -138,7 +138,6 @@ int main(int argc, char** argv) {
 
         RdnaInstructionDecoder decoder;
         auto decoded = decoder.Decode(request.shader.code);
-        LinkRdnaLiterals(decoded, request.shader.linkedLiterals);
         const std::string disasm = RdnaProgramToString(decoded);
 
         {

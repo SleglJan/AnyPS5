@@ -60,9 +60,6 @@ void PlanBuilder::Run() {
             if (inst->Opcode() == IrOpcode::LoadAddressU32 && IsRawRead(_program.Resources(), *inst) && inst->Argument(1)->Resolve()->HasImmediate() && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst)) {
                 Collect(inst, inst->Flags<MemoryFlags>().pc);
             }
-            if (inst->Opcode() == IrOpcode::GetLinkedWord) {
-                Collect(inst, 0);
-            }
         }
     }
     PatchReads();
@@ -90,7 +87,6 @@ bool PlanBuilder::ReadsAtRunTime() const {
     for (const auto& block : _program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             const auto op = inst->Opcode();
-            if (op == IrOpcode::GetLinkedWord) return false;
             if (op != IrOpcode::GetImageResource && op != IrOpcode::GetSamplerResource) continue;
             for (const IrValue* user : inst->Uses()) {
                 if (!deviceRead(*user, *inst, op == IrOpcode::GetSamplerResource)) return false;
@@ -144,11 +140,10 @@ void PlanBuilder::Collect(IrValue* raw, std::uint32_t usePc) {
 }
 
 void PlanBuilder::Record(IrValue* inst) {
-    const bool linked = inst->Opcode() == IrOpcode::GetLinkedWord;
-    if (!linked && !IsRawRead(_program.Resources(), *inst)) {
+    if (!IsRawRead(_program.Resources(), *inst)) {
         return;
     }
-    IrValue* offset = inst->Argument(linked ? 0u : 1u)->Resolve();
+    IrValue* offset = inst->Argument(1)->Resolve();
     const auto foldable = offset->HasImmediate() && offset->Type() == IrType::U32 && RuntimeValidator(_program.Resources(), RuntimeValueType::Any).Run(inst);
     if (!foldable) {
         if (std::find(_program.Metadata().dynamicReads.begin(), _program.Metadata().dynamicReads.end(), inst) == _program.Metadata().dynamicReads.end()) {

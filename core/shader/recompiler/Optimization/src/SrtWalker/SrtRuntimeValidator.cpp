@@ -73,9 +73,6 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         }
         return finish(true);
     }
-    if (op == IrOpcode::GetLinkedWord) {
-        return finish(inst.ArgumentCount() == 1 && inst.Argument(0)->Resolve()->HasImmediate());
-    }
     if (op == IrOpcode::GetShaderBase) {
         if (inst.ArgumentCount() != 0) {
             return finish(false);

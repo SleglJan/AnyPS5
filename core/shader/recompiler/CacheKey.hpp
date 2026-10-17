@@ -45,7 +45,6 @@ public:
         key.clear();
         append(key, RuntimeAbi::Version);
         append(key, request.shader.stage);
-        append(key, request.shader.linkedLiterals);
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
         append(key, request.context.userData.size());
@@ -79,7 +78,6 @@ public:
 
 private:
     static void appendInterface(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
-        append(key, request.shader.linkedLiterals);
         append(key, request.context.waveSize);
         append(key, request.context.userDataBaseRegister);
         append(key, request.context.userData.size());

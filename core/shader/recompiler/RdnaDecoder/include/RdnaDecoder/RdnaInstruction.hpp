@@ -57,8 +57,7 @@ enum class RdnaOperandKind {
     SrcSharedBase,
     SrcSharedLimit,
     SrcPrivateBase,
-    SrcPrivateLimit,
-    LinkedWord
+    SrcPrivateLimit
 };
 
 enum class RdnaImageDimension : std::uint32_t {

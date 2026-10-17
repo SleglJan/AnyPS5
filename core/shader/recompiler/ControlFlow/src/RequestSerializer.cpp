@@ -818,8 +818,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.registrationWordLimit);
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
-    writer.WriteU32Span(request.shader.linkedLiterals);
-    writer.WriteU32Span(request.context.linkedWords);
+    writer.WriteU32Span({});
+    writer.WriteU32Span({});
     if (request.context.compute.has_value()) writer.WriteBool(request.context.compute->threadsFromMemory);
     writer.WriteBool(request.context.continuation.has_value());
     if (request.context.continuation.has_value()) {
@@ -883,10 +883,8 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text, Collid
     if (UpstreamLayout(version)) {
         if (!reader.ReadU32Vector().empty()) throw std::runtime_error("unsupported recompile request: upstream request version " + std::to_string(version) + " carries linked call fallbacks");
     } else if (version >= 24u) {
-        result.linkedLiterals = reader.ReadU32Vector();
-        result.request.shader.linkedLiterals = result.linkedLiterals;
-        result.linkedWords = reader.ReadU32Vector();
-        result.request.context.linkedWords = result.linkedWords;
+        const bool literals = !reader.ReadU32Vector().empty();
+        if (!reader.ReadU32Vector().empty() || literals) throw std::runtime_error("unsupported recompile request: request version " + std::to_string(version) + " carries linked literals or linked words");
     }
     if (version >= 26u && !UpstreamLayout(version) && result.request.context.compute.has_value()) result.request.context.compute->threadsFromMemory = reader.ReadBool();
     if (version >= 33u && reader.ReadBool()) {

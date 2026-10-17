@@ -333,7 +333,6 @@ int main() {
         Require(refused);
         const auto own = serializer.Deserialize(EncodeBase64(bytes), ShaderRecompiler::CollidingVersions::ReadAsOwn);
         Require(own.request.context.pixel.has_value() && own.request.context.pixel->quadPixelMask == (colliding >= 25u ? 0x5u : 0x0fu));
-        Require(own.linkedLiterals.empty() && own.linkedWords.empty());
         const auto migrated = serializer.Serialize(own.request);
         Require(DecodeBase64(migrated)[4] == 34u && serializer.Serialize(serializer.Deserialize(migrated).request) == migrated);
     }
@@ -380,7 +379,6 @@ int main() {
                 Require(pixel.quadPixelMask == expected.context.pixel->quadPixelMask && pixel.quadSampleMask == expected.context.pixel->quadSampleMask && pixel.reversedBlend == expected.context.pixel->reversedBlend);
             }
             Require(!fixture.tessellation || (replay.request.graphics->tessellation->patchesPerGroup == 63u && replay.request.graphics->tessellation->primitiveGroupSize == 37u && replay.request.graphics->tessellation->breakAtInstance));
-            Require(replay.linkedLiterals.empty() && replay.linkedWords.empty());
             Require(serializer.Serialize(replay.request) == serializer.Serialize(expected));
             auto truncated = upstream;
             truncated.pop_back();

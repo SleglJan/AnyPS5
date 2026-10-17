@@ -255,7 +255,6 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeFormatTable
             PrepareShader
             GetPreparedCode
-            GetPreparedLinkedLiterals
             PreparedShaderInvocation::TryCreate
             PreparedShaderInvocation::Plan
             PreparedShaderInvocation::MaterializeAtRunTime

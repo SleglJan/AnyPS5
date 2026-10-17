@@ -462,7 +462,6 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
         case RdnaOperandKind::LiteralConstant:
         case RdnaOperandKind::IntegerInlineConstant:
         case RdnaOperandKind::FloatInlineConstant: return IrU32(ir.Constant(operand.value));
-        case RdnaOperandKind::LinkedWord: return IrU32(ir.Emit(IrOpcode::GetLinkedWord, IrType::U32, {&ir.Constant(operand.value)}));
         case RdnaOperandKind::Null:
         case RdnaOperandKind::PopsExitingWaveId: return IrU32(ir.Constant(0u));
         case RdnaOperandKind::ScalarRegister: return IrU32(ir.GetScalarReg(static_cast<ScalarReg>(operand.reg)));

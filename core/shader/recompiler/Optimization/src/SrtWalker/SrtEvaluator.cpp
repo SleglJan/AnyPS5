@@ -191,7 +191,6 @@ EvaluatorReads Evaluator::Reads(const IrResourcePlan& program, const IrValue& va
         case IrOpcode::CompositeConstructU32x2:
         case IrOpcode::IAddCarry32:
         case IrOpcode::GetUserData:
-        case IrOpcode::GetLinkedWord:
         case IrOpcode::GetShaderBase:
         case IrOpcode::Phi:
         case IrOpcode::ReadFirstLane:
@@ -268,14 +267,6 @@ bool Evaluator::EvaluateInst(IrValue& inst, std::uint64_t& result) {
                 return false;
             }
             result = _runtime.userData[reg - _program.userDataBase];
-            return true;
-        }
-        case IrOpcode::GetLinkedWord: {
-            const IrValue* index = inst.Argument(0)->Resolve();
-            if (!index->HasImmediate() || index->ImmediateU32() >= _runtime.linkedWords.size()) {
-                return false;
-            }
-            result = _runtime.linkedWords[index->ImmediateU32()];
             return true;
         }
         case IrOpcode::GetShaderBase: result = _runtime.shaderBase; return true;

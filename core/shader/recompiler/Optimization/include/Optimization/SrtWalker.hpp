@@ -27,7 +27,6 @@ struct SrtReadTrace {
 
 struct SrtRuntime {
     std::span<const std::uint32_t> userData;
-    std::span<const std::uint32_t> linkedWords;
     std::uint64_t shaderBase = 0;
     SrtMemoryReader readMemory = nullptr;
     void* userContext = nullptr;

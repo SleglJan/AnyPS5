@@ -624,7 +624,6 @@ ShaderRecompiler::PreparedShaderInvocation PreparedInvocationFor(const ShaderSna
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
-        invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*entry.handle);
         if (matchCode && !std::ranges::equal(invocationRequest.shader.code, source.shader.code)) continue;
         if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
     }
@@ -632,7 +631,6 @@ ShaderRecompiler::PreparedShaderInvocation PreparedInvocationFor(const ShaderSna
     auto handle = PrepareShaderWithDiagnostics(source);
     invocationRequest = source;
     invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    invocationRequest.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*handle);
     auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
     snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
@@ -672,11 +670,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     }
     if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
     auto source = request;
-    if (!linked.code.empty()) {
-        source.shader.code = linked.code;
-        source.shader.linkedLiterals = linked.linkedLiterals;
-        source.context.linkedWords = linked.linkedWords;
-    }
+    if (!linked.code.empty()) source.shader.code = linked.code;
     return PreparedInvocationFor(snapshot, codeOffset, source, !linked.code.empty(), preparedAtUse);
 }
 
@@ -709,7 +703,6 @@ ShaderRecompiler::PreparedShaderInvocation TableCallPartAhead(const ShaderRecomp
     auto handle = PrepareShaderWithDiagnostics(part);
     auto request = part;
     request.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    request.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*handle);
     auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
     require(invocation.has_value(), "a table-call program part prepared ahead of its dispatch does not match its invocation");
     return std::move(*invocation);

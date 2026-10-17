@@ -83,8 +83,6 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code, std::
         linked = LinkCallees(request, CalleeMemory{const_cast<GuestMemory*>(memory), &ReadGuestMemory, &ReadGuestMemory, nullptr});
         Require(!linked.code.empty(), "the program's callees were not linked");
         request.shader.code = linked.code;
-        request.shader.linkedLiterals = linked.linkedLiterals;
-        request.context.linkedWords = linked.linkedWords;
     }
     const auto result = Recompile(request);
     Require(!result.spirv.empty(), "the program did not recompile");

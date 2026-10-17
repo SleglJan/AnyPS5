@@ -136,13 +136,8 @@ Wave64Layout ChooseWave64Layout(const RecompileRequest& request, const IrProgram
     return layout;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, std::span<const std::uint32_t> linkedLiterals) {
-    if (stage != ShaderStageKind::Local) {
-        auto program = RdnaInstructionDecoder{}.Decode(code);
-        LinkRdnaLiterals(program, linkedLiterals);
-        return program;
-    }
-    if (!linkedLiterals.empty()) throw std::invalid_argument("a local shader has linked literals");
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code) {
+    if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
     static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
     program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
@@ -194,8 +189,7 @@ SwappcInfo WithListedCalls(SwappcInfo swappc, std::span<const std::uint32_t> lis
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
         : stage(request.shader.stage), listedCalls(ListedCalls(request)), swappc(WithListedCalls(swappcInfo, listedCalls)), code(request.shader.code.begin(), request.shader.code.end()),
-          linkedLiterals(request.shader.linkedLiterals.begin(), request.shader.linkedLiterals.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, linkedLiterals)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
         AssignCallFunctions(cfg);
     }
@@ -206,14 +200,13 @@ struct PreparedControlFlow {
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
         return stage == request.shader.stage && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
                swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount &&
-               std::ranges::equal(code, request.shader.code) && std::ranges::equal(linkedLiterals, request.shader.linkedLiterals) && listedCalls == ListedCalls(request);
+               std::ranges::equal(code, request.shader.code) && listedCalls == ListedCalls(request);
     }
 
     ShaderStage stage;
     std::vector<std::uint32_t> listedCalls;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
-    std::vector<std::uint32_t> linkedLiterals;
     RdnaProgram decoded;
     ControlFlowGraph cfg;
 };
@@ -404,7 +397,6 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     // accepted only when its code matches word for word. Owned here because the request's span
     // points into a registration the driver may replace while the entry lives on.
     std::vector<std::uint32_t> code;
-    std::vector<std::uint32_t> linkedLiterals;
     std::shared_ptr<const IrResourcePlan> plan;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
@@ -503,7 +495,6 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
         if (source == nullptr) {
             source = std::make_shared<SourceEntry>();
             source->code.assign(request.shader.code.begin(), request.shader.code.end());
-            source->linkedLiterals.assign(request.shader.linkedLiterals.begin(), request.shader.linkedLiterals.end());
             auto& bucket = sources[key];
             if (!bucket.empty()) {
                 // A second entry under one key is a code hash collision (or the unhashed key with
@@ -1430,7 +1421,6 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     RequestMemoryView memory(request.context.memory);
     auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
-    runtime.linkedWords = request.context.linkedWords;
     ResourceSnapshot snapshot;
     constexpr ResourceMaterializer materializer;
     if (!request.useCache) {
@@ -1761,15 +1751,8 @@ std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle) {
     return handle.source->code;
 }
 
-std::span<const std::uint32_t> GetPreparedLinkedLiterals(const SourceHandle& handle) {
-    if (handle.source == nullptr || handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
-    return handle.source->linkedLiterals;
-}
-
 PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle)
-    : request(request), handle(handle), linkedWords(std::make_shared<const std::vector<std::uint32_t>>(request.context.linkedWords.begin(), request.context.linkedWords.end())) {
-    this->request.context.linkedWords = *linkedWords;
-}
+    : request(request), handle(handle) {}
 
 std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) {
     struct PreparedKeyStorage {};
@@ -1809,7 +1792,6 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeAtRu
     if (!ResourceMaterializer::ReadsResourcesAtRunTime(plan)) return nullptr;
     SrtRuntime runtime;
     runtime.userData = request.context.userData;
-    runtime.linkedWords = request.context.linkedWords;
     runtime.shaderBase = request.shader.codeAddress;
     runtime.readMemory = +[](void*, std::uint64_t, std::uint32_t*) { return false; };
     ResourceSnapshot snapshot;

@@ -116,7 +116,6 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("ReferenceU32", Void, U32),
     makeMeta("UnlinkedCall", Void, U32, U32, U32),
     makeMeta("GetUserData", U32, ScalarReg),
-    makeMeta("GetLinkedWord", U32, U32),
     makeMeta("GetShaderBase", U64),
     makeMeta("ShaderClock", U64),
     makeMeta("RealtimeClock", U64),

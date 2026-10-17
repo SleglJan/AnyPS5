@@ -78,10 +78,8 @@ private:
     PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
     RecompileRequest request;
     std::shared_ptr<const SourceHandle> handle;
-    std::shared_ptr<const std::vector<std::uint32_t>> linkedWords;
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
-[[nodiscard]] std::span<const std::uint32_t> GetPreparedLinkedLiterals(const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);

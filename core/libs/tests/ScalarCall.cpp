@@ -188,9 +188,8 @@ static ControlFlowGraph BuildCode(std::span<const std::uint32_t> code, const Swa
     return GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code), &swappc);
 }
 
-static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc, std::span<const std::uint32_t> linkedLiterals = {}, const ContinuationAbi::Shape* continuation = nullptr) {
+static IrProgram TranslateCode(std::span<const std::uint32_t> code, const SwappcInfo& swappc, const ContinuationAbi::Shape* continuation = nullptr) {
     auto program = RdnaInstructionDecoder{}.Decode(code);
-    LinkRdnaLiterals(program, linkedLiterals);
     const auto cfg = GraphBuilder{}.Build(program, &swappc);
     ShaderComputeInputInfo computeInfo{};
     TranslateOptions options{};
@@ -258,7 +257,7 @@ static void CheckTableCalls() {
     headSwappc.listedCalls = headSite;
     Require(BuildCode(head.code, headSwappc).unlinkedCallProgramCounters == std::vector<std::uint32_t>{11u * 4u});
     const ContinuationAbi::Shape headShape{ContinuationAbi::Role::Head, head.sites, analysis.scalarRegisters, analysis.vectorRegisters, 0u};
-    const auto headWords = ProgramToString(TranslateCode(head.code, headSwappc, {}, &headShape));
+    const auto headWords = ProgramToString(TranslateCode(head.code, headSwappc, &headShape));
     Require(headWords.find("TableCallBin") != std::string::npos && headWords.find("ContinuationSpill") != std::string::npos && headWords.find("UnlinkedCall") == std::string::npos);
 
     const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
@@ -277,7 +276,7 @@ static void CheckTableCalls() {
     Require(cfg.unlinkedCallProgramCounters == std::vector<std::uint32_t>{16u * 4u});
     const std::array<std::uint32_t, 2> userDataScalars{0u, 1u};
     const ContinuationAbi::Shape continuationShape{ContinuationAbi::Role::Continuation, continuation.sites, analysis.scalarRegisters, analysis.vectorRegisters, 0u, userDataScalars, 0u};
-    const auto continuationWords = ProgramToString(TranslateCode(continuation.code, continuationSwappc, {}, &continuationShape));
+    const auto continuationWords = ProgramToString(TranslateCode(continuation.code, continuationSwappc, &continuationShape));
     Require(continuationWords.find("ContinuationSlot") != std::string::npos && continuationWords.find("ContinuationLoad") != std::string::npos && continuationWords.find("GetUserData") != std::string::npos);
 
     auto looped = caller;

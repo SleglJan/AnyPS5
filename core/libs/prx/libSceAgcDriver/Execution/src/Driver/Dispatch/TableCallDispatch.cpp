@@ -81,8 +81,6 @@ ShaderRecompiler::RecompileRequest TableCallPartRequest(const ShaderRecompiler::
     auto source = request;
     source.shader.code = part.code;
     source.context.userData = part.userData;
-    source.shader.linkedLiterals = {};
-    source.context.linkedWords = {};
     if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
         auto compute = *request.context.compute;
         compute.numThreads = {request.context.waveSize, 1u, 1u};
