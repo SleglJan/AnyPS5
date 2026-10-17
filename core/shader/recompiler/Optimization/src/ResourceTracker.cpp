@@ -1318,7 +1318,7 @@ private:
         const auto flags = inst.Flags<MemoryFlags>();
         if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
         const auto& memory = m_program.Resources().memoryInfo[flags.index];
-        return !memory.imagePacked && memory.imageByElements == 0u && memory.imageDimension != RdnaImageDimension::Dim2DMsaa && memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray;
+        return memory.imageByElements == 0u && memory.imageDimension != RdnaImageDimension::Dim2DMsaa && memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray;
     }
 
     void PlanDeviceColumns() {
@@ -1497,7 +1497,8 @@ private:
             image.deviceTable = DeviceSource(image.source);
             image.directRuntime = RuntimeSource(image.source) && !TableSource(image.source) && FixedSlotSource(image.source);
             const bool storage = image.resourceClass == ImageResourceClass::Storage || image.written || image.atomic;
-            if ((storage && !(image.deviceTable && RuntimeSource(image.source))) || image.packed || image.byElements != 0u) {
+            const bool deviceRuntime = image.deviceTable && RuntimeSource(image.source);
+            if ((storage && !deviceRuntime) || (!deviceRuntime && (image.packed || image.byElements != 0u))) {
                 image.tableOperation = TableOperation::Unsupported;
             }
         }
