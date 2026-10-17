@@ -1126,6 +1126,7 @@ void ResidencyManager::Apply() {
     applyQueued();
     retireReached();
     settleAccessGuards();
+    if (budget == ResidencyMeasuredBudget && device.OtherDeviceBytes() != appliedOthers) ApplyBudget();
     admitReservedTouches();
     admitEager();
 }
@@ -1190,6 +1191,7 @@ void ResidencyManager::SetBudget(std::uint64_t bytes) {
 void ResidencyManager::ApplyBudget() {
     applyQueued();
     measuredEpoch = 0;
+    appliedOthers = device.OtherDeviceBytes();
     const auto shrunk = chunkLimit(false);
     maxChunks = shrunk < liveChunks ? shrunk : std::max(liveChunks, chunkLimit(true));
     limitEpoch = Epoch();

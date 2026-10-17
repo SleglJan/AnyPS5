@@ -19,6 +19,7 @@ struct Measured {
     std::uint64_t guest = 0;
     std::uint64_t reported = 0;
     std::uint64_t room = 0;
+    std::uint64_t others = 0;
     bool full = false;
 };
 
@@ -43,17 +44,18 @@ Measured Measure(const AgcDriver::Graphics::Context& context) {
         Require(heap.has_value(), "budget: the device has no device-local heap");
         const auto mirrors = residency.Mirrors().DeviceBytes();
         const auto used = reported.heapUsage[*heap];
-        const auto others = used > mirrors ? used - mirrors : 0;
+        const auto beside = used > mirrors ? used - mirrors : 0;
+        measured.others = residency.OtherDeviceBytes();
         measured.room = ~std::uint64_t{0};
-        if (reported.heapBudget[*heap] != 0) measured.room = reported.heapBudget[*heap] > others ? reported.heapBudget[*heap] - others : 0;
-        measured.expected = std::min(measured.guest, measured.room);
+        if (reported.heapBudget[*heap] != 0) measured.room = reported.heapBudget[*heap] > beside ? reported.heapBudget[*heap] - beside : 0;
+        measured.expected = std::min(measured.guest > measured.others ? measured.guest - measured.others : 0, measured.room);
     });
     return measured;
 }
 
 void ExpectBudget(const Measured& measured, const std::string& what) {
     const auto difference = measured.budget > measured.expected ? measured.budget - measured.expected : measured.expected - measured.budget;
-    Expect(difference <= Tolerance, what + ": the residency budget is " + std::to_string(measured.budget) + " bytes, expected the guest's " + std::to_string(measured.guest) + " bytes, capped only by the heap budget left beside the other device-local memory, " + std::to_string(measured.expected) + " bytes");
+    Expect(difference <= Tolerance, what + ": the residency budget is " + std::to_string(measured.budget) + " bytes, expected the guest's " + std::to_string(measured.guest) + " bytes less the " + std::to_string(measured.others) + " bytes of other device-local allocations, capped by the heap budget, " + std::to_string(measured.expected) + " bytes");
     Expect(measured.budget <= measured.guest, what + ": the budget of " + std::to_string(measured.budget) + " bytes exceeds the guest's " + std::to_string(measured.guest) + " bytes");
     Expect(measured.reported == measured.budget, what + ": the driver reports a budget of " + std::to_string(measured.reported) + " bytes, the manager uses " + std::to_string(measured.budget));
     Expect(measured.full == (measured.budget >= measured.guest), what + ": full residency is " + (measured.full ? "on" : "off") + " with a budget of " + std::to_string(measured.budget) + " bytes for " + std::to_string(measured.guest) + " guest bytes");
@@ -94,7 +96,8 @@ void BudgetIsTheGuestSize(MirrorReader& reader) {
         AgcDriver::Graphics::Buffer other(*context, OtherBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         const auto beside = Measure(*context);
         ExpectBudget(beside, "with " + std::to_string(OtherBytes) + " bytes of other device-local memory");
-        if (beside.room >= beside.guest) Expect(beside.budget == beside.guest, "a device-local allocation of " + std::to_string(OtherBytes) + " bytes outside the mirrors took the mirror budget to " + std::to_string(beside.budget) + " bytes, below the guest's " + std::to_string(beside.guest) + " bytes");
+        Expect(beside.others >= shrunk.others + OtherBytes, "a device-local allocation of " + std::to_string(OtherBytes) + " bytes took the other device-local allocations from " + std::to_string(shrunk.others) + " to " + std::to_string(beside.others) + " bytes");
+        Expect(beside.budget + beside.others <= beside.guest || beside.budget == 0, "with " + std::to_string(beside.others) + " bytes of other device-local allocations the mirror budget is " + std::to_string(beside.budget) + " bytes, above what the guest's " + std::to_string(beside.guest) + " bytes leave");
     }
     std::uint32_t slots = 0;
     bool full = true;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceMemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -86,16 +87,23 @@ std::uint64_t ResidencyDriver::Budget() {
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
-    const auto mirrorBytes = mirrors.DeviceBytes();
-    const auto used = reported.heapUsage[deviceHeap];
-    const auto others = used > mirrorBytes ? used - mirrorBytes : 0;
-    auto limit = guest.GuestBytes();
+    const auto usage = DeviceMemoryAccounting::Usage(context.device, deviceHeap);
+    const auto others = usage.allocated > usage.mirrors ? usage.allocated - usage.mirrors : 0;
+    const auto guestBytes = guest.GuestBytes();
+    auto limit = guestBytes > others ? guestBytes - others : 0;
     if (reported.heapBudget[deviceHeap] != 0) {
-        const auto room = reported.heapBudget[deviceHeap] > others ? reported.heapBudget[deviceHeap] - others : 0;
+        const auto used = reported.heapUsage[deviceHeap];
+        const auto beside = used > usage.mirrors ? used - usage.mirrors : 0;
+        const auto room = reported.heapBudget[deviceHeap] > beside ? reported.heapBudget[deviceHeap] - beside : 0;
         limit = std::min<std::uint64_t>(limit, room);
     }
     budgetBytes = limit;
     return budgetBytes;
+}
+
+std::uint64_t ResidencyDriver::OtherDeviceBytes() {
+    const auto usage = DeviceMemoryAccounting::Usage(context.device, deviceHeap);
+    return usage.allocated > usage.mirrors ? usage.allocated - usage.mirrors : 0;
 }
 
 std::uint64_t ResidencyDriver::GuestBytes() {

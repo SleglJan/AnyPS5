@@ -142,6 +142,7 @@ public:
     bool ImportSettled(std::uint64_t page) override;
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t Budget() override;
+    std::uint64_t OtherDeviceBytes() override;
     std::uint64_t GuestBytes() override;
     void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) override;
     ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;

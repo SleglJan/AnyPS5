@@ -310,6 +310,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Residency.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyMirrors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceMemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidencyGuest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaPageTable.cpp

@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/DeviceMemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Residency.hpp"
@@ -145,8 +146,9 @@ private:
         deviceInfo.ppEnabledExtensionNames = wanted.data();
         deviceInfo.pEnabledFeatures = &enabled;
         Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &deviceInfo, nullptr, &context.device), "vkCreateDevice");
-        context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
+        context.deviceProc = AgcDriver::Graphics::DeviceMemoryAccounting::Wrap(function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr"));
         function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
+        AgcDriver::Graphics::DeviceMemoryAccounting::Track(context.device, context.memory);
         VkPhysicalDeviceProperties deviceProperties{};
         properties(context.physical, &deviceProperties);
         context.limits = deviceProperties.limits;
@@ -162,6 +164,7 @@ private:
         if (context.pool != VK_NULL_HANDLE) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
+        if (context.device != VK_NULL_HANDLE) AgcDriver::Graphics::DeviceMemoryAccounting::Forget(context.device);
         if (instance != VK_NULL_HANDLE) function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
         if (library != nullptr) SDL_UnloadObject(library);
     }

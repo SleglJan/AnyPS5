@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceMemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
@@ -28,6 +29,7 @@ MirrorChunk::MirrorChunk(const Context& context, VkDeviceSize bytes) : context(c
         const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory);
         if (result != VK_SUCCESS)
             throw std::runtime_error("residency: a mirror chunk of " + std::to_string(requirements.size >> 20) + " MiB was refused in device-local memory type " + std::to_string(allocation.memoryTypeIndex) + " (VkResult " + std::to_string(static_cast<int>(result)) + ")");
+        DeviceMemoryAccounting::MarkMirror(context.device, memory);
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
         addressInfo.buffer = buffer;

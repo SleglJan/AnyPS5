@@ -122,6 +122,7 @@ public:
         static_cast<void>(stamp);
     }
     virtual std::uint64_t Budget() { return ~std::uint64_t{0}; }
+    virtual std::uint64_t OtherDeviceBytes() { return 0; }
     virtual std::uint64_t GuestBytes() { return 0; }
     virtual void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) {
         static_cast<void>(firstPage);
@@ -405,6 +406,7 @@ private:
     std::uint64_t limitEpoch = 0;
     std::uint64_t measured = 0;
     std::uint64_t measuredEpoch = 0;
+    std::uint64_t appliedOthers = 0;
     std::uint32_t liveChunks = 0;
     std::vector<Chunk> chunks;
     std::vector<Page> pages;
