@@ -1051,11 +1051,22 @@ private:
             const auto op = Opcode(instruction);
             if (op == spv::OpName || op == spv::OpMemberName) continue;
             if (VisitInputs(instruction, [](std::size_t) {})) continue;
+            if (op == spv::OpDecorate || op == spv::OpMemberDecorate || op == spv::OpDecorateString || op == spv::OpMemberDecorateString) {
+                if (instruction.size() > 1u) copies.erase(instruction[1]);
+                continue;
+            }
             bool hasResult = false;
             bool hasType = false;
             spv::HasResultAndType(op, &hasResult, &hasType);
             const auto resultIndex = hasResult ? (hasType ? 2u : 1u) : 0u;
-            for (std::size_t index = 1; index < instruction.size(); ++index) if (index != resultIndex) copies.erase(instruction[index]);
+            std::uint32_t switchLiteralWords = 1u;
+            if (op == spv::OpSwitch && instruction.size() > 1u) {
+                const auto selectorType = resultTypes.find(instruction[1]);
+                if (selectorType != resultTypes.end() && types.contains(selectorType->second) && types.at(selectorType->second).width == 64u) switchLiteralWords = 2u;
+            }
+            VisitIdOperands(instruction, switchLiteralWords, [&](std::size_t index) {
+                if (index != resultIndex) copies.erase(instruction[index]);
+            });
         }
         if (copies.empty()) return false;
         const auto resolve = [&](std::uint32_t id) {

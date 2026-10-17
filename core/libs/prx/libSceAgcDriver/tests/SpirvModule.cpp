@@ -607,7 +607,48 @@ void testSingleSuccessorChainsMerge() {
     check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "block merging is not stable");
 }
 
+std::vector<std::uint32_t> identityCopyModule(std::uint32_t copy) {
+    const auto op = [](std::uint32_t count, spv::Op code) { return (count << 16u) | static_cast<std::uint32_t>(code); };
+    return {
+        spv::MagicNumber, 0x00010300u, 0u, 50u, 0u,
+        op(2, spv::OpCapability), spv::CapabilityShader,
+        op(3, spv::OpMemoryModel), spv::AddressingModelLogical, spv::MemoryModelGLSL450,
+        op(6, spv::OpEntryPoint), spv::ExecutionModelGLCompute, 40u, 0x6e69616du, 0u, 10u,
+        op(6, spv::OpExecutionMode), 40u, spv::ExecutionModeLocalSize, 1u, 1u, 1u,
+        op(2, spv::OpTypeVoid), 1u,
+        op(4, spv::OpTypeInt), 2u, 32u, 0u,
+        op(4, spv::OpTypePointer), 4u, spv::StorageClassPrivate, 2u,
+        op(3, spv::OpTypeFunction), 5u, 1u,
+        op(4, spv::OpConstant), 2u, 6u, 0u,
+        op(4, spv::OpVariable), 4u, 10u, spv::StorageClassPrivate,
+        op(5, spv::OpFunction), 1u, 40u, 0u, 5u,
+        op(2, spv::OpLabel), 41u,
+        op(4, spv::OpLoad), 2u, 31u, 10u,
+        op(5, spv::OpIAdd), 2u, copy, 31u, 6u,
+        op(5, spv::OpIMul), 2u, 33u, copy, copy,
+        op(3, spv::OpStore), 10u, 33u,
+        op(1, spv::OpReturn),
+        op(1, spv::OpFunctionEnd),
+    };
+}
+
+void testIdentityCopiesFoldWhateverTheirIds() {
+    for (const std::uint32_t copy : {30u, 32u}) {
+        const auto specialized = ShaderRecompiler::SpecializeSpirv(identityCopyModule(copy));
+        const auto counts = opcodeCounts(specialized);
+        bool squaresLoad = false;
+        for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
+            if ((specialized[cursor] >> 16u) == 0u) break;
+            if ((specialized[cursor] & 0xffffu) == spv::OpIMul) squaresLoad = specialized[cursor + 3u] == 31u && specialized[cursor + 4u] == 31u;
+        }
+        const std::string context = copy == 32u ? " (the OpTypeInt width equals the copy's id)" : " (no literal equals the copy's id)";
+        check(!counts.contains(spv::OpCopyObject) && !counts.contains(spv::OpIAdd), ("an addition of zero was kept as a copy" + context).c_str());
+        check(squaresLoad, ("the product does not read the loaded value" + context).c_str());
+    }
+}
+
 int main() {
+    testIdentityCopiesFoldWhateverTheirIds();
     testFoldingLeavesNoDeadBlocksOrConstants();
     testFoldedValuesShareConstants();
     testOperationsOneOperandDecidesFold();
