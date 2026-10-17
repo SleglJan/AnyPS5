@@ -138,28 +138,15 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler) {
     const auto& samplerResource = state.program.Info().samplers.at(sampler);
     const auto& image = state.runtimeImage;
-    const bool table = samplerResource.table != NoTable || (image != nullptr && image->table != NoTable);
+    const bool table = image != nullptr && image->table != NoTable;
     const bool point = image != nullptr && (table ? TablePointSampled(*image) : (image->numericClass == IrTextureNumericClass::Sint || image->conversionFormat != IrBufferFormat::Invalid || image->depthBits));
     const auto samplerType = state.module.Type(spv::OpTypeSampler);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, samplerType);
-    if (state.heapSamplerVariable == 0u) ExitDescriptorBindingFailure(state, samplerResource.table != NoTable ? DescriptorBindingKind::SamplerTable : DescriptorBindingKind::Samplers, sampler, "sampler heap was not emitted");
+    if (state.heapSamplerVariable == 0u) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "sampler heap was not emitted");
     if (samplerResource.deviceTable) {
         if (!state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "device sampler access was not emitted");
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.heapSamplerVariable, state.tableAccess.samplerElement);
-        DecorateTableNonUniform(state, pointer);
-        const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);
-        DecorateTableNonUniform(state, loaded);
-        return loaded;
-    }
-    if (samplerResource.table != NoTable) {
-        if (!state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table access was not emitted");
-        const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
-        const auto slot = LoadTableMap(state, Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u))));
-        DecorateTableNonUniform(state, slot);
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.heapSamplerVariable, slot);
         DecorateTableNonUniform(state, pointer);
         const auto loaded = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);
@@ -182,7 +169,7 @@ std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource,
     const auto sampledImage = state.module.AllocateId();
     const auto sampledType = state.module.Type(spv::OpTypeSampledImage, ImageType(state, imageResource));
     state.module.AddFunction(spv::OpSampledImage, sampledType, sampledImage, image, samplerId);
-    if (imageResource.table != NoTable || state.program.Info().samplers.at(sampler).table != NoTable) DecorateTableNonUniform(state, sampledImage);
+    if (imageResource.table != NoTable) DecorateTableNonUniform(state, sampledImage);
     return sampledImage;
 }
 

@@ -20,37 +20,9 @@ struct BlockInfo {
     std::uint32_t function = 0;
 };
 
-struct KeyDomain {
-    std::uint32_t source = 0;
-    std::uint32_t offset = 0;
-    std::uint32_t stride = 4;
-    bool value = false;
-    bool values = false;
-
-    bool operator==(const KeyDomain& other) const = default;
-};
-
-struct TableColumn {
-    std::uint32_t heapSource = 0;
-    std::uint32_t stride = 0;
-    std::uint32_t addend = 0;
-    std::uint32_t offset = 0;
-    std::uint32_t dwordCount = 0;
-    std::uint32_t maxKey = 0xffffffffu;
-    bool sampler = false;
-    bool address = false;
-    bool indirect = false;
-    std::uint32_t indirectOffset = 0;
-    std::uint32_t indirectImmediate = 0;
-    std::optional<KeyDomain> keyDomain;
-
-    bool operator==(const TableColumn& other) const = default;
-};
-
 struct DescriptorSource {
     std::array<IrValue*, 8> dwords {};
     std::uint32_t dwordCount = 0;
-    std::optional<TableColumn> tableColumn;
     bool runtime = false;
 
     bool operator==(const DescriptorSource& other) const = default;

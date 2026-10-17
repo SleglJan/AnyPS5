@@ -1,5 +1,4 @@
 #include "Optimization/ResourceMaterializer.hpp"
-#include "Optimization/KeyValueSet.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
@@ -279,510 +278,13 @@ DecodedImage decodeImageDescriptor(const DescriptorValue& descriptor, const Imag
     return result.decoded;
 }
 
-bool requiresPointSampler(const ImageResource& mode) {
-    return mode.numericClass == IrTextureNumericClass::Uint || mode.numericClass == IrTextureNumericClass::Sint || mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits;
-}
-
-bool reducesBetweenTexels(std::uint32_t word0, std::uint32_t filter) {
-    return ((word0 >> 29u) & 3u) != 0u && (((filter >> 20u) & 0xfu) != 0u || ((filter >> 26u) & 3u) == 2u);
-}
-
 std::string hexText(std::uint64_t value) {
     char text[24];
     std::snprintf(text, sizeof(text), "%llx", static_cast<unsigned long long>(value));
     return text;
 }
 
-std::uint32_t TableKeyScanLimit() {
-    static const std::uint32_t limit = [] {
-        const char* text = std::getenv("APS5_IMAGE_TABLE_KEY_SCAN");
-        return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 256u;
-    }();
-    return limit;
-}
-
-bool TableStrict() {
-    static const bool strict = [] {
-        const char* text = std::getenv("APS5_IMAGE_TABLE_STRICT");
-        return text != nullptr && std::strcmp(text, "0") != 0;
-    }();
-    return strict;
-}
-
-bool TableTraced() {
-    static const bool traced = std::getenv("APS5_TRACE_IMAGE_TABLE") != nullptr;
-    return traced;
-}
-
-constexpr std::size_t PoisonReasonCount = static_cast<std::size_t>(PoisonReason::Count);
-
-struct TableCounters {
-    std::atomic<std::uint64_t> snapshots{0};
-    std::atomic<std::uint64_t> tables{0};
-    std::atomic<std::uint64_t> keys{0};
-    std::array<std::atomic<std::uint64_t>, PoisonReasonCount> poison{};
-    std::atomic<std::uint64_t> narrowed{0};
-    std::atomic<std::uint64_t> narrowSkipped{0};
-    std::atomic<std::uint64_t> nanoseconds{0};
-    std::atomic<long long> lastReport{0};
-};
-
-TableCounters& tableCounters() {
-    static TableCounters counters;
-    return counters;
-}
-
-void reportTables() {
-    if (!MaterializeProfiled()) return;
-    auto& counters = tableCounters();
-    const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    auto last = counters.lastReport.load(std::memory_order_relaxed);
-    if (last == 0) {
-        counters.lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed);
-        return;
-    }
-    if (now - last < 10'000'000'000ll || !counters.lastReport.compare_exchange_strong(last, now, std::memory_order_relaxed)) return;
-    const auto snapshots = counters.snapshots.exchange(0, std::memory_order_relaxed);
-    if (snapshots == 0) return;
-    std::string poison;
-    for (std::size_t reason = 0; reason < PoisonReasonCount; reason++) {
-        const auto count = counters.poison[reason].exchange(0, std::memory_order_relaxed);
-        if (count == 0) continue;
-        poison += " " + std::string(ImageTableAbi::PoisonReasonName(static_cast<PoisonReason>(reason))) + "=" + std::to_string(count);
-    }
-    std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, structural poison:%s, narrowing %llu applied / %llu skipped, %.1f ms\n",
-        static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
-        static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
-}
-
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped };
-
-struct ColumnRecords {
-    std::uint64_t base = 0;
-    std::uint64_t size = 0;
-    std::uint32_t records = 0;
-    std::uint32_t keys = 0;
-    std::uint32_t fault = 0;
-    bool narrowed = false;
-    bool outside = false;
-    std::vector<RecordState> states;
-    std::vector<std::uint32_t> words;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
-};
-
-struct TableTrace {
-    std::uint64_t base = 0;
-    std::uint64_t size = 0;
-    std::uint32_t records = 0;
-    std::uint32_t keys = 0;
-    std::uint32_t poison = 0;
-    bool narrowed = false;
-
-    bool operator==(const TableTrace& other) const = default;
-};
-
-void traceTable(const IrResourcePlan& plan, std::uint32_t table, const TableColumn& column, const TableTrace& trace) {
-    static std::mutex mutex;
-    static std::map<std::pair<std::uint64_t, std::uint32_t>, TableTrace> seen;
-    std::lock_guard lock(mutex);
-    auto& last = seen[{plan.shaderHash, table}];
-    if (last == trace) return;
-    last = trace;
-    std::fprintf(stderr, "[image-table] shader 0x%llx table %u (%s): base 0x%llx size 0x%llx stride 0x%x addend 0x%x offset 0x%x dwords %u, %u records, %u keys%s, %u structural poison\n", static_cast<unsigned long long>(plan.shaderHash), table, column.sampler ? "sampler" : "image", static_cast<unsigned long long>(trace.base), static_cast<unsigned long long>(trace.size), column.stride, column.addend, column.offset, column.dwordCount, trace.records, trace.keys, trace.narrowed ? " (narrowed)" : "", trace.poison);
-}
-
-class TableSnapshotter {
-public:
-    TableSnapshotter(const IrResourcePlan& plan, const SrtRuntime& runtime, SrtWalker& walker, const std::vector<std::uint8_t>& activeSources, ImageTableSnapshot& tables) : plan(plan), runtime(runtime), walker(walker), activeSources(activeSources), tables(tables) {}
-
-    void Run() {
-        tables = ImageTableSnapshot{};
-        std::uint32_t count = 0;
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) count = std::max(count, image.table + 1u);
-        }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
-        }
-        if (count == 0u) {
-            return;
-        }
-        tables.shader = plan.shaderHash;
-        tables.tables.resize(count);
-        const bool snapshotted = std::ranges::any_of(plan.info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; }) || std::ranges::any_of(plan.info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
-        if (!snapshotted) {
-            return;
-        }
-        if (runtime.readMemory == nullptr) {
-            throw std::runtime_error("image table snapshot requires runtime memory access");
-        }
-        const auto started = std::chrono::steady_clock::now();
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable && !image.deviceTable) Snapshot(image.source, image.table);
-        }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
-        }
-        auto& counters = tableCounters();
-        counters.snapshots.fetch_add(1, std::memory_order_relaxed);
-        counters.tables.fetch_add(count, std::memory_order_relaxed);
-        counters.nanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
-        if (TableStrict()) {
-            for (std::uint32_t table = 0; table < tables.tables.size(); table++) {
-                const auto& column = tables.tables[table];
-                const auto poisoned = std::find_if(column.codes.begin(), column.codes.end(), [](std::uint32_t code) { return (code & ImageTableAbi::PoisonFlag) != 0u && (code & ~ImageTableAbi::PoisonFlag) != static_cast<std::uint32_t>(PoisonReason::OutsideDomain); });
-                if (column.fault != 0u || poisoned != column.codes.end()) {
-                    const auto reason = static_cast<PoisonReason>((column.fault != 0u ? column.fault : *poisoned) & ~ImageTableAbi::PoisonFlag);
-                    throw std::runtime_error("image table " + std::to_string(table) + " at 0x" + hexText(column.base) + " holds a record that cannot be read (" + std::string(ImageTableAbi::PoisonReasonName(reason)) + "), and APS5_IMAGE_TABLE_STRICT is set");
-                }
-            }
-        }
-    }
-
-private:
-    static constexpr std::uint64_t PageBytes = 4096u;
-
-    bool Accessible(std::uint64_t address, std::uint64_t bytes) const {
-        return runtime.accessible == nullptr || runtime.accessible(runtime.userContext, address, bytes);
-    }
-
-    bool PageAccessible(std::uint64_t address, std::uint64_t begin, std::uint64_t end) {
-        const auto page = address & ~(PageBytes - 1u);
-        if (const auto found = pages.find(page); found != pages.end()) return found->second;
-        const auto first = std::max(page, begin);
-        const auto last = std::min(page + PageBytes, end);
-        const bool accessible = first < last && Accessible(first, last - first);
-        pages.emplace(page, accessible);
-        return accessible;
-    }
-
-    bool AddressAccessible(std::uint64_t address) {
-        const auto page = address & ~(PageBytes - 1u);
-        const auto [found, inserted] = wholePages.try_emplace(page, false);
-        if (inserted) found->second = Accessible(page, PageBytes);
-        return found->second || Accessible(address, sizeof(std::uint32_t));
-    }
-
-    std::uint32_t Read(std::uint64_t address) const {
-        std::uint32_t word = 0;
-        if (!runtime.readMemory(runtime.userContext, address, &word)) {
-            throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
-        }
-        return word;
-    }
-
-    ShaderBufferResource EvaluateBuffer(std::uint32_t source) const {
-        DescriptorValue value;
-        walker.EvaluateDescriptorSource(plan, source, runtime, value);
-        return decodeBufferDescriptor(value);
-    }
-
-    void Narrow(const TableColumn& column, ColumnRecords& records) {
-        const auto& domain = *column.keyDomain;
-        const auto skip = [&] {
-            tableCounters().narrowSkipped.fetch_add(1, std::memory_order_relaxed);
-        };
-        std::vector<std::uint32_t> values{0u};
-        std::uint64_t base = 0;
-        std::uint64_t size = 0;
-        std::uint64_t positions = 0;
-        if (domain.values) {
-            std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
-            const auto keys = EvaluateKeyValues(plan, plan.descriptorSources.at(domain.source).dwords[0], runtime, reads);
-            if (!keys.has_value()) {
-                skip();
-                return;
-            }
-            values.insert(values.end(), keys->begin(), keys->end());
-            tables.ranges.insert(tables.ranges.end(), reads.begin(), reads.end());
-        } else if (domain.value) {
-            DescriptorValue key;
-            try {
-                walker.EvaluateDescriptorSource(plan, domain.source, runtime, key);
-            } catch (const std::exception&) {
-                skip();
-                return;
-            }
-            values.push_back(key.dwords[0]);
-        } else {
-            const auto keyBuffer = EvaluateBuffer(domain.source);
-            if (keyBuffer.Type() != 0u) {
-                skip();
-                return;
-            }
-            base = keyBuffer.Base48();
-            size = keyBuffer.GetSize();
-            const std::uint64_t first = domain.offset & ~3u;
-            positions = size >= first + 4u ? (size - first - 4u) / domain.stride + 1u : 0u;
-            if (positions > TableKeyScanLimit() || first > 0xffffffffull) {
-                skip();
-                return;
-            }
-            if (positions != 0u && runtime.pendingWrite != nullptr && runtime.pendingWrite(runtime.userContext, base + first, size - first)) {
-                skip();
-                return;
-            }
-            for (std::uint64_t index = 0; index < positions; index++) {
-                const auto address = base + first + index * domain.stride;
-                if (!PageAccessible(address, base, base + size)) {
-                    skip();
-                    return;
-                }
-                values.push_back(Read(address));
-            }
-        }
-        records.states.assign(records.keys, RecordState::OutsideDomain);
-        records.outside = false;
-        for (const auto value : values) {
-            const std::uint32_t relative = value * column.stride;
-            const bool aligned = relative % column.stride == 0u;
-            const auto record = relative / column.stride;
-            if (aligned && record < records.keys) {
-                records.states[record] = RecordState::Read;
-                continue;
-            }
-            if (column.address || ImageTableAbi::ScalarBufferDword(relative + column.addend, column.offset, records.size).has_value()) records.outside = true;
-        }
-        records.narrowed = true;
-        if (positions != 0u) tables.ranges.emplace_back(base, size);
-        tableCounters().narrowed.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    std::uint32_t WordsIndex(const DescriptorValue& value) {
-        const auto [found, inserted] = wordsIndex.try_emplace({value.dwords, value.dwordCount, value.availableDwordMask}, static_cast<std::uint32_t>(tables.words.size()));
-        if (inserted) tables.words.push_back(value);
-        return found->second;
-    }
-
-    ColumnRecords& Column(std::uint32_t source) {
-        if (const auto found = columns.find(source); found != columns.end()) {
-            return found->second;
-        }
-        auto& records = columns[source];
-        const auto& column = *plan.descriptorSources.at(source).tableColumn;
-        const bool active = source >= activeSources.size() || activeSources[source] != 0u;
-        if (!active) {
-            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
-            return records;
-        }
-        if (column.address) {
-            DescriptorValue pointer;
-            walker.EvaluateDescriptorSource(plan, column.heapSource, runtime, pointer);
-            records.base = (static_cast<std::uint64_t>(pointer.dwords[1]) << 32u) | pointer.dwords[0];
-            records.records = ImageTableAbi::ScalarAddressRecords(column.stride);
-        } else {
-            const auto heap = EvaluateBuffer(column.heapSource);
-            if (heap.Type() != 0u) {
-                records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::NotBuffer));
-                return records;
-            }
-            records.base = heap.Base48();
-            records.size = heap.GetSize();
-            records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset + (column.indirect ? 4u : 0u), records.size);
-            if (records.size != 0u) tables.ranges.emplace_back(records.base, records.size);
-        }
-        records.records = std::min(records.records, ImageTableAbi::KeyRecords(column.maxKey, column.stride));
-        records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
-        records.outside = records.keys < records.records;
-        records.states.assign(records.keys, RecordState::Read);
-        if (column.keyDomain.has_value() && records.keys != 0u) {
-            Narrow(column, records);
-        }
-        records.words.assign(records.keys, 0u);
-        const auto end = records.base + records.size;
-        if (column.indirect) {
-            for (std::uint32_t record = 0; record < records.keys; record++) {
-                if (records.states[record] != RecordState::Read) continue;
-                const auto offset = column.addend + record * column.stride;
-                const auto lowWord = ImageTableAbi::ScalarBufferDword(offset, column.offset, records.size);
-                const auto highWord = ImageTableAbi::ScalarBufferDword(offset, column.offset + 4u, records.size);
-                if (!lowWord.has_value() || !highWord.has_value() || !PageAccessible(records.base + *lowWord, records.base, end) || !PageAccessible(records.base + *highWord, records.base, end)) {
-                    records.states[record] = RecordState::Unmapped;
-                    continue;
-                }
-                const std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
-                DescriptorValue value;
-                value.dwordCount = column.sampler ? 4u : 8u;
-                std::uint64_t first = std::numeric_limits<std::uint64_t>::max();
-                std::uint64_t past = 0;
-                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-                    auto address = ImageTableAbi::ScalarAddressDword(pointer, column.indirectOffset, column.indirectImmediate + dword * 4u);
-                    if (address.has_value() && (*address & 3u) != 0u) address.reset();
-                    if (!address.has_value() || !AddressAccessible(*address)) {
-                        records.states[record] = RecordState::Unmapped;
-                        break;
-                    }
-                    value.dwords[dword] = Read(*address);
-                    value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-                    first = std::min(first, *address);
-                    past = std::max(past, *address + sizeof(std::uint32_t));
-                }
-                if (records.states[record] != RecordState::Read) continue;
-                records.words[record] = WordsIndex(value);
-                tables.ranges.emplace_back(first, past - first);
-            }
-            return records;
-        }
-        constexpr auto Unread = std::numeric_limits<std::uint32_t>::max();
-        std::vector<std::uint32_t> whole(records.keys, Unread);
-        std::vector<std::pair<std::uint32_t, std::array<std::uint32_t, 8>>> split;
-        std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
-        std::uint32_t total = 0;
-        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
-        std::uint64_t high = 0;
-        std::uint64_t checkedPage = std::numeric_limits<std::uint64_t>::max();
-        bool checkedAccessible = false;
-        const auto accessible = [&](std::uint64_t address) {
-            if (column.address) return AddressAccessible(address);
-            if ((address & ~(PageBytes - 1u)) != checkedPage) {
-                checkedPage = address & ~(PageBytes - 1u);
-                checkedAccessible = PageAccessible(address, records.base, end);
-            }
-            return checkedAccessible;
-        };
-        const auto wholeAccessible = [&](std::uint64_t address) {
-            if (!column.address) return accessible(address);
-            const auto [found, inserted] = wholePages.try_emplace(address & ~(PageBytes - 1u), false);
-            if (inserted) found->second = Accessible(address & ~(PageBytes - 1u), PageBytes);
-            return found->second;
-        };
-        const auto locate = [&](std::uint32_t offset, std::uint32_t immediate) -> std::optional<std::uint64_t> {
-            if (column.address) return ImageTableAbi::ScalarAddressDword(records.base, offset, immediate);
-            const auto position = ImageTableAbi::ScalarBufferDword(offset, immediate, records.size);
-            return position.has_value() ? std::optional<std::uint64_t>(records.base + *position) : std::nullopt;
-        };
-        const auto take = [&](std::uint64_t address, std::uint32_t words) {
-            if (!runs.empty() && address > runs.back().first && address - runs.back().first == static_cast<std::uint64_t>(runs.back().second) * 4u) {
-                runs.back().second += words;
-            } else {
-                runs.emplace_back(address, words);
-            }
-            if (column.address) records.readRanges.emplace_back(address, static_cast<std::uint64_t>(words) * sizeof(std::uint32_t));
-            low = std::min(low, address);
-            high = std::max(high, address + static_cast<std::uint64_t>(words) * sizeof(std::uint32_t));
-            total += words;
-            return total - words;
-        };
-        const auto last = (column.dwordCount - 1u) * 4u;
-        for (std::uint32_t record = 0; record < records.keys; record++) {
-            if (records.states[record] != RecordState::Read) continue;
-            const auto offset = column.addend + record * column.stride;
-            const auto head = locate(offset, column.offset);
-            const auto tail = locate(offset, column.offset + last);
-            if (head.has_value() && tail.has_value() && (*head & 3u) == 0u && *tail > *head && *tail - *head == last && wholeAccessible(*head) && wholeAccessible(*tail)) {
-                whole[record] = take(*head, column.dwordCount);
-                continue;
-            }
-            std::array<std::uint32_t, 8> slots;
-            slots.fill(Unread);
-            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-                auto address = locate(offset, column.offset + dword * 4u);
-                if (column.address && address.has_value() && (*address & 3u) != 0u) address.reset();
-                if (!address.has_value() && !column.address) continue;
-                if (!address.has_value() || !accessible(*address)) {
-                    records.states[record] = RecordState::Unmapped;
-                    break;
-                }
-                slots[dword] = take(*address, 1u);
-            }
-            if (records.states[record] == RecordState::Read) split.emplace_back(record, slots);
-        }
-        std::vector<std::uint32_t> read(total);
-        std::uint32_t at = 0;
-        for (const auto& [address, count] : runs) {
-            if (runtime.readWords != nullptr) {
-                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
-            } else {
-                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * 4u);
-            }
-            at += count;
-        }
-        auto next = split.begin();
-        for (std::uint32_t record = 0; record < records.keys; record++) {
-            if (records.states[record] != RecordState::Read) continue;
-            DescriptorValue value;
-            value.dwordCount = column.sampler ? 4u : 8u;
-            if (whole[record] != Unread) {
-                std::copy_n(read.begin() + whole[record], column.dwordCount, value.dwords.begin());
-                value.availableDwordMask = static_cast<std::uint8_t>((1u << column.dwordCount) - 1u);
-            } else {
-                for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-                    if (next->second[dword] != Unread) {
-                        value.dwords[dword] = read[next->second[dword]];
-                        value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-                    }
-                }
-                ++next;
-            }
-            records.words[record] = WordsIndex(value);
-        }
-        if (column.address && low < high) tables.ranges.emplace_back(low, high - low);
-        std::sort(records.readRanges.begin(), records.readRanges.end());
-        std::size_t ranges = 0;
-        for (const auto& range : records.readRanges) {
-            if (ranges != 0u && range.first - records.readRanges[ranges - 1u].first <= records.readRanges[ranges - 1u].second) {
-                auto& previous = records.readRanges[ranges - 1u];
-                previous.second = std::max(previous.second, range.first - previous.first + range.second);
-            } else {
-                records.readRanges[ranges++] = range;
-            }
-        }
-        records.readRanges.resize(ranges);
-        return records;
-    }
-
-    void Snapshot(std::uint32_t source, std::uint32_t table) {
-        const auto& column = *plan.descriptorSources.at(source).tableColumn;
-        const auto& records = Column(source);
-        auto& out = tables.tables.at(table);
-        out.base = records.base;
-        out.size = records.size;
-        out.records = records.records;
-        out.keys = records.keys;
-        out.fault = records.fault;
-        out.outside = records.outside;
-        out.codes.assign(records.keys, 0u);
-        out.readRanges = records.readRanges;
-        TableTrace trace{records.base, records.size, records.records, records.keys, 0u, records.narrowed};
-        auto& counters = tableCounters();
-        if (records.fault != 0u) counters.poison[records.fault & ~ImageTableAbi::PoisonFlag].fetch_add(1, std::memory_order_relaxed);
-        for (std::uint32_t key = 0; key < records.keys; key++) {
-            switch (records.states[key]) {
-                case RecordState::Read:
-                    out.codes[key] = records.words[key];
-                    continue;
-                case RecordState::OutsideDomain:
-                    out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::OutsideDomain));
-                    break;
-                case RecordState::Unmapped:
-                    out.codes[key] = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Unmapped));
-                    counters.poison[static_cast<std::size_t>(PoisonReason::Unmapped)].fetch_add(1, std::memory_order_relaxed);
-                    break;
-            }
-            trace.poison++;
-        }
-        counters.keys.fetch_add(records.keys, std::memory_order_relaxed);
-        if (TableTraced()) traceTable(plan, table, column, trace);
-    }
-
-    const IrResourcePlan& plan;
-    const SrtRuntime& runtime;
-    SrtWalker& walker;
-    const std::vector<std::uint8_t>& activeSources;
-    ImageTableSnapshot& tables;
-    std::map<std::uint32_t, ColumnRecords> columns;
-    struct WordsHash {
-        using Key = std::tuple<std::array<std::uint32_t, 8>, std::uint32_t, std::uint8_t>;
-        std::size_t operator()(const Key& key) const noexcept {
-            std::uint64_t hash = 0xcbf29ce484222325ull ^ std::get<1>(key) ^ std::get<2>(key);
-            for (const auto word : std::get<0>(key)) hash = (hash ^ word) * 0x100000001b3ull;
-            return static_cast<std::size_t>(hash ^ (hash >> 32u));
-        }
-    };
-    std::unordered_map<WordsHash::Key, std::uint32_t, WordsHash> wordsIndex;
-    std::unordered_map<std::uint64_t, bool> pages;
-    std::unordered_map<std::uint64_t, bool> wholePages;
-};
 
 void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, SrtWalker& walker, ResourceSnapshot& snapshot, std::vector<std::uint8_t>& activeSources) {
     snapshot = ResourceSnapshot{};
@@ -825,7 +327,7 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     snapshot.samplers.resize(plan.info.samplers.size());
     for (std::uint32_t i = 0; i < plan.info.samplers.size(); i++) {
-        if (plan.info.samplers[i].table != NoTable || plan.info.samplers[i].deviceTable) {
+        if (plan.info.samplers[i].deviceTable) {
             snapshot.samplers[i].dwordCount = 4u;
             continue;
         }
@@ -887,7 +389,7 @@ bool nativeCompare(const ImageResource& image, const DescriptorValue& descriptor
 std::uint32_t colorCompareState(const ImageResource& image, const DescriptorValue& descriptor, std::span<const std::array<std::uint32_t, 4>> samplers) {
     if (nativeCompare(image, descriptor)) return 0u;
     const auto format = rawImageFormat(descriptor);
-    if ((image.table != NoTable && !image.deviceTable) || (image.emulatedCompare & EmulatedCompare::Unsupported) != 0u) throw std::runtime_error("unsupported color comparison image instructions");
+    if ((image.emulatedCompare & EmulatedCompare::Unsupported) != 0u) throw std::runtime_error("unsupported color comparison image instructions");
     if ((image.emulatedCompare & EmulatedCompare::RequiresSingleLevel) != 0u && ((descriptor.dwords[3] >> 12u) & 0xfu) != ((descriptor.dwords[3] >> 16u) & 0xfu)) throw std::runtime_error("color comparison requires a single mip level");
     const auto reference = colorCompareReference(format);
     const auto type = rawImageType(descriptor);
@@ -951,231 +453,13 @@ void materializeSrtGuards(const IrResourcePlan& plan, ResourceSnapshot& snapshot
     }
 }
 
-struct DecodeMemoKey {
-    std::uint64_t artifact = 0;
-    std::uint32_t resource = 0;
-    std::array<std::uint32_t, 8> words{};
-
-    bool operator==(const DecodeMemoKey& other) const = default;
-};
-
-struct DecodeMemoHash {
-    std::size_t operator()(const DecodeMemoKey& key) const {
-        std::uint64_t hash = 0xcbf29ce484222325ull;
-        const auto mix = [&](std::uint64_t value) {
-            hash ^= value;
-            hash *= 0x100000001b3ull;
-        };
-        mix(key.artifact);
-        mix(key.resource);
-        for (const auto word : key.words) mix(word);
-        return static_cast<std::size_t>(hash);
-    }
-};
-
-struct DecodeMemo {
-    std::mutex mutex;
-    std::unordered_map<DecodeMemoKey, std::uint32_t, DecodeMemoHash> entries;
-};
-
-DecodeMemo& decodeMemo() {
-    static DecodeMemo memo;
-    return memo;
 }
 
-constexpr std::uint32_t DecodeMemoEntries = 1u << 20u;
-constexpr std::uint32_t DecodeFailed = 0x80000000u;
-
-std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const ImageResource> modes, const DescriptorValue& words, std::uint64_t memoKey, std::uint32_t resource) {
-    DecodeMemoKey key{memoKey, resource, words.dwords};
-    if (memoKey != 0u) {
-        auto& memo = decodeMemo();
-        std::lock_guard lock(memo.mutex);
-        if (const auto found = memo.entries.find(key); found != memo.entries.end()) return found->second;
-    }
-    const auto match = ResourceMaterializer::TryRuntimeImageMode(image, words, modes);
-    const auto value = match.mode.has_value() ? *match.mode : DecodeFailed | static_cast<std::uint32_t>(match.reason);
-    if (memoKey != 0u) {
-        auto& memo = decodeMemo();
-        std::lock_guard lock(memo.mutex);
-        if (memo.entries.size() >= DecodeMemoEntries) memo.entries.clear();
-        memo.entries.emplace(key, value);
-    }
-    return value;
-}
-
-}
-
-ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
-    namespace Abi = ImageTableAbi;
-    ResolvedImageTables out;
-    std::uint32_t count = 0;
-    for (const auto& image : info.images) {
-        if (image.table != NoTable) count = std::max(count, image.table + 1u);
-    }
-    for (const auto& sampler : info.samplers) {
-        if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
-    }
-    if (count == 0u) return out;
-    const auto& tables = snapshot.tables;
-    if (tables.tables.size() != count) throw std::runtime_error("image table snapshot disagrees with the static tables");
-    if (info.runtimeImageModes.size() != info.images.size()) throw std::runtime_error("prepared runtime image modes are missing");
-    out.map.assign(Abi::HeaderWords + Abi::TableWords * count, 0u);
-    out.map[Abi::HeaderVersion] = Abi::Version;
-    out.poison.push_back({{}, 0u, NoTable, PoisonReason::OutsideSnapshot});
-    out.poison.push_back({{}, 0u, NoTable, PoisonReason::OutsideDomain});
-    std::map<std::tuple<std::uint32_t, PoisonReason, std::array<std::uint32_t, 8>, std::uint32_t>, std::uint32_t> poisonIndex;
-    std::set<std::uint32_t> expected;
-    const auto poison = [&](std::uint32_t resource, PoisonReason reason, const DescriptorValue* words) {
-        const auto value = words != nullptr ? *words : DescriptorValue{};
-        const auto [found, inserted] = poisonIndex.try_emplace({resource, reason, value.dwords, value.dwordCount}, static_cast<std::uint32_t>(out.poison.size()));
-        if (inserted) out.poison.push_back({value.dwords, value.dwordCount, resource, reason});
-        expected.insert(found->second);
-        return Abi::PoisonCode(found->second);
-    };
-    std::map<std::tuple<std::array<std::uint32_t, 8>, RdnaImageDimension, bool, DescriptorBindingKind>, std::uint32_t> elementIndex;
-    std::vector<std::vector<std::uint32_t>> directSamplers(info.images.size());
-    std::vector<bool> reducingSampler(info.images.size(), false);
-    for (const auto& pair : info.sampledPairs) {
-        const auto& sampler = info.samplers.at(pair.sampler);
-        if (sampler.table != NoTable || sampler.deviceTable) continue;
-        directSamplers.at(pair.image).push_back(pair.sampler);
-        const auto& words = snapshot.samplers.at(pair.sampler).dwords;
-        if (reducesBetweenTexels(words[0], words[2])) reducingSampler.at(pair.image) = true;
-    }
-    const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
-        const auto& image = info.images[resource];
-        const auto& modes = info.runtimeImageModes[resource];
-        std::array<std::uint32_t, Abi::ImageRecordWords> record{0u, words.dwords[3], 0u};
-        if ((words.availableDwordMask & (1u << 3u)) == 0u) {
-            record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::OutsideSnapshot, &words);
-            const auto offset = static_cast<std::uint32_t>(out.map.size());
-            out.map.insert(out.map.end(), record.begin(), record.end());
-            return offset;
-        }
-        const auto decoded = decodeTableEntry(image, modes, words, memoKey, resource);
-        if ((decoded & DecodeFailed) != 0u) {
-            record[Abi::ImageRecordFlags] = poison(resource, static_cast<PoisonReason>(decoded & ~DecodeFailed), &words);
-        } else {
-            const auto& mode = modes.at(decoded);
-            if (mode.dimension == RdnaImageDimension::Dim2DMsaa || mode.dimension == RdnaImageDimension::Dim2DMsaaArray) {
-                record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Multisampled, &words);
-            } else if (requiresPointSampler(mode) && reducingSampler[resource]) {
-                record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-            } else {
-                auto element = words.dwords;
-                if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
-                const auto kind = DescriptorBindingForImage(mode);
-                const auto [found, inserted] = elementIndex.try_emplace({element, mode.dimension, mode.depthCompare, kind}, static_cast<std::uint32_t>(out.elements.size()));
-                if (inserted && out.elements.size() >= Abi::ImageElementBudget) {
-                    elementIndex.erase(found);
-                    record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
-                } else {
-                    if (inserted) out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, {}, BindsDecodedCopy(mode, words)});
-                    auto& samplers = out.elements[found->second].samplers;
-                    samplers.insert(samplers.end(), directSamplers[resource].begin(), directSamplers[resource].end());
-                    std::ranges::sort(samplers);
-                    samplers.erase(std::unique(samplers.begin(), samplers.end()), samplers.end());
-                    record[Abi::ImageRecordFlags] = decoded << Abi::ModeShift;
-                    record[Abi::ImageRecordElement] = found->second;
-                }
-            }
-        }
-        const auto offset = static_cast<std::uint32_t>(out.map.size());
-        out.map.insert(out.map.end(), record.begin(), record.end());
-        return offset;
-    };
-    const auto samplerRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
-        std::array<std::uint32_t, Abi::SamplerRecordWords> record{0u, 0u};
-        if ((words.dwords[0] & (1u << 15u)) != 0u) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
-        } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-        } else if (out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
-        } else {
-            record[Abi::SamplerRecordElement] = static_cast<std::uint32_t>(out.samplers.size());
-            for (std::uint32_t variant = 0; variant < 2u; variant++) {
-                const bool compare = variant == 1u;
-                for (std::uint32_t point = 0; point < 2u; point++) {
-                    ImageTableSamplerElement element;
-                    std::copy_n(words.dwords.begin(), 4u, element.words.begin());
-                    element.compare = compare;
-                    element.point = point != 0u;
-                    out.samplers.push_back(element);
-                }
-            }
-        }
-        const auto offset = static_cast<std::uint32_t>(out.map.size());
-        out.map.insert(out.map.end(), record.begin(), record.end());
-        return offset;
-    };
-    std::vector<bool> outside(count, false);
-    const auto fill = [&](std::uint32_t resource, std::uint32_t table, bool sampler) {
-        const auto& column = tables.tables.at(table);
-        const auto header = Abi::TableHeader(table);
-        out.map[header + Abi::TableKeyCount] = column.keys;
-        out.map[header + Abi::TableSizeLow] = static_cast<std::uint32_t>(column.size);
-        out.map[header + Abi::TableSizeHigh] = static_cast<std::uint32_t>(column.size >> 32u);
-        out.map[header + Abi::TableBaseLow] = static_cast<std::uint32_t>(column.base);
-        out.map[header + Abi::TableBaseHigh] = static_cast<std::uint32_t>(column.base >> 32u);
-        if (column.codes.size() != column.keys) throw std::runtime_error("image table snapshot has a truncated map");
-        if (column.fault != 0u) {
-            out.map[header + Abi::TableFault] = poison(resource, static_cast<PoisonReason>(column.fault & ~Abi::PoisonFlag), nullptr);
-        } else if (!sampler && (info.images[resource].tableOperation == TableOperation::Unsupported || info.runtimeImageModes[resource].empty())) {
-            out.map[header + Abi::TableFault] = poison(resource, PoisonReason::UnsupportedOperation, nullptr);
-        }
-        outside[table] = column.outside;
-        const auto mapStart = static_cast<std::uint32_t>(out.map.size());
-        out.map[header + Abi::TableMapStart] = mapStart;
-        out.map.resize(out.map.size() + column.keys, 0u);
-        std::unordered_map<std::uint32_t, std::uint32_t> records;
-        for (std::uint32_t key = 0; key < column.keys; key++) {
-            const auto code = column.codes[key];
-            std::uint32_t mapped = Abi::NullCode;
-            if ((code & Abi::PoisonFlag) != 0u) {
-                const auto reason = static_cast<PoisonReason>(code & ~Abi::PoisonFlag);
-                mapped = reason == PoisonReason::OutsideDomain ? Abi::PoisonCode(Abi::OutsideDomainPoison) : poison(resource, reason, nullptr);
-            } else if (out.map[header + Abi::TableFault] == 0u) {
-                const auto& words = tables.words.at(code);
-                if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(words)) {
-                    const auto [found, inserted] = records.try_emplace(code, 0u);
-                    if (inserted) found->second = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
-                    mapped = found->second;
-                }
-            }
-            out.map[mapStart + key] = mapped;
-        }
-        if (sampler && out.map[header + Abi::TableFault] == 0u) {
-            DescriptorValue zero;
-            zero.dwordCount = 4u;
-            out.map[header + Abi::TableOutsideCode] = samplerRecord(resource, zero);
-        }
-    };
-    for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
-        if (info.images[resource].table != NoTable) fill(resource, info.images[resource].table, false);
-    }
-    for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
-        if (info.samplers[resource].table != NoTable) fill(resource, info.samplers[resource].table, true);
-    }
-    out.map[Abi::HeaderElementCount] = static_cast<std::uint32_t>(out.elements.size());
-    out.map[Abi::HeaderSamplerCount] = static_cast<std::uint32_t>(out.samplers.size());
-    out.map[Abi::HeaderPoisonCount] = static_cast<std::uint32_t>(out.poison.size());
-    out.map[Abi::HeaderTableCount] = count;
-    out.map[Abi::HeaderElementFaults] = static_cast<std::uint32_t>(out.map.size());
-    out.map.resize(out.map.size() + out.elements.size(), 0u);
-    out.map[Abi::HeaderSamplerFaults] = static_cast<std::uint32_t>(out.map.size());
-    out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
-    out.map[Abi::HeaderSamplerSlots] = static_cast<std::uint32_t>(out.map.size());
-    out.map.resize(out.map.size() + out.samplers.size(), 0u);
-    out.map[Abi::HeaderImageSlots] = static_cast<std::uint32_t>(out.map.size());
-    out.map.resize(out.map.size() + out.elements.size(), 0u);
-    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.deviceTable; })) {
-        out.map[Abi::HeaderSamplerClasses] = static_cast<std::uint32_t>(out.map.size());
-        out.map.resize(out.map.size() + std::max<std::size_t>(info.samplers.size(), 1u), 0u);
-    }
-    out.faults = static_cast<std::uint32_t>(expected.size() + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));
-    return out;
+std::vector<std::uint32_t> ResourceMaterializer::ImageTableMap(const ShaderInfo& info) {
+    if (std::ranges::none_of(info.images, [](const ImageResource& image) { return image.table != NoTable; })) return {};
+    std::vector<std::uint32_t> map(ImageTableAbi::HeaderWords + std::max<std::size_t>(info.samplers.size(), 1u), 0u);
+    map[ImageTableAbi::HeaderVersion] = ImageTableAbi::Version;
+    return map;
 }
 
 namespace {
@@ -1639,7 +923,6 @@ const char* ResourceMaterializer::VolumePlaneBiasSamplerMismatch(const ImageReso
 }
 
 const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource& image) {
-    if (image.table != NoTable && !image.deviceTable) return "samples an image selected at run time";
     if (image.constantSwizzle) return nullptr;
     if ((image.dimension != RdnaImageDimension::Dim1D && image.dimension != RdnaImageDimension::Dim2D) || image.cube) return "samples a 1D-array, 2D-array, 3D, cube or multisampled image";
     if (image.depthCompare) return "is used with depth comparison";
@@ -1751,7 +1034,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
                 if (component.bitWidth == 32u && argument < address->ArgumentCount() && address->Argument(argument)->Resolve()->HasImmediate()) continue;
                 if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
                     images.at(memory.resource).emulatedCompare |= EmulatedCompare::NativeOffsetUnsupported;
-                } else if (resources.info.samplers.at(memory.sampler).table == NoTable) {
+                } else {
                     images.at(memory.resource).foldTexelOffsetsOnly = true;
                     resources.info.samplers.at(memory.sampler).foldTexelOffsetsOnly = true;
                 }
@@ -1771,7 +1054,6 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         if (pair.image >= images.size() || pair.sampler >= resources.info.samplers.size()) throw std::runtime_error("static sampled pair is out of range");
         auto& sampler = resources.info.samplers[pair.sampler];
         sampler.depthCompare = sampler.depthCompare || images[pair.image].depthCompare;
-        tables = tables || sampler.table != NoTable;
     }
     resources.info.images = std::move(images);
     resources.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(resources);
@@ -2033,7 +1315,6 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
     plan.cleanFlatSlots = source.cleanFlatSlots;
-    plan.requiresSpecializationMemory = source.requiresSpecializationMemory;
     plan.srtPlanComplete = source.srtPlanComplete;
     plan.resourceTrackingComplete = source.resourceTrackingComplete;
     plan.info = source.info;
@@ -2052,14 +1333,9 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         if (image.table == NoTable) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan an image outside the image tables is not implemented");
         }
-        if (!image.deviceTable) plan.requiresSpecializationMemory = true;
     }
     for (const auto& sampler : plan.info.samplers) {
-        if (sampler.table != NoTable) {
-            plan.requiresSpecializationMemory = true;
-        } else if (!sampler.deviceTable) {
-            addSource(sampler.source);
-        }
+        if (!sampler.deviceTable) addSource(sampler.source);
     }
     for (const auto& store : plan.info.bufferStores) {
         if (!store.fromMemory) addSource(store.source);
@@ -2079,28 +1355,18 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
     if (!plan.resourceTrackingComplete) {
         throw std::runtime_error("ResourceMaterializer::Materialize requires a completed resource plan");
     }
-    if (plan.requiresSpecializationMemory && runtime.readMemory == nullptr) {
-        throw std::runtime_error("ResourceMaterializer::Materialize requires runtime memory access for image tables");
-    }
     SrtWalker walker;
     ResourceSnapshot nextSnapshot;
     std::vector<std::uint8_t> activeSources;
-    try {
-        materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
-        TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
-    } catch (...) {
-        reportTables();
-        throw;
-    }
+    materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
     const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     materializeSrtGuards(plan, nextSnapshot);
     if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
-    reportTables();
 }
 
 bool ResourceMaterializer::ReadsResourcesAtRunTime(const IrResourcePlan& plan) {
-    if (!plan.resourceTrackingComplete || !plan.srtReads.empty() || plan.uniformFill.fill.kind != UniformFillKind::None || plan.requiresSpecializationMemory) return false;
+    if (!plan.resourceTrackingComplete || !plan.srtReads.empty() || plan.uniformFill.fill.kind != UniformFillKind::None) return false;
     const auto constant = [&](std::uint32_t source) {
         const auto& descriptor = plan.descriptorSources.at(source);
         for (std::uint32_t word = 0; word < descriptor.dwordCount; ++word) {
@@ -2109,7 +1375,7 @@ bool ResourceMaterializer::ReadsResourcesAtRunTime(const IrResourcePlan& plan) {
         return true;
     };
     for (const auto& sampler : plan.info.samplers) {
-        if (!sampler.deviceTable && (sampler.table != NoTable || !constant(sampler.source))) return false;
+        if (!sampler.deviceTable && !constant(sampler.source)) return false;
     }
     return true;
 }
@@ -2140,9 +1406,6 @@ void ResourceMaterializer::RunTimeSnapshot(const IrResourcePlan& plan, const Srt
     }
     evaluateBufferSites(plan, runtime, next.stores, next.loads, false);
     next.deviceImagesComplete = false;
-    SrtWalker walker;
-    const std::vector<std::uint8_t> active;
-    TableSnapshotter(plan, runtime, walker, active, next.tables).Run();
     materializeSrtGuards(plan, next);
     snapshot = std::move(next);
 }

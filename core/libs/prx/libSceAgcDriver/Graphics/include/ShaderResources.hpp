@@ -110,11 +110,6 @@ private:
     Stats stats;
 };
 
-struct ImageTableReuseCounts {
-    std::uint64_t reused = 0;
-    std::uint64_t resolved = 0;
-};
-ImageTableReuseCounts ImageTableReuses();
 struct SampledTextureCounts {
     std::uint64_t gathers;
     std::uint64_t clears;
@@ -327,20 +322,11 @@ private:
         const ShaderRecompiler::DescriptorBinding* images = nullptr;
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
-        std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
-        std::vector<std::size_t> elementTextures;
-        std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
-        std::vector<std::size_t> samplerSlots;
     };
     std::vector<TableStage> tableStages;
     TableStage& tableStage(const CompiledShader& shader);
-    static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
-    std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
-    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, TableStage& table);
-    void resolveImageTables();
     void finishImageTables();
 
     // A host-imported buffer region the set reads in place, with its import's identity at build time.

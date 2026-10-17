@@ -108,7 +108,6 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
-            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/KeyValueSet.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RequestMemoryView.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
@@ -244,9 +243,7 @@ function(add_shader_recompiler target runtimeTarget)
             DepthBitsTextureWidth
             DeviceImageProbeResult
             HashBytes
-            ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
-            ImageTableAbi::TableHeader
             PixelInput
             PixelInputBit
             RayTracingStrict

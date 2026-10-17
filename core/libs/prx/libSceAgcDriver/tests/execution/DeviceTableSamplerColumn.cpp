@@ -54,7 +54,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto compiled = Compile(device, SampleColumnProgram(), userData);
     ExpectRouted(compiled, "sampler from a table column");
     const auto& samplers = compiled.plan->info.samplers;
-    Expect(samplers.size() == 1u && samplers[0].table == ShaderRecompiler::NoTable, "sampler from a table column: the S# read from the table was planned as a table read on the CPU");
+    Expect(samplers.size() == 1u && samplers[0].deviceTable, "sampler from a table column: the S# read from the table is not read through the device image table");
     const auto first = Run(device, compiled, Height);
     const auto read = ExpectFirstUse(first, expected, 1, "sampler from a table column: first dispatch");
     const auto hit = Run(device, Compile(device, SampleColumnProgram(), userData), Height);

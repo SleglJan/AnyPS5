@@ -89,20 +89,14 @@ public:
     void PrepareUse(const Context& context, VkCommandBuffer commands, Recorder* recorder);
     bool NeedsTransfers(const Recorder& recorder) const;
     void FinishUse(const Context& context, VkCommandBuffer commands) const;
-    struct ImageTableFaults {
-        std::uint32_t stage = 0;
-        std::uint64_t shader = 0;
-        std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
-    };
-    void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void SetImageTables(std::vector<std::uint32_t> stages) { imageTableStages = std::move(stages); }
     void NameStages(std::vector<std::pair<std::uint32_t, std::uint64_t>> stages) { stageShaders = std::move(stages); }
 
 private:
     friend class BatchFaultRecord;
-    static void markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
-    static void applyWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users);
-    static void markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users);
+    static void markWrittenPages(std::uint32_t* words);
+    static void applyWrittenPages(std::uint32_t* words);
+    static void markWrittenRange(std::uint64_t begin, std::size_t bytes);
     static bool published(const ShaderRecompiler::BdaAbi::Fault& report);
     bool owns(const ShaderRecompiler::BdaAbi::Fault& report) const;
     [[noreturn]] void throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const;
@@ -115,9 +109,7 @@ private:
     std::shared_ptr<BatchFaultRecord> shared;
     std::uint64_t ownRecord = 0;
     const DeviceImageTable* deviceImages = nullptr;
-    std::vector<ImageTableFaults> imageTables;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
-    std::vector<std::vector<std::byte>> imageTableBytes;
+    std::vector<std::uint32_t> imageTableStages;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> stageShaders;
 };
 

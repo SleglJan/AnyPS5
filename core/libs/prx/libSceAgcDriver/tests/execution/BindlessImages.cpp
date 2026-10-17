@@ -79,14 +79,14 @@ void Run(AgcDriver::VulkanDevice& device) {
                 auto invalid = shader;
                 auto binding = std::ranges::find_if(invalid.bindings, [](const DescriptorBinding& value) { return value.role == DescriptorRole::ImageTableMap; });
                 Require(binding != invalid.bindings.end(), "bindless shader has no image table map");
-                binding->guestDescriptor.at(ImageTableAbi::HeaderElementCount) += 1u;
+                binding->guestDescriptor.at(ImageTableAbi::HeaderVersion) += 1u;
                 bool rejected = false;
                 try {
                     device.Dispatch(invalid, 1u, 1u, 1u);
                 } catch (const std::exception& error) {
-                    rejected = std::string_view(error.what()).find("image table map disagrees with its image binding") != std::string_view::npos;
+                    rejected = std::string_view(error.what()).find("image table map binding is malformed") != std::string_view::npos;
                 }
-                Require(rejected, "driver accepted an image table map naming more elements than its bound table");
+                Require(rejected, "driver accepted an image table map of another version");
             }
             device.Dispatch(shader, 1u, 1u, 1u);
             device.SubmitRecorded(false);

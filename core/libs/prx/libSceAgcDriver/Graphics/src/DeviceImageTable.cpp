@@ -81,9 +81,8 @@ std::shared_ptr<Sampler> ModeSampler(const Context& build, std::span<const std::
 }
 
 bool UsesDeviceImageTable(const ShaderRecompiler::RecompileResult& program) {
-    namespace Map = ShaderRecompiler::ImageTableAbi;
     return std::any_of(program.bindings.begin(), program.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
-        return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap && binding.guestDescriptor.size() > Map::HeaderSamplerClasses && binding.guestDescriptor[Map::HeaderSamplerClasses] != 0u;
+        return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap;
     });
 }
 

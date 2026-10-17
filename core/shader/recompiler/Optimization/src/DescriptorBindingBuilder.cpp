@@ -22,14 +22,8 @@ namespace {
 }
 
 
-void MergeSamplerElements(std::vector<std::uint32_t>& into, std::span<const std::uint32_t> from) {
-    into.insert(into.end(), from.begin(), from.end());
-    std::ranges::sort(into);
-    into.erase(std::unique(into.begin(), into.end()), into.end());
-}
-
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
-    if (kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::SamplerTable) {
+    if (kind == DescriptorBindingKind::Samplers) {
         return DescriptorKind::SamplerSlot;
     }
     if (kind == DescriptorBindingKind::ImageTable) {
@@ -66,9 +60,6 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
     }
     if (kind == DescriptorBindingKind::ImageTable) {
         return DescriptorRole::ImageTable;
-    }
-    if (kind == DescriptorBindingKind::SamplerTable) {
-        return DescriptorRole::SamplerTable;
     }
     if (kind == DescriptorBindingKind::ImageTableMap) {
         return DescriptorRole::ImageTableMap;
@@ -118,7 +109,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
         const auto& sampler = info.samplers[r];
-        if (sampler.table != NoTable || sampler.deviceTable) continue;
+        if (sampler.deviceTable) continue;
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {
             if (sampler.foldTexelOffsetsOnly) {
                 fail("DescriptorBindingBuilder::Populate normalized guest sampler is used with a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended");
@@ -198,8 +189,8 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
 
 void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, std::span<const std::uint8_t> exportMappings) const {
     auto plan = Prepare(allocation.layout, info, stage, snapshot, exportMappings);
-    const auto tables = ResourceMaterializer::ResolveImageTables(info, snapshot);
-    Populate(allocation, allocation, plan, userDataBase, snapshot, partialThreads, &tables);
+    const auto tableMap = ResourceMaterializer::ImageTableMap(info);
+    Populate(allocation, allocation, plan, userDataBase, snapshot, partialThreads, &tableMap);
     allocation.specialization = std::move(plan.specialization);
 }
 
@@ -295,7 +286,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     return selected;
 }
 
-void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables) const {
+void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const std::vector<std::uint32_t>* tableMap) const {
     const auto& layout = compiled.layout;
     const bool needsShaderData = layout.UsesPushData() || plan.storageData;
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.runtimeState) : std::vector<std::uint32_t>{};
@@ -316,40 +307,12 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             }
             break;
         case DescriptorRole::ImageTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate image table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->elements.size() * 8u);
-            for (const auto& element : tables->elements) {
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
-                ImageResource shape;
-                shape.dimension = element.dimension;
-                physical.imageShapes.push_back(ImageShapeForResource(shape));
-                physical.imageDepthCompare.push_back(element.depthCompare);
-                physical.imageDecodedCopy.push_back(element.decodedCopy);
-                physical.imageWritten.push_back(false);
-                physical.imageAtomic.push_back(false);
-                std::vector<std::uint32_t> samplers;
-                for (const auto sampler : element.samplers) {
-                    if (sampler < entry.tableSamplerElements.size()) MergeSamplerElements(samplers, entry.tableSamplerElements[sampler]);
-                }
-                physical.imageSamplers.push_back(std::move(samplers));
-            }
-            physical.count = static_cast<std::uint32_t>(tables->elements.size());
+            physical.count = 0u;
             physical.tableSamplerElements = entry.tableSamplerElements;
             break;
-        case DescriptorRole::SamplerTable:
-            if (tables == nullptr) fail("DescriptorBindingBuilder::Populate sampler table elements were not resolved");
-            physical.guestDescriptor.reserve(tables->samplers.size() * 4u);
-            for (const auto& element : tables->samplers) {
-                const auto first = physical.guestDescriptor.size();
-                physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
-                if (element.point) physical.guestDescriptor[first + 2u] = PointFilteredSamplerWord(physical.guestDescriptor[first], physical.guestDescriptor[first + 2u]);
-                physical.samplerDepthCompare.push_back(element.compare);
-            }
-            physical.count = static_cast<std::uint32_t>(tables->samplers.size());
-            break;
         case DescriptorRole::ImageTableMap:
-            if (tables == nullptr || tables->map.empty()) fail("DescriptorBindingBuilder::Populate image table map was not resolved");
-            physical.guestDescriptor = tables->map;
+            if (tableMap == nullptr || tableMap->empty()) fail("DescriptorBindingBuilder::Populate image table map was not built");
+            physical.guestDescriptor = *tableMap;
             break;
         case DescriptorRole::FlattenedSrt:
             if (snapshot.flattenedSrt.empty()) {

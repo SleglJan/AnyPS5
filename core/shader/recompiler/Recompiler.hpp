@@ -398,7 +398,6 @@ enum class DescriptorRole {
     FlattenedSrt,
     ShaderData,
     ImageTable,
-    SamplerTable,
     ImageTableMap,
     FormatTable
 };
@@ -423,13 +422,6 @@ struct DescriptorBinding {
     std::vector<bool> samplerUsed;
     std::vector<std::vector<std::uint32_t>> imageSamplers;
     std::vector<std::vector<std::uint32_t>> tableSamplerElements;
-};
-
-struct ImageTableEntryPoison {
-    std::array<std::uint32_t, 8> words{};
-    std::uint32_t dwordCount = 0;
-    std::uint32_t resource = 0;
-    std::uint32_t reason = 0;
 };
 
 struct VertexAttribute {
@@ -645,8 +637,6 @@ struct ShaderInvocation {
     std::vector<std::uint32_t> userDataSlots;
     std::vector<VertexAttribute> vertexAttributes;
     std::uint32_t poisonedSrtReads = 0;
-    std::vector<ImageTableEntryPoison> imageTablePoison;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeRanges;
     bool unboundedWrites = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
@@ -655,9 +645,6 @@ struct ShaderInvocation {
     std::size_t memoryReadRanges = 0;
     bool fixedUnboundedWrites = false;
     bool fixedUnboundedReads = false;
-    std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
-    std::uint64_t imageTableShader = 0;
-    std::uint32_t imageTableFaults = 0;
     std::vector<DeviceImageTableAbi::Expectation> deviceImages;
     bool deviceImagesComplete = true;
     std::vector<std::uint64_t> deviceImageInterfaces;

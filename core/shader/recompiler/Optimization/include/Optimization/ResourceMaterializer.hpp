@@ -15,36 +15,6 @@
 
 namespace ShaderRecompiler {
 
-struct ImageTableElement {
-    std::array<std::uint32_t, 8> words{};
-    RdnaImageDimension dimension = RdnaImageDimension::Unknown;
-    bool depthCompare = false;
-    DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
-    std::vector<std::uint32_t> samplers;
-    bool decodedCopy = false;
-};
-
-struct ImageTableSamplerElement {
-    std::array<std::uint32_t, 4> words{};
-    bool compare = false;
-    bool point = false;
-};
-
-struct ImageTablePoisonRecord {
-    std::array<std::uint32_t, 8> words{};
-    std::uint32_t dwordCount = 0;
-    std::uint32_t resource = 0;
-    ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::OutsideSnapshot;
-};
-
-struct ResolvedImageTables {
-    std::vector<std::uint32_t> map;
-    std::vector<ImageTableElement> elements;
-    std::vector<ImageTableSamplerElement> samplers;
-    std::vector<ImageTablePoisonRecord> poison;
-    std::uint32_t faults = 0;
-};
-
 struct RuntimeImageModeMatch {
     std::optional<std::uint32_t> mode;
     ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::InvalidFormat;
@@ -67,7 +37,7 @@ public:
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     static const char* VolumePlaneBiasSamplerMismatch(const ImageResource& image, const ImageResource& mode, std::span<const std::uint32_t, 4> sampler);
     static bool BindsDecodedCopy(const ImageResource& mode, const DescriptorValue& descriptor);
-    static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static std::vector<std::uint32_t> ImageTableMap(const ShaderInfo& info);
     static std::uint64_t DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes);
     static void RegisterDeviceImageInterfaces(const ShaderInfo& info);
     static std::shared_ptr<const DeviceImageInterface> FindDeviceImageInterface(std::uint64_t id);

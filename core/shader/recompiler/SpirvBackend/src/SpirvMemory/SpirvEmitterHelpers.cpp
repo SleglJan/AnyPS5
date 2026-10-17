@@ -483,9 +483,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 }
             }
             break;
-        case DescriptorBindingKind::SamplerTable:
-            DefineSamplerHeap(state);
-            break;
         case DescriptorBindingKind::ImageTableMap:
             state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");
             break;

@@ -538,7 +538,7 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto format = access.image.packedFormat;
-    if (format == IrBufferFormat::Invalid || (access.image.table != NoTable && !access.image.deviceTable) || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
+    if (format == IrBufferFormat::Invalid || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
     const auto info = GetFormatInfo(format);
@@ -1775,27 +1775,6 @@ void EmitSamplingOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 
 constexpr std::uint32_t InvalidTableSelector = 0xffffffffu;
 
-struct ScalarBufferDword {
-    std::uint32_t byte = 0;
-    std::uint32_t inRange = 0;
-};
-
-ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t offset, std::uint32_t immediate, std::uint32_t sizeLow, std::uint32_t sizeHigh) {
-    const auto u32 = TypeU32(state);
-    const auto boolean = TypeBool(state);
-    const auto sum = state.module.AllocateId();
-    state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), sum, offset, immediate);
-    const auto address = state.module.AllocateId();
-    const auto carry = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, u32, address, sum, 0u);
-    state.module.AddFunction(spv::OpCompositeExtract, u32, carry, sum, 1u);
-    ScalarBufferDword dword;
-    dword.byte = Binary(state, spv::OpBitwiseAnd, u32, address, ConstantU32(state, ~3u));
-    const auto below = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, sizeHigh, ConstantU32(state, 0u)), Binary(state, spv::OpULessThan, boolean, dword.byte, Binary(state, spv::OpBitwiseAnd, u32, sizeLow, ConstantU32(state, ~3u))));
-    dword.inRange = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, carry, ConstantU32(state, 0u)), below);
-    return dword;
-}
-
 }
 
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
@@ -1808,85 +1787,6 @@ std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
 
 namespace {
 
-std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset) {
-    return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
-}
-
-struct TableWord {
-    std::uint32_t code = 0;
-    std::uint32_t addressLow = 0;
-    std::uint32_t addressHigh = 0;
-    std::uint32_t poisoned = 0;
-};
-
-TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t source, std::uint32_t table, std::size_t argument) {
-    auto& state = ctx.state;
-    const IrValue* handle = inst.Argument(argument)->Resolve();
-    const auto& sources = state.program.Resources().descriptorSources;
-    if (handle->ArgumentCount() == 0u || source >= sources.size() || !sources[source].tableColumn.has_value()) ctx.Fail(inst, "has an image table handle without its column");
-    const auto& column = *sources[source].tableColumn;
-    const auto offset = ctx.Def(handle->Argument(0));
-    const auto u32 = TypeU32(state);
-    const auto boolean = TypeBool(state);
-    const auto header = ImageTableAbi::TableHeader(table);
-    const auto field = [&](std::uint32_t index) { return LoadTableMap(state, ConstantU32(state, header + index)); };
-    const auto mapStart = field(ImageTableAbi::TableMapStart);
-    const auto keys = field(ImageTableAbi::TableKeyCount);
-    const auto sizeLow = field(ImageTableAbi::TableSizeLow);
-    const auto sizeHigh = field(ImageTableAbi::TableSizeHigh);
-    const auto baseLow = field(ImageTableAbi::TableBaseLow);
-    const auto baseHigh = field(ImageTableAbi::TableBaseHigh);
-    const auto outsideCode = field(ImageTableAbi::TableOutsideCode);
-    const auto tableFault = field(ImageTableAbi::TableFault);
-    const auto relative = Binary(state, spv::OpISub, u32, offset, ConstantU32(state, column.addend));
-    const auto record = Binary(state, spv::OpUDiv, u32, relative, ConstantU32(state, column.stride));
-    const auto remainder = Binary(state, spv::OpISub, u32, relative, Binary(state, spv::OpIMul, u32, record, ConstantU32(state, column.stride)));
-    const auto aligned = Binary(state, spv::OpIEqual, boolean, remainder, ConstantU32(state, 0u));
-    const auto inMap = Binary(state, spv::OpLogicalAnd, boolean, aligned, Binary(state, spv::OpULessThan, boolean, record, keys));
-    const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, record), ConstantU32(state, 0u)));
-    if (column.address) {
-        TableWord word;
-        word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison))));
-        const auto immediate = column.offset & ~3u;
-        const auto first = state.module.AllocateId();
-        state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), first, baseLow, Binary(state, spv::OpBitwiseAnd, u32, offset, ConstantU32(state, ~3u)));
-        const auto firstLow = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, firstLow, first, 0u);
-        const auto firstCarry = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, firstCarry, first, 1u);
-        const auto second = state.module.AllocateId();
-        state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), second, firstLow, ConstantU32(state, immediate));
-        word.addressLow = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, word.addressLow, second, 0u);
-        const auto secondCarry = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, secondCarry, second, 1u);
-        const auto extension = ConstantU32(state, (immediate & 0x80000000u) != 0u ? 0xffffffffu : 0u);
-        word.addressHigh = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIAdd, u32, baseHigh, extension), Binary(state, spv::OpIAdd, u32, firstCarry, secondCarry));
-        word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
-        return word;
-    }
-    const auto dword = EmitScalarBufferDword(state, offset, ConstantU32(state, column.offset), sizeLow, sizeHigh);
-    const auto outside = Select(state, u32, dword.inRange, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)), outsideCode);
-    TableWord word;
-    word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside));
-    const auto low = state.module.AllocateId();
-    state.module.AddFunction(spv::OpIAddCarry, TypeU32Pair(state), low, baseLow, dword.byte);
-    const auto carry = state.module.AllocateId();
-    word.addressLow = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, u32, word.addressLow, low, 0u);
-    state.module.AddFunction(spv::OpCompositeExtract, u32, carry, low, 1u);
-    word.addressHigh = Binary(state, spv::OpIAdd, u32, baseHigh, carry);
-    word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
-    return word;
-}
-
-void EmitTableFault(SpirvValueEmitContext& ctx, const IrValue& inst, const TableWord& word, std::uint32_t poison, std::uint32_t condition) {
-    auto& state = ctx.state;
-    EmitIfCondition(state, condition, [&] {
-        RecordBdaFaultWords(state, word.addressLow, word.addressHigh, Binary(state, spv::OpBitwiseAnd, TypeU32(state), poison, ConstantU32(state, ~ImageTableAbi::PoisonFlag)), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::ImageTable);
-    });
-}
-
 std::uint32_t ZeroResult(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     switch (inst.Type()) {
@@ -1896,83 +1796,6 @@ std::uint32_t ZeroResult(SpirvValueEmitContext& ctx, const IrValue& inst) {
         default: break;
     }
     ctx.Fail(inst, "has no zero result for an image table access");
-}
-
-struct TableAccessResult {
-    std::uint32_t valid = 0;
-    std::uint32_t flags = 0;
-    bool unsupported = false;
-};
-
-TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, bool tableSampler) {
-    auto& state = ctx.state;
-    if (state.tableMapVariable == 0 || state.faultBufferVariable == 0) ctx.Fail(inst, "reads an image table without its map or fault buffer");
-    const auto u32 = TypeU32(state);
-    const auto boolean = TypeBool(state);
-    const auto both = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalAnd, boolean, left, right); };
-    const auto negate = [&](std::uint32_t value) { return Unary(state, spv::OpLogicalNot, boolean, value); };
-    const auto flagged = [&](std::uint32_t value) { return Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, value, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u)); };
-    const auto exec = ctx.Arg(inst, inst.ArgumentCount() - 1u);
-    TableAccessResult result;
-    result.valid = ConstantBool(state, true);
-    auto live = ConstantBool(state, true);
-    state.tableAccess = {};
-    if (base.table != NoTable) {
-        const auto word = EmitTableWord(ctx, inst, base.source, base.table, 0u);
-        EmitTableFault(ctx, inst, word, word.code, both(exec, word.poisoned));
-        if (base.tableOperation == TableOperation::Unsupported || state.program.Info().runtimeImageModes.at(memory.resource).empty()) {
-            if (inst.Type() != IrType::Void) ctx.Define(inst, ZeroResult(ctx, inst));
-            result.unsupported = true;
-            return result;
-        }
-        const auto selected = both(Binary(state, spv::OpINotEqual, boolean, word.code, ConstantU32(state, ImageTableAbi::NullCode)), negate(word.poisoned));
-        const auto record = Select(state, u32, selected, word.code, ConstantU32(state, 0u));
-        const auto flags = TableMapAt(state, record, ImageTableAbi::ImageRecordFlags);
-        const auto dword3 = TableMapAt(state, record, ImageTableAbi::ImageRecordDword3);
-        const auto element = TableMapAt(state, record, ImageTableAbi::ImageRecordElement);
-        const auto rejected = both(selected, flagged(flags));
-        EmitTableFault(ctx, inst, word, flags, both(exec, rejected));
-        const auto inBounds = Binary(state, spv::OpULessThan, boolean, element, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementCount)));
-        const auto outside = both(both(selected, negate(rejected)), negate(inBounds));
-        EmitTableFault(ctx, inst, word, ConstantU32(state, ImageTableAbi::OutsideSnapshotPoison), both(exec, outside));
-        const auto checked = both(both(selected, negate(rejected)), inBounds);
-        const auto faults = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementFaults));
-        const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, faults, element), ConstantU32(state, 0u)));
-        const auto driverRejected = both(checked, flagged(driverFault));
-        EmitTableFault(ctx, inst, word, driverFault, both(exec, driverRejected));
-        result.valid = both(checked, negate(driverRejected));
-        result.flags = flags;
-        live = selected;
-        const auto slot = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderImageSlots)), element), ConstantU32(state, 0u)));
-        state.tableAccess.element = Select(state, u32, checked, slot, ConstantU32(state, 0u));
-        DecorateTableNonUniform(state, state.tableAccess.element);
-        state.tableAccess.dword3 = dword3;
-    }
-    if (tableSampler) {
-        const auto& sampler = state.program.Info().samplers.at(memory.sampler);
-        const auto word = EmitTableWord(ctx, inst, sampler.source, sampler.table, 1u);
-        EmitTableFault(ctx, inst, word, word.code, both(both(exec, live), word.poisoned));
-        const auto selected = negate(word.poisoned);
-        const auto record = Select(state, u32, selected, word.code, ConstantU32(state, 0u));
-        const auto flags = TableMapAt(state, record, ImageTableAbi::SamplerRecordFlags);
-        const auto element = TableMapAt(state, record, ImageTableAbi::SamplerRecordElement);
-        const auto rejected = both(selected, flagged(flags));
-        EmitTableFault(ctx, inst, word, flags, both(both(exec, live), rejected));
-        const auto end = Binary(state, spv::OpIAdd, u32, element, ConstantU32(state, ImageTableAbi::SamplerEntryElements));
-        const auto inBounds = Binary(state, spv::OpULessThanEqual, boolean, end, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerCount)));
-        const auto outside = both(both(selected, negate(rejected)), negate(inBounds));
-        EmitTableFault(ctx, inst, word, ConstantU32(state, ImageTableAbi::OutsideSnapshotPoison), both(both(exec, live), outside));
-        const auto checked = both(both(selected, negate(rejected)), inBounds);
-        const auto entry = Binary(state, spv::OpShiftRightLogical, u32, element, ConstantU32(state, 2u));
-        const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerFaults)), entry), ConstantU32(state, 0u)));
-        const auto driverRejected = both(checked, flagged(driverFault));
-        EmitTableFault(ctx, inst, word, driverFault, both(both(exec, live), driverRejected));
-        result.valid = both(result.valid, both(checked, negate(driverRejected)));
-        state.tableAccess.samplerElement = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerSlots)), element);
-        DecorateTableNonUniform(state, state.tableAccess.samplerElement);
-    }
-    state.tableAccess.active = true;
-    return result;
 }
 
 }
@@ -2318,7 +2141,7 @@ std::optional<DeviceImagePlan> PlanDeviceImage(const SpirvEmitterState& state, c
     plan.needsSampler = info.needsSampler;
     if (info.needsSampler) {
         const auto& samplers = state.program.Info().samplers;
-        if (plan.memory->sampler >= samplers.size() || samplers[plan.memory->sampler].table != NoTable) return std::nullopt;
+        if (plan.memory->sampler >= samplers.size()) return std::nullopt;
         if (samplers[plan.memory->sampler].deviceTable) {
             plan.samplerHandle = inst.ArgumentCount() > 1u ? inst.Argument(1)->Resolve() : nullptr;
             if (plan.samplerHandle == nullptr || plan.samplerHandle->ArgumentCount() != Abi::SamplerWords) return std::nullopt;
@@ -2363,7 +2186,7 @@ void CompleteDeviceImageArguments(SpirvEmitterState& state, const DeviceImagePla
         arguments.samplerClass = ConstantU32(state, Abi::RuntimeSampler);
         if (plan.levelZero) arguments.samplerClass = Select(state, u32, Binary(state, spv::OpINotEqual, TypeBool(state), arguments.unnormalized, zero), ConstantU32(state, Abi::RuntimeSampler | Abi::SamplerExactAtBase), arguments.samplerClass);
     } else if (plan.needsSampler) {
-        arguments.samplerClass = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerClasses)), ConstantU32(state, plan.memory->sampler)));
+        arguments.samplerClass = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderWords + plan.memory->sampler));
     }
 }
 
@@ -2507,11 +2330,10 @@ bool DeviceImageInputsDefined(const SpirvValueEmitContext& ctx, const DeviceImag
     return !plan.deviceSampler || std::ranges::all_of(plan.samplerHandle->Arguments(), defined);
 }
 
-void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, const std::vector<ImageResource>& modes, bool tableSampler) {
+void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, const std::vector<ImageResource>& modes) {
     namespace Abi = DeviceImageTableAbi;
     auto& state = ctx.state;
     if (state.tableMapVariable == 0 || state.faultBufferVariable == 0 || state.deviceImageLookupFunction == 0) ctx.Fail(inst, "reads a device-table image without its map, fault buffer or lookup function");
-    if (tableSampler) ctx.Fail(inst, "samples a device-table image through a sampler table");
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto zero = ConstantU32(state, 0u);
@@ -2520,9 +2342,8 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto exec = ctx.Arg(inst, inst.ArgumentCount() - 1u);
     const auto pc = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
     if (base.tableOperation == TableOperation::Unsupported || modes.empty()) {
-        const auto fault = LoadTableMap(state, ConstantU32(state, ImageTableAbi::TableHeader(base.table) + ImageTableAbi::TableFault));
-        EmitIfCondition(state, both(exec, Binary(state, spv::OpINotEqual, boolean, fault, zero)), [&] {
-            RecordBdaFaultWords(state, zero, zero, Binary(state, spv::OpBitwiseAnd, u32, fault, ConstantU32(state, ~ImageTableAbi::PoisonFlag)), pc, BdaAbi::FaultReason::ImageTable);
+        EmitIfCondition(state, exec, [&] {
+            RecordBdaFaultWords(state, zero, zero, ConstantU32(state, static_cast<std::uint32_t>(ImageTableAbi::PoisonReason::UnsupportedOperation)), pc, BdaAbi::FaultReason::ImageTable);
         });
         if (inst.Type() != IrType::Void) ctx.Define(inst, ZeroResult(ctx, inst));
         return;
@@ -2836,20 +2657,8 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto& base = ImageResourceOf(state, memory);
     if (base.table == NoTable) ctx.Fail(inst, "accesses an image outside the image tables");
     EmitImageStoreRecord(ctx, inst, memory, base);
-    const auto imageInfo = ImageOpcodeInfoOf(inst.Opcode());
-    const auto& samplers = state.program.Info().samplers;
-    const bool tableSampler = imageInfo.needsSampler && memory.sampler < samplers.size() && samplers[memory.sampler].table != NoTable;
-    const auto& modes = state.program.Info().runtimeImageModes.at(memory.resource);
-    if (base.deviceTable) {
-        EmitDeviceTableImage(ctx, inst, memory, base, modes, tableSampler);
-        return;
-    }
-    const auto access = EmitTableAccess(ctx, inst, memory, base, tableSampler);
-    if (!access.unsupported) {
-        const auto mode = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), access.flags, ConstantU32(state, ImageTableAbi::ModeShift)), ConstantU32(state, ImageTableAbi::ModeMask));
-        EmitTableImageCall(ctx, inst, memory, modes, Select(state, TypeU32(state), access.valid, mode, ConstantU32(state, InvalidTableSelector)), tableSampler, false);
-    }
-    state.tableAccess = {};
+    if (!base.deviceTable) ctx.Fail(inst, "accesses an image outside the device image table");
+    EmitDeviceTableImage(ctx, inst, memory, base, state.program.Info().runtimeImageModes.at(memory.resource));
 }
 
 void EmitGetImageResource(SpirvValueEmitContext& context) {

@@ -10,8 +10,7 @@ namespace ShaderRecompiler::Detail {
 std::vector<std::uint8_t> ComputePureFlatSlots(const IrResourcePlan& plan) {
     std::vector<std::uint8_t> pure(plan.srtReads.size(), 1u);
     if (pure.empty()) return pure;
-    const bool disqualified = !plan.srtPlanComplete || plan.requiresSpecializationMemory
-        || std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value(); })
+    const bool disqualified = !plan.srtPlanComplete
         || (plan.uniformFill.fill.kind != UniformFillKind::None && plan.uniformFill.fill.words > plan.uniformFill.values.size());
     if (disqualified) {
         std::fill(pure.begin(), pure.end(), 0u);

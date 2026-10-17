@@ -134,14 +134,13 @@ struct SamplerResource {
     bool depthCompare = false;
     std::uint16_t uses = 0;
     bool foldTexelOffsetsOnly = false;
-    std::uint32_t table = NoTable;
     bool deviceTable = false;
 
     bool operator==(const SamplerResource& other) const = default;
 };
 
 inline bool FoldsTexelOffsets(const SamplerResource& sampler) {
-    return sampler.table == NoTable && (sampler.uses & SamplerUseOffset) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u && !sampler.depthCompare;
+    return (sampler.uses & SamplerUseOffset) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u && !sampler.depthCompare;
 }
 
 inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {

@@ -100,7 +100,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.memoryOffsetDword = static_cast<std::uint32_t>(next.userDataRegisters.size());
     next.dispatchThreadLimit = info.dispatchThreadLimit;
     if (info.images.size() > RuntimeAbi::ImageCapacity) fail("shader binding layout exceeds runtime metadata capacity");
-    next.samplerSlotCount = 2u * static_cast<std::uint32_t>(std::ranges::count_if(info.samplers, [](const SamplerResource& sampler) { return sampler.table == NoTable; }));
+    next.samplerSlotCount = 2u * static_cast<std::uint32_t>(info.samplers.size());
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
     if (registrationModules && program.Resources().stage == IrShaderStage::Pixel) next.runtimeStateDwords = RuntimeAbi::StateDwords;
     if (registrationModules && program.Resources().stage != IrShaderStage::Pixel) {
@@ -113,7 +113,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
 
-    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table == NoTable; })) fail("an image outside the image tables has no binding");
+    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table == NoTable || !image.deviceTable; })) fail("an image outside the device image table has no binding");
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     next.pushDataStartDword = next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     if (stencilReplay) {
@@ -124,9 +124,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {
-        if (info.samplers[i].table == NoTable) {
-            samplers.insert(samplers.end(), 2u, i);
-        }
+        samplers.insert(samplers.end(), 2u, i);
     }
     if (!samplers.empty()) {
         addBinding(next, DescriptorBindingKind::Samplers, std::move(samplers));
@@ -148,14 +146,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         addBinding(next, DescriptorBindingKind::FlattenedSrt);
     }
     const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; });
-    const bool samplerTables = std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
-    if (samplerTables) {
-        addBinding(next, DescriptorBindingKind::SamplerTable);
-    }
-    if (imageTables || samplerTables) {
-        addBinding(next, DescriptorBindingKind::ImageTableMap);
-    }
     if (imageTables) {
+        addBinding(next, DescriptorBindingKind::ImageTableMap);
         addBinding(next, DescriptorBindingKind::ImageTable);
     }
 

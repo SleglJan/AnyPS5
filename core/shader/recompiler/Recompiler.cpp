@@ -1246,7 +1246,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     } else {
         result.spirv = artifact.spirv;
     }
-    const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    const auto tableMap = ResourceMaterializer::ImageTableMap(variant.info.info);
     ResourceMaterializer::RegisterDeviceImageInterfaces(variant.info.info);
     const auto& images = variant.info.info.images;
     if (std::ranges::any_of(images, [](const ImageResource& image) { return image.deviceTable; })) {
@@ -1291,7 +1291,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (refusal.has_value()) throw std::runtime_error(refusal->detail);
     }
     BindingAllocationResult bindings;
-    DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
+    DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tableMap);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
@@ -1318,15 +1318,6 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads;
     ApplyBufferRanges(variant.info.info, snapshot.stores, snapshot.loads, false, result);
     ApplyBufferRanges(variant.info.info, snapshot.stores, snapshot.loads, true, result);
-    if (!tables.map.empty()) {
-        result.imageTablePoison.reserve(tables.poison.size());
-        for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
-        result.imageTableRanges = snapshot.tables.ranges;
-        result.imageTableReadRanges.reserve(snapshot.tables.tables.size());
-        for (const auto& table : snapshot.tables.tables) result.imageTableReadRanges.push_back(table.readRanges);
-        result.imageTableShader = snapshot.tables.shader;
-        result.imageTableFaults = tables.faults;
-    }
     return result;
 }
 
@@ -1535,29 +1526,6 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
     mix(snapshot.uniformFill.words);
     mix(snapshot.uniformFill.value);
-    const auto& tables = snapshot.tables;
-    mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
-        mix(table.base);
-        mix(table.size);
-        mix(table.records);
-        mix(table.keys);
-        mix(table.fault);
-        mix(table.outside ? 1u : 0u);
-        mixWords(table.codes);
-        mix(table.readRanges.size());
-        for (const auto& [base, size] : table.readRanges) {
-            mix(base);
-            mix(size);
-        }
-    }
-    mixDescriptors(tables.words);
-    mix(tables.ranges.size());
-    for (const auto& [base, size] : tables.ranges) {
-        mix(base);
-        mix(size);
-    }
     for (const auto threads : partialThreads(request)) mix(threads);
     mix(request.context.compute.has_value() && request.context.compute->threadsFromMemory);
     mix(request.layout.pushConstantOffsetBytes);
@@ -1943,14 +1911,6 @@ std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest
     snapshot.samplers.assign(info.samplers.size(), {{}, 4u});
     snapshot.userData.assign(RuntimeAbi::UserDataCapacity, 0u);
     snapshot.flattenedSrt.assign(1u, 0u);
-    std::uint32_t tables = 0;
-    for (const auto& image : info.images) {
-        if (image.table != NoTable) tables = std::max(tables, image.table + 1u);
-    }
-    for (const auto& sampler : info.samplers) {
-        if (sampler.table != NoTable) tables = std::max(tables, sampler.table + 1u);
-    }
-    snapshot.tables.tables.resize(tables);
     return std::make_shared<RecompileResult>(materializeResult(*handle.artifact, request, snapshot, true));
 }
 

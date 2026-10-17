@@ -4222,113 +4222,6 @@ void descriptorCacheTests() {
     Require(mock.live == 0, "the combined descriptor cache leaked a pool or layout");
 }
 
-void imageTableAllocationTests() {
-    namespace Abi = ShaderRecompiler::ImageTableAbi;
-    constexpr std::uint32_t untouched = 0xffffffffu;
-    for (const bool cached : {false, true}) {
-        for (const std::uint32_t count : {0u, 2u, 3u}) {
-            mock = MockVulkan{};
-            auto context = mockContext();
-            context.limits.maxDescriptorSetSampledImages = 0;
-            context.limits.maxPerStageDescriptorSampledImages = 0;
-            {
-                AgcDriver::Graphics::DescriptorCache cache(context);
-                if (cached) context.descriptorCache = &cache;
-                ShaderRecompiler::RecompileResult program;
-                auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 2u * count, untouched));
-                std::fill_n(map.guestDescriptor.begin(), Abi::HeaderWords + count, 0u);
-                map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
-                map.guestDescriptor[Abi::HeaderElementCount] = count;
-                map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
-                map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords + count;
-                map.guestDescriptor[Abi::HeaderImageSlots] = Abi::HeaderWords + count;
-                map.guestDescriptor[Abi::HeaderSamplerSlots] = Abi::HeaderWords + 2u * count;
-                program.bindings.push_back(map);
-                auto images = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, count, std::vector<std::uint32_t>(count * 8u));
-                images.kind = Kind::SampledImage;
-                images.imageShapes.resize(count);
-                images.imageDepthCompare.resize(count);
-                images.imageSamplers.resize(count);
-                program.bindings.push_back(std::move(images));
-                const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-                {
-                    AgcDriver::Graphics::ShaderResources resources(context, shader, true);
-                    Require(std::none_of(mock.layoutBindings.begin(), mock.layoutBindings.end(), [](const auto& item) { return item.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || item.binding == ShaderRecompiler::RuntimeAbi::ImageTableBinding; }), "the image table took a layout binding in the shader's set");
-                    Require(!mock.variableDescriptorCount.has_value(), "the image table allocation reserved a variable descriptor count");
-                    Require(cached || std::none_of(mock.poolSizes.begin(), mock.poolSizes.end(), [](const auto& size) { return size.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; }), "the image table pool reserved sampled image descriptors");
-                    resources.Complete();
-                    Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || write.binding == ShaderRecompiler::RuntimeAbi::ImageTableBinding; }), "the image table wrote image descriptors into the shader's set");
-                    const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
-                    std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
-                    std::memcpy(actual.data(), bytes.data(), bytes.size());
-                    Require(actual[Abi::HeaderElementCount] == count && actual[Abi::HeaderImageSlots] == Abi::HeaderWords + count, "the image table map lost its domain or its slot region");
-                    for (std::uint32_t element = 0; element < count; ++element) {
-                        Require((actual[Abi::HeaderWords + element] & Abi::PoisonFlag) != 0u, "an absent table image lost its deferred fault");
-                        Require(actual[actual[Abi::HeaderImageSlots] + element] == untouched, "an absent table image wrote its slot");
-                    }
-                }
-            }
-            Require(mock.live == 0, "the image table leaked Vulkan objects");
-        }
-    }
-}
-
-void samplerTableNonSeamlessCubeTests() {
-    namespace Abi = ShaderRecompiler::ImageTableAbi;
-    constexpr auto count = 2u * Abi::SamplerEntryElements;
-    for (const bool supported : {false, true}) {
-        for (const std::uint32_t flaggedEntry : {0u, 1u}) {
-            mock = MockVulkan{};
-            auto context = mockContext();
-            context.nonSeamlessCubeMap = supported;
-            context.limits.maxSamplerAnisotropy = 1.0f;
-            ShaderRecompiler::RecompileResult program;
-            auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 2u + count));
-            map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
-            map.guestDescriptor[Abi::HeaderSamplerCount] = count;
-            map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
-            map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
-            map.guestDescriptor[Abi::HeaderSamplerSlots] = Abi::HeaderWords + 2u;
-            program.bindings.push_back(map);
-            auto samplers = makeBinding(Role::SamplerTable, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::SamplerTable), count, {});
-            samplers.kind = Kind::SamplerSlot;
-            for (std::uint32_t entry = 0; entry < 2u; ++entry) {
-                const std::array<std::uint32_t, 4> words{0x92u | (entry == flaggedEntry ? 1u << 28u : 0u), (4u * 256u) << 12u, 0u, 0u};
-                for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
-                    samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), words.begin(), words.end());
-                    samplers.samplerDepthCompare.push_back(variant >= 2u);
-                }
-            }
-            program.bindings.push_back(std::move(samplers));
-            const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-            {
-                AgcDriver::Graphics::ShaderResources resources(context, shader, true);
-                resources.Complete();
-                const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
-                std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
-                std::memcpy(actual.data(), bytes.data(), bytes.size());
-                Require(actual[Abi::HeaderSamplerCount] == count, "non-seamless sampler rejection changed the guest table domain");
-                Require(actual[Abi::HeaderPoisonCount] == (supported ? 0u : 1u), "non-seamless sampler table has the wrong deferred poison count");
-                for (std::uint32_t entry = 0; entry < 2u; ++entry) {
-                    const auto expected = !supported && entry == flaggedEntry ? Abi::PoisonCode(0u) : 0u;
-                    Require(actual[Abi::HeaderWords + entry] == expected, "non-seamless sampler rejection poisoned the wrong entry");
-                }
-                const auto first = supported ? 0u : (1u - flaggedEntry) * Abi::SamplerEntryElements;
-                const auto written = supported ? count : Abi::SamplerEntryElements;
-                const auto slots = actual[Abi::HeaderSamplerSlots];
-                for (std::uint32_t element = 0; element < count; ++element) Require((actual[slots + element] != 0u) == (element >= first && element < first + written), "non-seamless sampler rejection gave a rejected entry heap slots or a valid one none");
-                Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLER; }), "a sampler table wrote sampler descriptors into the shader's set");
-                Require(mock.samplerFlags.size() == written, "a rejected sampler table entry allocated a Vulkan sampler");
-                for (std::uint32_t index = 0; index < written; ++index) {
-                    const auto expected = supported && (first + index) / Abi::SamplerEntryElements == flaggedEntry ? VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT : 0u;
-                    Require(mock.samplerFlags.at(MockHeapSampler(actual[slots + first + index])) == expected, "a sampler table variant has the wrong non-seamless cube creation flag");
-                }
-            }
-            Require(mock.live == 0 && mock.samplerFlags.empty(), "the non-seamless sampler table leaked Vulkan objects");
-        }
-    }
-}
-
 void guestSamplerSlotTests() {
     const std::array<std::uint32_t, 4> words{0x92u, (4u * 256u) << 12u, 0u, 0u};
     for (const bool pushed : {true, false}) {
@@ -4406,62 +4299,6 @@ void descriptorHeapImageSlotTests() {
     AgcDriver::Graphics::Context withoutNull = MockHeapContext();
     withoutNull.nullDescriptors = false;
     expectFailure([&] { Heap rejected(withoutNull, {2u, 2u, 2u}); }, "nullDescriptor");
-}
-
-void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::nullopt) {
-    namespace Abi = ShaderRecompiler::ImageTableAbi;
-    constexpr auto count = 2u * Abi::SamplerEntryElements;
-    const std::array<std::uint32_t, 4> valid{0x92u, (4u * 256u) << 12u, 0u, 0u};
-    const std::array<std::array<std::uint32_t, 4>, 3> invalid{{
-        {0x92u, valid[1], 256u, 0u},
-        {0x92u | (2u << 9u), valid[1], (2u << 20u) | (2u << 22u), 0u},
-        {0x92u | (1u << 29u), valid[1], 0u, 0u}
-    }};
-    for (std::uint32_t kind = 0; kind < invalid.size(); ++kind) {
-        if (selected.has_value() && kind != *selected) continue;
-        for (const std::uint32_t badEntry : {0u, 1u}) {
-            mock = MockVulkan{};
-            auto context = mockContext();
-            context.samplerAnisotropy = true;
-            context.samplerFilterMinmax = true;
-            context.limits.maxSamplerAnisotropy = 2.0f;
-            context.limits.maxSamplerLodBias = 0.5f;
-            ShaderRecompiler::RecompileResult program;
-            auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 2u + count));
-            map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
-            map.guestDescriptor[Abi::HeaderSamplerCount] = count;
-            map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
-            map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
-            map.guestDescriptor[Abi::HeaderSamplerSlots] = Abi::HeaderWords + 2u;
-            program.bindings.push_back(map);
-            auto samplers = makeBinding(Role::SamplerTable, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::SamplerTable), count, {});
-            samplers.kind = Kind::SamplerSlot;
-            for (std::uint32_t entry = 0; entry < 2u; ++entry) {
-                const auto& words = entry == badEntry ? invalid[kind] : valid;
-                for (std::uint32_t variant = 0; variant < Abi::SamplerEntryElements; ++variant) {
-                    samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), words.begin(), words.end());
-                    samplers.samplerDepthCompare.push_back(variant >= 2u);
-                }
-            }
-            program.bindings.push_back(std::move(samplers));
-            const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-            {
-                AgcDriver::Graphics::ShaderResources resources(context, shader, true);
-                resources.Complete();
-                const auto& bytes = bufferBytes(findWrite(map.binding).buffers.at(0).buffer);
-                std::vector<std::uint32_t> actual(bytes.size() / sizeof(std::uint32_t));
-                std::memcpy(actual.data(), bytes.data(), bytes.size());
-                Require(actual[Abi::HeaderSamplerCount] == count && actual[Abi::HeaderPoisonCount] == 1u, "sampler device validation changed the domain or deferred poison count");
-                for (std::uint32_t entry = 0; entry < 2u; ++entry) {
-                    Require(actual[Abi::HeaderWords + entry] == (entry == badEntry ? Abi::PoisonCode(0u) : 0u), "sampler device validation poisoned the valid entry");
-                }
-                const auto slots = actual[Abi::HeaderSamplerSlots];
-                for (std::uint32_t element = 0; element < count; ++element) Require((actual[slots + element] != 0u) == (element / Abi::SamplerEntryElements != badEntry) && (actual[slots + element] == 0u || mock.samplerFlags.contains(MockHeapSampler(actual[slots + element]))), "sampler device validation gave the rejected entry heap slots or the valid entry none");
-                Require(mock.samplerCreateCount == Abi::SamplerEntryElements && mock.samplerFlags.size() == Abi::SamplerEntryElements, "a rejected sampler table entry created a Vulkan sampler");
-            }
-            Require(mock.live == 0 && mock.samplerFlags.empty(), "sampler device validation leaked Vulkan objects");
-        }
-    }
 }
 
 void textureCacheBudgetTests() {
@@ -7142,20 +6979,6 @@ int main(int argc, char** argv) {
             std::cout << "Alpha-to-coverage state and refusal tests passed\n";
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--image-table-allocation") {
-            imageTableAllocationTests();
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--image-table-snapshot") {
-            return 0;
-        }
-        const std::array<std::string_view, 3> samplerCases{"--sampler-table-lod-bias", "--sampler-table-anisotropy", "--sampler-table-reduction-compare"};
-        for (std::uint32_t index = 0; index < samplerCases.size(); ++index) {
-            if (argc == 2 && std::string_view(argv[1]) == samplerCases[index]) {
-                samplerTableDeviceLimitTests(index);
-                return 0;
-            }
-        }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-pool-reset-failure") {
             descriptorPoolResetFailureTest();
             std::cerr << "descriptor pool reset failure did not terminate\n";
@@ -7264,9 +7087,6 @@ int main(int argc, char** argv) {
         resourceTests();
         descriptorCacheTests();
         bufferBudgetPlacementTests();
-        imageTableAllocationTests();
-        samplerTableNonSeamlessCubeTests();
-        samplerTableDeviceLimitTests();
         guestSamplerSlotTests();
         descriptorHeapImageSlotTests();
         debugBranchTests();

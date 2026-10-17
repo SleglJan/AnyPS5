@@ -11,7 +11,6 @@
 namespace AgcDriver::Graphics {
 
 void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> shaders) {
-    static const bool loopGuarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         std::uint32_t tables = 0;
@@ -39,10 +38,9 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
             if (shader.program->bdaWrites) accessRanges.insert(accessRanges.end(), shader.program->writeRanges.begin(), shader.program->writeRanges.end());
         }
         usesFaultBuffer = usesFaultBuffer || faults != 0;
-        const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         const bool device = UsesDeviceImageTable(*shader.program);
         deviceImages = deviceImages || device;
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || device || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
+        faultChecks = faultChecks || tables != 0 || faults != 0;
     }
     if (const auto linear = linearStoreRange(); linear.has_value() && pageTableStores) {
         storesUnbounded = false;

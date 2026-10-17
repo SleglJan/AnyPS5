@@ -94,9 +94,8 @@ std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const Dra
     require((prepared.shader.code.size() == request.shader.code.size() || program.tailContinuation != nullptr) && prepared.shader.linkedLiterals.empty() && prepared.context.linkedWords.empty(), "a graphics program that calls code through its user data is not implemented");
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a graphics program that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
-    require(CacheableResult(*compiled), "a graphics program whose compile poisoned an SRT read or an image table entry is not implemented");
+    require(CacheableResult(*compiled), "a graphics program whose compile poisoned an SRT read is not implemented");
     require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a graphics program that binds a flattened SRT is not implemented");
-    require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a graphics program that reads image tables on the CPU is not implemented");
     auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
     std::lock_guard cacheLock(drawCacheMutex);
     ++drawStageCompiles;

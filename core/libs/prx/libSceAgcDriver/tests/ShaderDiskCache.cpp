@@ -102,13 +102,6 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
-    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
-    require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
-    for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
-        const auto& a = left.imageTablePoison[i];
-        const auto& b = right.imageTablePoison[i];
-        require(a.words == b.words && a.dwordCount == b.dwordCount && a.resource == b.resource && a.reason == b.reason, prefix + "image table poison differs");
-    }
     require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
@@ -179,11 +172,6 @@ RecompileResult sampleResult() {
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
     result.barycentricEmulation = {true, false, true};
     result.variantId = 99;
-    result.imageTablePoison = {{{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, 8u, 2u, 6u}, {{9u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}, 4u, 0xffffffffu, 19u}};
-    result.imageTableRanges = {{0x1000u, 0x200u}, {0x5000000000ull, 48u}};
-    result.imageTableReadRanges = {{{0x1000u, 32u}, {0x1040u, 32u}}, {}, {{0x5000000000ull, 16u}}};
-    result.imageTableShader = 0x80003aa700ull;
-    result.imageTableFaults = 3u;
     return result;
 }
 
@@ -230,7 +218,7 @@ CompiledVariant sampleVariant() {
     image.tableOperation = TableOperation::Unsupported;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
-    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
+    info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, true}};
     info.info.usesFaultBuffer = true;
     info.info.sampledPairs = {{0, 0, 0x10}};
     StageInput input{};
@@ -1425,7 +1413,6 @@ IrResourcePlan handBuiltPlan() {
     DescriptorSource table;
     table.dwordCount = 8u;
     table.dwords[0] = &readConst(3);
-    table.tableColumn = TableColumn{2u, 32u, 2u, 4u, 8u, 15u, true, true, true, 12u, 3u, KeyDomain{3u, 4u, 16u, true, true}};
     DescriptorSource heap;
     heap.dwordCount = 4u;
     heap.dwords[1] = &readConst(6);
@@ -1443,7 +1430,6 @@ IrResourcePlan handBuiltPlan() {
     plan.srtGuardOffset = 6u;
     plan.cleanFlatSlots = {0u, 1u};
     plan.pureFlatSlots = {1u, 0u};
-    plan.requiresSpecializationMemory = true;
     plan.srtPlanComplete = true;
     plan.resourceTrackingComplete = true;
     ImageResource image{};
@@ -1510,7 +1496,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn) return false;
+        if (a.dwordCount != b.dwordCount || a.runtime != b.runtime) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }
@@ -1527,7 +1513,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
         if (!sameValue(left.uniformFill.values[index], right.uniformFill.values[index])) return false;
     }
     return left.materializationSources == right.materializationSources && left.guardedSrtSlots == right.guardedSrtSlots && left.srtGuardOffset == right.srtGuardOffset && left.cleanFlatSlots == right.cleanFlatSlots && left.pureFlatSlots == right.pureFlatSlots &&
-           left.requiresSpecializationMemory == right.requiresSpecializationMemory && left.srtPlanComplete == right.srtPlanComplete && left.resourceTrackingComplete == right.resourceTrackingComplete && left.info == right.info && left.uniformFill.fill == right.uniformFill.fill;
+           left.srtPlanComplete == right.srtPlanComplete && left.resourceTrackingComplete == right.resourceTrackingComplete && left.info == right.info && left.uniformFill.fill == right.uniformFill.fill;
 }
 
 struct MaterializedPlan {
@@ -1671,8 +1657,6 @@ void verifyMalformedPlans() {
     rejects("an image past the sources", [](IrResourcePlan& plan) { plan.info.images[0].source = 5u; });
     rejects("a descriptor of nine dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].dwordCount = 9u; });
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
-    rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
-    rejects("an image table key domain past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomain->source = 4u; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
@@ -1733,7 +1717,6 @@ void verifyPlanRoundTrip() {
     const auto covers = [&](const std::function<bool(const IrResourcePlan&)>& predicate) {
         return std::any_of(plans.begin(), plans.end(), [&](const std::shared_ptr<const IrResourcePlan>& plan) { return predicate(*plan); });
     };
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value(); }); }), "no fixture plans a table column");
     const auto pointerTable = std::find_if(fixtures.begin(), fixtures.end(), [](const auto& fixture) { return fixture.name == "pointer image table"; });
     require(pointerTable != fixtures.end(), "the pointer image table fixture is missing");
     const auto& pointerPlan = *plans[static_cast<std::size_t>(pointerTable - fixtures.begin())];
@@ -1846,7 +1829,7 @@ std::filesystem::path planEntryPath(PlanFixture& fixture) {
 }
 
 int runPlanLoadingProcess(std::string_view mode) {
-    if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_IMAGE_TABLE", "1");
+    if (mode == "--load-plan-switch") setEnvironment("APS5_TRACE_BDA", "1");
     if (mode == "--load-plan-off") setEnvironment("APS5_NO_PERF_DISK_PLANS", "1");
     auto fixtures = planFixtures();
     const auto count = fixtures.size();

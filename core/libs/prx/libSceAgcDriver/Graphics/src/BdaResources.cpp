@@ -257,11 +257,10 @@ bool BdaResources::published(const ShaderRecompiler::BdaAbi::Fault& report) {
 
 void BdaResources::CheckFault() const {
     if (shared != nullptr) return;
-    const BdaResources* self = this;
     auto* words = reinterpret_cast<std::uint32_t*>(fault.data);
     const bool recorded = ownRecord != 0 && StorageTexture::StoresRecordedFor(ownRecord);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
-    markWrittenPages(words, std::span(&self, 1));
+    markWrittenPages(words);
     if (recorded) StorageTexture::ResolveRecordedStores(ownRecord, images ? &*images : nullptr);
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault.data, sizeof(report));
@@ -292,16 +291,18 @@ std::uint32_t RecordedStage(std::uint32_t stage) {
 
 bool BdaResources::owns(const ShaderRecompiler::BdaAbi::Fault& report) const {
     if (report.reason != ShaderRecompiler::BdaAbi::FaultReason::ImageTable) return false;
-    return (report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u ? deviceImages != nullptr : !imageTables.empty();
+    return (report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u ? deviceImages != nullptr : !imageTableStages.empty();
 }
 
 void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) const {
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
-        const auto table = std::find_if(imageTables.begin(), imageTables.end(), [&](const ImageTableFaults& candidate) { return candidate.stage == report.stage; });
-        const auto* tables = table != imageTables.end() ? &*table : imageTables.size() == 1 ? &imageTables.front() : nullptr;
+        std::uint64_t shader = 0;
+        for (const auto& [named, address] : stageShaders) {
+            if (named == report.stage) shader = address;
+        }
         std::ostringstream message;
-        message << "image table: shader 0x" << std::hex << (tables != nullptr ? tables->shader : 0u) << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction;
+        message << "image table: shader 0x" << std::hex << shader << std::dec << " stage " << report.stage << " pc 0x" << std::hex << report.instruction;
         if ((report.bytes & ShaderRecompiler::DeviceImageTableAbi::FaultFlag) != 0u) {
             const auto rejection = deviceImages != nullptr ? deviceImages->FindRejection(report.bytes & ~ShaderRecompiler::DeviceImageTableAbi::FaultFlag) : std::nullopt;
             message << " selected a descriptor the device image table rejected" << std::dec;
@@ -314,19 +315,7 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
             }
             throw std::runtime_error(message.str());
         }
-        message << " selected the descriptor at 0x" << report.address << std::dec;
-        if (tables != nullptr && report.bytes < tables->poison.size()) {
-            const auto& poison = tables->poison[report.bytes];
-            if (poison.dwordCount != 0) {
-                message << " (words";
-                for (std::uint32_t index = 0; index < poison.dwordCount && index < poison.words.size(); ++index) message << ' ' << std::hex << std::setw(8) << std::setfill('0') << poison.words[index];
-                message << std::dec << ")";
-            }
-            message << ": " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(poison.reason));
-            if (report.bytes < tables->messages.size() && !tables->messages[report.bytes].empty()) message << ": " << tables->messages[report.bytes];
-        } else {
-            message << ": poison entry " << report.bytes;
-        }
+        message << std::dec << ": " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(report.bytes));
         throw std::runtime_error(message.str());
     }
     std::ostringstream message;
@@ -369,32 +358,18 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
 
 namespace AgcDriver::Graphics {
 
-void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
-    imageTables = std::move(tables);
-    imageTableRanges = std::move(ranges);
-    imageTableBytes.clear();
-    imageTableBytes.reserve(imageTableRanges.size());
-    for (const auto& [base, size] : imageTableRanges) {
-        const auto* bytes = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(base));
-        imageTableBytes.emplace_back(bytes, bytes + size);
-    }
-}
-
 void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     if (users.empty()) return;
     auto* words = reinterpret_cast<std::uint32_t*>(slice.data);
-    std::vector<const BdaResources*> sharing;
-    sharing.reserve(users.size());
-    for (const auto& user : users) sharing.push_back(user.bda);
     const bool recorded = StorageTexture::StoresRecordedFor(id);
     const auto images = recorded ? WrittenImageRanges(words) : std::nullopt;
-    BdaResources::applyWrittenPages(words, sharing);
+    BdaResources::applyWrittenPages(words);
     if (recorded) StorageTexture::ResolveRecordedStores(id, images ? &*images : nullptr);
     if (words[Abi::WrittenOverflowWord] != 0) {
         for (const auto& user : users) {
             for (const auto& [begin, end] : user.writes) {
-                if (end > begin) BdaResources::markWrittenRange(begin, static_cast<std::size_t>(end - begin), sharing);
+                if (end > begin) BdaResources::markWrittenRange(begin, static_cast<std::size_t>(end - begin));
             }
         }
         words[Abi::WrittenOverflowWord] = 0;
@@ -432,17 +407,17 @@ void BatchFaultRecord::Check(std::span<const BatchFaultUser> users) const {
     }
 }
 
-void BdaResources::markWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
+void BdaResources::markWrittenPages(std::uint32_t* words) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
-    applyWrittenPages(words, users);
+    applyWrittenPages(words);
 }
 
-void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaResources* const> users) {
+void BdaResources::applyWrittenPages(std::uint32_t* words) {
     namespace Abi = ShaderRecompiler::BdaAbi;
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
-    Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) { markWrittenRange(begin, bytes, users); }), "invalid BDA written-page record");
+    Require(Abi::ForEachWrittenRange(words, [&](std::uint64_t begin, std::size_t bytes) { markWrittenRange(begin, bytes); }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];
         words[Abi::WrittenSlotsWord + 2 * slot] = 0;
@@ -451,23 +426,8 @@ void BdaResources::applyWrittenPages(std::uint32_t* words, std::span<const BdaRe
     words[Abi::WrittenCountWord] = 0;
 }
 
-void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes, std::span<const BdaResources* const> users) {
-    const auto end = begin + bytes;
+void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes) {
     if (auto* residency = ResidencyDriver::Active()) residency->NoteRecordedWrites(begin, bytes);
-    for (const auto* user : users) {
-        for (std::size_t index = 0; index < user->imageTableRanges.size(); ++index) {
-            const auto [base, size] = user->imageTableRanges[index];
-            const auto low = std::max(begin, base);
-            const auto high = std::min(end, base + size);
-            if (low >= high) continue;
-            const auto* current = reinterpret_cast<const std::byte*>(static_cast<std::uintptr_t>(low));
-            if (std::memcmp(current, user->imageTableBytes[index].data() + (low - base), static_cast<std::size_t>(high - low)) != 0) {
-                std::ostringstream message;
-                message << "image table at 0x" << std::hex << base << " is written by its own dispatch";
-                Require(false, message.str());
-            }
-        }
-    }
     GuestMemory::MarkWritten(begin, bytes);
 }
 

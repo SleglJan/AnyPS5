@@ -31,7 +31,6 @@ enum class Binding : std::uint32_t {
     FaultBuffer = 60u,
     FlattenedSrt = 61u,
     ShaderData = 62u,
-    SamplerTable = 63u,
     ImageTableMap = 64u,
     FormatTable = 65u,
     Count = 66u,

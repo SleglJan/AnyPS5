@@ -195,7 +195,6 @@ struct Outcome {
     std::string log;
     std::uint64_t variantId = 0;
     std::uint32_t tableElements = 0;
-    std::size_t tableRanges = 0;
     AgcDriver::Graphics::DeviceImageTable::Counts before;
     AgcDriver::Graphics::DeviceImageTable::Counts after;
 };
@@ -218,8 +217,6 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     const auto result = Compile(device, span, memory);
     Outcome outcome;
     outcome.variantId = result.PipelineVariantId();
-    outcome.tableRanges = result.imageTableRanges.size();
-    for (const auto& ranges : result.imageTableReadRanges) outcome.tableRanges += ranges.size();
     for (const auto& binding : result.bindings) {
         if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) outcome.tableElements = binding.count;
     }
@@ -362,7 +359,7 @@ void RunFirstUse(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(first), "device image table: the first use of valid entries faulted:\n" + first.log);
     for (std::uint32_t group = 0; group < 6u; ++group) Require(ZeroGroup(first, group), "device image table: the first use of record " + std::to_string(group) + " did not read zeros");
     Require(NewMisses(first) == 5u * Lanes && first.after.dropped == first.before.dropped, "device image table: the first use did not record one miss per lane of the five non-null records (" + std::to_string(NewMisses(first)) + ")");
-    Require(first.tableElements == 0u && first.tableRanges == 0u, "device image table: the build bound table elements or captured table ranges");
+    Require(first.tableElements == 0u, "device image table: the build bound table elements");
     const auto second = Run(device, LoadTableCode, 6);
     Require(!Faulted(second), "device image table: valid entries faulted after the drain:\n" + second.log);
     Require(NewMisses(second) == 0u && second.after.distinct - second.before.distinct == 5u && second.after.inserted - second.before.inserted == 5u, "device image table: the drain did not insert the five distinct records, or the second use missed again");
@@ -439,7 +436,7 @@ void RunRuntimeDescriptors(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(first), "run-time descriptors: the first load of valid T#s faulted:\n" + first.log);
     for (std::uint32_t group = 0; group < 5u; ++group) Require(ZeroGroup(first, group), "run-time descriptors: the first load through record " + std::to_string(group) + " did not read zeros");
     Require(NewMisses(first) == 5u * Lanes, "run-time descriptors: the first load did not miss once per lane (" + std::to_string(NewMisses(first)) + ")");
-    Require(first.tableElements == 0u && first.tableRanges == 0u, "run-time descriptors: the build bound table elements or captured table ranges");
+    Require(first.tableElements == 0u, "run-time descriptors: the build bound table elements");
     const auto loaded = RunRuntime(device, RuntimeLoadCode, 5);
     Require(!Faulted(loaded) && NewMisses(loaded) == 0u && loaded.after.inserted - loaded.before.inserted == 5u, "run-time descriptors: the drain did not insert the five T#s, or the second load missed:\n" + loaded.log);
     for (std::uint32_t group = 0; group < 5u; ++group) Require(Group(loaded, group) == Group(RunDirect(device, LoadDirectCode, images[group]), 0), "run-time descriptors: the load through record " + std::to_string(group) + " differs from the direct binding of its T#");

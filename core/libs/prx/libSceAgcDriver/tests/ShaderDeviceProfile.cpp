@@ -225,18 +225,22 @@ void CheckHeaps() {
         sampled.deviceTable = true;
         ImageResource plain = sampled;
         plain.resourceClass = ImageResourceClass::Storage;
-        ImageResource cpuTable = sampled;
-        cpuTable.deviceTable = false;
         IrProgram mixed;
         mixed.Metadata().shaderInfoComplete = true;
-        mixed.Resources().info.images = {sampled, image, cpuTable, sampled, plain};
+        mixed.Resources().info.images = {sampled, image, sampled, plain};
         for (std::uint32_t index = 0u; index < mixed.Resources().info.images.size(); ++index) mixed.Resources().info.images[index].table = index;
-        expectTables(BindingAllocator{}.Allocate(mixed, {0u, 0u, 0u, 128u}).layout, "sampled, dynamic-mip storage, CPU-table and plain storage images");
+        expectTables(BindingAllocator{}.Allocate(mixed, {0u, 0u, 0u, 128u}).layout, "sampled, dynamic-mip storage and plain storage images");
         IrProgram outside;
         outside.Metadata().shaderInfoComplete = true;
         outside.Resources().info.images = {sampled, sampled};
         outside.Resources().info.images[0].table = 0u;
-        Reject([&] { BindingAllocator{}.Allocate(outside, {0u, 0u, 0u, 128u}); }, "outside the image tables");
+        Reject([&] { BindingAllocator{}.Allocate(outside, {0u, 0u, 0u, 128u}); }, "outside the device image table");
+        IrProgram cpuTable;
+        cpuTable.Metadata().shaderInfoComplete = true;
+        cpuTable.Resources().info.images = {sampled};
+        cpuTable.Resources().info.images[0].table = 0u;
+        cpuTable.Resources().info.images[0].deviceTable = false;
+        Reject([&] { BindingAllocator{}.Allocate(cpuTable, {0u, 0u, 0u, 128u}); }, "outside the device image table");
     }
     constexpr std::uint32_t hundredSamplers = 100u;
     const auto hundred = allocate(image, 0u, hundredSamplers);

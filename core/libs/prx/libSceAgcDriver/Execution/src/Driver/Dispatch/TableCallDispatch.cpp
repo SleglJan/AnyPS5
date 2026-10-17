@@ -97,9 +97,8 @@ ShaderRecompiler::RecompileRequest TableCallPartRequest(const ShaderRecompiler::
 std::shared_ptr<const ShaderRecompiler::RunTimeProgram> TableCallPartProgram(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a table-call program part that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
-    require(CacheableResult(*compiled), "a table-call program part whose compile poisoned an SRT read or an image table entry is not implemented");
+    require(CacheableResult(*compiled), "a table-call program part whose compile poisoned an SRT read is not implemented");
     require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a table-call program part that binds a flattened SRT is not implemented");
-    require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a table-call program part that reads image tables on the CPU is not implemented");
     return std::make_shared<const ShaderRecompiler::RunTimeProgram>(ShaderRecompiler::RunTimeProgram{invocation.Plan(), std::move(compiled)});
 }
 

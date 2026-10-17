@@ -49,9 +49,7 @@ std::array<std::uint32_t, 3> DispatchGroups(std::span<const std::uint32_t> packe
 }
 
 bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled) {
-    return compiled.poisonedSrtReads == 0u && std::none_of(compiled.imageTablePoison.begin(), compiled.imageTablePoison.end(), [](const ShaderRecompiler::ImageTableEntryPoison& poison) {
-        return poison.reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Unmapped) || poison.reason == static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::Inactive);
-    });
+    return compiled.poisonedSrtReads == 0u;
 }
 
 std::vector<std::uint64_t>& Driver::prePassReads() {
@@ -91,9 +89,8 @@ Driver::DispatchProgram Driver::runTimeDispatch(const ShaderSnapshot& snapshot, 
     const bool linked = !callees.calls.empty();
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a compute program that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
-    require(CacheableResult(*compiled), "a compute program whose compile poisoned an SRT read or an image table entry is not implemented");
+    require(CacheableResult(*compiled), "a compute program whose compile poisoned an SRT read is not implemented");
     require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a compute program that binds a flattened SRT is not implemented");
-    require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a compute program that reads image tables on the CPU is not implemented");
     auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
     std::lock_guard cacheLock(runTimeProgramsMutex);
     ++dataIndependentHits;
