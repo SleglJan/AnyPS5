@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -63,12 +64,18 @@ std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code)
 Usage Scan(std::span<const std::uint32_t> words) {
     Usage usage;
     bool locked = false;
+    std::unordered_set<std::uint32_t> elected;
+    std::unordered_set<std::uint32_t> attempts;
+    std::uint32_t label = 0;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> spv::WordCountShift;
         const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
         Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
-        if (op == spv::OpGroupNonUniformElect) ++usage.elects;
+        if (op == spv::OpLabel) label = words[cursor + 1];
+        if (op == spv::OpGroupNonUniformElect) elected.insert(words[cursor + 2]);
+        if (op == spv::OpBranchConditional && elected.contains(words[cursor + 1])) attempts.insert(words[cursor + 2]);
         if (op == spv::OpAtomicCompareExchange) {
+            if (attempts.erase(label) != 0) ++usage.elects;
             ++usage.exchanges;
             locked = true;
         }
