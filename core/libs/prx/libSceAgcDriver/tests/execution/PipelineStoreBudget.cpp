@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
@@ -92,7 +93,12 @@ void Run(AgcDriver::VulkanDevice& device) {
     Expect(1u, "the pending dispatch whose pipeline the store kept");
 
     Flood(device, programs, budget, "a store fed more pipelines than its budget after the batch retired");
+    const auto feedbackBefore = AgcDriver::Graphics::PipelineCreationFeedbackTotals();
     Require(device.PrepareComputePipeline(*programs[0].result, programs[0].address), "the least recently used pipeline, no longer held by a batch, was not evicted");
+    const auto feedbackAfter = AgcDriver::Graphics::PipelineCreationFeedbackTotals();
+    constexpr auto compute = static_cast<std::size_t>(AgcDriver::Graphics::PipelineCreationKind::Compute);
+    Require(feedbackAfter.unreported[compute] == feedbackBefore.unreported[compute], "the driver reported no creation feedback for the recreated compute pipeline");
+    Require(feedbackAfter.hits[compute] == feedbackBefore.hits[compute] + 1u && feedbackAfter.misses[compute] == feedbackBefore.misses[compute], "the pipeline recreated after its eviction missed the pipeline cache (" + std::to_string(feedbackAfter.hits[compute] - feedbackBefore.hits[compute]) + " hits, " + std::to_string(feedbackAfter.misses[compute] - feedbackBefore.misses[compute]) + " misses)");
     Output.fill(Untouched);
     device.Dispatch(*programs[0].result, 1, 1, 1, programs[0].address);
     device.WaitIdle();

@@ -2,11 +2,14 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_PIPELINECACHE_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <array>
 #include <condition_variable>
+#include <cstdint>
 #include <cstddef>
 #include <filesystem>
 #include <mutex>
 #include <span>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -60,6 +63,17 @@ private:
 VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
 bool PipelineCacheChecksHits(const Context& context);
+
+enum class PipelineCreationKind : std::size_t { Compute, Graphics, LibraryPart, Linked, Count };
+
+struct PipelineCreationFeedbackCounts {
+    std::array<std::uint64_t, static_cast<std::size_t>(PipelineCreationKind::Count)> hits{};
+    std::array<std::uint64_t, static_cast<std::size_t>(PipelineCreationKind::Count)> misses{};
+    std::array<std::uint64_t, static_cast<std::size_t>(PipelineCreationKind::Count)> unreported{};
+};
+
+PipelineCreationFeedbackCounts PipelineCreationFeedbackTotals();
+std::string PipelineCreationFeedbackReport();
 VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline);
 VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data);
 

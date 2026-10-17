@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include <optional>
 #include "ShaderCacheDirectory.hpp"
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -279,12 +281,91 @@ void PipelineCache::run() {
     }
 }
 
-VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+namespace {
+
+struct FeedbackTotals {
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(PipelineCreationKind::Count)> hits{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(PipelineCreationKind::Count)> misses{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(PipelineCreationKind::Count)> unreported{};
+};
+
+FeedbackTotals& Feedback() {
+    static auto* totals = new FeedbackTotals;
+    return *totals;
+}
+
+PipelineCreationKind GraphicsKind(const VkGraphicsPipelineCreateInfo& info) {
+    if ((info.flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) return PipelineCreationKind::LibraryPart;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next != nullptr; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR) return PipelineCreationKind::Linked;
+    }
+    return PipelineCreationKind::Graphics;
+}
+
+template<typename TInfo, typename TCreate>
+VkResult WithFeedback(const Context& context, const TInfo& info, PipelineCreationKind kind, TCreate&& create) {
+    if (!context.pipelineCreationFeedback) return create(info);
+    VkPipelineCreationFeedbackEXT feedback{};
+    VkPipelineCreationFeedbackCreateInfoEXT chained{VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO_EXT, info.pNext, &feedback, 0, nullptr};
+    auto withFeedback = info;
+    withFeedback.pNext = &chained;
+    const auto result = create(withFeedback);
+    if (result != VK_SUCCESS) return result;
+    auto& totals = Feedback();
+    const auto index = static_cast<std::size_t>(kind);
+    if ((feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT) == 0) totals.unreported[index].fetch_add(1, std::memory_order_relaxed);
+    else if ((feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT_EXT) != 0) totals.hits[index].fetch_add(1, std::memory_order_relaxed);
+    else totals.misses[index].fetch_add(1, std::memory_order_relaxed);
+    return result;
+}
+
+VkResult CreateComputeUnobserved(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
     if (context.pipelineCache != nullptr) return context.pipelineCache->CreateCompute(context, info, pipeline, words);
     std::optional<CreationGate> gate;
     if (words != 0) gate.emplace(words);
     const auto create = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
+}
+
+VkResult CreateGraphicsUnobserved(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline, words);
+    std::optional<CreationGate> gate;
+    if (words != 0) gate.emplace(words);
+    const auto create = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+    return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
+}
+
+}
+
+VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+    return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return CreateComputeUnobserved(context, observed, pipeline, words); });
+}
+
+VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
+    return WithFeedback(context, info, GraphicsKind(info), [&](const VkGraphicsPipelineCreateInfo& observed) { return CreateGraphicsUnobserved(context, observed, pipeline, words); });
+}
+
+PipelineCreationFeedbackCounts PipelineCreationFeedbackTotals() {
+    auto& totals = Feedback();
+    PipelineCreationFeedbackCounts counts;
+    for (std::size_t kind = 0; kind < counts.hits.size(); ++kind) {
+        counts.hits[kind] = totals.hits[kind].load(std::memory_order_relaxed);
+        counts.misses[kind] = totals.misses[kind].load(std::memory_order_relaxed);
+        counts.unreported[kind] = totals.unreported[kind].load(std::memory_order_relaxed);
+    }
+    return counts;
+}
+
+std::string PipelineCreationFeedbackReport() {
+    const auto counts = PipelineCreationFeedbackTotals();
+    constexpr std::array<const char*, static_cast<std::size_t>(PipelineCreationKind::Count)> names{"compute", "graphics", "library parts", "linked"};
+    std::string line = " pipeline cache feedback:";
+    for (std::size_t kind = 0; kind < names.size(); ++kind) {
+        char text[128];
+        std::snprintf(text, sizeof(text), " %s %llu hits, %llu misses, %llu unreported;", names[kind], static_cast<unsigned long long>(counts.hits[kind]), static_cast<unsigned long long>(counts.misses[kind]), static_cast<unsigned long long>(counts.unreported[kind]));
+        line += text;
+    }
+    return line;
 }
 
 bool PipelineCacheChecksHits(const Context& context) {
@@ -301,12 +382,5 @@ VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipeli
     return context.pipelineCache->CreateComputeFrom(context, info, pipeline, data);
 }
 
-VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
-    if (context.pipelineCache != nullptr) return context.pipelineCache->CreateGraphics(context, info, pipeline, words);
-    std::optional<CreationGate> gate;
-    if (words != 0) gate.emplace(words);
-    const auto create = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
-    return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
-}
 
 }

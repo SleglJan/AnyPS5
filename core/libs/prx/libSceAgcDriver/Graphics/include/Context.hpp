@@ -204,6 +204,7 @@ struct Context {
     bool pipelineExecutableInfo = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
+    bool pipelineCreationFeedback = false;
     std::uint32_t srgbDecodeFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
