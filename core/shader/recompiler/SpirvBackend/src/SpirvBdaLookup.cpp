@@ -196,6 +196,14 @@ void NoteBdaTouch(SpirvEmitterState& state, std::uint32_t touch, std::uint32_t a
     state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), touch, address);
 }
 
+void NoteBdaTouchSpan(SpirvEmitterState& state, std::uint32_t touch, std::uint32_t address, std::uint32_t end) {
+    const auto u64 = TypeScalarU64(state);
+    NoteBdaTouch(state, touch, address);
+    const auto last = Binary(state, spv::OpISub, u64, end, BdaConstant(state, 1u));
+    const auto page = [&](std::uint32_t value) { return Binary(state, spv::OpShiftRightLogical, u64, value, BdaConstant(state, BdaTouchAbi::PageShift)); };
+    EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), page(last), page(address)), [&] { NoteBdaTouch(state, touch, last); });
+}
+
 struct BdaTable {
     std::uint32_t pages = 0;
     std::uint32_t count = 0;
@@ -393,7 +401,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uin
             fail(binary(spv::OpLogicalAnd, boolean, held, binary(spv::OpUGreaterThan, boolean, binary(spv::OpIAdd, u64, offset, widen(bytes)), limit)), BdaAbi::FaultReason::Unmapped);
             const auto allowed = permitted(binary(spv::OpBitwiseAnd, u32, binary(spv::OpShiftRightLogical, u32, bounds, constant(BdaAbi::PermissionShift)), constant(BdaAbi::Read | BdaAbi::Write)), held);
             fail(binary(spv::OpLogicalAnd, boolean, held, Unary(state, spv::OpLogicalNot, boolean, allowed)), BdaAbi::FaultReason::Permission);
-            EmitIfCondition(state, held, [&] { NoteBdaTouch(state, touch, address); });
+            EmitIfCondition(state, held, [&] { NoteBdaTouchSpan(state, touch, address, end); });
             ReturnValueIf(state, held, translation(binary(spv::OpIAdd, u64, address, pair(component(found, 0u), component(found, 1u))), constant(0)));
         });
     });
@@ -419,7 +427,7 @@ std::uint32_t DefineBdaTranslate(SpirvEmitterState& state, bool writes, std::uin
     fail(binary(spv::OpULessThan, boolean, device, base), BdaAbi::FaultReason::Overflow);
     const auto deviceEnd = binary(spv::OpIAdd, u64, device, widen(bytes));
     fail(binary(spv::OpULessThanEqual, boolean, deviceEnd, device), BdaAbi::FaultReason::Overflow);
-    NoteBdaTouch(state, touch, address);
+    NoteBdaTouchSpan(state, touch, address, end);
     state.module.AddFunction(spv::OpReturnValue, translation(device, constant(0)));
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
@@ -701,6 +709,7 @@ std::uint32_t DefineWrittenChunkNote(SpirvEmitterState& state) {
 
 void DeclareBdaReadCache(SpirvEmitterState& state) {
     state.bdaReadCache = {};
+    state.bdaNotedPage = 0;
     if (state.bdaSegmentFunction == 0u) return;
     const auto pointer = TypePointer(state, spv::StorageClassPrivate, TypeScalarU64(state));
     const auto zero = BdaConstant(state, 0u);
@@ -708,6 +717,8 @@ void DeclareBdaReadCache(SpirvEmitterState& state) {
         variable = state.module.AllocateId();
         state.module.EmitGlobalVariable({spv::OpVariable, pointer, variable, spv::StorageClassPrivate, zero});
     }
+    state.bdaNotedPage = state.module.AllocateId();
+    state.module.EmitGlobalVariable({spv::OpVariable, TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), state.bdaNotedPage, spv::StorageClassPrivate, ConstantU32(state, ~0u)});
 }
 
 void InitializeBdaTable(SpirvEmitterState& state) {
@@ -756,6 +767,7 @@ bool BdaVectorCacheAvailable(const SpirvEmitterState& state) {
 void LocalizeBdaCaches(SpirvEmitterState& state) {
     std::vector<std::uint32_t> variables(state.bdaReadCache.begin(), state.bdaReadCache.end());
     variables.insert(variables.end(), state.bdaVectorCache.begin(), state.bdaVectorCache.end());
+    variables.push_back(state.bdaNotedPage);
     state.module.LocalizePrivateVariables(variables);
 }
 
@@ -1016,7 +1028,9 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     DeclareBdaTable(state);
     const auto touch = DefineBdaTouch(state);
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites, touch);
+    state.bdaNotePagesFunction = 0;
     if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state, touch);
+    if (state.bdaSegmentFunction != 0u) state.bdaNotePagesFunction = DefineBdaNotePages(state, touch);
     DeclareBdaVectorCache(state);
     DeclareBdaReadCache(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);

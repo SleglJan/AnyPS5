@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include "BdaTouchAbi.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <algorithm>
 #include <cstdlib>
@@ -236,6 +237,7 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent,
             state.module.AddFunction(spv::OpSelectionMerge, miss, spv::SelectionControlMaskNone);
             state.module.AddFunction(spv::OpBranchConditional, cached.hit, hit, miss);
             EmitLabel(state, hit);
+            NoteBdaSegmentRead(state, firstAddress, bytes);
             std::array<std::uint32_t, 4> parts{};
             for (std::uint32_t dword = 0; dword < 4u; ++dword) {
                 const auto wanted = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, used, ConstantU32(state, 1u << dword)), zero);
@@ -552,6 +554,55 @@ std::uint32_t RefreshBdaReadCache(SpirvEmitterState& state, std::uint32_t addres
 
 }
 
+std::uint32_t DefineBdaNotePages(SpirvEmitterState& state, std::uint32_t touch) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto voidType = state.module.Type(spv::OpTypeVoid);
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, "note_bda_pages");
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, u32, u32));
+    const auto first = state.module.AllocateId();
+    const auto last = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, u32, first);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, last);
+    EmitLabel(state, state.module.AllocateId());
+    const auto note = [&](std::uint32_t page) {
+        const auto address = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, page), BdaConstant(state, BdaTouchAbi::PageShift));
+        state.module.AddFunction(spv::OpFunctionCall, voidType, state.module.AllocateId(), touch, address);
+    };
+    if (BdaSegmentsShared(state)) {
+        const auto leader = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, leader, ConstantU32(state, spv::ScopeSubgroup), first);
+        const auto elected = state.module.AllocateId();
+        EmitSubgroupElect(state, elected);
+        EmitIfCondition(state, Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, first, leader), elected), [&] { note(first); });
+    } else {
+        note(first);
+    }
+    EmitIfCondition(state, Binary(state, spv::OpINotEqual, boolean, last, first), [&] { note(last); });
+    state.module.AddFunction(spv::OpReturn);
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+void NoteBdaSegmentRead(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes) {
+    if (state.bdaNotePagesFunction == 0u || state.bdaNotedPage == 0u) return;
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto boolean = TypeBool(state);
+    const auto page = [&](std::uint32_t value) { return Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, u64, value, BdaConstant(state, BdaTouchAbi::PageShift))); };
+    const auto first = page(address);
+    const auto last = page(Binary(state, spv::OpISub, u64, Binary(state, spv::OpIAdd, u64, address, bytes), BdaConstant(state, 1u)));
+    const auto noted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, u32, noted, state.bdaNotedPage);
+    const auto moved = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, first, noted), Binary(state, spv::OpINotEqual, boolean, last, noted));
+    EmitIfCondition(state, moved, [&] {
+        state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNotePagesFunction, first, last);
+        state.module.AddFunction(spv::OpStore, state.bdaNotedPage, last);
+    });
+}
+
 std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t address, std::uint32_t enabled, const std::function<std::uint32_t()>& uncached, bool refill) {
     auto& state = ctx.state;
     if (!BdaReadCacheAvailable(state)) ctx.Fail(inst, "BDA read cache is missing");
@@ -568,6 +619,7 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
     const auto end = Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, 4u));
     const auto within = [&](std::uint32_t begin, std::uint32_t limit) { return both(Binary(state, spv::OpULessThanEqual, boolean, begin, address), Binary(state, spv::OpULessThanEqual, boolean, end, limit)); };
     const auto fast = [&] {
+        NoteBdaSegmentRead(state, address, BdaConstant(state, 4u));
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, Binary(state, spv::OpIAdd, u64, address, load(cache[2])));
         const auto value = state.module.AllocateId();
@@ -579,6 +631,7 @@ std::uint32_t EmitBdaCachedDword(SpirvValueEmitContext& ctx, const IrValue& inst
     if (segment[0] != 0u) {
         const auto resolved = ProbeBdaSegment(state, {segment[0], segment[1], segment[2]}, address, BdaConstant(state, 4u));
         const auto direct = [&] {
+            NoteBdaSegmentRead(state, address, BdaConstant(state, 4u));
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, resolved.device);
             const auto value = state.module.AllocateId();
@@ -609,6 +662,7 @@ std::uint32_t EmitBdaCachedDwords(SpirvValueEmitContext& ctx, const IrValue& ins
     const auto end = Binary(state, spv::OpIAdd, u64, address, BdaConstant(state, dwords * 4u));
     const auto within = both(Binary(state, spv::OpULessThanEqual, boolean, load(cache[0]), address), Binary(state, spv::OpULessThanEqual, boolean, end, load(cache[1])));
     const auto span = [&] {
+        NoteBdaSegmentRead(state, address, BdaConstant(state, dwords * 4u));
         const auto device = Binary(state, spv::OpIAdd, u64, address, load(cache[2]));
         std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
         const bool coherent = BdaCoherent(state, inst);
@@ -846,6 +900,7 @@ std::uint32_t DefineBdaComponentReadFunction(SpirvEmitterState& state, bool cohe
             EmitIfCondition(state, binary(spv::OpLogicalAnd, boolean, whole, Unary(state, spv::OpLogicalNot, boolean, ProbeBdaVectorCache(state, guest, bytes).hit)), [&] { RefreshBdaVectorCache(state, guest); });
             const auto cached = ProbeBdaVectorCache(state, guest, bytes);
             translated = EmitValueIfElse(state, binary(spv::OpLogicalAnd, boolean, whole, cached.hit), translation, [&] {
+                NoteBdaSegmentRead(state, guest, bytes);
                 const auto value = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, translation, value, cached.device, zero);
                 return value;
@@ -1170,6 +1225,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
         const auto& segment = state.bdaAccessSegment;
         const auto resolved = ProbeBdaSegment(state, {segment[0], segment[1], segment[2]}, firstAddress, BdaConstant(state, (last - first + 1u) * 4u));
         read = EmitValueIfElse(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, resolved.hit), vector, [&] {
+            NoteBdaSegmentRead(state, firstAddress, BdaConstant(state, (last - first + 1u) * 4u));
             std::array<std::uint32_t, 4> loaded{};
             for (std::uint32_t dword = 0; dword < 4u; ++dword) {
                 loaded[dword] = ConstantU32(state, 0u);
@@ -1192,6 +1248,7 @@ std::array<std::uint32_t, 4> EmitBdaDwordReads(SpirvValueEmitContext& ctx, const
         EmitIfCondition(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, missed), [&] { RefreshBdaVectorCache(state, firstAddress); });
         const auto cached = ProbeBdaVectorCache(state, firstAddress, bytes);
         read = EmitValueIfElse(state, Binary(state, spv::OpLogicalAnd, boolean, unwrapped, cached.hit), vector, [&] {
+            NoteBdaSegmentRead(state, firstAddress, bytes);
             std::array<std::uint32_t, 4> loaded{};
             for (std::uint32_t dword = 0; dword < 4u; ++dword) {
                 loaded[dword] = ConstantU32(state, 0u);

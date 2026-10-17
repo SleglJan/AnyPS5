@@ -29,6 +29,8 @@ struct BdaCacheProbe {
 };
 BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes);
 void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address);
+std::uint32_t DefineBdaNotePages(SpirvEmitterState& state, std::uint32_t touch);
+void NoteBdaSegmentRead(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes);
 std::uint32_t DefineWrittenChunkNote(SpirvEmitterState& state);
 void DefineBdaDwordReadFunctions(SpirvEmitterState& state);
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
