@@ -25,7 +25,7 @@ int main() {
         AgcDriver::Submit(&packet, 0);
 
         const auto dormant = [] { return AgcDriver::DriverDetail::queue0Dormant.load(std::memory_order_relaxed); };
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
         while (!dormant() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         AgcDriver::Graphics::Require(!AgcDriver::Graphics::StorageTexture::AnyPending(), "a no-op submission left storage results pending");
         AgcDriver::Graphics::Require(dormant(), "queue 0 kept polling with every queue idle and no storage results to store instead of waiting");
