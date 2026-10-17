@@ -815,6 +815,8 @@ namespace {
 
 std::atomic<std::uint64_t> drawInputCopies{0};
 std::atomic<std::uint64_t> drawIndexScans{0};
+std::atomic<std::uint64_t> drawPassesBegun{0};
+std::atomic<std::uint64_t> drawPassesContinued{0};
 
 }
 
@@ -854,6 +856,10 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
     if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
     recorder->KeepDrawSnapshot(address, copy.bytes, copy.generation, copy.registryGeneration, copy.buffer, use, derived);
+}
+
+DrawPassCounts DrawPasses() {
+    return {drawPassesBegun.load(std::memory_order_relaxed), drawPassesContinued.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t DrawInputCopies() {
@@ -904,6 +910,7 @@ DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, 
         recorder->NotePendingRead(address, bytes, Recorder::ReadKind::DrawInput);
         return {sources.front().buffer, sources.front().offset, nullptr};
     }
+    if (pieces.size() == 1 && pieces.front().buffer != VK_NULL_HANDLE && pieces.front().offset % alignment == 0) return {pieces.front().buffer, pieces.front().offset, nullptr};
     auto gathered = std::make_shared<DeviceBuffer>(context, (bytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const auto commands = recorder->Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -1638,6 +1645,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
+    (continued ? drawPassesContinued : drawPassesBegun).fetch_add(1, std::memory_order_relaxed);
     const auto commands = start.commands;
     if (!continued) recorder->PrepareSampleSlot();
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
