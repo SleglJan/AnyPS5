@@ -3818,7 +3818,7 @@ std::vector<std::pair<std::uint32_t, std::uint32_t>> StorageTexture::pendingUnit
 
 void StorageTexture::OwnAsTarget() {
     auto* residency = ResidencyDriver::Active();
-    if (residency == nullptr) return;
+    if (residency == nullptr || residency->Device() != context.device) return;
     std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
     auto& manager = residency->Manager();

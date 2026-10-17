@@ -79,6 +79,7 @@ public:
     ~ResidencyDriver() override;
 
     static ResidencyDriver* Active();
+    VkDevice Device() const { return context.device; }
 
     ResidencyManager& Manager() { return manager; }
     const ResidencyMirrors& Mirrors() const { return mirrors; }
