@@ -136,8 +136,12 @@ std::string Dispatch() {
     } catch (const std::exception& error) {
         failure = error.what();
     }
+    try {
+        AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Output.data())), decltype(Output)::ByteSize);
+    } catch (const std::exception& error) {
+        failure += error.what();
+    }
     const auto log = capture.Finish();
-    AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Output.data())), decltype(Output)::ByteSize);
     return log + failure;
 }
 
