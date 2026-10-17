@@ -183,6 +183,10 @@ void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes) {
     if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->RefreshImportWritten(address, bytes);
 }
 
+void StoreThroughMirrors(std::uint64_t address, std::span<const std::byte> bytes) {
+    if (auto* driver = ResidencyDriver::Active(); driver != nullptr && !bytes.empty()) driver->StoreThroughMirrors(address, bytes);
+}
+
 void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes) {
     if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->PrepareImportWrite(address, bytes);
 }

@@ -1438,6 +1438,33 @@ void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t by
     refresh(fills);
 }
 
+std::vector<ResidencyMirrorStore> ResidencyManager::StoreThroughMirrors(std::uint64_t address, std::uint64_t bytes, const ResidencyToken& lands) {
+    applyQueued();
+    std::vector<ResidencyMirrorStore> stores;
+    if (bytes == 0) return stores;
+    if (bytes > ResidencyPageBytes) throw std::invalid_argument("residency: a store through the mirrors spans more than one page: " + std::to_string(bytes) + " bytes");
+    auto spans = device.Aliases(address, bytes);
+    spans.push_back({address, bytes});
+    std::vector<Fill> fills;
+    for (const auto& range : spans) {
+        for (const auto id : residentIn(range.address, range.bytes)) {
+            const auto base = pages[id].index << ResidencyPageShift;
+            const auto first = std::max(range.address, base);
+            const auto last = std::min(range.address + range.bytes, base + ResidencyPageBytes);
+            const auto begin = static_cast<std::uint32_t>(first - base);
+            if (std::any_of(fills.begin(), fills.end(), [&](const Fill& fill) { return fill.id == id && fill.begin == begin; })) continue;
+            fills.push_back({id, begin, static_cast<std::uint32_t>(last - base)});
+            stores.push_back({pages[id].slot, begin, static_cast<std::uint32_t>((first - address) & (ResidencyPageBytes - 1)), static_cast<std::uint32_t>(last - first)});
+        }
+    }
+    waitWriters(fills);
+    for (const auto& fill : fills) {
+        clearDirty(fill.id, fill.begin, fill.end);
+        pages[fill.id].pin = MergeTokens(pages[fill.id].pin, lands);
+    }
+    return stores;
+}
+
 void ResidencyManager::RefreshImportWritten(std::uint64_t address, std::uint64_t bytes) {
     applyQueued();
     const auto fills = withAliases(address, bytes);

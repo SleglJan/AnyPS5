@@ -40,6 +40,7 @@ void InstallResidencyHooks();
 void RemoveResidencyHooks();
 void NoteImportWritten(std::uint64_t address, std::uint64_t bytes);
 void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
+void StoreThroughMirrors(std::uint64_t address, std::span<const std::byte> bytes);
 void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
 std::vector<ShaderRecompiler::BdaAbi::Range> WithResidentPages(std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
 

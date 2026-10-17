@@ -217,6 +217,16 @@ void ResidencyDriver::RefreshImportWritten(std::uint64_t address, std::uint64_t 
     manager.RefreshImportWritten(address, bytes);
 }
 
+void ResidencyDriver::StoreThroughMirrors(std::uint64_t address, std::span<const std::byte> bytes) {
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    for (const auto& store : manager.StoreThroughMirrors(address, bytes.size(), recorder.CallerToken())) {
+        const auto chunk = mirrors.Chunk(store.mirror.chunk);
+        recorder.Keep(chunk);
+        recorder.RecordStore(chunk->buffer, (VkDeviceSize{store.mirror.slot} << ResidencyPageShift) + store.offset, bytes.subspan(store.source, store.bytes), address + store.source);
+    }
+}
+
 void ResidencyDriver::AccessFault(std::uint64_t page) {
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();

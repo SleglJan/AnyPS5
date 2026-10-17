@@ -79,6 +79,13 @@ struct ResidencyCopy {
     std::uint32_t bytes = 0;
 };
 
+struct ResidencyMirrorStore {
+    MirrorSlot mirror;
+    std::uint32_t offset = 0;
+    std::uint32_t source = 0;
+    std::uint32_t bytes = 0;
+};
+
 class IResidencyOwner {
 public:
     virtual ~IResidencyOwner() = default;
@@ -197,6 +204,7 @@ public:
     void DemoteWritable();
     void DropRange(std::uint64_t address, std::uint64_t bytes);
     void NoteImportWritten(std::uint64_t address, std::uint64_t bytes);
+    std::vector<ResidencyMirrorStore> StoreThroughMirrors(std::uint64_t address, std::uint64_t bytes, const ResidencyToken& lands);
     void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
     void QueueCpuWritten(std::span<const std::uint64_t> pages);
     void NoteGpuWritten(std::uint64_t address, std::uint64_t bytes, bool written = false);

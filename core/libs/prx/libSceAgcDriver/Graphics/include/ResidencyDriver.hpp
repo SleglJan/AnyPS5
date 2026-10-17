@@ -104,6 +104,7 @@ public:
     void NoteRecordedWrites(std::uint64_t address, std::uint64_t bytes);
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
     void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
+    void StoreThroughMirrors(std::uint64_t address, std::span<const std::byte> bytes);
     void AccessFault(std::uint64_t page);
     void WriteBackAll();
     struct MirrorTarget {
