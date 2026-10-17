@@ -4105,7 +4105,7 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.kind = Kind::DeviceAddress; }), "unsupported descriptor kind DeviceAddress");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::SampledImage; }), "unsupported descriptor kind SampledImage");
     expectSingleFailure(changed([](auto& binding) { binding.descriptorSet = 1; }), "unexpected descriptor set");
-    expectSingleFailure(changed([](auto& binding) { binding.readOnly = true; }), "read-only descriptors are unsupported");
+    expectSingleFailure(changed([](auto& binding) { binding.readOnly = true; }), "a read-only descriptor binding is allowed only for the format table, not for role FlattenedSrt");
     expectSingleFailure(changed([](auto& binding) { binding.count = 0; }), "empty descriptor binding");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.count = 2; binding.guestDescriptor = {1, 2}; }), "must not be arrays");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "empty shader data descriptor");

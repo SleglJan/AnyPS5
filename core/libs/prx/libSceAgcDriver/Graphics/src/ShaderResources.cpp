@@ -1682,7 +1682,7 @@ std::shared_ptr<const ShaderResources::Program> ShaderResources::BuildProgram(co
             const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
             if (!bufferRole) Require(false, std::string("unsupported descriptor role ") + roleName(binding.role));
             if (binding.kind != ShaderRecompiler::DescriptorKind::StorageBuffer) Require(false, std::string("unsupported descriptor kind ") + kindName(binding.kind) + " for role " + roleName(binding.role) + ": only StorageBuffer is supported");
-            Require(!binding.readOnly, "read-only descriptors are unsupported because the recompiler emits no NonWritable decoration");
+            Require(!binding.readOnly, std::string("a read-only descriptor binding is allowed only for the format table, not for role ") + roleName(binding.role));
             Require(binding.count != 0, "empty descriptor binding");
             stageStorageBuffers += binding.count;
             stageResources += binding.count;
