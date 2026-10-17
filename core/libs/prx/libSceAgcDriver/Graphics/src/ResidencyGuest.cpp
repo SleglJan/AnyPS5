@@ -138,7 +138,7 @@ void dropRange(std::uint64_t address, std::size_t bytes) {
 
 void writeBack(std::uint64_t address, std::size_t bytes) {
     auto* driver = ResidencyDriver::Active();
-    if (driver == nullptr || !driver->Manager().AnyResident(address, bytes)) return;
+    if (driver == nullptr || (!driver->Manager().AnyResident(address, bytes) && !driver->Manager().StaleIn(address, bytes))) return;
     const std::lock_guard lock(GuestMemory::GpuMutex());
     driver->Manager().FlushForCpuRead(address, bytes);
 }

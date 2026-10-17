@@ -1,7 +1,10 @@
 #include "ResidencyRulesFixture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include <algorithm>
 #include <memory>
+#include <span>
+#include <vector>
 
 #ifdef _WIN32
 
@@ -185,7 +188,7 @@ void UnmapWritesBackFirst(MirrorReader& reader) {
     CloseHandle(section);
 }
 
-void PrivatePageWrittenAtOnce(MirrorReader& reader) {
+void PrivatePageHeldForReaders(MirrorReader& reader) {
     const std::string what = "a page of private memory a render target owns";
     SharedPages shared(1);
     Use(shared.Address());
@@ -194,12 +197,16 @@ void PrivatePageWrittenAtOnce(MirrorReader& reader) {
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     RenderTarget target(ContextOf(shared.Address()), pages.Address(), PageBytes);
     target.Render(FirstRendered);
-    Expect(target.retiles == 1u, what + ": the render was retiled " + std::to_string(target.retiles) + " times; private pages are written to guest memory at once");
-    WaitIdle();
-    AgcDriver::GuestMemory::FlushGpuWrites(pages.Address(), PageBytes);
-    const auto wrong = WrongWords(pages.Words(), WordsPerPage, FirstRendered);
-    Expect(wrong == 0u, what + ": " + std::to_string(wrong) + " words miss the rendered value after the batch");
+    std::uint16_t stale = 0;
+    Locked([&] { stale = Residency().Manager().Stale(PageOf(pages.Address())); });
+    Expect(target.retiles == 0u && stale == 0xffffu, what + ": the render was retiled " + std::to_string(target.retiles) + " times before any reader (stale " + Hex(stale) + ")");
     ExpectRead(reader.Read(pages.Address(), 1), 1, [](std::uint64_t, std::uint32_t) { return FirstRendered; }, what + ": a dispatch through the page table");
+    Expect(target.retiles == 1u, what + ": the dispatch retiled " + std::to_string(target.retiles) + " times");
+    target.Render(SecondRendered);
+    std::vector<std::uint32_t> read(WordsPerPage);
+    AgcDriver::GuestMemory::Read(pages.Address(), std::as_writable_bytes(std::span(read)));
+    const auto wrong = static_cast<std::uint32_t>(std::count_if(read.begin(), read.end(), [](std::uint32_t word) { return word != SecondRendered; }));
+    Expect(wrong == 0u && target.retiles == 2u, what + ": a driver read after the second render misses " + std::to_string(wrong) + " words (" + std::to_string(target.retiles) + " retiles)");
     Settle();
 }
 
@@ -207,7 +214,7 @@ void Run(MirrorReader& reader) {
     CpuReadGetsRenderedBytes();
     ReadThroughTheTable(reader);
     UnmapWritesBackFirst(reader);
-    PrivatePageWrittenAtOnce(reader);
+    PrivatePageHeldForReaders(reader);
 }
 
 }

@@ -1132,16 +1132,45 @@ void CpuReadRetilesStalePages() {
     Expect(fixture.manager->Stale(BasePage + 1) == 0 && fixture.manager->Dirty(BasePage + 1) == 0 && fixture.manager->Counts().stalePages == 0, "the page is neither stale nor dirty after the read");
 }
 
-void PrivateOwnedPagesWrittenAtOnce() {
-    scope = "owned private pages written back at once";
+void PrivateOwnedPagesHeldForReaders() {
+    scope = "owned private pages held for their readers";
     Fixture fixture(8, 1);
     FakeOwner owner(fixture, 903);
     fixture.manager->Own(Address(BasePage + 2), ResidencyPageBytes, &owner);
     fixture.gpu.Drain();
+    const auto guarded = fixture.manager->Counts().accessGuarded;
     fixture.manager->MarkStale(Address(BasePage + 2, 1), ResidencySubpageBytes, &owner);
-    Expect(owner.retiled.size() == 1 && fixture.manager->Stale(BasePage + 2) == 0 && fixture.manager->Counts().eagerRetiles == 1, "a private page holds no stale state: the owner retiles into guest memory at once");
+    Expect(owner.retiled.empty() && fixture.manager->Stale(BasePage + 2) == 0x0002 && fixture.manager->Counts().eagerRetiles == 0 && fixture.manager->Counts().accessGuarded == guarded, "a private page holds its stale subpage, unguarded, until a reader");
+    Expect(fixture.manager->StaleIn(Address(BasePage + 2, 1), 4) && !fixture.manager->StaleIn(Address(BasePage + 2, 2), 4), "the unlocked stale query names the stale subpage only");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 2, 1), 4);
     fixture.gpu.Drain();
+    Expect(owner.retiled.size() == 1 && fixture.manager->Stale(BasePage + 2) == 0, "a driver read retiles the private page");
     Expect(fixture.Stored(BasePage + 2, 1) == 903 && fixture.manager->Dirty(BasePage + 2) == 0, "the bytes reached guest memory, and the private page is not dirty");
+}
+
+void OwnedPagesExemptAndForgotten() {
+    scope = "retiles skip exempt owners, and a forgotten owner leaves nothing stale";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 3);
+    fixture.Share(BasePage + 4);
+    FakeOwner first(fixture, 905);
+    FakeOwner second(fixture, 906);
+    fixture.manager->Own(Address(BasePage + 3), ResidencyPageBytes, &first);
+    fixture.manager->Own(Address(BasePage + 4), ResidencyPageBytes, &second);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 3), ResidencySubpageBytes, &first);
+    fixture.manager->MarkStale(Address(BasePage + 4), ResidencySubpageBytes, &second);
+    Expect(fixture.manager->StaleOfOthers(Address(BasePage + 3), 2 * ResidencyPageBytes, &first) && !fixture.manager->StaleOfOthers(Address(BasePage + 3), ResidencyPageBytes, &first), "the stale pages of other owners are told from an owner's own");
+    Expect(fixture.manager->HoldOwners(Address(BasePage + 3), 2 * ResidencyPageBytes).size() == 2 && fixture.manager->HoldStaleOwners().size() == 2, "both owners are found by their pages");
+    const std::array<const IResidencyOwner*, 1> exempt{&first};
+    Expect(fixture.manager->RetileOwned(Address(BasePage + 3), 2 * ResidencyPageBytes, exempt), "the retile over both pages reports a retile");
+    Expect(first.retiled.empty() && second.retiled.size() == 1 && fixture.manager->Stale(BasePage + 3) == 0x0001 && fixture.manager->Stale(BasePage + 4) == 0, "the exempt owner keeps its stale subpage, the other is retiled");
+    const auto serial = fixture.manager->OwnershipSerial();
+    fixture.manager->Forget(&first);
+    Expect(fixture.manager->OwnerOf(BasePage + 3) == nullptr && fixture.manager->Stale(BasePage + 3) == 0 && !fixture.manager->StaleIn(Address(BasePage + 3), ResidencyPageBytes) && fixture.manager->OwnershipSerial() != serial, "a forgotten owner leaves no record and nothing stale");
+    Expect(!fixture.manager->RetileAllOwned() && first.retiled.empty(), "a forgotten owner is never asked to retile");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 3), 2 * ResidencyPageBytes);
+    fixture.gpu.Drain();
 }
 
 void StaleOwnedPagesKeptAndDisowned() {
@@ -1634,7 +1663,8 @@ int main() {
         FullResidencyWhenTheGuestFits();
         OwnedPagesRetiledBeforeReaders();
         CpuReadRetilesStalePages();
-        PrivateOwnedPagesWrittenAtOnce();
+        PrivateOwnedPagesHeldForReaders();
+        OwnedPagesExemptAndForgotten();
         StaleOwnedPagesKeptAndDisowned();
         DemotionRetilesStalePages();
         AdmissionRule();

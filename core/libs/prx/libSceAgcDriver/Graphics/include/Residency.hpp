@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -82,6 +83,7 @@ class IResidencyOwner {
 public:
     virtual ~IResidencyOwner() = default;
     virtual void Retile(std::span<const ResidencyRange> ranges) = 0;
+    virtual std::shared_ptr<IResidencyOwner> Hold() { return {std::shared_ptr<IResidencyOwner>{}, this}; }
 };
 
 class IResidencyDevice {
@@ -191,12 +193,19 @@ public:
     void WriteBackAll();
     void Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
     void MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
-    void RetileOwned(std::uint64_t address, std::uint64_t bytes);
-    void RetileAllOwned();
+    bool RetileOwned(std::uint64_t address, std::uint64_t bytes, std::span<const IResidencyOwner* const> except = {});
+    bool RetileAllOwned(std::span<const IResidencyOwner* const> except = {});
     void Disown(IResidencyOwner* owner);
+    void Forget(IResidencyOwner* owner);
     IResidencyOwner* OwnerOf(std::uint64_t page) const;
     ResidencyMask Stale(std::uint64_t page) const;
+    std::vector<std::shared_ptr<IResidencyOwner>> HoldOwners(std::uint64_t address, std::uint64_t bytes) const;
+    std::vector<std::shared_ptr<IResidencyOwner>> HoldStaleOwners() const;
+    bool StaleOfOthers(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const;
+    std::uint64_t OwnershipSerial() const { return ownershipSerial.load(std::memory_order_acquire); }
+    bool AnyStale() const { return staleCount.load(std::memory_order_acquire) != 0; }
     bool DirtyIn(std::uint64_t address, std::uint64_t bytes) const;
+    bool StaleIn(std::uint64_t address, std::uint64_t bytes) const;
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
@@ -224,6 +233,7 @@ private:
 
     struct DirtyLeaf {
         std::array<std::atomic<ResidencyMask>, std::size_t{1} << DirtyLeafShift> masks{};
+        std::array<std::atomic<ResidencyMask>, std::size_t{1} << DirtyLeafShift> stale{};
     };
     static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
 
@@ -317,9 +327,11 @@ private:
     void clearDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void clearAllDirty(std::uint32_t id);
     void publishDirty(std::uint64_t page, ResidencyMask mask);
+    void publishStale(std::uint64_t page, ResidencyMask mask);
     void publishPage(std::uint64_t page);
-    void retileStale(std::span<const std::uint64_t> stalePages);
+    bool retileStale(std::span<const std::uint64_t> stalePages, std::span<const IResidencyOwner* const> except = {});
     std::vector<std::uint64_t> staleIn(std::uint64_t address, std::uint64_t bytes) const;
+    bool isStale(std::uint64_t page) const;
 
     struct Owned {
         IResidencyOwner* owner = nullptr;
@@ -364,9 +376,11 @@ private:
     std::deque<std::pair<std::uint64_t, std::uint64_t>> hotCooling;
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
+    mutable std::shared_mutex ownedMutex;
     std::unordered_map<std::uint64_t, Owned> owned;
     std::unordered_set<std::uint64_t> staleOwned;
     std::atomic<std::uint32_t> staleCount{0};
+    std::atomic<std::uint64_t> ownershipSerial{0};
     std::uint64_t importsGeneration = 0;
     std::vector<ResidencyRange> pendingImports;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;

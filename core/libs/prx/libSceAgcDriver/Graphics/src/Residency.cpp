@@ -93,6 +93,18 @@ void ResidencyManager::publishDirty(std::uint64_t page, ResidencyMask mask) {
     leaf->masks[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].store(mask, std::memory_order_release);
 }
 
+void ResidencyManager::publishStale(std::uint64_t page, ResidencyMask mask) {
+    const auto leafIndex = page >> DirtyLeafShift;
+    if (leafIndex >= DirtyLeaves) throw std::out_of_range("residency: page " + std::to_string(page) + " lies past the 47-bit guest address space");
+    auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+    if (leaf == nullptr) {
+        if (mask == 0) return;
+        leaf = new DirtyLeaf();
+        dirtyLeaves[leafIndex].store(leaf, std::memory_order_release);
+    }
+    leaf->stale[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].store(mask, std::memory_order_release);
+}
+
 bool ResidencyManager::DirtyIn(std::uint64_t address, std::uint64_t bytes) const {
     const auto span = PagesOf(address, bytes);
     if (span.empty || (dirtyPages.load(std::memory_order_acquire) == 0 && staleCount.load(std::memory_order_acquire) == 0)) return false;
@@ -104,7 +116,27 @@ bool ResidencyManager::DirtyIn(std::uint64_t address, std::uint64_t bytes) const
             page |= (std::uint64_t{1} << DirtyLeafShift) - 1;
             continue;
         }
-        const auto mask = leaf->masks[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].load(std::memory_order_acquire);
+        const auto index = page & ((std::uint64_t{1} << DirtyLeafShift) - 1);
+        const auto mask = static_cast<ResidencyMask>(leaf->masks[index].load(std::memory_order_acquire) | leaf->stale[index].load(std::memory_order_acquire));
+        if ((mask & SubpageMask(page, address, bytes)) != 0) return true;
+    }
+    return false;
+}
+
+bool ResidencyManager::StaleIn(std::uint64_t address, std::uint64_t bytes) const {
+    if (staleCount.load(std::memory_order_acquire) == 0 || bytes == 0) return false;
+    if (bytes > std::numeric_limits<std::uint64_t>::max() - address) bytes = std::numeric_limits<std::uint64_t>::max() - address;
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return false;
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto leafIndex = page >> DirtyLeafShift;
+        if (leafIndex >= DirtyLeaves) return false;
+        const auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+        if (leaf == nullptr) {
+            page |= (std::uint64_t{1} << DirtyLeafShift) - 1;
+            continue;
+        }
+        const auto mask = leaf->stale[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].load(std::memory_order_acquire);
         if ((mask & SubpageMask(page, address, bytes)) != 0) return true;
     }
     return false;
@@ -113,13 +145,23 @@ bool ResidencyManager::DirtyIn(std::uint64_t address, std::uint64_t bytes) const
 void ResidencyManager::publishPage(std::uint64_t page) {
     ResidencyMask mask = 0;
     if (const auto id = find(page)) mask = pages[*id].dirty;
-    if (const auto entry = owned.find(page); entry != owned.end()) mask = static_cast<ResidencyMask>(mask | entry->second.stale);
     publishDirty(page, mask);
+    const std::shared_lock lock(ownedMutex);
+    ResidencyMask stale = 0;
+    if (const auto entry = owned.find(page); entry != owned.end()) stale = entry->second.stale;
+    publishStale(page, stale);
+}
+
+bool ResidencyManager::isStale(std::uint64_t page) const {
+    const std::shared_lock lock(ownedMutex);
+    return staleOwned.contains(page);
 }
 
 std::vector<std::uint64_t> ResidencyManager::staleIn(std::uint64_t address, std::uint64_t bytes) const {
     std::vector<std::uint64_t> stale;
+    if (bytes > std::numeric_limits<std::uint64_t>::max() - address) bytes = std::numeric_limits<std::uint64_t>::max() - address;
     const auto span = PagesOf(address, bytes);
+    const std::shared_lock lock(ownedMutex);
     if (span.empty || staleOwned.empty()) return stale;
     if (span.last - span.first >= staleOwned.size()) {
         for (const auto page : staleOwned) {
@@ -134,33 +176,47 @@ std::vector<std::uint64_t> ResidencyManager::staleIn(std::uint64_t address, std:
     return stale;
 }
 
-void ResidencyManager::retileStale(std::span<const std::uint64_t> stalePages) {
-    std::vector<std::pair<IResidencyOwner*, std::vector<ResidencyRange>>> work;
-    for (const auto page : stalePages) {
-        const auto entry = owned.find(page);
-        if (entry == owned.end() || entry->second.stale == 0) continue;
-        std::uint32_t bits = entry->second.stale;
-        entry->second.stale = 0;
-        if (staleOwned.erase(page) != 0) --staleCount;
-        publishPage(page);
-        auto at = std::find_if(work.begin(), work.end(), [&](const auto& item) { return item.first == entry->second.owner; });
-        if (at == work.end()) at = work.insert(work.end(), {entry->second.owner, {}});
-        auto& ranges = at->second;
-        while (bits != 0) {
-            const auto first = static_cast<std::uint32_t>(std::countr_zero(bits));
-            const auto run = static_cast<std::uint32_t>(std::countr_one(bits >> first));
-            const auto address = (page << ResidencyPageShift) + (std::uint64_t{first} << ResidencySubpageShift);
-            const auto length = std::uint64_t{run} << ResidencySubpageShift;
-            if (!ranges.empty() && ranges.back().address + ranges.back().bytes == address) ranges.back().bytes += length;
-            else ranges.push_back({address, length});
-            counts.retiledBytes += length;
-            bits &= run >= 32 ? 0u : ~(((1u << run) - 1u) << first);
+bool ResidencyManager::retileStale(std::span<const std::uint64_t> stalePages, std::span<const IResidencyOwner* const> except) {
+    struct Work {
+        std::shared_ptr<IResidencyOwner> owner;
+        std::vector<ResidencyRange> ranges;
+    };
+    std::vector<Work> work;
+    {
+        const std::unique_lock lock(ownedMutex);
+        for (const auto page : stalePages) {
+            const auto entry = owned.find(page);
+            if (entry == owned.end() || entry->second.stale == 0) continue;
+            auto* owner = entry->second.owner;
+            if (std::find(except.begin(), except.end(), owner) != except.end()) continue;
+            std::uint32_t bits = entry->second.stale;
+            entry->second.stale = 0;
+            if (staleOwned.erase(page) != 0) --staleCount;
+            publishStale(page, 0);
+            auto at = std::find_if(work.begin(), work.end(), [&](const Work& item) { return item.owner.get() == owner; });
+            if (at == work.end()) {
+                auto held = owner->Hold();
+                if (held == nullptr) continue;
+                at = work.insert(work.end(), {std::move(held), {}});
+            }
+            auto& ranges = at->ranges;
+            while (bits != 0) {
+                const auto first = static_cast<std::uint32_t>(std::countr_zero(bits));
+                const auto run = static_cast<std::uint32_t>(std::countr_one(bits >> first));
+                const auto address = (page << ResidencyPageShift) + (std::uint64_t{first} << ResidencySubpageShift);
+                const auto length = std::uint64_t{run} << ResidencySubpageShift;
+                if (!ranges.empty() && ranges.back().address + ranges.back().bytes == address) ranges.back().bytes += length;
+                else ranges.push_back({address, length});
+                counts.retiledBytes += length;
+                bits &= run >= 32 ? 0u : ~(((1u << run) - 1u) << first);
+            }
         }
     }
-    for (const auto& [owner, ranges] : work) {
+    for (const auto& item : work) {
         ++counts.retiles;
-        owner->Retile(ranges);
+        item.owner->Retile(item.ranges);
     }
+    return !work.empty();
 }
 
 void ResidencyManager::Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner) {
@@ -168,12 +224,21 @@ void ResidencyManager::Own(std::uint64_t address, std::uint64_t bytes, IResidenc
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
     std::vector<std::uint64_t> previous;
-    for (auto page = span.first; page <= span.last; ++page) {
-        const auto entry = owned.find(page);
-        if (entry != owned.end() && entry->second.owner != owner && entry->second.stale != 0) previous.push_back(page);
+    bool changed = false;
+    {
+        const std::shared_lock lock(ownedMutex);
+        for (auto page = span.first; page <= span.last; ++page) {
+            const auto entry = owned.find(page);
+            if (entry == owned.end() || entry->second.owner != owner) changed = true;
+            if (entry != owned.end() && entry->second.owner != owner && entry->second.stale != 0) previous.push_back(page);
+        }
     }
     retileStale(previous);
-    for (auto page = span.first; page <= span.last; ++page) owned[page].owner = owner;
+    if (changed) {
+        const std::unique_lock lock(ownedMutex);
+        for (auto page = span.first; page <= span.last; ++page) owned[page].owner = owner;
+        ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
+    }
     admit(span.first, span.last);
 }
 
@@ -191,10 +256,18 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
         const auto begin = std::max(address, base);
         const auto end = std::min(address + bytes, base + ResidencyPageBytes);
         const auto mask = SubpageMask(page, address, bytes);
-        const auto entry = owned.find(page);
         const auto id = find(page);
-        bool keep = entry != owned.end() && entry->second.owner == owner && id && pages[*id].shared && !aliasKeys.contains(page);
-        if (keep) {
+        bool mine = false;
+        {
+            const std::shared_lock lock(ownedMutex);
+            const auto entry = owned.find(page);
+            mine = entry != owned.end() && entry->second.owner == owner;
+        }
+        if (!mine) {
+            addEager(begin, end);
+            continue;
+        }
+        if (id && pages[*id].shared && !aliasKeys.contains(page)) {
             auto& record = pages[*id];
             const auto adding = static_cast<ResidencyMask>(mask & ~record.accessMask);
             if (adding != 0) {
@@ -204,17 +277,14 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
                     accessGuards.insert(page);
                 } else {
                     ++counts.accessUnguardable;
-                    keep = false;
                 }
             }
         }
-        if (!keep) {
-            addEager(begin, end);
-            continue;
-        }
-        if (entry->second.stale == 0 && staleOwned.insert(page).second) ++staleCount;
-        entry->second.stale = static_cast<ResidencyMask>(entry->second.stale | mask);
-        publishPage(page);
+        const std::unique_lock lock(ownedMutex);
+        auto& entry = owned[page];
+        if (entry.stale == 0 && staleOwned.insert(page).second) ++staleCount;
+        entry.stale = static_cast<ResidencyMask>(entry.stale | mask);
+        publishStale(page, entry.stale);
     }
     if (eager.empty()) return;
     ++counts.eagerRetiles;
@@ -222,37 +292,124 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
     owner->Retile(eager);
 }
 
-void ResidencyManager::RetileOwned(std::uint64_t address, std::uint64_t bytes) {
+bool ResidencyManager::RetileOwned(std::uint64_t address, std::uint64_t bytes, std::span<const IResidencyOwner* const> except) {
     applyQueued();
-    retileStale(staleIn(address, bytes));
+    if (staleCount.load(std::memory_order_acquire) == 0) return false;
+    return retileStale(staleIn(address, bytes), except);
 }
 
-void ResidencyManager::RetileAllOwned() {
-    if (staleOwned.empty()) return;
-    std::vector<std::uint64_t> stale(staleOwned.begin(), staleOwned.end());
+bool ResidencyManager::RetileAllOwned(std::span<const IResidencyOwner* const> except) {
+    std::vector<std::uint64_t> stale;
+    {
+        const std::shared_lock lock(ownedMutex);
+        if (staleOwned.empty()) return false;
+        stale.assign(staleOwned.begin(), staleOwned.end());
+    }
     std::sort(stale.begin(), stale.end());
-    retileStale(stale);
+    return retileStale(stale, except);
 }
 
 void ResidencyManager::Disown(IResidencyOwner* owner) {
     applyQueued();
     std::vector<std::uint64_t> stale;
-    for (const auto& [page, record] : owned) {
-        if (record.owner == owner && record.stale != 0) stale.push_back(page);
+    {
+        const std::shared_lock lock(ownedMutex);
+        for (const auto& [page, record] : owned) {
+            if (record.owner == owner && record.stale != 0) stale.push_back(page);
+        }
     }
     std::sort(stale.begin(), stale.end());
     retileStale(stale);
-    std::erase_if(owned, [&](const auto& entry) { return entry.second.owner == owner; });
+    Forget(owner);
+}
+
+void ResidencyManager::Forget(IResidencyOwner* owner) {
+    const std::unique_lock lock(ownedMutex);
+    for (auto entry = owned.begin(); entry != owned.end();) {
+        if (entry->second.owner != owner) {
+            ++entry;
+            continue;
+        }
+        if (entry->second.stale != 0) {
+            if (staleOwned.erase(entry->first) != 0) --staleCount;
+            publishStale(entry->first, 0);
+        }
+        entry = owned.erase(entry);
+    }
+    ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
 }
 
 IResidencyOwner* ResidencyManager::OwnerOf(std::uint64_t page) const {
+    const std::shared_lock lock(ownedMutex);
     const auto entry = owned.find(page);
     return entry == owned.end() ? nullptr : entry->second.owner;
 }
 
 ResidencyMask ResidencyManager::Stale(std::uint64_t page) const {
+    const std::shared_lock lock(ownedMutex);
     const auto entry = owned.find(page);
     return entry == owned.end() ? ResidencyMask{0} : entry->second.stale;
+}
+
+std::vector<std::shared_ptr<IResidencyOwner>> ResidencyManager::HoldOwners(std::uint64_t address, std::uint64_t bytes) const {
+    std::vector<std::shared_ptr<IResidencyOwner>> held;
+    if (bytes > std::numeric_limits<std::uint64_t>::max() - address) bytes = std::numeric_limits<std::uint64_t>::max() - address;
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return held;
+    std::vector<IResidencyOwner*> seen;
+    const auto take = [&](IResidencyOwner* owner) {
+        if (std::find(seen.begin(), seen.end(), owner) != seen.end()) return;
+        seen.push_back(owner);
+        if (auto alive = owner->Hold()) held.push_back(std::move(alive));
+    };
+    const std::shared_lock lock(ownedMutex);
+    if (owned.empty()) return held;
+    if (span.last - span.first >= owned.size()) {
+        std::vector<std::pair<std::uint64_t, IResidencyOwner*>> found;
+        for (const auto& [page, record] : owned) {
+            if (page >= span.first && page <= span.last) found.emplace_back(page, record.owner);
+        }
+        std::sort(found.begin(), found.end());
+        for (const auto& [page, owner] : found) take(owner);
+        return held;
+    }
+    for (auto page = span.first; page <= span.last; ++page) {
+        if (const auto entry = owned.find(page); entry != owned.end()) take(entry->second.owner);
+    }
+    return held;
+}
+
+std::vector<std::shared_ptr<IResidencyOwner>> ResidencyManager::HoldStaleOwners() const {
+    std::vector<std::shared_ptr<IResidencyOwner>> held;
+    std::vector<IResidencyOwner*> seen;
+    const std::shared_lock lock(ownedMutex);
+    for (const auto page : staleOwned) {
+        const auto entry = owned.find(page);
+        if (entry == owned.end() || std::find(seen.begin(), seen.end(), entry->second.owner) != seen.end()) continue;
+        seen.push_back(entry->second.owner);
+        if (auto alive = entry->second.owner->Hold()) held.push_back(std::move(alive));
+    }
+    return held;
+}
+
+bool ResidencyManager::StaleOfOthers(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const {
+    if (!StaleIn(address, bytes)) return false;
+    if (bytes > std::numeric_limits<std::uint64_t>::max() - address) bytes = std::numeric_limits<std::uint64_t>::max() - address;
+    const auto span = PagesOf(address, bytes);
+    const std::shared_lock lock(ownedMutex);
+    if (span.last - span.first >= staleOwned.size()) {
+        for (const auto page : staleOwned) {
+            if (page < span.first || page > span.last) continue;
+            const auto entry = owned.find(page);
+            if (entry != owned.end() && entry->second.owner != owner && (entry->second.stale & SubpageMask(page, address, bytes)) != 0) return true;
+        }
+        return false;
+    }
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto entry = owned.find(page);
+        if (entry != owned.end() && entry->second.owner != owner && (entry->second.stale & SubpageMask(page, address, bytes)) != 0) return true;
+    }
+    return false;
 }
 
 void ResidencyManager::WriteBackAll() {
@@ -563,7 +720,7 @@ std::optional<std::uint32_t> ResidencyManager::victim(std::uint64_t protectFirst
         const auto& page = pages[id];
         if (page.index >= protectFirst && page.index <= protectLast) continue;
         if (touchFrame != 0 && page.touchFrame == touchFrame) continue;
-        if (staleOwned.contains(page.index)) continue;
+        if (isStale(page.index)) continue;
         if (!settled(page.pin)) continue;
         return id;
     }
@@ -677,18 +834,28 @@ void ResidencyManager::applyDrops() {
         }
         const auto span = PagesOf(range.address, range.bytes);
         if (span.empty) continue;
+        std::vector<std::uint64_t> candidates;
+        {
+            const std::shared_lock lock(ownedMutex);
+            for (const auto& [index, record] : owned) {
+                if (index >= span.first && index <= span.last) candidates.push_back(index);
+            }
+        }
         std::vector<std::uint64_t> dropped;
-        for (const auto& [index, record] : owned) {
-            if (index < span.first || index > span.last) continue;
+        for (const auto index : candidates) {
             const auto import = device.Import(index);
             const auto id = find(index);
             if (import.whole && id && import.serial == pages[*id].importSerial) continue;
             dropped.push_back(index);
         }
-        for (const auto index : dropped) {
-            if (staleOwned.erase(index) != 0) --staleCount;
-            owned.erase(index);
-            publishDirty(index, 0);
+        if (!dropped.empty()) {
+            const std::unique_lock lock(ownedMutex);
+            for (const auto index : dropped) {
+                if (staleOwned.erase(index) != 0) --staleCount;
+                owned.erase(index);
+                publishStale(index, 0);
+            }
+            ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
         }
         std::erase_if(writingBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
@@ -866,7 +1033,7 @@ void ResidencyManager::evictDraining() {
     if (liveChunks <= maxChunks) return;
     std::vector<std::uint64_t> stale;
     for (auto id = oldest; id != None; id = pages[id].newer) {
-        if (chunks[pages[id].slot.chunk].draining && staleOwned.contains(pages[id].index)) stale.push_back(pages[id].index);
+        if (chunks[pages[id].slot.chunk].draining && isStale(pages[id].index)) stale.push_back(pages[id].index);
     }
     retileStale(stale);
     std::vector<std::uint32_t> leaving;
@@ -1035,7 +1202,7 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
 void ResidencyManager::demote(std::span<const std::uint32_t> ids) {
     std::vector<std::uint64_t> stale;
     for (const auto id : ids) {
-        if (staleOwned.contains(pages[id].index)) stale.push_back(pages[id].index);
+        if (isStale(pages[id].index)) stale.push_back(pages[id].index);
     }
     retileStale(stale);
     ResidencyToken pending{};
@@ -1147,9 +1314,9 @@ void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t byte
     applyQueued();
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
-    retileStale(staleIn(address, bytes));
+    const bool retiled = retileStale(staleIn(address, bytes));
     const auto inSpan = [&](std::uint64_t page) { return page >= span.first && page <= span.last; };
-    ResidencyToken pending{};
+    ResidencyToken pending = retiled ? device.Current() : ResidencyToken{};
     for (const auto& [page, token] : writers) {
         if (inSpan(page) && !settled(token)) pending = MergeTokens(pending, token);
     }
@@ -1178,6 +1345,7 @@ void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t byte
     for (auto page = span.first; page <= span.last; ++page) {
         const auto id = find(page);
         if (id && !pages[*id].dirtyRuns.empty()) continue;
+        if (isStale(page)) continue;
         if (!accessGuards.contains(page) && !(id && pages[*id].accessGuarded) && span.last - span.first >= 16) continue;
         device.UnguardAccess(page);
         accessGuards.erase(page);
@@ -1394,8 +1562,11 @@ ResidencyCounts ResidencyManager::Counts() const {
     result.chunks = liveChunks;
     result.resident = static_cast<std::uint32_t>(resident.size());
     result.dirty = dirtyPages.load(std::memory_order_relaxed);
-    result.ownedPages = static_cast<std::uint32_t>(owned.size());
-    result.stalePages = static_cast<std::uint32_t>(staleOwned.size());
+    {
+        const std::shared_lock lock(ownedMutex);
+        result.ownedPages = static_cast<std::uint32_t>(owned.size());
+        result.stalePages = static_cast<std::uint32_t>(staleOwned.size());
+    }
     result.accessGuarded = static_cast<std::uint32_t>(accessGuards.size());
     result.hotResident = static_cast<std::uint32_t>(hotResident.size());
     result.retiring = static_cast<std::uint32_t>(retiring.size());
