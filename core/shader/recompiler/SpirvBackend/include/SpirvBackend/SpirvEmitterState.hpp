@@ -90,6 +90,12 @@ struct SpirvTableAccess {
     std::uint32_t compare = 0;
 };
 
+struct SpirvSwizzleSelectors {
+    std::uint32_t label = 0;
+    std::uint32_t dword3 = 0;
+    std::array<std::uint32_t, 4> selectors{};
+};
+
 struct SpirvTableImageFunction {
     IrOpcode opcode;
     MemoryInfo memory;
@@ -225,6 +231,7 @@ struct SpirvEmitterState {
     std::uint32_t meshCull = 0;
     std::uint32_t entryLabel = 0;
     std::uint32_t currentLabel = 0;
+    SpirvSwizzleSelectors swizzleSelectors;
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
     std::uint32_t quadPixelUncovered = 0;

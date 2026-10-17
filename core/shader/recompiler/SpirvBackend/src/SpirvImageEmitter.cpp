@@ -47,7 +47,11 @@ struct SampleSetup {
 
 std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t component) {
     if (state.program.Info().images.at(resource).table == NoTable || !state.tableAccess.active) FailEmit("image table swizzle requested outside a table access");
-    return Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), state.tableAccess.dword3, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
+    auto& known = state.swizzleSelectors;
+    if (known.label != state.currentLabel || known.dword3 != state.tableAccess.dword3) known = {state.currentLabel, state.tableAccess.dword3, {}};
+    auto& selector = known.selectors.at(component);
+    if (selector == 0u) selector = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), state.tableAccess.dword3, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
+    return selector;
 }
 
 std::uint32_t RuntimeSwizzledComponent(SpirvEmitterState& state, std::uint32_t selector, const std::array<std::uint32_t, 4>& components) {
@@ -331,6 +335,9 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
         const auto result = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, packed[0], packed[1], packed[2], packed[3]);
         return result;
+    }
+    if (!dref && !access.image.depthUnorm16 && !(access.image.depthBits && !gather)) {
+        return valueClass == IrTextureNumericClass::Uint ? value : Unary(state, spv::OpBitcast, TypeU32Vector(state, 4), value);
     }
     std::uint32_t component[4] = {};
     for (std::uint32_t index = 0; index < 4u; index++) {
@@ -708,29 +715,34 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     const auto sint = SintStorageFormat(access.image);
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
+    std::array<std::uint32_t, 4> candidates{};
+    for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
+        const auto source = reverse - 1u;
+        const auto packedIndex = DmaskComponentIndex(dmask, source);
+        auto candidate = ConstantU32(state, 0u);
+        if (((dmask >> source) & 1u) != 0u) {
+            candidate = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), candidate, data, mem.dataBits == 16u ? packedIndex / 2u : packedIndex);
+        }
+        if (mem.dataBits == 16u && ((dmask >> source) & 1u) != 0u) {
+            if ((packedIndex & 1u) != 0u) {
+                candidate = Binary(state, spv::OpShiftRightLogical, TypeU32(state), candidate, ConstantU32(state, 16u));
+            }
+            if (sint.format != IrBufferFormat::Invalid) {
+                const auto extended = state.module.AllocateId();
+                state.module.AddFunction(spv::OpBitFieldSExtract, TypeU32(state), extended, candidate, ConstantU32(state, 0u), ConstantU32(state, 16u));
+                candidate = extended;
+            } else {
+                candidate = Binary(state, spv::OpBitwiseAnd, TypeU32(state), candidate, ConstantU32(state, 0xffffu));
+            }
+        }
+        candidates[source] = candidate;
+    }
     for (std::uint32_t component = 0; component < 4u; component++) {
         auto raw = ConstantU32(state, 0);
         for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
             const auto source = reverse - 1u;
-            const auto packedIndex = DmaskComponentIndex(dmask, source);
-            auto candidate = ConstantU32(state, 0u);
-            if (((dmask >> source) & 1u) != 0u) {
-                candidate = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), candidate, data, mem.dataBits == 16u ? packedIndex / 2u : packedIndex);
-            }
-            if (mem.dataBits == 16u && ((dmask >> source) & 1u) != 0u) {
-                if ((packedIndex & 1u) != 0u) {
-                    candidate = Binary(state, spv::OpShiftRightLogical, TypeU32(state), candidate, ConstantU32(state, 16u));
-                }
-                if (sint.format != IrBufferFormat::Invalid) {
-                    const auto extended = state.module.AllocateId();
-                    state.module.AddFunction(spv::OpBitFieldSExtract, TypeU32(state), extended, candidate, ConstantU32(state, 0u), ConstantU32(state, 16u));
-                    candidate = extended;
-                } else {
-                    candidate = Binary(state, spv::OpBitwiseAnd, TypeU32(state), candidate, ConstantU32(state, 0xffffu));
-                }
-            }
-            raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
+            raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidates[source], raw);
         }
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
         if (component < sint.componentCount) {
@@ -1643,7 +1655,10 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     };
     std::uint32_t sample = 0;
     const bool baseLevelIfUnnormalized = !setup.dref && SamplesBaseLevelIfUnnormalized(state.program.Info().samplers.at(mem.sampler));
-    if (runtimeUnnormalized) {
+    const bool levelZeroSample = !hasOffset && opcode == spv::OpImageSampleExplicitLod && operandMask == spv::ImageOperandsLodMask && operands.size() == 1u && operands[0] == ZeroF32(state);
+    if ((runtimeUnnormalized || baseLevelIfUnnormalized) && levelZeroSample) {
+        sample = emitSample(setup.coord, operandMask, operands, opcode);
+    } else if (runtimeUnnormalized) {
         const auto unnormalized = Binary(state, spv::OpINotEqual, TypeBool(state), state.tableAccess.unnormalized, ConstantU32(state, 0u));
         const bool fold = hasOffset && setup.dimensionInfo.coordinateComponents == setup.dimensionInfo.spatialComponents;
         sample = EmitValueIfElse(state, unnormalized, resultType, [&] {
