@@ -1544,7 +1544,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (recorder->HasQueuedStores() && (resources.MemoryAccessesUnknown() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     if (resources.UsesDeviceImages()) {
         Require(context.deviceImages != nullptr, "a draw reading images through the device image table needs the device's table");
-        for (const auto& shader : shaders) resources.ExpectDeviceImages(*context.deviceImages, *shader.program);
+        for (const auto& shader : shaders) resources.ExpectDeviceImages(*context.deviceImages, shader.stage, *shader.program);
         context.deviceImages->BeforeDispatch(context, *recorder);
         requireNoTableDepthFeedback(context, state, *recorder);
     }
@@ -2130,7 +2130,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     if (recorded && recorder->HasQueuedStores() && (resources->MemoryAccessesUnknown() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     if (resources->UsesDeviceImages()) {
         Require(recorder != nullptr && context.deviceImages != nullptr, "a draw reading images through the device image table needs a recorder and the device's table");
-        for (const auto& shader : shaders) resources->ExpectDeviceImages(*context.deviceImages, *shader.program);
+        for (const auto& shader : shaders) resources->ExpectDeviceImages(*context.deviceImages, shader.stage, *shader.program);
         context.deviceImages->BeforeDispatch(context, *recorder);
         requireNoTableDepthFeedback(context, state, *recorder);
         if (!recorded) recorder->Sync();

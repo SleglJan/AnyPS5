@@ -4122,7 +4122,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedStores() && (resources.MemoryAccessesUnknown() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     if (resources.UsesDeviceImages()) {
         Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
-        resources.ExpectDeviceImages(*context.deviceImages, *record.shader->program);
+        resources.ExpectDeviceImages(*context.deviceImages, record.shader->stage, *record.shader->program);
         context.deviceImages->BeforeDispatch(context, recorder);
     }
     const auto workgroupDwords = record.shader->program->workgroupMemoryDwords;
@@ -4804,7 +4804,7 @@ void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Bu
         if (recorder.HasQueuedStores()) recorder.FlushStores();
         if (resources.UsesDeviceImages()) {
             Graphics::Require(context.deviceImages != nullptr, "a dispatch reading images through the device image table needs the device's table");
-            resources.ExpectDeviceImages(*context.deviceImages, *part.program);
+            resources.ExpectDeviceImages(*context.deviceImages, ShaderRecompiler::ShaderStage::Compute, *part.program);
             context.deviceImages->BeforeDispatch(context, recorder);
         }
     }

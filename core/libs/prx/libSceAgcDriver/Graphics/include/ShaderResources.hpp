@@ -64,6 +64,16 @@ struct PipelineSetLayouts {
     std::span<const std::uint32_t> fragmentKey;
 };
 
+class ProgramResourceCache;
+
+struct ProgramResourceCounts {
+    std::uint64_t programs = 0;
+    std::uint64_t uses = 0;
+    std::uint64_t dispatchSets = 0;
+    std::uint64_t dispatchData = 0;
+};
+ProgramResourceCounts ProgramResourceCounters();
+
 class DescriptorCache {
 public:
     explicit DescriptorCache(const Context& context);
@@ -91,8 +101,10 @@ public:
         std::uint64_t dedicatedPools = 0;
     };
     Stats Counters() const;
+    ProgramResourceCache& Programs() { return *programs; }
 
 private:
+    std::unique_ptr<ProgramResourceCache> programs;
     Context context;
     PFN_vkDestroyDescriptorSetLayout destroyLayout;
     PFN_vkDestroyDescriptorPool destroyPool;
@@ -172,10 +184,10 @@ public:
     VkDescriptorSetLayout Layout() const;
     std::vector<VkDescriptorSetLayoutBinding> LayoutBindings() const;
     bool LayoutUpdateAfterBind() const;
-    std::span<const VkDescriptorBindingFlags> LayoutBindingFlags() const { return layoutBindingFlags; }
-    VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
-    bool SplitSets() const { return splitSets; }
-    PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    std::span<const VkDescriptorBindingFlags> LayoutBindingFlags() const;
+    VkDescriptorSetLayout FragmentLayout() const;
+    bool SplitSets() const;
+    PipelineSetLayouts SetLayouts() const;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -224,7 +236,7 @@ public:
     };
     WritableSet Writable() const { return {guestMemory.WriteGrants(), pageTableStores}; }
     bool UsesDeviceImages() const { return deviceImages; }
-    void ExpectDeviceImages(DeviceImageTable& table, const ShaderRecompiler::RecompileResult& program) const;
+    void ExpectDeviceImages(DeviceImageTable& table, ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::RecompileResult& program) const;
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const;
     // Whether a region the recorded work reads in place through a host import overlaps the range.
     bool ReadsOverlap(std::uint64_t address, std::size_t bytes) const;
@@ -235,8 +247,8 @@ public:
     std::vector<std::pair<VkImage, bool>> StorageImages() const;
     bool ReadsImage(const StorageTexture* image) const;
     bool HasCachedStorageImages() const;
-    const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
-    const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
+    const std::vector<std::uint32_t>& LayoutKey() const;
+    const std::vector<std::uint32_t>& FragmentLayoutKey() const;
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
     std::string Describe() const;
 
@@ -251,9 +263,7 @@ public:
     static void RecordBatchFaults(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources);
     void NameProgram(std::uint64_t address) { program = address; }
     void PatchDispatchThreadLimit(const ShaderRecompiler::RecompileResult& program, VkDeviceAddress address, std::span<std::byte, PipelinePushConstantBytes> push);
-    void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
-        for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
-    }
+    void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const;
     // APS5_PROFILE_DRAW: the build's sub-phases ([resources] totals) and their times in
     // milliseconds (zero when not profiling), so the draw path can total them separately from
     // dispatches. bindingsMs covers the binding plan (stage A) and the image lookups (stage B);
@@ -318,52 +328,64 @@ private:
 
     struct TableStage {
         ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Compute;
-        const ShaderRecompiler::RecompileResult* program = nullptr;
-        const ShaderRecompiler::DescriptorBinding* images = nullptr;
+        bool images = false;
+        std::vector<std::vector<std::uint32_t>> samplerElements;
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::size_t firstSampler = 0;
         std::size_t samplerCount = 0;
     };
-    std::vector<TableStage> tableStages;
-    TableStage& tableStage(const CompiledShader& shader);
-    void finishImageTables();
-
-    // A host-imported buffer region the set reads in place, with its import's identity at build time.
-    struct DirectRegion {
-        std::uint64_t begin;
-        std::uint64_t end;
-        std::uint64_t serial;
+    struct SetObjects {
+        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+        bool ownsLayout = false;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        DescriptorCache::SetAllocation cacheAllocation;
     };
+    struct SamplerSource {
+        std::array<std::uint32_t, 4> words{};
+        bool compareEnable = false;
+        bool unnormalized = false;
+        bool integerBorder = false;
+    };
+    struct SamplerSlotPatch {
+        std::size_t sampler;
+        std::int32_t pushByte = -1;
+        std::int64_t dataAllocation = -1;
+        std::uint32_t dataByte = 0;
+    };
+    struct DispatchWords {
+        std::size_t allocation;
+        std::size_t shader;
+        std::size_t binding;
+    };
+    struct Program;
+    friend class ProgramResourceCache;
+    static std::shared_ptr<const Program> BuildProgram(const Context& context, std::span<const CompiledShader> shaders, std::uint32_t colorAttachments);
+    static std::shared_ptr<const Program> ProgramFor(const Context& context, std::span<const CompiledShader> shaders, std::uint32_t colorAttachments);
+    std::shared_ptr<const Program> shared;
+    static SetObjects AllocateSet(const Context& context, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind);
+    static bool DispatchAllocation(const Allocation& allocation);
 
-    // The build is two stages. A (buildPrepare, no device lock): the binding plan with its layout
-    // entries, samplers, data buffers, the upload's prepare stage (imports already serving the
-    // regions, read-only copies), the set layout and the descriptor set. B (buildComplete, under
-    // GuestMemory::GpuMutex): the texture and storage image lookups (they refresh, upload and flush
-    // through the recorder), the rest of the upload, the BDA objects, the descriptor writes and the
-    // reusability record. build runs both.
     void build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes);
     void buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes);
     void buildComplete();
     // APS5_PROFILE_DRAW: closes the current sub-phase of the build into the [resources] totals.
     double phase(BuildPhase which);
-    std::size_t addDataBuffer(std::span<const std::uint32_t> words);
-    void addGuestSamplers(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders);
     void selectMemoryImages(std::span<const CompiledShader> shaders);
-    VkDescriptorBufferInfo descriptor(Allocation& allocation);
-    std::pair<VkDeviceAddress, std::uint64_t> bufferAddress(Allocation& allocation);
-    void patchBufferAddress(const Allocation& allocation, VkDeviceAddress address, std::uint64_t bytes);
+    VkDescriptorBufferInfo descriptor(std::size_t index);
     void patchShaderData(std::int32_t pushByte, std::int64_t dataAllocation, std::uint32_t dataByte, std::span<const std::uint32_t> words);
     void reportDescriptorCaches() const;
+    Buffer* dataBuffer(std::size_t index) const;
+    VkDescriptorSet mainSet() const;
+    VkDescriptorSet fragmentSet() const;
     Context context;
-    std::vector<std::uint32_t> layoutKey;
     GuestBufferMemory guestMemory;
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
-    std::int64_t computeShaderData = -1;
     bool pageTableStores = false;
     bool storesUnbounded = false;
     bool computeBuild = false;
@@ -376,25 +398,12 @@ private:
     bool faultChecks = false;
     bool imageStoresRecorded = false;
     bool deviceImages = false;
-    VkDescriptorSetLayout _layout = VK_NULL_HANDLE;
-    // Whether the layout is this object's own (no cache) and destroyed with it.
-    bool ownsLayout = false;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     VkDescriptorPool pool = VK_NULL_HANDLE;
     // The cache pool the set was allocated from, freed back to it on release.
     DescriptorCache::SetAllocation cacheAllocation;
-    struct SetObjects {
-        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
-        bool ownsLayout = false;
-        VkDescriptorSet set = VK_NULL_HANDLE;
-        VkDescriptorPool pool = VK_NULL_HANDLE;
-        DescriptorCache::SetAllocation cacheAllocation;
-    };
-    bool splitSets = false;
-    std::vector<std::uint32_t> fragmentLayoutKey;
     SetObjects fragment;
-    std::uint32_t setOf(const Binding& binding) const;
-    std::vector<Allocation> allocations;
+    std::vector<std::unique_ptr<Buffer>> dispatchData;
     std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
     friend class BatchFaults;
@@ -412,35 +421,9 @@ private:
     std::uint64_t linearThreads = 0;
     std::optional<ShaderRecompiler::LinearStore> linearStore;
     std::vector<std::shared_ptr<Texture>> textures;
-    std::vector<bool> textureFirstLayer;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> stageShaders;
-    std::vector<std::shared_ptr<Sampler>> samplers;
-    std::shared_ptr<Sampler> paddingSampler;
-    struct SamplerSource {
-        std::array<std::uint32_t, 4> words{};
-        bool compareEnable = false;
-        bool unnormalized = false;
-        bool integerBorder = false;
-    };
-    std::vector<SamplerSource> samplerSources;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
-    std::vector<DataPatch> dataPatches;
-    struct SamplerSlotPatch {
-        std::size_t sampler;
-        std::int32_t pushByte = -1;
-        std::int64_t dataAllocation = -1;
-        std::uint32_t dataByte = 0;
-    };
-    std::vector<SamplerSlotPatch> samplerSlotPatches;
     BuildTiming timing;
-    // Build state carried from stage A to stage B: the bindings in plan order, the image bindings
-    // still to look up (index into `bindings`; the DescriptorBinding lives in the compiled shader),
-    // the descriptor counts the set was sized for, and the compute stage of a deferred build.
-    std::vector<Binding> bindings;
-    std::vector<VkDescriptorBindingFlags> layoutBindingFlags;
-    std::vector<VkDescriptorBindingFlags> fragmentBindingFlags;
-    std::uint64_t storageBuffers = 0;
-    bool updateAfterBind = false;
     // The compute constructor's shader and captured regions: the caller's objects, valid only until
     // the build (Complete() for a deferred one) is done, and reset then (forgetDeferredInputs).
     CompiledShader deferredCompute{};
