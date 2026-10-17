@@ -91,11 +91,34 @@ Violations Inspect(std::span<const std::uint32_t> words) {
     const auto name = [&](std::uint32_t id) { return names.contains(id) ? names[id] : "%" + std::to_string(id); };
     Violations found;
     std::string function;
+    std::uint32_t functionId = 0;
+    std::uint32_t block = 0;
+    struct Call {
+        std::uint32_t caller;
+        std::uint32_t block;
+        std::uint32_t callee;
+        std::vector<std::uint32_t> pointers;
+    };
+    std::vector<Call> calls;
+    std::map<std::uint32_t, std::map<std::uint32_t, std::vector<std::uint32_t>>> successors;
     for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
         const auto op = words[cursor] & 0xffffu;
         const auto count = words[cursor] >> 16u;
         const auto operand = [&](std::size_t index) { return words[cursor + 1u + index]; };
-        if (op == spv::OpFunction) function = name(operand(1));
+        if (op == spv::OpFunction) {
+            function = name(operand(1));
+            functionId = operand(1);
+        }
+        if (op == spv::OpLabel) {
+            block = operand(0);
+            successors[functionId][block];
+        }
+        if (op == spv::OpBranch) successors[functionId][block].push_back(operand(0));
+        if (op == spv::OpBranchConditional) successors[functionId][block].insert(successors[functionId][block].end(), {operand(1), operand(2)});
+        if (op == spv::OpSwitch) {
+            successors[functionId][block].push_back(operand(1));
+            for (std::size_t index = 3; index + 1u < count; index += 2) successors[functionId][block].push_back(operand(index));
+        }
         if (op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain || op == spv::OpPtrAccessChain || op == spv::OpInBoundsPtrAccessChain) {
             const auto base = operand(2);
             if (localPointers.contains(base)) localPointers[operand(1)] = localPointers[base];
@@ -107,12 +130,39 @@ Violations Inspect(std::span<const std::uint32_t> words) {
             }
         }
         if (op == spv::OpFunctionCall) {
+            Call call{functionId, block, operand(2), {}};
             for (std::size_t argument = 3; argument + 1u < count; ++argument) {
                 const auto value = operand(argument);
-                if (!localPointers.contains(value) || localPointers[value] != spv::StorageClassFunction) continue;
-                found.resultPointers.push_back(function + " passes the Function-storage pointer " + name(value) + " to " + name(operand(2)));
+                if (localPointers.contains(value) && localPointers[value] == spv::StorageClassFunction) call.pointers.push_back(value);
             }
+            calls.push_back(std::move(call));
         }
+    }
+    const auto inCycle = [&](std::uint32_t caller, std::uint32_t start) {
+        const auto& graph = successors[caller];
+        std::set<std::uint32_t> seen;
+        std::vector<std::uint32_t> stack;
+        if (const auto found = graph.find(start); found != graph.end()) stack.assign(found->second.begin(), found->second.end());
+        while (!stack.empty()) {
+            const auto next = stack.back();
+            stack.pop_back();
+            if (next == start) return true;
+            if (!seen.insert(next).second) continue;
+            if (const auto found = graph.find(next); found != graph.end()) stack.insert(stack.end(), found->second.begin(), found->second.end());
+        }
+        return false;
+    };
+    std::map<std::uint32_t, bool> byValue;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> sites;
+    for (const auto& call : calls) ++sites[{call.callee, call.caller}];
+    for (const auto& call : calls) {
+        const bool single = sites[{call.callee, call.caller}] == 1u && !inCycle(call.caller, call.block);
+        const auto known = byValue.find(call.callee);
+        byValue[call.callee] = (known == byValue.end() || known->second) && single;
+    }
+    for (const auto& call : calls) {
+        if (!byValue[call.callee]) continue;
+        for (const auto pointer : call.pointers) found.resultPointers.push_back(name(call.caller) + " passes the Function-storage pointer " + name(pointer) + " to " + name(call.callee) + ", which every caller calls from one site outside any cycle");
     }
     return found;
 }
@@ -135,7 +185,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         const auto compiled = Compile(device, TableProgram(), userData);
         const auto violations = Inspect(compiled.result->spirv.Words());
         Expect(violations.dynamicIndexing.empty(), what + ": the module indexes Function or Private arrays dynamically, which the GPU places in local memory:" + Join(violations.dynamicIndexing));
-        Expect(violations.resultPointers.empty(), what + ": the module returns helper results through Function-storage pointers instead of by value:" + Join(violations.resultPointers));
+        Expect(violations.resultPointers.empty(), what + ": a callee every caller calls from one site outside any cycle returns its results through Function-storage pointers instead of by value:" + Join(violations.resultPointers));
         const auto outcome = Run(device, compiled, Height);
         ExpectClean(outcome, what);
         const Expected expected{Height, 0, 4, [index](std::uint32_t row, std::uint32_t x, std::uint32_t component, std::uint32_t word) {
