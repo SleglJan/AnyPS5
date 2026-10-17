@@ -48,6 +48,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
 #include "Optimization/include/Optimization/LinearStore.hpp"
+#include "Optimization/include/Optimization/TransferKernel.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
@@ -376,6 +377,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     if (request.context.compute && !request.context.compute->threadsFromMemory && !request.context.compute->PartialGroups()) program.Info().linearStore = FindLinearStore(program, request.context.compute->numThreads);
+    program.Info().transferKernel = FindTransferKernel(program);
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
 
     return program;
@@ -618,6 +620,13 @@ void ApplyBufferRanges(const ShaderInfo& info, std::span<const DescriptorValue> 
     apply(info.bufferStores, stores, info.unboundedStores, result.writeRanges, result.unboundedWrites, result.fixedUnboundedWrites, result.memoryWriteRanges);
     apply(info.bufferLoads, loads, info.unboundedLoads, result.readRanges, result.unboundedReads, result.fixedUnboundedReads, result.memoryReadRanges);
     if (!memory) result.linearStore = MaterializeLinearStore(info, stores);
+    if (!memory) {
+        result.transferKernel.reset();
+        if (result.linearStore && info.transferKernel) {
+            const auto& site = *info.transferKernel;
+            result.transferKernel = TransferKernel{site.kind == TransferKernelSite::Kind::Copy ? TransferKernel::Kind::Copy : TransferKernel::Kind::Fill, site.components, site.destination, site.source, site.values, site.valueRegisters, site.valueMemory, site.valueDescriptor};
+        }
+    }
 }
 
 bool RefreshMemoryBuffers(const IrResourcePlan& plan, const SrtRuntime& runtime, const ShaderInvocation& current, ShaderInvocation& refreshed) {

@@ -622,6 +622,20 @@ struct CompiledShaderArtifact {
     std::array<std::uint64_t, 2> identity{};
 };
 
+struct TransferKernel {
+    enum class Kind : std::uint8_t { Fill, Copy };
+    Kind kind = Kind::Fill;
+    std::uint32_t components = 0;
+    std::uint32_t destination = 0;
+    std::uint32_t source = 0;
+    std::array<std::uint32_t, 4> values{};
+    std::uint32_t valueRegisters = 0;
+    std::uint32_t valueMemory = 0;
+    std::uint32_t valueDescriptor = 0;
+
+    bool operator==(const TransferKernel& other) const = default;
+};
+
 struct LinearStore {
     std::uint64_t base = 0;
     std::uint32_t stride = 0;
@@ -657,6 +671,7 @@ struct ShaderInvocation {
     bool deviceImagesComplete = true;
     std::vector<std::uint64_t> deviceImageInterfaces;
     std::optional<LinearStore> linearStore;
+    std::optional<TransferKernel> transferKernel;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the

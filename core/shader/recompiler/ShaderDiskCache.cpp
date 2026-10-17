@@ -138,8 +138,9 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 29, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 30, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<LinearStoreSite>() == 5, "LinearStoreSite changed: update the info encoder");
+static_assert(fieldCount<TransferKernelSite>() == 8, "TransferKernelSite changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 40, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 9, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -807,6 +808,17 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         writer.Value(info.linearStore->groupThreads);
         writer.Value(info.linearStore->groupIdBits);
     }
+    writer.Value(info.transferKernel.has_value());
+    if (info.transferKernel) {
+        writer.Value(info.transferKernel->kind);
+        writer.Value(info.transferKernel->components);
+        writer.Value(info.transferKernel->destination);
+        writer.Value(info.transferKernel->source);
+        for (const auto value : info.transferKernel->values) writer.Value(value);
+        writer.Value(info.transferKernel->valueRegisters);
+        writer.Value(info.transferKernel->valueMemory);
+        writer.Value(info.transferKernel->valueDescriptor);
+    }
 }
 
 void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
@@ -935,6 +947,22 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         reader.Value(site.groupThreads);
         reader.Value(site.groupIdBits);
         info.linearStore = site;
+    }
+    bool transferKernel = false;
+    reader.Value(transferKernel);
+    info.transferKernel.reset();
+    if (transferKernel) {
+        TransferKernelSite site;
+        reader.Value(site.kind);
+        reader.Value(site.components);
+        reader.Value(site.destination);
+        reader.Value(site.source);
+        for (auto& value : site.values) reader.Value(value);
+        reader.Value(site.valueRegisters);
+        reader.Value(site.valueMemory);
+        reader.Value(site.valueDescriptor);
+        if (site.kind != TransferKernelSite::Kind::Fill && site.kind != TransferKernelSite::Kind::Copy) throw std::runtime_error("shader disk cache: invalid transfer kernel kind");
+        info.transferKernel = site;
     }
 }
 
