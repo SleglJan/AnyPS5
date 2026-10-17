@@ -6918,7 +6918,7 @@ void validationTests() {
     {
         auto vertex = buffered({.push = true, .plainBuffer = true});
         vertex.bindings.front().readOnly = true;
-        expectFailure([&] { validate(vertex, 8); }, "read-only descriptor metadata is unsupported");
+        expectFailure([&] { validate(vertex, 8); }, "only the format table is a read-only descriptor");
     }
     {
         auto vertex = pushed({.push = true});
