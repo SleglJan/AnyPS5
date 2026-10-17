@@ -96,7 +96,8 @@ struct TextureGatherCopy {
 class Texture {
 public:
     Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool decodedCopy = false);
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const TextureGatherCopy> gather, bool depthCompare, bool decodedCopy);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, DccKeys keys, bool depthCompare, bool decodedCopy);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const TextureGatherCopy> gather, DccKeys keys, bool depthCompare, bool decodedCopy);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -155,7 +156,7 @@ public:
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
 
 private:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::span<const TextureGatherCopy> gather, bool depthCompare, bool decodedCopy);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::span<const TextureGatherCopy> gather, DccKeys keys, bool depthCompare, bool decodedCopy);
     void release() noexcept;
     void createFirstLayerView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);
     void prepareBaseLevelView(const GuestTextureResource& descriptor, VkImageViewCreateInfo viewInfo);

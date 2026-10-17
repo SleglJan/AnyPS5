@@ -1,0 +1,33 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 1, std430) buffer Surface { uint data[]; } surface;
+
+layout(push_constant) uniform Push {
+    uint words;
+    uint elementBytes;
+    uint expand;
+    uint unused;
+    uvec4 pattern;
+} push;
+
+uvec4 firstElement(uint first) {
+    uint word0 = surface.data[first];
+    if (push.elementBytes == 1u) return uvec4((word0 & 0xffu) * 0x01010101u);
+    if (push.elementBytes == 2u) return uvec4((word0 & 0xffffu) * 0x00010001u);
+    if (push.elementBytes == 4u) return uvec4(word0);
+    uint word1 = surface.data[first + 1u];
+    if (push.elementBytes == 8u) return uvec4(word0, word1, word0, word1);
+    return uvec4(word0, word1, surface.data[first + 2u], surface.data[first + 3u]);
+}
+
+void main() {
+    uint first = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 64u;
+    if (first >= push.words) return;
+    uvec4 pattern = push.expand != 0u ? firstElement(first) : push.pattern;
+    memoryBarrierBuffer();
+    barrier();
+    uint index = first + gl_LocalInvocationID.x;
+    if (index < push.words) surface.data[index] = pattern[gl_LocalInvocationID.x & 3u];
+}

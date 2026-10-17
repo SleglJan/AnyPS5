@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/DccKeyClear_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecode_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/SurfaceFill_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage10_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage11_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage20_spv.h"
@@ -20,6 +21,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -118,6 +120,8 @@ TextureDetiler::~TextureDetiler() {
 }
 
 void TextureDetiler::release() noexcept {
+    if (fillPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, fillPipeline, nullptr);
+    if (fillModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, fillModule, nullptr);
     for (const auto decodePipeline : decodePipelines) {
         if (decodePipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, decodePipeline, nullptr);
     }
@@ -334,6 +338,57 @@ void TextureDetiler::DispatchDecode(VkCommandBuffer commands, std::uint32_t gues
         const auto pushed = static_cast<std::uint32_t>(count);
         context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushed), &pushed);
         const auto groups = (count + 255u) / 256u;
+        const auto groupsX = static_cast<std::uint32_t>(std::min<std::uint64_t>(groups, 65535u));
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, static_cast<std::uint32_t>((groups + groupsX - 1u) / groupsX), 1);
+    }
+}
+
+void TextureDetiler::DispatchSurfaceFill(VkCommandBuffer commands, VkBuffer surface, std::uint64_t bytes, std::uint32_t elementBytes, bool expandSingle, const std::array<std::uint32_t, 4>& pattern) {
+    Require(commands != VK_NULL_HANDLE && surface != VK_NULL_HANDLE, "a surface fill needs a command buffer and the surface's buffer");
+    Require(bytes % 16u == 0u, "a surface fill covers whole 16-byte groups");
+    Require(!expandSingle || (std::has_single_bit(elementBytes) && elementBytes <= 16u), "a single-color block expansion needs a power-of-two element of at most 16 bytes");
+    if (fillModule == VK_NULL_HANDLE) {
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(SURFACE_FILL_SPV);
+        moduleInfo.pCode = SURFACE_FILL_SPV;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &fillModule), "vkCreateShaderModule surface fill");
+    }
+    if (fillPipeline == VK_NULL_HANDLE) {
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        createInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        createInfo.stage.module = fillModule;
+        createInfo.stage.pName = "main";
+        createInfo.layout = pipelineLayout;
+        Check(CreateComputePipeline(context, createInfo, &fillPipeline), "vkCreateComputePipelines surface fill");
+    }
+    struct FillPush {
+        std::uint32_t words;
+        std::uint32_t elementBytes;
+        std::uint32_t expand;
+        std::uint32_t unused;
+        std::array<std::uint32_t, 4> pattern;
+    };
+    constexpr std::uint64_t BlockBytes = 256u;
+    const std::uint64_t step = std::lcm<std::uint64_t>(std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4u), BlockBytes);
+    const std::uint64_t chunk = context.limits.maxStorageBufferRange / step * step;
+    Require(chunk != 0u, "the device's storage buffer range is too small for a surface fill");
+    for (std::uint64_t first = 0; first < bytes; first += chunk) {
+        const auto count = std::min(chunk, bytes - first);
+        const auto set = allocateSet();
+        const VkDescriptorBufferInfo surfaceInfo{surface, first, count};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = 1;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &surfaceInfo;
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, fillPipeline);
+        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+        const FillPush push{static_cast<std::uint32_t>(count / 4u), elementBytes, expandSingle ? 1u : 0u, 0u, pattern};
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        const auto groups = (count + BlockBytes - 1u) / BlockBytes;
         const auto groupsX = static_cast<std::uint32_t>(std::min<std::uint64_t>(groups, 65535u));
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, static_cast<std::uint32_t>((groups + groupsX - 1u) / groupsX), 1);
     }

@@ -117,6 +117,7 @@ ImageTableReuseCounts ImageTableReuses();
 struct SampledTextureCounts {
     std::uint64_t snapshots;
     std::uint64_t gathers;
+    std::uint64_t clears;
 };
 SampledTextureCounts SampledTextureSources();
 

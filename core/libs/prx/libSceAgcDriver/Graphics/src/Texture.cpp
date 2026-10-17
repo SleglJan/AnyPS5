@@ -270,11 +270,13 @@ std::uint64_t SampledTextureMemory() {
     return SampledMemoryCounter().load(std::memory_order_relaxed);
 }
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool decodedCopy) : Texture(context, detiler, descriptor, components, snapshot, {}, depthCompare, decodedCopy) {}
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool decodedCopy) : Texture(context, detiler, descriptor, components, snapshot, {}, DccKeys::Uncompressed, depthCompare, decodedCopy) {}
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const TextureGatherCopy> gather, bool depthCompare, bool decodedCopy) : Texture(context, detiler, descriptor, components, {}, gather, depthCompare, decodedCopy) {}
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, DccKeys keys, bool depthCompare, bool decodedCopy) : Texture(context, detiler, descriptor, components, snapshot, {}, keys, depthCompare, decodedCopy) {}
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::span<const TextureGatherCopy> gather, bool depthCompare, bool decodedCopy) : context(context) {
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const TextureGatherCopy> gather, DccKeys keys, bool depthCompare, bool decodedCopy) : Texture(context, detiler, descriptor, components, {}, gather, keys, depthCompare, decodedCopy) {}
+
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, std::span<const TextureGatherCopy> gather, DccKeys keys, bool depthCompare, bool decodedCopy) : context(context) {
 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -298,7 +300,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         for (const auto& mip : mips) AGC_LOG_DEFERRED(stdout, "  mip %ux%u tiled=0x%llx+0x%llx linear=0x%llx+0x%llx blocksPerRow=%u pitch=%u tail=%d", mip.width, mip.height, static_cast<unsigned long long>(mip.tiledOffset), static_cast<unsigned long long>(mip.tiledSize), static_cast<unsigned long long>(mip.linearOffset), static_cast<unsigned long long>(mip.linearSize), mip.blocksPerRow, mip.pitchBytes, mip.tail ? 1 : 0);
 
         const auto guestBytes = geometry.guestBytes;
-        Require(gather.empty() ? snapshot.size() == guestBytes : snapshot.empty(), "texture snapshot size mismatch");
+        const bool cleared = IsDccClear(keys);
+        Require(cleared || keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle, std::string("AGC graphics: a sampled texture is made under ") + DccKeysName(keys) + " DCC keys, which are neither uncompressed, a clear code nor single-color blocks");
+        Require(cleared ? snapshot.empty() && gather.empty() : gather.empty() ? snapshot.size() == guestBytes : snapshot.empty(), "texture snapshot size mismatch");
+        std::array<std::uint32_t, 4> clearWords{};
+        if (cleared) Require(FillDccClear(ResolveTextureFormat(descriptor.format), keys, descriptor.dccAlphaOnMsb, std::as_writable_bytes(std::span(clearWords))), std::string("AGC graphics: the sampled texture's format has no encoding of its ") + DccKeysName(keys) + " DCC clear code");
 
         const auto sliceLinearBytes = geometry.sliceLinearBytes;
         Require(arrayLayers == 0 || sliceLinearBytes <= UINT64_MAX / arrayLayers, "detiled texture buffer size overflows");
@@ -343,7 +349,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
             std::shared_ptr<Buffer> staging;
-            if (gather.empty()) {
+            if (gather.empty() && !cleared) {
                 staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
             }
@@ -377,11 +383,15 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             if (staging != nullptr) {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
                 CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, guestBytes);
-            } else {
+            } else if (!cleared) {
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
                 for (const auto& copy : gather) CopyBuffer(context, commands, copy.source, copy.sourceOffset, tiled->Handle(), copy.targetOffset, copy.bytes);
             }
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            if (!cleared) RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            if (cleared || keys == DccKeys::ClearSingle) {
+                detiler.DispatchSurfaceFill(commands, tiled->Handle(), guestBytes, elementBytes, !cleared, clearWords);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            }
 
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
                 const auto guestLayerOffset = geometry.GuestLayerOffset(layer);

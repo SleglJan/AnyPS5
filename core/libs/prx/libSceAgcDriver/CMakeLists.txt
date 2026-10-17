@@ -122,6 +122,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcSurfaceFillShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SurfaceFill.comp)
+set(agcSurfaceFillShaderSpv ${agcTextureDetileGeneratedDir}/SurfaceFill.spv)
+set(agcSurfaceFillShaderHeader ${agcTextureDetileGeneratedDir}/SurfaceFill_spv.h)
+add_custom_command(
+        OUTPUT "${agcSurfaceFillShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcSurfaceFillShaderSpv}" "${agcSurfaceFillShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcSurfaceFillShaderSpv} -DOUTPUT=${agcSurfaceFillShaderHeader}
+        -DSYMBOL=SURFACE_FILL_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcSurfaceFillShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcTexelDecodeImageShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TexelDecodeImage.comp)
 set(agcTexelDecodeImageShaderHeaders)
 foreach(agcTexelDecodeDimension 1 2 3)
@@ -285,6 +298,7 @@ set(agcDriverSources
         ${agcCmaskClearShaderHeader}
         ${agcDccKeyClearShaderHeader}
         ${agcTexelDecodeShaderHeader}
+        ${agcSurfaceFillShaderHeader}
         ${agcTexelDecodeImageShaderHeaders}
         ${agcMeshArgumentsShaderHeader}
         ${agcDispatchThreadsShaderHeader}
@@ -2696,3 +2710,5 @@ endif()
 target_include_directories(agc_driver_sample_own_multisample_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_sample_own_native_depth_table_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
+target_include_directories(agc_driver_sampled_texture_keys_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)

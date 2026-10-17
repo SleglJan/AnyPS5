@@ -352,6 +352,7 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
     std::atomic<std::uint64_t> gathers{0};
+    std::atomic<std::uint64_t> clears{0};
     std::atomic<std::uint64_t> pendingReads{0};
     std::atomic<std::uint64_t> storageFallbacks{0};
     std::atomic<std::uint64_t> records{0};
@@ -715,11 +716,38 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         texture->RefreshCopy();
         return texture;
     };
+    const auto surfaceTexture = [&](CachedTexture& made) {
+        if (IsDccClear(*keys)) {
+            made.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const TextureGatherCopy>(), *keys, depthCompare, decodedCopy);
+            counters.clears.fetch_add(1, std::memory_order_relaxed);
+        } else if (auto gather = gatherSurface(context, address, bytes)) {
+            made.gathered = true;
+            made.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const TextureGatherCopy>(*gather), *keys, depthCompare, decodedCopy);
+            counters.gathers.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            if (Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
+            std::vector<std::byte> snapshot(bytes);
+            {
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+                GuestMemory::ReadCommitted(address, snapshot);
+            }
+            static const bool traceTextures = std::getenv("APS5_TRACE_TEXTURES") != nullptr;
+            if (traceTextures) {
+                std::size_t nonzero = 0;
+                for (std::size_t i = 0; i < snapshot.size(); i += 64) nonzero += snapshot[i] != std::byte{0};
+                std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, snapshot.size() / 64);
+            }
+            made.digest = GuestMemory::Digest(snapshot);
+            made.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, *keys, depthCompare, decodedCopy);
+            counters.snapshots.fetch_add(1, std::memory_order_relaxed);
+        }
+        made.accounted = made.texture->AllocationBytes();
+    };
     if (disabled) {
         if (source != nullptr) return storageTexture();
-        std::vector<std::byte> snapshot(bytes);
-        ReadTextureSurface(resource, *keys, snapshot);
-        return std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, decodedCopy);
+        CachedTexture made{};
+        surfaceTexture(made);
+        return made.texture;
     }
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare, decodedCopy);
@@ -775,26 +803,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = storageTexture();
         entry.accounted = (source->Cached() ? 0u : heldBytes(*source)) + (decodedCopy ? entry.texture->AllocationBytes() : 0u);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
-    } else if (auto gather = *keys == DccKeys::Uncompressed ? gatherSurface(context, address, bytes) : std::nullopt) {
-        entry.gathered = true;
-        entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const TextureGatherCopy>(*gather), depthCompare, decodedCopy);
-        entry.accounted = entry.texture->AllocationBytes();
-        counters.gathers.fetch_add(1, std::memory_order_relaxed);
     } else {
-        // Snapshot before the upload so a write racing with it is caught by the next comparison.
-        if (*keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
-        std::vector<std::byte> snapshot(bytes);
-        ReadTextureSurface(resource, *keys, snapshot);
-        static const bool traceTextures = std::getenv("APS5_TRACE_TEXTURES") != nullptr;
-        if (traceTextures) {
-            std::size_t nonzero = 0;
-            for (std::size_t i = 0; i < snapshot.size(); i += 64) nonzero += snapshot[i] != std::byte{0};
-            std::fprintf(stderr, "[texture] 0x%llx %ux%u format %u tile %d: %zu of %zu sampled bytes nonzero\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), nonzero, snapshot.size() / 64);
-        }
-        entry.digest = GuestMemory::Digest(snapshot);
-        entry.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot, depthCompare, decodedCopy);
-        entry.accounted = entry.texture->AllocationBytes();
-        counters.snapshots.fetch_add(1, std::memory_order_relaxed);
+        surfaceTexture(entry);
     }
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
@@ -2725,7 +2735,7 @@ void ShaderResources::resolveImageTables() {
 
 SampledTextureCounts SampledTextureSources() {
     const auto& counters = TextureCounts();
-    return {counters.snapshots.load(std::memory_order_relaxed), counters.gathers.load(std::memory_order_relaxed)};
+    return {counters.snapshots.load(std::memory_order_relaxed), counters.gathers.load(std::memory_order_relaxed), counters.clears.load(std::memory_order_relaxed)};
 }
 
 ImageTableReuseCounts ImageTableReuses() {
