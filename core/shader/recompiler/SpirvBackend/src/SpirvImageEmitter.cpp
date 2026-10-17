@@ -2084,6 +2084,26 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
     return merge;
 }
 
+constexpr std::size_t InlineModeSwitchArms = 512u;
+
+bool InlineModeSwitchesFit(const SpirvEmitterState& state) {
+    const auto& infos = state.program.Resources().memoryInfo;
+    const auto& images = state.program.Resources().info.images;
+    std::size_t arms = 0;
+    for (const IrBlock* block : state.program.BlockOrder()) {
+        for (const IrValue* other : block->Instructions()) {
+            if (ImageOpcodeInfoOf(other->Opcode()).access == ImageAccess::None) continue;
+            const auto index = other->Flags<MemoryFlags>().index;
+            if (index >= infos.size() || infos[index].kind != ResourceKind::Image || infos[index].resource >= images.size()) continue;
+            const auto& image = images[infos[index].resource];
+            if (image.table == NoTable && !image.deviceTable) continue;
+            arms += image.table != NoTable ? state.program.Info().runtimeImageModes.at(infos[index].resource).size() : ResourceMaterializer::RuntimeImageModes(image).size();
+            if (arms > InlineModeSwitchArms) return false;
+        }
+    }
+    return true;
+}
+
 bool SingleTableImageUse(const SpirvEmitterState& state, const IrValue& inst, const MemoryInfo& memory) {
     const auto& infos = state.program.Resources().memoryInfo;
     std::size_t uses = 0;
@@ -2100,7 +2120,7 @@ bool SingleTableImageUse(const SpirvEmitterState& state, const IrValue& inst, co
 void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, std::uint32_t selector, bool tableSampler, bool atAccess) {
     auto& state = ctx.state;
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
-    if (state.laneCount == 1u && !state.module.InHelperFunction() && (atAccess || SingleTableImageUse(state, inst, memory))) {
+    if (state.laneCount == 1u && !state.module.InHelperFunction() && (atAccess || SingleTableImageUse(state, inst, memory)) && InlineModeSwitchesFit(state)) {
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
         EmitModeSwitch(ctx, inst, memory, modes, true, selector, result);
         if (returnsValue) ctx.Define(inst, result);
