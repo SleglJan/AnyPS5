@@ -1161,6 +1161,7 @@ void OwnedPagesRetiledBeforeReaders() {
     fixture.manager->MarkStale(Address(BasePage + 0, 2), 2 * ResidencySubpageBytes, &owner);
     Expect(fixture.manager->Stale(BasePage + 0) == 0x000c && owner.retiled.empty(), "the owner's writes into a resident shared page stay in the owner, stale");
     Expect(fixture.manager->DirtyIn(Address(BasePage + 0, 3), 16), "a stale subpage answers dirty without the lock");
+    Expect(fixture.manager->GuardedStaleIn(Address(BasePage + 0), ResidencyPageBytes, &owner) && !fixture.manager->GuardedStaleIn(Address(BasePage + 0), ResidencyPageBytes, nullptr), "the owner's stale subpages of a resident shared page are access-guarded");
     fixture.manager->RetileAllOwned();
     Expect(owner.retiled.size() == 1 && owner.retiled[0].address == Address(BasePage + 0, 2) && owner.retiled[0].bytes == 2 * ResidencySubpageBytes, "the retile before a reader asks the owner for the two stale subpages");
     Expect(fixture.manager->Stale(BasePage + 0) == 0 && fixture.manager->Dirty(BasePage + 0) == 0x000c, "after the retile the subpages are dirty in the mirror, not stale");
@@ -1196,6 +1197,7 @@ void PrivateOwnedPagesHeldForReaders() {
     fixture.manager->MarkStale(Address(BasePage + 2, 1), ResidencySubpageBytes, &owner);
     Expect(owner.retiled.empty() && fixture.manager->Stale(BasePage + 2) == 0x0002 && fixture.manager->Counts().eagerRetiles == 0 && fixture.manager->Counts().accessGuarded == guarded, "a private page holds its stale subpage, unguarded, until a reader");
     Expect(fixture.manager->StaleIn(Address(BasePage + 2, 1), 4) && !fixture.manager->StaleIn(Address(BasePage + 2, 2), 4), "the unlocked stale query names the stale subpage only");
+    Expect(!fixture.manager->GuardedStaleIn(Address(BasePage + 2), ResidencyPageBytes, &owner), "a private page's stale subpage is not access-guarded");
     fixture.manager->FlushForCpuRead(Address(BasePage + 2, 1), 4);
     fixture.gpu.Drain();
     Expect(owner.retiled.size() == 1 && fixture.manager->Stale(BasePage + 2) == 0, "a driver read retiles the private page");

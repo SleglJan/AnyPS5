@@ -3906,7 +3906,7 @@ std::uint64_t StorageTexture::RegistryStores() {
 
 void StorageTexture::retileSelf() {
     auto* residency = ResidencyDriver::Active();
-    if (!residencyOwned || residency == nullptr || !residency->Manager().StaleIn(descriptor.baseAddress, guestBytes)) return;
+    if (!residencyOwned || residency == nullptr || !residency->Manager().GuardedStaleIn(descriptor.baseAddress, guestBytes, this)) return;
     const auto previous = std::exchange(flushReason, "storage refresh");
     struct Restore {
         const char* previous;

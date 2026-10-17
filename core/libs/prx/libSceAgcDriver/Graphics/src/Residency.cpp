@@ -451,6 +451,19 @@ std::vector<std::shared_ptr<IResidencyOwner>> ResidencyManager::HoldStaleOwners(
     return held;
 }
 
+bool ResidencyManager::GuardedStaleIn(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const {
+    if (!StaleIn(address, bytes)) return false;
+    const auto span = PagesOf(address, bytes);
+    const std::shared_lock lock(ownedMutex);
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto entry = owned.find(page);
+        if (entry == owned.end() || entry->second.owner != owner || entry->second.stale == 0) continue;
+        const auto id = find(page);
+        if (id && (pages[*id].accessMask & entry->second.stale) != 0) return true;
+    }
+    return false;
+}
+
 bool ResidencyManager::StaleOfOthers(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const {
     if (!StaleIn(address, bytes)) return false;
     if (bytes > std::numeric_limits<std::uint64_t>::max() - address) bytes = std::numeric_limits<std::uint64_t>::max() - address;

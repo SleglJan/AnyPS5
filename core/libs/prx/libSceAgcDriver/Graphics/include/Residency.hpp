@@ -203,6 +203,7 @@ public:
     std::vector<std::shared_ptr<IResidencyOwner>> HoldOwners(std::uint64_t address, std::uint64_t bytes) const;
     std::vector<std::shared_ptr<IResidencyOwner>> HoldStaleOwners() const;
     bool StaleOfOthers(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const;
+    bool GuardedStaleIn(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const;
     std::uint64_t OwnershipSerial() const { return ownershipSerial.load(std::memory_order_acquire); }
     bool AnyStale() const { return staleCount.load(std::memory_order_acquire) != 0; }
     bool DirtyIn(std::uint64_t address, std::uint64_t bytes) const;
