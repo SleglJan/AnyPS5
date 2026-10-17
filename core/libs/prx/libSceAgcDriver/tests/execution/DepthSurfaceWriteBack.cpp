@@ -43,6 +43,11 @@ namespace Graphics = AgcDriver::Graphics;
 constexpr std::size_t PlaneBytes = 65536;
 constexpr std::uint32_t Untouched = 0x5a5a5a5au;
 constexpr std::uint8_t StencilValue = 0x3cu;
+constexpr std::uint32_t StoreThreads = 32;
+
+alignas(256) constexpr std::array<std::uint32_t, 9> StoreLaneDepthCode{
+    0x7e280d00u, 0x102828ffu, 0x3c800000u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u, 0xbf810000u,
+};
 
 struct Shaders {
     ShaderRecompiler::RecompileResult vertex;
@@ -445,6 +450,63 @@ void PartialHtilePublication(AgcDriver::VulkanDevice& device, const Shaders& slo
     std::printf("%s publishes %zu of %u tiles and leaves the other HTILE words untouched\n", what.c_str(), published.size(), TilesX * TilesY);
 }
 
+ShaderRecompiler::RecompileResult StoreLaneDepth(AgcDriver::VulkanDevice& device, std::uint64_t plane) {
+    constexpr std::uint32_t Format32Float = 22u;
+    constexpr std::uint32_t Type2D = 9u;
+    TestGuest::Vector<std::uint32_t> userData(16, 0u);
+    const std::array<std::uint32_t, 8> texture{
+        static_cast<std::uint32_t>(plane >> 8u),
+        static_cast<std::uint32_t>((plane >> 40u) & 0xffu) | (Format32Float << 20u) | (((Width - 1u) & 3u) << 30u),
+        ((Width - 1u) >> 2u) | ((Height - 1u) << 14u),
+        0xfacu | (static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX) << 20u) | (Type2D << 28u),
+        0u, 0u, 0u, 0u,
+    };
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(StoreLaneDepthCode.data()), std::as_bytes(std::span(StoreLaneDepthCode))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{StoreThreads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(StoreLaneDepthCode.data()), StoreLaneDepthCode, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void StorageWriteMarksPlaneStale(AgcDriver::VulkanDevice& device, const Shaders& flat) {
+    GuestPlane depth;
+    GuestPlane htile;
+    const auto htileBytes = Graphics::HtileMetadataBytes({Width, Height});
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(htile.data);
+    for (std::size_t word = 0; word < htileBytes / 4u; ++word) words[word] = 0x00000105u;
+    const Planes planes{depth.address, 0, VK_FORMAT_D32_SFLOAT, 1u, htile.address};
+    const std::string what = "a storage write into an owned depth plane with HTILE";
+    DrawPlanes(device, flat, planes, true, false);
+    CheckHtile(htile.address, htileBytes, 0xfffc000fu, what + ", after the draw");
+    static_cast<void>(ReadPlane(depth.address));
+    Require(Owned(depth.address) && Stale(depth.address) == 0u && Stale(htile.address) == 0u, what + ": the reads after the draw left the plane or the HTILE stale");
+    const auto program = StoreLaneDepth(device, depth.address);
+    device.Dispatch(program, 1, 1, 1, reinterpret_cast<std::uintptr_t>(StoreLaneDepthCode.data()));
+    Require(Stale(depth.address) != 0u, what + ": the storage write left the surface's plane without stale subpages");
+    Require(Stale(htile.address) != 0u, what + ": the storage write left the surface's HTILE without stale subpages");
+    device.WaitIdle();
+    const auto read = ReadPlane(depth.address);
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            float value = 0.0f;
+            std::memcpy(&value, &read[GuestOffset(x, y, 0u, 4u, 1u)], sizeof(value));
+            const float expected = y == 0u && x < StoreThreads ? static_cast<float>(x) / 64.0f : 0.5f;
+            if (value != expected) ++wrong;
+        }
+    }
+    Require(wrong == 0u, what + ": a CPU read after the dispatch misses the stored or drawn depth in " + std::to_string(wrong) + " elements");
+    CheckHtile(htile.address, htileBytes, 0xfffc000fu, what + ", after the storage write");
+    Require(Stale(depth.address) == 0u, what + ": the CPU read left the plane stale");
+    std::printf("%s marks the plane and its HTILE stale for its owner\n", what.c_str());
+}
+
 void StencilSwizzle(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
     GuestPlane depth;
     GuestPlane stencil;
@@ -492,6 +554,7 @@ int main() {
         NativeMultisampledDepth(*device, sloped);
         HtileWithStencil(*device, sloped);
         PartialHtilePublication(*device, sloped);
+        StorageWriteMarksPlaneStale(*device, flat);
         StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
         LibcRunShutdown_nid_postfix();

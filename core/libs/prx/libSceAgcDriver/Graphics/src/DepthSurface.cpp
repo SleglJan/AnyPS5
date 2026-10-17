@@ -1189,32 +1189,32 @@ public:
         return plane.storage;
     }
 
-    bool StoreBack(const StorageTexture& candidate) {
+    VkImageAspectFlags StoreBack(const StorageTexture& candidate) {
         for (const bool stencil : {false, true}) {
             auto& plane = stencil ? stencilPlane : depthPlane;
             if (plane.storage.get() == &candidate) {
                 copyPlane(plane, plane.storage, stencil, false);
                 written = ++depthWrites;
-                return true;
+                return stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
             }
             if (std::none_of(plane.replaced.begin(), plane.replaced.end(), [&](const auto& old) { return old.lock().get() == &candidate; })) continue;
             char text[288];
             std::snprintf(text, sizeof(text), "AGC graphics: storage image writes to the %s plane of depth surface 0x%llx through a view that another view of the plane (guest format %u, tile mode %d) replaced are not implemented", stencil ? "stencil" : "depth", static_cast<unsigned long long>(target.address), plane.storage->Descriptor().format, static_cast<int>(plane.storage->Descriptor().tileMode));
             throw std::runtime_error(text);
         }
-        return false;
+        return 0u;
     }
 
-    bool StoreBackCovering(const StorageTexture& candidate) {
+    VkImageAspectFlags StoreBackCovering(const StorageTexture& candidate) {
         for (const bool stencil : {false, true}) {
             if (!CoversPlane(candidate, stencil)) continue;
             auto& plane = stencil ? stencilPlane : depthPlane;
             const auto source = std::const_pointer_cast<StorageTexture>(candidate.shared_from_this());
             copyPlane(plane, source, stencil, false);
             written = ++depthWrites;
-            return true;
+            return stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
         }
-        return false;
+        return 0u;
     }
 
     void TakeStorage() {
@@ -2391,21 +2391,42 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
 }
 
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {
-    std::lock_guard lock(surfacesMutex());
-    for (auto& [key, entry] : layeredStorages()) {
-        if (std::get<0>(key) != context.device || entry->storage.get() != &storage) continue;
-        const auto slices = layeredSlices(context, *entry);
-        entry->Copy(slices, false);
-        for (const auto& slice : slices) slice.surface->written = ++depthWrites;
-        return true;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    std::vector<std::pair<DepthSurface*, VkImageAspectFlags>> written;
+    {
+        std::lock_guard lock(surfacesMutex());
+        const auto store = [&]() {
+            for (auto& [key, entry] : layeredStorages()) {
+                if (std::get<0>(key) != context.device || entry->storage.get() != &storage) continue;
+                const auto slices = layeredSlices(context, *entry);
+                entry->Copy(slices, false);
+                for (const auto& slice : slices) {
+                    slice.surface->written = ++depthWrites;
+                    written.emplace_back(slice.surface, VK_IMAGE_ASPECT_DEPTH_BIT);
+                }
+                return true;
+            }
+            for (const auto& surface : surfaces()) {
+                if (!surface->active->load(std::memory_order_acquire) || surface->context.device != context.device) continue;
+                if (const auto aspect = surface->StoreBack(storage); aspect != 0u) {
+                    written.emplace_back(surface.get(), aspect);
+                    return true;
+                }
+            }
+            for (auto surface = surfaces().rbegin(); surface != surfaces().rend(); ++surface) {
+                if ((*surface)->context.device != context.device) continue;
+                if (const auto aspect = (*surface)->StoreBackCovering(storage); aspect != 0u) {
+                    written.emplace_back(surface->get(), aspect);
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!store()) return false;
     }
-    for (const auto& surface : surfaces()) {
-        if (surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && surface->StoreBack(storage)) return true;
-    }
-    for (auto surface = surfaces().rbegin(); surface != surfaces().rend(); ++surface) {
-        if ((*surface)->context.device == context.device && (*surface)->StoreBackCovering(storage)) return true;
-    }
-    return false;
+    for (const auto& [surface, aspect] : written) surface->MarkStale(aspect);
+    return true;
 }
 
 bool DepthSurfaceAt(std::uint64_t address) {
