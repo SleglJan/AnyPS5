@@ -193,6 +193,18 @@ private:
 };
 
 constexpr std::uint32_t MaxSegmentedWindowSlots = 256u;
+constexpr std::uint64_t MaxSegmentedWindowArms = 2048u;
+
+std::uint64_t DynamicWindowAccesses(const IrProgram& program) {
+    std::uint64_t accesses = 0;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() != IrOpcode::LoadVectorWindow && inst->Opcode() != IrOpcode::StoreVectorWindow) continue;
+            if (!inst->Argument(0)->Resolve()->HasImmediate()) ++accesses;
+        }
+    }
+    return accesses;
+}
 
 std::uint32_t IndexedWindowSlots(const IrProgram& program) {
     const auto window = program.Metadata().vectorWindowSize;
@@ -229,8 +241,9 @@ void DefineModule(SpirvEmitterState& state) {
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
         state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
-        if (narrowWindow && state.vectorWindowIndexed == 0u && window <= MaxSegmentedWindowSlots && state.program.Metadata().callFunctions.empty()) state.vectorWindowIndexed = window;
-        const bool indexedSlots = state.vectorWindowIndexed != 0u && state.vectorWindowIndexed <= MaxSegmentedWindowSlots && state.program.Metadata().callFunctions.empty();
+        const bool slotsFit = window <= MaxSegmentedWindowSlots && DynamicWindowAccesses(state.program) * window <= MaxSegmentedWindowArms && state.program.Metadata().callFunctions.empty();
+        if (narrowWindow && state.vectorWindowIndexed == 0u && slotsFit) state.vectorWindowIndexed = window;
+        const bool indexedSlots = state.vectorWindowIndexed != 0u && slotsFit;
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
             if (state.vectorWindowIndexed == 0u) continue;
