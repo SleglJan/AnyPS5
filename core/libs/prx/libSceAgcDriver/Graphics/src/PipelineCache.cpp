@@ -341,11 +341,11 @@ VkResult CreateGraphicsUnobserved(const Context& context, const VkGraphicsPipeli
 }
 
 VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
-    return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return CreateComputeUnobserved(context, observed, pipeline, words); });
+    return CreationPool::AtUse([&] { return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return CreateComputeUnobserved(context, observed, pipeline, words); }); });
 }
 
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {
-    return WithFeedback(context, info, GraphicsKind(info), [&](const VkGraphicsPipelineCreateInfo& observed) { return CreateGraphicsUnobserved(context, observed, pipeline, words); });
+    return CreationPool::AtUse([&] { return WithFeedback(context, info, GraphicsKind(info), [&](const VkGraphicsPipelineCreateInfo& observed) { return CreateGraphicsUnobserved(context, observed, pipeline, words); }); });
 }
 
 PipelineCreationFeedbackCounts PipelineCreationFeedbackTotals() {
@@ -377,13 +377,13 @@ bool PipelineCacheChecksHits(const Context& context) {
 
 VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) {
     if (context.pipelineCache == nullptr) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
-    return context.pipelineCache->LookupCompute(context, info, pipeline);
+    return CreationPool::AtUse([&] { return context.pipelineCache->LookupCompute(context, info, pipeline); });
 }
 
 VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data, PipelineCacheOutcome* outcome) {
     if (outcome != nullptr) *outcome = PipelineCacheOutcome::Unreported;
     if (context.pipelineCache == nullptr) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
-    return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return context.pipelineCache->CreateComputeFrom(context, observed, pipeline, data); }, outcome);
+    return CreationPool::AtUse([&] { return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return context.pipelineCache->CreateComputeFrom(context, observed, pipeline, data); }, outcome); });
 }
 
 

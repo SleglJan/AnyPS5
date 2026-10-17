@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -107,6 +108,42 @@ public:
 
 private:
     static void Submit(std::function<void()> task);
+};
+
+class CreationPool {
+public:
+    struct Counts {
+        std::uint64_t onPool = 0;
+        std::uint64_t waits = 0;
+        std::uint64_t waitNanoseconds = 0;
+        std::size_t threads = 0;
+    };
+
+    template<typename TCreate>
+    static auto AtUse(TCreate&& create) -> decltype(create()) {
+        if (CreationAhead::Active() || Current()) return create();
+        using Result = decltype(create());
+        std::promise<Result> done;
+        auto result = done.get_future();
+        const auto started = std::chrono::steady_clock::now();
+        Submit([&] {
+            try {
+                done.set_value(create());
+            } catch (...) {
+                done.set_exception(std::current_exception());
+            }
+        });
+        result.wait();
+        NoteWait(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()));
+        return result.get();
+    }
+
+    static bool Current();
+    static Counts Totals();
+
+private:
+    static void Submit(std::function<void()> task);
+    static void NoteWait(std::uint64_t nanoseconds);
 };
 
 class CreationGate {

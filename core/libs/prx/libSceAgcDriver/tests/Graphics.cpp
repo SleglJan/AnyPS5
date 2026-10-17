@@ -5206,7 +5206,10 @@ void largeCreationThreadTests() {
         mockDestroyPipeline(context.device, pipeline, nullptr);
         return compiled;
     };
-    Require(create(CreationThread::Words()) == std::this_thread::get_id(), "a large pipeline needed inside a frame was not compiled on its caller's thread");
+    const auto poolBefore = AgcDriver::CreationPool::Totals();
+    Require(create(CreationThread::Words()) != std::this_thread::get_id(), "a large pipeline needed inside a frame was compiled on its caller's thread");
+    const auto poolAfter = AgcDriver::CreationPool::Totals();
+    Require(poolAfter.onPool == poolBefore.onPool + 1u && poolAfter.waits == poolBefore.waits + 1u, "a large pipeline needed inside a frame was not created on the creation pool with one wait");
     const auto ahead = [&](std::size_t words) {
         std::thread::id where;
         std::thread pool([&] {

@@ -37,6 +37,43 @@ CreationQueue& Queue() {
     return *queue;
 }
 
+thread_local bool creationPoolThread = false;
+
+struct AtUsePool {
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::deque<std::function<void()>> tasks;
+    std::size_t threads = 0;
+    std::size_t idle = 0;
+    std::uint64_t onPool = 0;
+    std::uint64_t waits = 0;
+    std::uint64_t waitNanoseconds = 0;
+};
+
+AtUsePool& Pool() {
+    static auto* pool = new AtUsePool();
+    return *pool;
+}
+
+void* RunAtUseCreations(void* argument) {
+    auto& pool = *static_cast<AtUsePool*>(argument);
+    creationPoolThread = true;
+    std::unique_lock lock(pool.mutex);
+    for (;;) {
+        ++pool.idle;
+        pool.ready.wait(lock, [&] { return !pool.tasks.empty(); });
+        --pool.idle;
+        auto task = std::move(pool.tasks.front());
+        pool.tasks.pop_front();
+        ++pool.onPool;
+        lock.unlock();
+        task();
+        task = {};
+        lock.lock();
+    }
+    return nullptr;
+}
+
 struct RamSide {
     std::mutex mutex;
     std::chrono::steady_clock::time_point sampled{};
@@ -219,6 +256,36 @@ void CreationGate::UseRamSide(MemorySource deviceLocal) {
         state.deviceLocal = deviceLocal;
     }
     SetMemorySource(&RamSideBytes, MemoryLimitBytes);
+}
+
+bool CreationPool::Current() {
+    return creationPoolThread;
+}
+
+CreationPool::Counts CreationPool::Totals() {
+    auto& pool = Pool();
+    std::lock_guard lock(pool.mutex);
+    return {pool.onPool, pool.waits, pool.waitNanoseconds, pool.threads};
+}
+
+void CreationPool::Submit(std::function<void()> task) {
+    auto& pool = Pool();
+    {
+        std::lock_guard lock(pool.mutex);
+        if (pool.idle <= pool.tasks.size()) {
+            if (!HostThread::StartDetached(std::size_t{64} << 20u, &RunAtUseCreations, &pool)) throw std::runtime_error("AGC driver: a pipeline creation pool thread did not start");
+            ++pool.threads;
+        }
+        pool.tasks.push_back(std::move(task));
+    }
+    pool.ready.notify_one();
+}
+
+void CreationPool::NoteWait(std::uint64_t nanoseconds) {
+    auto& pool = Pool();
+    std::lock_guard lock(pool.mutex);
+    ++pool.waits;
+    pool.waitNanoseconds += nanoseconds;
 }
 
 bool CreationThread::Current() {
