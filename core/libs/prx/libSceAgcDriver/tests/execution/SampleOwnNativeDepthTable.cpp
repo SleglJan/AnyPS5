@@ -61,7 +61,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto descriptor = DepthSampleWords(depth);
     std::memcpy(descriptorWords.Data(), descriptor.data(), sizeof(descriptor));
     const std::array<std::uint32_t, 2> userData{NewPath::Low(descriptorWords.Address()), NewPath::High(descriptorWords.Address())};
-    ExpectRefusedWithin(device, [&] { Draw(device, state, triangle, SamplingPixel(true, false), userData); }, Refusal, "a draw sampling its native multisampled depth target through the device image table");
+    ExpectRefusedWithin(device, [&] { Draw(device, state, triangle, SamplingPixel(true, false), userData, true); }, Refusal, "a draw sampling its native multisampled depth target through the device image table");
 }
 
 }

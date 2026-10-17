@@ -48,7 +48,7 @@ constexpr std::uint32_t LoadMultisampleWord0 = 0xf0001f30u;
 constexpr std::uint32_t LoadFromMemoryDescriptor = 0x00020804u;
 constexpr std::uint32_t LoadFromUserDescriptor = 0x00000804u;
 constexpr std::array<std::uint32_t, 2> ExportColor{0xf800180fu, 0x0b0a0908u};
-constexpr std::array<std::uint32_t, 2> ExportNull{0xf8001890u, 0x00000000u};
+constexpr std::array<std::uint32_t, 2> ExportDepth{0xf8001881u, 0x00000008u};
 constexpr std::uint32_t EndProgram = 0xbf810000u;
 
 }
@@ -71,7 +71,7 @@ inline const Program& SamplingPixel(bool fromMemory, bool color) {
     for (const auto word : ZeroCoordinates) built << word;
     if (fromMemory) built << WaitScalar;
     built << LoadMultisampleWord0 << (fromMemory ? LoadFromMemoryDescriptor : LoadFromUserDescriptor) << WaitVector;
-    built << (color ? ExportColor : ExportNull) << EndProgram;
+    built << (color ? ExportColor : ExportDepth) << EndProgram;
     return built;
 }
 
@@ -97,7 +97,7 @@ private:
     NewPath::PrivatePages memory;
 };
 
-inline void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& state, const Triangle& triangle, const Program& pixel, std::span<const std::uint32_t> pixelUserData) {
+inline void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& state, const Triangle& triangle, const Program& pixel, std::span<const std::uint32_t> pixelUserData, bool depthExport = false) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -116,7 +116,7 @@ inline void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::Sta
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
     const auto codeAddress = pixel.Address();
     const auto pixelCode = pixel.Code();
-    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, Float32Export}};
+    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, depthExport ? 1u : 0u}, {0x1c5, Float32Export}};
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{codeAddress, std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
