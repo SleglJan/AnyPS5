@@ -2825,3 +2825,4 @@ if(BUILD_TESTING)
 endif()
 
 target_include_directories(agc_driver_compute_branch_split_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+target_include_directories(agc_driver_device_table_store_components_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)

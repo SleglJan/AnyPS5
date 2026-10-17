@@ -709,11 +709,8 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
     return info;
 }
 
-std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data, bool integer) {
+std::array<std::uint32_t, 4> StoreComponents(SpirvValueEmitContext& ctx, const MemoryInfo& mem, std::uint32_t data, bool extend) {
     auto& state = ctx.state;
-    const auto& mem = access.mem;
-    const auto sint = SintStorageFormat(access.image);
-    std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
     std::array<std::uint32_t, 4> candidates{};
     for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
@@ -728,7 +725,7 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
             if ((packedIndex & 1u) != 0u) {
                 candidate = Binary(state, spv::OpShiftRightLogical, TypeU32(state), candidate, ConstantU32(state, 16u));
             }
-            if (sint.format != IrBufferFormat::Invalid) {
+            if (extend) {
                 const auto extended = state.module.AllocateId();
                 state.module.AddFunction(spv::OpBitFieldSExtract, TypeU32(state), extended, candidate, ConstantU32(state, 0u), ConstantU32(state, 16u));
                 candidate = extended;
@@ -738,12 +735,49 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
         }
         candidates[source] = candidate;
     }
+    std::array<std::uint32_t, 4> selected{};
     for (std::uint32_t component = 0; component < 4u; component++) {
         auto raw = ConstantU32(state, 0);
         for (std::uint32_t reverse = 4u; reverse != 0u; --reverse) {
             const auto source = reverse - 1u;
             raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidates[source], raw);
         }
+        selected[component] = raw;
+    }
+    return selected;
+}
+
+void PrepareStoreComponents(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes) {
+    auto& state = ctx.state;
+    state.storeComponents = {};
+    if (inst.Opcode() != IrOpcode::ImageWrite || memory.imagePacked) return;
+    bool plain = false;
+    bool extended = false;
+    std::size_t arms = 0;
+    for (const auto& mode : modes) {
+        if (!TableModeEmitted(mode) || mode.resourceClass != ImageResourceClass::Storage) continue;
+        ++arms;
+        const bool extend = memory.dataBits == 16u && SintStorageFormat(mode).format != IrBufferFormat::Invalid;
+        plain = plain || !extend;
+        extended = extended || extend;
+    }
+    if (arms < 2u) return;
+    const auto data = ctx.Arg(inst, 2);
+    if (plain) state.storeComponents.plain = StoreComponents(ctx, memory, data, false);
+    if (extended) state.storeComponents.extended = StoreComponents(ctx, memory, data, true);
+    state.storeComponents.inst = &inst;
+}
+
+std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data, bool integer) {
+    auto& state = ctx.state;
+    const auto& mem = access.mem;
+    const auto sint = SintStorageFormat(access.image);
+    std::uint32_t values[4] = {};
+    const bool extend = mem.dataBits == 16u && sint.format != IrBufferFormat::Invalid;
+    const auto& prepared = extend ? state.storeComponents.extended : state.storeComponents.plain;
+    const auto selected = state.storeComponents.inst == &access.inst && prepared[0] != 0u ? prepared : StoreComponents(ctx, mem, data, extend);
+    for (std::uint32_t component = 0; component < 4u; component++) {
+        const auto raw = selected[component];
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
         if (component < sint.componentCount) {
             values[component] = EmitFormatStoreComponent(state, sint, component, values[component]);
@@ -2023,6 +2057,7 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
         words.insert(words.end(), {index, labels[index]});
     }
     std::vector<std::uint32_t> incoming;
+    PrepareStoreComponents(ctx, inst, memory, modes);
     state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
     state.module.AddFunction(words);
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
@@ -2034,6 +2069,7 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
         state.module.AddFunction(spv::OpBranch, merge);
     }
     state.runtimeImage = nullptr;
+    state.storeComponents = {};
     EmitLabel(state, invalid);
     if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
     state.module.AddFunction(spv::OpBranch, merge);

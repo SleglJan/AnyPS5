@@ -96,6 +96,12 @@ struct SpirvSwizzleSelectors {
     std::array<std::uint32_t, 4> selectors{};
 };
 
+struct SpirvStoreComponents {
+    const IrValue* inst = nullptr;
+    std::array<std::uint32_t, 4> plain{};
+    std::array<std::uint32_t, 4> extended{};
+};
+
 struct SpirvTableImageFunction {
     IrOpcode opcode;
     MemoryInfo memory;
@@ -232,6 +238,7 @@ struct SpirvEmitterState {
     std::uint32_t entryLabel = 0;
     std::uint32_t currentLabel = 0;
     SpirvSwizzleSelectors swizzleSelectors;
+    SpirvStoreComponents storeComponents;
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
     std::uint32_t quadPixelUncovered = 0;
