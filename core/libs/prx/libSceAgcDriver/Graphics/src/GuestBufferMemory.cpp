@@ -720,6 +720,12 @@ bool wouldRetireImport(const HostImports& state, const ImportRun& run) {
 }
 
 bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease) {
+    if (entry.widened) {
+        return std::all_of(entry.ranges.begin(), entry.ranges.end(), [&](const auto& range) {
+            const auto current = leasedRangeOwner(lease, range->address, range->address + range->bytes);
+            return current != nullptr && !range.owner_before(current) && !current.owner_before(range);
+        });
+    }
     if (entry.ranges.size() == 1 && !entry.joined && entry.bytes < entry.ranges.front()->bytes) {
         const auto current = leasedRangeOwner(lease, entry.base, entry.base + entry.bytes);
         return current != nullptr && !entry.ranges.front().owner_before(current) && !current.owner_before(entry.ranges.front());
@@ -827,6 +833,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         if (const auto* current = findImport(state, own->address, own->address + own->bytes); current != nullptr && (fresh || std::find(current->ranges.begin(), current->ranges.end(), own) != current->ranges.end())) return current;
         run = ImportRun{own->address, own->bytes, {own}};
     }
+    if (const auto* committed = CommittedImportCovering(state.device, run.base, run.base + run.bytes)) return committed;
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict);
 }
 
@@ -839,11 +846,37 @@ const HostImport* importJoined(const Context& context, HostImports& state, std::
     return importRunAt(context, state, std::move(run), true, begin, lease, end, true);
 }
 
+ImportRun alignedRun(const HostImports& state, ImportRun run, std::uint64_t alignment) {
+    auto begin = run.base / alignment * alignment;
+    auto end = (run.base + run.bytes + alignment - 1) / alignment * alignment;
+    for (bool grown = true; grown;) {
+        grown = false;
+        auto it = state.imports.upper_bound(begin);
+        if (it != state.imports.begin()) --it;
+        for (; it != state.imports.end() && it->first < end; ++it) {
+            const auto importEnd = it->second.base + it->second.bytes;
+            if (importEnd <= begin || !it->second.widened) continue;
+            if (it->second.base < begin || importEnd > end) grown = true;
+            begin = std::min(begin, it->second.base);
+            end = std::max(end, importEnd);
+            for (const auto& range : it->second.ranges) {
+                if (std::find(run.ranges.begin(), run.ranges.end(), range) == run.ranges.end()) run.ranges.push_back(range);
+            }
+        }
+    }
+    std::sort(run.ranges.begin(), run.ranges.end(), [](const auto& left, const auto& right) { return left->address < right->address; });
+    run.base = begin;
+    run.bytes = end - begin;
+    return run;
+}
+
 const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict) {
+    const auto alignment = context.hostImportAlignment;
+    const bool widened = !joined && alignment != 0 && !run.ranges.empty() && (run.base % alignment != 0 || run.bytes % alignment != 0);
+    if (widened) run = alignedRun(state, std::move(run), alignment);
     const auto base = run.base;
     const auto bytes = run.bytes;
     auto& failures = joined ? state.failedJoins : state.failed;
-    const auto alignment = context.hostImportAlignment;
     if (joined && (alignment == 0 || base % alignment != 0 || bytes % alignment != 0)) {
         failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end())});
         return nullptr;
@@ -859,6 +892,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     std::uint64_t replaced = 0;
     const auto held = [&](const HostImport& entry) {
         if (joined || !pointerHeld(state, entry)) return false;
+        if ((widened || entry.widened) && base <= entry.base && base + bytes >= entry.base + entry.bytes) return Recorder::Active() == nullptr;
         const bool expandedWindow = run.ranges.size() == 1 && entry.ranges.size() == 1 && entry.range == run.ranges.front() && base <= entry.base && base + bytes >= entry.base + entry.bytes && bytes > entry.bytes;
         return !expandedWindow || Recorder::Active() == nullptr;
     };
@@ -891,6 +925,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     if (state.liveBytes + CommittedImportPinnedBytes() + bytes > budget) retireLeastRecent(context, state, lease, state.liveBytes + CommittedImportPinnedBytes() + bytes - budget);
     HostImport entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
+    entry.widened = widened;
     entry.range = run.ranges.front();
     entry.ranges = std::move(run.ranges);
 #ifdef _WIN32
@@ -926,7 +961,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         } catch (const std::runtime_error&) {
             if (entry.ranges.size() == 1) throw;
-            if (joined) {
+            if (joined || widened) {
                 failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
                 return nullptr;
             }
