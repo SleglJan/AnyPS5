@@ -4534,9 +4534,10 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
             if (disposable) {
                 const auto found = Graphics::LookupComputePipeline(context, info, created);
                 if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
-                const auto made = Graphics::CreateComputePipelineFrom(context, info, created, compileOnDisposableDevice(describe()));
+                auto outcome = Graphics::PipelineCacheOutcome::Unreported;
+                const auto made = Graphics::CreateComputePipelineFrom(context, info, created, compileOnDisposableDevice(describe()), &outcome);
                 if (made != VK_PIPELINE_COMPILE_REQUIRED_EXT) {
-                    if (made == VK_SUCCESS) disposableCompiles().hits.fetch_add(1, std::memory_order_relaxed);
+                    if (made == VK_SUCCESS) (outcome == Graphics::PipelineCacheOutcome::Miss ? disposableCompiles().misses : disposableCompiles().hits).fetch_add(1, std::memory_order_relaxed);
                     return made;
                 }
                 disposableCompiles().misses.fetch_add(1, std::memory_order_relaxed);

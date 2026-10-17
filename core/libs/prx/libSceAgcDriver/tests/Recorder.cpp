@@ -242,6 +242,10 @@ public:
                 extensionsEnabled.insert(extensionsEnabled.end(), libraryExtensions.begin(), libraryExtensions.end());
                 address.pNext = &library;
             }
+            if (hasExtension(VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME)) {
+                extensionsEnabled.push_back(VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME);
+                context.pipelineCreationFeedback = true;
+            }
             VkPhysicalDeviceRobustness2FeaturesEXT robustness{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
             if (hasExtension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &robustness};
@@ -5637,6 +5641,23 @@ void pipelineLibraryTests(const Device& device) {
     Require(first->Optimized() == lto && culled->Optimized() == lto, "a pipeline did not switch to its optimized link");
     ClearCachedPipelines(context.device);
     Require(counters().linked == 0, "clearing the pipelines kept the device's libraries");
+    if (context.pipelineCreationFeedback) {
+        PipelineCache cache(context, device.Properties(), false);
+        auto warm = context;
+        warm.pipelineCache = &cache;
+        const auto warmLookup = [&] { return CachedPipeline(warm, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL); };
+        static_cast<void>(warmLookup());
+        ClearCachedPipelines(context.device);
+        const auto before = PipelineCreationFeedbackTotals();
+        static_cast<void>(warmLookup());
+        const auto after = PipelineCreationFeedbackTotals();
+        ClearCachedPipelines(context.device);
+        constexpr auto shaderParts = static_cast<std::size_t>(PipelineCreationKind::LibraryShaderPart);
+        constexpr auto interfaceParts = static_cast<std::size_t>(PipelineCreationKind::LibraryInterfacePart);
+        Require(after.unreported[shaderParts] == before.unreported[shaderParts] && after.unreported[interfaceParts] == before.unreported[interfaceParts], "the driver reported no creation feedback for a library part");
+        Require(after.hits[shaderParts] - before.hits[shaderParts] == 2u && after.misses[shaderParts] == before.misses[shaderParts], "the pre-rasterization and fragment shader library parts created again from a warm pipeline cache reported " + std::to_string(after.hits[shaderParts] - before.hits[shaderParts]) + " hits and " + std::to_string(after.misses[shaderParts] - before.misses[shaderParts]) + " misses");
+        Require((after.hits[interfaceParts] - before.hits[interfaceParts]) + (after.misses[interfaceParts] - before.misses[interfaceParts]) == 2u, "the vertex input and fragment output library parts created again did not each report feedback");
+    }
     std::cout << "Pipeline library reuse tests passed\n";
 }
 

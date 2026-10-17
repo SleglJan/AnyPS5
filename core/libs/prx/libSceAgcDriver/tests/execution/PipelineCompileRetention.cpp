@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
@@ -117,6 +118,7 @@ int main() {
         std::vector<Module> modules;
         for (std::uint32_t index = 0; index < Creations; ++index) modules.push_back(Compile(*device, Blocks, seed + index + 1u));
         const auto compiledBefore = AgcDriver::VulkanDevice::DisposableCompiles();
+        const auto feedbackBefore = AgcDriver::Graphics::PipelineCreationFeedbackTotals();
         std::vector<Created> results(Creations);
         std::vector<std::exception_ptr> failures(Creations);
         std::mutex mutex;
@@ -165,6 +167,9 @@ int main() {
         std::printf("disposable compiles %llu, hits %llu, misses %llu, devices %llu in %.0f ms; private bytes %+.1f MiB across the %u creations\n", static_cast<unsigned long long>(compiled.compiles - compiledBefore.compiles), static_cast<unsigned long long>(compiled.hits - compiledBefore.hits), static_cast<unsigned long long>(compiled.misses - compiledBefore.misses), static_cast<unsigned long long>(compiled.devices - compiledBefore.devices), compiled.deviceMs - compiledBefore.deviceMs, held / 1048576.0, Creations);
         Require(compiled.compiles - compiledBefore.compiles == Creations, "large pipelines were not compiled on a disposable device");
         Require(compiled.hits - compiledBefore.hits == Creations && compiled.misses == compiledBefore.misses, "a pipeline compiled on a disposable device was not created from its cache data");
+        const auto feedbackAfter = AgcDriver::Graphics::PipelineCreationFeedbackTotals();
+        constexpr auto compute = static_cast<std::size_t>(AgcDriver::Graphics::PipelineCreationKind::Compute);
+        Require(feedbackAfter.unreported[compute] == feedbackBefore.unreported[compute] && feedbackAfter.hits[compute] - feedbackBefore.hits[compute] >= Creations, "a creation from a disposable compile's cache data did not report a pipeline cache hit (" + std::to_string(feedbackAfter.hits[compute] - feedbackBefore.hits[compute]) + " hits for " + std::to_string(Creations) + " creations)");
         Require(compiled.devices - compiledBefore.devices == Creations, "a disposable compile device outlived its compile");
         Require(held <= RetainedBound, "private bytes grew by " + std::to_string(held >> 20) + " MiB across " + std::to_string(Creations) + " large pipeline creations, each on its own thread kept alive, more than the " + std::to_string(RetainedBound >> 20) + " MiB their pipelines may hold");
         std::puts("pipeline compile retention tests passed");

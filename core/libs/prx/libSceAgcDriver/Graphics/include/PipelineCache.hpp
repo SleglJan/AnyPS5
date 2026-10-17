@@ -64,7 +64,8 @@ VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCr
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
 bool PipelineCacheChecksHits(const Context& context);
 
-enum class PipelineCreationKind : std::size_t { Compute, Graphics, LibraryPart, Linked, Count };
+enum class PipelineCreationKind : std::size_t { Compute, Graphics, LibraryShaderPart, LibraryInterfacePart, Linked, Count };
+enum class PipelineCacheOutcome { Hit, Miss, Unreported };
 
 struct PipelineCreationFeedbackCounts {
     std::array<std::uint64_t, static_cast<std::size_t>(PipelineCreationKind::Count)> hits{};
@@ -75,7 +76,7 @@ struct PipelineCreationFeedbackCounts {
 PipelineCreationFeedbackCounts PipelineCreationFeedbackTotals();
 std::string PipelineCreationFeedbackReport();
 VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline);
-VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data);
+VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data, PipelineCacheOutcome* outcome = nullptr);
 
 }
 

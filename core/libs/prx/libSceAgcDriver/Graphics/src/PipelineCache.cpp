@@ -295,7 +295,7 @@ FeedbackTotals& Feedback() {
 }
 
 PipelineCreationKind GraphicsKind(const VkGraphicsPipelineCreateInfo& info) {
-    if ((info.flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) return PipelineCreationKind::LibraryPart;
+    if ((info.flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0) return info.stageCount != 0 ? PipelineCreationKind::LibraryShaderPart : PipelineCreationKind::LibraryInterfacePart;
     for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next != nullptr; next = next->pNext) {
         if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR) return PipelineCreationKind::Linked;
     }
@@ -303,7 +303,8 @@ PipelineCreationKind GraphicsKind(const VkGraphicsPipelineCreateInfo& info) {
 }
 
 template<typename TInfo, typename TCreate>
-VkResult WithFeedback(const Context& context, const TInfo& info, PipelineCreationKind kind, TCreate&& create) {
+VkResult WithFeedback(const Context& context, const TInfo& info, PipelineCreationKind kind, TCreate&& create, PipelineCacheOutcome* outcome = nullptr) {
+    if (outcome != nullptr) *outcome = PipelineCacheOutcome::Unreported;
     if (!context.pipelineCreationFeedback) return create(info);
     VkPipelineCreationFeedbackEXT feedback{};
     VkPipelineCreationFeedbackCreateInfoEXT chained{VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO_EXT, info.pNext, &feedback, 0, nullptr};
@@ -313,8 +314,10 @@ VkResult WithFeedback(const Context& context, const TInfo& info, PipelineCreatio
     if (result != VK_SUCCESS) return result;
     auto& totals = Feedback();
     const auto index = static_cast<std::size_t>(kind);
-    if ((feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT) == 0) totals.unreported[index].fetch_add(1, std::memory_order_relaxed);
-    else if ((feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT_EXT) != 0) totals.hits[index].fetch_add(1, std::memory_order_relaxed);
+    const auto observed = (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT) == 0 ? PipelineCacheOutcome::Unreported : (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT_EXT) != 0 ? PipelineCacheOutcome::Hit : PipelineCacheOutcome::Miss;
+    if (outcome != nullptr) *outcome = observed;
+    if (observed == PipelineCacheOutcome::Unreported) totals.unreported[index].fetch_add(1, std::memory_order_relaxed);
+    else if (observed == PipelineCacheOutcome::Hit) totals.hits[index].fetch_add(1, std::memory_order_relaxed);
     else totals.misses[index].fetch_add(1, std::memory_order_relaxed);
     return result;
 }
@@ -358,7 +361,7 @@ PipelineCreationFeedbackCounts PipelineCreationFeedbackTotals() {
 
 std::string PipelineCreationFeedbackReport() {
     const auto counts = PipelineCreationFeedbackTotals();
-    constexpr std::array<const char*, static_cast<std::size_t>(PipelineCreationKind::Count)> names{"compute", "graphics", "library parts", "linked"};
+    constexpr std::array<const char*, static_cast<std::size_t>(PipelineCreationKind::Count)> names{"compute", "graphics", "library shader parts", "library interface parts", "linked"};
     std::string line = " pipeline cache feedback:";
     for (std::size_t kind = 0; kind < names.size(); ++kind) {
         char text[128];
@@ -377,9 +380,10 @@ VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCr
     return context.pipelineCache->LookupCompute(context, info, pipeline);
 }
 
-VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data) {
+VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data, PipelineCacheOutcome* outcome) {
+    if (outcome != nullptr) *outcome = PipelineCacheOutcome::Unreported;
     if (context.pipelineCache == nullptr) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
-    return context.pipelineCache->CreateComputeFrom(context, info, pipeline, data);
+    return WithFeedback(context, info, PipelineCreationKind::Compute, [&](const VkComputePipelineCreateInfo& observed) { return context.pipelineCache->CreateComputeFrom(context, observed, pipeline, data); }, outcome);
 }
 
 
