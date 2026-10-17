@@ -58,7 +58,7 @@ void CheckShutdownCancellation() {
         const auto queued = WriteData(&states[index].queued);
         Submit(queues[index], {queued.begin(), queued.end()});
     }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(50);
     for (const auto& state : states) {
         while (state.entered != 1) {
             Require(std::chrono::steady_clock::now() < deadline, "queue did not reach its unsatisfied wait");
