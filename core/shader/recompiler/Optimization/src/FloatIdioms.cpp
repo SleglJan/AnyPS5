@@ -1,4 +1,5 @@
 #include "Optimization/FloatIdioms.hpp"
+#include <bit>
 
 namespace ShaderRecompiler {
 
@@ -44,6 +45,19 @@ IrValue* MagnitudeSource(const IrValue& value) {
         if (inner == nullptr) return current;
         current = inner;
     }
+}
+
+std::optional<std::uint32_t> ExactF32Product(std::uint32_t lhs, std::uint32_t rhs) {
+    const auto normalOrZero = [](std::uint32_t bits) {
+        const std::uint32_t exponent = bits & 0x7f800000u;
+        return exponent == 0u ? (bits & 0x007fffffu) == 0u : exponent != 0x7f800000u;
+    };
+    if (!normalOrZero(lhs) || !normalOrZero(rhs)) return std::nullopt;
+    const std::uint32_t product = std::bit_cast<std::uint32_t>(std::bit_cast<float>(lhs) * std::bit_cast<float>(rhs));
+    if (!normalOrZero(product)) return std::nullopt;
+    const bool zeroOperand = (lhs & 0x7fffffffu) == 0u || (rhs & 0x7fffffffu) == 0u;
+    if ((product & 0x7fffffffu) == 0u && !zeroOperand) return std::nullopt;
+    return product;
 }
 
 }

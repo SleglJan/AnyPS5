@@ -382,6 +382,28 @@ int main() {
         return b.eliminate() == 1u && !flushedProduct.HasUses() && otherScale.HasUses() && otherBound.HasUses() && otherFactor.HasUses() && withAddend.HasUses();
     });
 
+    passed &= run("a product by a constant whose scaled factor was folded needs no flush, a wrong folded factor keeps it", [] {
+        Builder b;
+        const auto asFloat = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits}); };
+        const auto asBits = [&](IrValue& value) -> IrValue& { return b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&value}); };
+        const auto product = [&](std::uint32_t folded) -> IrValue& {
+            auto& factor = b.constant(0x3b800000u);
+            auto& rhsBits = b.flush(b.unknown());
+            auto& rhs = asFloat(rhsBits);
+            auto& exact = b.emit(IrOpcode::FPMul32, IrType::F32, {&factor, &rhs});
+            auto& scaled = b.emit(IrOpcode::FPMul32, IrType::F32, {&b.constant(folded), &rhs});
+            auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&asBits(scaled), &b.constant(0x7fffffffu)});
+            auto& tiny = b.emit(IrOpcode::ULessThan32, IrType::Bool, {&b.emit(IrOpcode::ISub32, IrType::U32, {&magnitude, &b.constant(1u)}), &b.constant(0x207fffffu)});
+            auto& sign = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&factor, &rhsBits}), &b.constant(0x80000000u)});
+            return b.flush(asBits(b.emit(IrOpcode::SelectF32, IrType::F32, {&tiny, &asFloat(sign), &exact})));
+        };
+        auto& exactFactor = product(0x5b800000u);
+        auto& wrongFactor = product(0x5b000000u);
+        b.keep(exactFactor);
+        b.keep(wrongFactor);
+        return b.eliminate() == 1u && !exactFactor.HasUses() && wrongFactor.HasUses();
+    });
+
     passed &= run("a flush of a select is distributed over its arms when each arm is denormal-free or already flushed", [] {
         Builder b;
         auto& condition = b.emit(IrOpcode::ULessThan32, IrType::Bool, {&b.unknown(), &b.constant(16u)});

@@ -3,6 +3,7 @@
 
 #include "IntermediateRepresentation/IrValue.hpp"
 #include <cstdint>
+#include <optional>
 
 namespace ShaderRecompiler {
 
@@ -11,6 +12,7 @@ namespace ShaderRecompiler {
 [[nodiscard]] IrValue* NanTestedF32Source(const IrValue& value);
 [[nodiscard]] IrValue* QuietedF32Source(const IrValue& value);
 [[nodiscard]] IrValue* MagnitudeSource(const IrValue& value);
+[[nodiscard]] std::optional<std::uint32_t> ExactF32Product(std::uint32_t lhs, std::uint32_t rhs);
 
 }
 

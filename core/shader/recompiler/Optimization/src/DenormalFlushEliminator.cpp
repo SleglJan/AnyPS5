@@ -85,8 +85,16 @@ const IrValue* tinyProductOtherArm(const IrValue& value) {
     const IrValue& scaled = *bitsOf(*magnitude);
     if (scaled.Opcode() != IrOpcode::FPMul32 || scaled.ArgumentCount() != 2u) return nullptr;
     const IrValue& lifted = *scaled.Argument(0)->Resolve();
+    if (scaled.Argument(1)->Resolve() != product.Argument(1)->Resolve()) return nullptr;
+    const IrValue& factor = *product.Argument(0)->Resolve();
+    if (lifted.HasImmediate()) {
+        if (!factor.HasImmediate()) return nullptr;
+        const auto expected = ExactF32Product(factor.ImmediateU32(), 0x5f800000u);
+        if (!expected || *expected != lifted.ImmediateU32()) return nullptr;
+        return value.Argument(1);
+    }
     if (lifted.Opcode() != IrOpcode::FPMul32 || lifted.ArgumentCount() != 2u || !isImmediate(*lifted.Argument(1)->Resolve(), 0x5f800000u)) return nullptr;
-    if (lifted.Argument(0)->Resolve() != product.Argument(0)->Resolve() || scaled.Argument(1)->Resolve() != product.Argument(1)->Resolve()) return nullptr;
+    if (lifted.Argument(0)->Resolve() != &factor) return nullptr;
     return value.Argument(1);
 }
 
