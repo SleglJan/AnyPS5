@@ -1243,7 +1243,13 @@ private:
         }
         std::vector<const IrValue*> runtimeSamplers;
         for (const IrValue* inst : sampled) {
-            if (DeviceTables() && DeviceAccessKind(*inst) && DeviceImage(*inst->Argument(0)->Resolve())) runtimeSamplers.push_back(inst->Argument(1)->Resolve());
+            if (!DeviceTables() || !DeviceAccessKind(*inst)) continue;
+            const IrValue& image = *inst->Argument(0)->Resolve();
+            const IrValue& sampler = *inst->Argument(1)->Resolve();
+            const auto* column = FindTableColumn(image);
+            const bool deviceImage = column != nullptr ? !m_sources[column->source].tableColumn->sampler : DeviceImage(image);
+            const bool runtimeSampler = sampler.Opcode() == IrOpcode::GetSamplerResource && sampler.ArgumentCount() == 4u && ShaderComputable(sampler);
+            if (deviceImage && (column == nullptr || runtimeSampler)) runtimeSamplers.push_back(&sampler);
         }
         for (const IrValue* inst : sampled) {
             IrValue& sampler = *inst->Argument(1)->Resolve();
