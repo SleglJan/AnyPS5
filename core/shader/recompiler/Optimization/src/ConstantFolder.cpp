@@ -1,6 +1,7 @@
 #include "Optimization/ConstantFolder.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrMetadata/StageIO.hpp"
+#include "Optimization/FloatIdioms.hpp"
 
 #include <algorithm>
 #include <array>
@@ -467,6 +468,15 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
         }
         case IrOpcode::BitCastU16F16: return foldBitCast(builder, value, IrOpcode::BitCastF16U16);
         case IrOpcode::BitCastF16U16: return foldBitCast(builder, value, IrOpcode::BitCastU16F16);
+        case IrOpcode::FPMul32: {
+            auto& lhs = resolveArg(value, 0);
+            auto& rhs = resolveArg(value, 1);
+            if (!isImmediate(lhs, IrType::F32) || !isImmediate(rhs, IrType::F32)) return false;
+            const auto product = ExactF32Product(std::bit_cast<std::uint32_t>(lhs.ImmediateF32()), std::bit_cast<std::uint32_t>(rhs.ImmediateF32()));
+            if (!product) return false;
+            replaceWith(value, builder.ConstantF32(std::bit_cast<float>(*product)));
+            return true;
+        }
         case IrOpcode::BitCastU32F32: return foldBitCast(builder, value, IrOpcode::BitCastF32U32);
         case IrOpcode::BitCastF32U32: return foldBitCast(builder, value, IrOpcode::BitCastU32F32);
         case IrOpcode::ConvertU16U32: {

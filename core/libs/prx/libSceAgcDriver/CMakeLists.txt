@@ -2620,6 +2620,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_constant_products_tests EXCLUDE_FROM_ALL tests/ConstantProducts.cpp)
+target_link_libraries(agc_constant_products_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_constant_products_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_constant_products_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_constant_products_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_constant_products COMMAND agc_constant_products_tests)
+    if(WIN32)
+        set_tests_properties(agc_constant_products PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 target_include_directories(agc_driver_device_table_uniform_lookup_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 add_test_executable(agc_device_image_interface_ids_tests EXCLUDE_FROM_ALL tests/DeviceImageInterfaceIds.cpp)
