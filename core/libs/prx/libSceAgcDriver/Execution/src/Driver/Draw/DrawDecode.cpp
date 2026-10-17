@@ -2,6 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include <cstdio>
+#include <stdexcept>
+#include <string>
 
 namespace AgcDriver::DriverDetail {
 
@@ -60,27 +63,35 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
     };
     const bool pixelSkipped = Graphics::PixelProgramSkipped(queue);
     const auto prepare = [&](std::uint64_t address, std::uint8_t type, Stage stage, std::uint32_t rsrc2, std::uint32_t userDataBase) {
-        const bool nullPixel = stage == Stage::Fragment && (address == 0 || pixelSkipped);
-        if (nullPixel) address = NullPixelProgramAddress();
-        const auto program = ProgramSnapshot(registry, address, {type});
-        const auto& snapshot = *program;
-        require((address - snapshot.codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
-        require(snapshot.header.empty() || snapshot.type == type, "graphics program refers to an incompatible shader binary type");
-        if (!nullPixel && snapshot.header.empty()) NoteRawGraphicsDraw(snapshot);
-        const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
-        DrawProgram result{
-            {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
-            userDataBase,
-            stage == Stage::Fragment ? 0u : 8u,
-            {},
-            {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}},
-            program,
-            codeOffset
-        };
-        result.resourceRegister = rsrc2;
-        result.nullPixel = nullPixel;
-        ReadUserWords(queue, result, staticAbi);
-        return result;
+        try {
+            const bool nullPixel = stage == Stage::Fragment && (address == 0 || pixelSkipped);
+            if (nullPixel) address = NullPixelProgramAddress();
+            const auto program = ProgramSnapshot(registry, address, {type});
+            const auto& snapshot = *program;
+            require((address - snapshot.codeAddress) % sizeof(std::uint32_t) == 0, "graphics entry point is not dword aligned");
+            require(snapshot.header.empty() || snapshot.type == type, "graphics program refers to an incompatible shader binary type");
+            if (!nullPixel && snapshot.header.empty()) NoteRawGraphicsDraw(snapshot);
+            const auto codeOffset = static_cast<std::size_t>((address - snapshot.codeAddress) / sizeof(std::uint32_t));
+            DrawProgram result{
+                {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
+                userDataBase,
+                stage == Stage::Fragment ? 0u : 8u,
+                {},
+                {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}},
+                program,
+                codeOffset
+            };
+            result.resourceRegister = rsrc2;
+            result.nullPixel = nullPixel;
+            ReadUserWords(queue, result, staticAbi);
+            return result;
+        } catch (const std::exception& error) {
+            std::string reason = error.what();
+            if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
+            char where[64];
+            std::snprintf(where, sizeof(where), "shader 0x%llx stage %u: ", static_cast<unsigned long long>(address), static_cast<unsigned>(stage));
+            throw std::runtime_error(where + reason);
+        }
     };
     {
         auto* product = &decoded;
