@@ -99,15 +99,12 @@ std::shared_ptr<const TableCallTargetSet> TableCallProgram::Targets(const Shader
     return set;
 }
 
-std::shared_ptr<const TableCallPart> TableCallProgram::prepare(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
-    auto part = std::make_shared<TableCallPart>();
-    part->code = std::move(code.code);
-    part->sites = std::move(code.sites);
-    part->userData.assign(request.context.userData.begin(), request.context.userData.end());
-    part->userData.resize(part->userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
+ShaderRecompiler::RecompileRequest TableCallPartRequest(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, TableCallPart& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
+    part.userData.assign(request.context.userData.begin(), request.context.userData.end());
+    part.userData.resize(part.userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
     auto source = request;
-    source.shader.code = part->code;
-    source.context.userData = part->userData;
+    source.shader.code = part.code;
+    source.context.userData = part.userData;
     source.shader.linkedLiterals = {};
     source.context.linkedWords = {};
     if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
@@ -117,16 +114,28 @@ std::shared_ptr<const TableCallPart> TableCallProgram::prepare(const std::shared
         compute.threadsFromMemory = false;
         source.context.compute = compute;
     }
-    source.context.continuation = ShaderRecompiler::ContinuationAbi::Shape{role, part->sites, split.scalarRegisters, split.vectorRegisters, split.ldsDwords, split.userDataScalars, entrySite};
-    bool preparedAtUse = false;
-    const auto invocation = TableCallPartInvocation(snapshot, codeOffset, source, &preparedAtUse);
-    if (preparedAtUse) RecordPreparedProgram(device, snapshot, codeOffset, invocation.Request());
+    source.context.continuation = ShaderRecompiler::ContinuationAbi::Shape{role, part.sites, split.scalarRegisters, split.vectorRegisters, split.ldsDwords, split.userDataScalars, entrySite};
+    return source;
+}
+
+std::shared_ptr<const ShaderRecompiler::RunTimeProgram> TableCallPartProgram(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
     auto compiled = invocation.MaterializeAtRunTime();
     require(compiled != nullptr, "a table-call program part that reads SRT words, uniform fills, image tables or bound descriptors at compile time is not implemented");
     require(CacheableResult(*compiled), "a table-call program part whose compile poisoned an SRT read or an image table entry is not implemented");
     require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a table-call program part that binds a flattened SRT is not implemented");
     require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a table-call program part that reads image tables on the CPU is not implemented");
-    part->program = std::make_shared<const ShaderRecompiler::RunTimeProgram>(ShaderRecompiler::RunTimeProgram{invocation.Plan(), std::move(compiled)});
+    return std::make_shared<const ShaderRecompiler::RunTimeProgram>(ShaderRecompiler::RunTimeProgram{invocation.Plan(), std::move(compiled)});
+}
+
+std::shared_ptr<const TableCallPart> TableCallProgram::prepare(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
+    auto part = std::make_shared<TableCallPart>();
+    part->code = std::move(code.code);
+    part->sites = std::move(code.sites);
+    const auto source = TableCallPartRequest(request, split, *part, role, entrySite);
+    bool preparedAtUse = false;
+    const auto invocation = TableCallPartInvocation(snapshot, codeOffset, source, &preparedAtUse);
+    if (preparedAtUse) RecordPreparedProgram(device, snapshot, codeOffset, invocation.Request());
+    part->program = TableCallPartProgram(invocation);
     return part;
 }
 

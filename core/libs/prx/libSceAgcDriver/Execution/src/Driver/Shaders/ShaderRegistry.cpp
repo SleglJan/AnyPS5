@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/src/Driver/Dispatch/TableCallDispatch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "CacheKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
@@ -501,7 +502,14 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 
 namespace {
 
+std::atomic<std::uint64_t> continuationsPreparedAtUse{0};
+
 void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
+    if (request.context.continuation && request.context.continuation->role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
+        continuationsPreparedAtUse.fetch_add(1u, std::memory_order_relaxed);
+        APS5_LOG_OUT("Shader 0x%llx: the continuation of its table call site %u for a callee first named at run time is prepared at use", static_cast<unsigned long long>(snapshot.codeAddress), request.context.continuation->entrySite);
+        return;
+    }
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return;
@@ -674,6 +682,10 @@ ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderS
     return PreparedInvocationFor(snapshot, codeOffset, part, true, preparedAtUse);
 }
 
+std::uint64_t TableCallContinuationsPreparedAtUse() {
+    return continuationsPreparedAtUse.load(std::memory_order_relaxed);
+}
+
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     auto* replay = device != nullptr ? device->Replay() : nullptr;
     if (replay == nullptr || snapshot.header.empty()) return;
@@ -784,7 +796,33 @@ struct RegisteredPreparation {
     std::optional<ShaderRecompiler::RecompileRequest> request;
     std::vector<std::uint64_t> abiKey;
     std::shared_ptr<VulkanDevice> prebuildDevice;
+    std::shared_ptr<const ShaderRecompiler::TableCallSplit> tableCallSplit;
+    std::shared_ptr<TableCallPart> tableCallHead;
 };
+
+bool PlanTableCallHead(RegisteredPreparation& plan, const ShaderRecompiler::RdnaProgram& decoded) {
+    std::optional<ShaderRecompiler::TableCallSplit> split;
+    try {
+        split = SplitTableCallProgram(*plan.request, nullptr);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (!split) return false;
+    auto rest = decoded;
+    for (auto& instruction : rest.instructions) {
+        if (std::ranges::any_of(split->calls, [&](const ShaderRecompiler::TableCall& call) { return call.programCounter == instruction.programCounter; })) instruction.op = ShaderRecompiler::RdnaOpcode::SNop;
+    }
+    if (ShaderRecompiler::UnresolvableSwappcTarget(rest, &plan.swappc)) return false;
+    auto shared = std::make_shared<const ShaderRecompiler::TableCallSplit>(std::move(*split));
+    auto head = std::make_shared<TableCallPart>();
+    head->code = shared->head.code;
+    head->sites = shared->head.sites;
+    auto request = TableCallPartRequest(*plan.request, *shared, *head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u);
+    plan.request = std::move(request);
+    plan.tableCallSplit = std::move(shared);
+    plan.tableCallHead = std::move(head);
+    return true;
+}
 
 std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const QueueState& state, bool registration, bool* deferred = nullptr) {
     using Stage = ShaderRecompiler::ShaderStage;
@@ -876,18 +914,18 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
         if (outputs != state.context.end()) vertex->paClVsOutCntl = PositionExportLayout(&snapshot, codeOffset, std::span(snapshot.code).subspan(codeOffset), outputs->second);
     }
     plan->swappc = {vertex.has_value(), firstUser, userCount};
-    if (deferred != nullptr) {
-        if (const auto counter = ShaderRecompiler::UnresolvableSwappcTarget(decoded, &plan->swappc)) {
-            char reason[96];
-            std::snprintf(reason, sizeof(reason), "its s_swappc_b64 at program counter 0x%x calls a computed target", *counter);
-            return defer(reason);
-        }
-    }
+    std::optional<std::uint32_t> computedCall;
+    if (deferred != nullptr) computedCall = ShaderRecompiler::UnresolvableSwappcTarget(decoded, &plan->swappc);
     plan->memory = {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};
     auto& request = plan->request.emplace(ShaderRecompiler::RecompileRequest{{stage, address, code, snapshot.headerAddress, snapshot.header}, {wave, firstUser, plan->userData, compute, pixel, vertex, plan->memory, RegisteredFloatMode(snapshot)}, stage == Stage::Compute ? device.ComputeTarget(wave) : device.Target(), {0, 0, 0, 128}, graphics});
     if (graphics && graphics->mesh) request.layout.pushConstantSizeBytes = ShaderRecompiler::MeshDrawPushOffsetBytes;
     if (graphics && graphics->tessellation) request.layout.pushConstantSizeBytes = ShaderRecompiler::TessellationLevelPushOffsetBytes;
     if (pixel && device.GraphicsPipelineLibraries()) request.layout.pushConstantOffsetBytes = Graphics::FixedPushOffset(Stage::Fragment);
+    if (computedCall && (stage != Stage::Compute || !PlanTableCallHead(*plan, decoded))) {
+        char reason[96];
+        std::snprintf(reason, sizeof(reason), "its s_swappc_b64 at program counter 0x%x calls a computed target", *computedCall);
+        return defer(reason);
+    }
     return plan;
 }
 
@@ -1166,6 +1204,14 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
                 APS5_LOG_ERR("Shader 0x%llx: a compute pipeline recorded by an earlier run could not be created at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
                 std::lock_guard lock(snapshot->prepared->mutex);
                 snapshot->prepared->failure = std::current_exception();
+            }
+            if (plan->tableCallHead == nullptr || published.empty()) return;
+            try {
+                const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(*plan->request, published.front().handle);
+                require(invocation.has_value(), "the head prepared at registration does not match its request");
+                static_cast<void>(plan->prebuildDevice->PrepareComputePipeline(*TableCallPartProgram(*invocation)->compiled, plan->request->shader.codeAddress));
+            } catch (const std::exception& error) {
+                APS5_LOG_ERR("Shader 0x%llx: the head of its table-call program could not be created at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
             }
         });
     }, preparedKey);

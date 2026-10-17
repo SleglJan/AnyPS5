@@ -141,6 +141,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* reads);
 std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads);
+std::uint64_t TableCallContinuationsPreparedAtUse();
 ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& part, bool* preparedAtUse);
 void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
