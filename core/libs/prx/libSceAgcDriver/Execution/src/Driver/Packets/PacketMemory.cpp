@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <cstdlib>
@@ -192,6 +193,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         static_cast<void>(Graphics::StorageTexture::StoreSmallPending("flip"));
+        if (auto* residency = Graphics::ResidencyDriver::Active()) residency->Flip();
     }
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
