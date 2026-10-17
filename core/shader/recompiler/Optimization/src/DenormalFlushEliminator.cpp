@@ -92,6 +92,25 @@ const IrValue* tinyProductOtherArm(const IrValue& value) {
 
 class DenormalFreeValues {
 public:
+    explicit DenormalFreeValues(const IrProgram& program) {
+        std::vector<const IrValue*> values;
+        for (const IrBlock* block : program.BlockOrder()) {
+            for (const IrValue* inst : block->Instructions()) {
+                values.push_back(inst);
+                known.emplace(inst, true);
+            }
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (const IrValue* value : values) {
+                auto& slot = known[value];
+                if (!slot || compute(*value)) continue;
+                slot = false;
+                changed = true;
+            }
+        }
+    }
+
     bool Contains(const IrValue* value) {
         value = value->Resolve();
         if (const auto found = known.find(value); found != known.end()) return found->second;
@@ -212,7 +231,7 @@ std::uint32_t distributeFlushes(IrProgram& program, DenormalFreeValues& denormal
 
 DenormalFlushEliminationStats DenormalFlushEliminator::Eliminate(IrProgram& program) const {
     DenormalFlushEliminationStats stats;
-    DenormalFreeValues denormalFree;
+    DenormalFreeValues denormalFree(program);
     for (auto* block : program.BlockOrder()) {
         for (auto* inst : block->Instructions()) {
             if (!inst->HasUses()) continue;

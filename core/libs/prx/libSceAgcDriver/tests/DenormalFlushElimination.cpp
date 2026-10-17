@@ -188,26 +188,61 @@ int main() {
         return b.eliminate() == 2u && !floored.HasUses() && !ceiled.HasUses();
     });
 
-    passed &= run("a max carried around a loop without a flush keeps its flush and the search ends", [] {
-        Builder b;
-        IrBlock& head = *b.block;
-        IrBlock& body = b.newBlock();
-        IrBlock& exit = b.newBlock();
-        head.AddBranch(&body);
-        body.AddBranch(&body);
-        body.AddBranch(&exit);
-        auto& initial = b.flush(b.unknown());
-        b.block = &body;
-        auto& carried = b.program.CreateValue(IrOpcode::Phi, IrType::U32);
-        body.AppendInstruction(&carried);
-        auto& step = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&b.flush(b.unknown())});
-        auto& maximum = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPMax32, IrType::F32, {&b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&carried}), &step})});
-        carried.AddPhiOperand(&head, &initial);
-        carried.AddPhiOperand(&body, &maximum);
-        auto& flushed = b.flush(maximum);
-        b.block = &exit;
-        b.keep(flushed);
-        return b.eliminate() == 0u && flushed.HasUses();
+    passed &= run("a max carried around a loop of flushed values needs no flush, one with an unknown step keeps it", [] {
+        const auto loop = [](bool flushedStep) {
+            Builder b;
+            IrBlock& head = *b.block;
+            IrBlock& body = b.newBlock();
+            IrBlock& exit = b.newBlock();
+            head.AddBranch(&body);
+            body.AddBranch(&body);
+            body.AddBranch(&exit);
+            auto& initial = b.flush(b.unknown());
+            b.block = &body;
+            auto& carried = b.program.CreateValue(IrOpcode::Phi, IrType::U32);
+            body.AppendInstruction(&carried);
+            auto& stepBits = flushedStep ? b.flush(b.unknown()) : b.unknown();
+            auto& step = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&stepBits});
+            auto& maximum = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPMax32, IrType::F32, {&b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&carried}), &step})});
+            carried.AddPhiOperand(&head, &initial);
+            carried.AddPhiOperand(&body, &maximum);
+            auto& flushed = b.flush(maximum);
+            b.block = &exit;
+            b.keep(flushed);
+            const auto removed = b.eliminate();
+            return flushedStep ? removed == 1u && !flushed.HasUses() : removed == 0u && flushed.HasUses();
+        };
+        return loop(true) && loop(false);
+    });
+
+    passed &= run("values that only feed each other around a loop and take flushed values need no flush, a denormal constant keeps it", [] {
+        const auto loop = [](std::uint32_t initialBits) {
+            Builder b;
+            IrBlock& head = *b.block;
+            IrBlock& body = b.newBlock();
+            IrBlock& exit = b.newBlock();
+            head.AddBranch(&body);
+            body.AddBranch(&body);
+            body.AddBranch(&exit);
+            b.block = &body;
+            auto& first = b.program.CreateValue(IrOpcode::Phi, IrType::U32);
+            auto& second = b.program.CreateValue(IrOpcode::Phi, IrType::U32);
+            body.AppendInstruction(&first);
+            body.AppendInstruction(&second);
+            auto& converted = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::ConvertF32U32, IrType::F32, {&b.unknown()})});
+            auto& active = b.emit(IrOpcode::IEqual32, IrType::Bool, {&b.unknown(), &b.constant(0u)});
+            auto& chosen = b.emit(IrOpcode::SelectU32, IrType::U32, {&active, &converted, &second});
+            first.AddPhiOperand(&head, &b.constant(initialBits));
+            first.AddPhiOperand(&body, &chosen);
+            second.AddPhiOperand(&head, &b.constant(0u));
+            second.AddPhiOperand(&body, &first);
+            auto& flushed = b.flush(chosen);
+            b.block = &exit;
+            b.keep(flushed);
+            b.eliminate();
+            return !flushed.HasUses();
+        };
+        return loop(0x3f800000u) && !loop(0x00000001u);
     });
 
     passed &= run("a phi of flushed values needs no flush", [] {
