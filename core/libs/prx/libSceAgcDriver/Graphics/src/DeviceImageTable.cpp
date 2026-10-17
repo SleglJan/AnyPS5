@@ -263,10 +263,24 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
         }
         if (std::ranges::find(current, key) == current.end()) {
             if (entry.memory && !entry.written) {
-                const auto dropped = key;
-                entries.erase(held);
-                it = perUseKeys.erase(it);
-                totals.evicted += keys.Retain([&](const DeviceImageKeys::Key& kept) { return kept != dropped; });
+                Entry view;
+                const auto value = lookup(build, key, 0u, view, false, false);
+                Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a memory-path device image entry was not in the table");
+                ++totals.replaced;
+                if (view.texture == nullptr) {
+                    entries.erase(held);
+                    it = perUseKeys.erase(it);
+                    continue;
+                }
+                view.used = entry.used;
+                view.checked = currentState();
+                const bool perUse = view.perUse;
+                entry = std::move(view);
+                if (!perUse) {
+                    it = perUseKeys.erase(it);
+                    continue;
+                }
+                ++it;
                 continue;
             }
             if (!entry.parked) {
