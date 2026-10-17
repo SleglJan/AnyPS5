@@ -36,7 +36,6 @@ struct GraphicsBindingShape {
     std::uint32_t descriptorSet = 0;
     std::uint32_t binding = 0;
     std::uint32_t count = 0;
-    std::uint32_t written = 0;
 
     bool operator==(const GraphicsBindingShape&) const = default;
 };

@@ -229,7 +229,7 @@ void AgeCache(const std::filesystem::path& directory) {
         for (auto& stage : entry.record.stages) {
             stage.program = Older(stage.program);
             stage.pushBytes += 4u;
-            stage.bindings.push_back({1u, 0u, 0u, 99u, 1u, 0u});
+            stage.bindings.push_back({1u, 0u, 0u, 99u, 1u});
         }
     }
     for (auto& record : records->prepared) record.identity = Older(record.identity);

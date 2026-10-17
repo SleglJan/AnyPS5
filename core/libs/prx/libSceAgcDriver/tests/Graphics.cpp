@@ -1383,7 +1383,7 @@ void ShadersWriteMemoryTests() {
         return result;
     };
     ShaderRecompiler::RecompileResult reads;
-    reads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageImage, ShaderRecompiler::DescriptorRole::GuestImages, {false}));
+    reads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::SampledImage, ShaderRecompiler::DescriptorRole::ImageTable, {false}));
     ShaderRecompiler::RecompileResult tableReads;
     tableReads.bindings.push_back(binding(ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::BdaPagetable, {}));
     ShaderRecompiler::RecompileResult stores = tableReads;
@@ -4095,11 +4095,8 @@ void resourceTests() {
         mutate(binding);
         return binding;
     };
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::SampledImage; binding.binding = 1u; }), "guest texture descriptor must contain 8 dwords");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::StorageImage; binding.binding = 29u; }), "guest storage image descriptors must contain 8 dwords");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestSamplers; binding.kind = Kind::Sampler; binding.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers); }), "guest samplers take slots in the descriptor heap");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestSamplers; binding.kind = Kind::SamplerSlot; binding.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers); }), "missing depth comparison metadata");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::SampledImage; binding.binding = 29u; }), "resource class disagrees");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::Gds; binding.kind = Kind::StorageBuffer; }), "invalid GDS descriptor contract");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::BdaPagetable; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::FaultBuffer; binding.kind = Kind::StorageBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
@@ -4116,26 +4113,6 @@ void resourceTests() {
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; }), "invalid compact shader data size");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::ShaderData; binding.kind = Kind::StorageBuffer; binding.guestDescriptor = ShaderDataWords({}); binding.guestDescriptor.pop_back(); }), "invalid compact shader data size");
     expectSingleFailure(changed([](auto& binding) { binding.guestDescriptor.clear(); }), "empty shader data descriptor");
-    {
-        ShaderRecompiler::RecompileResult vertex;
-        ShaderRecompiler::RecompileResult fragment;
-        vertex.bindings.push_back(makeBinding(Role::GuestImages, 1, 1, std::vector<std::uint32_t>(8, 0)));
-        const auto expectStageResources = [&](Role role, Kind kind, std::uint32_t words, std::uint32_t limit, std::string_view reason) {
-            vertex.bindings.back().role = role;
-            vertex.bindings.back().kind = kind;
-            vertex.bindings.back().binding = kind == Kind::StorageImage ? ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding : ShaderRecompiler::RuntimeAbi::FirstImageBinding;
-            vertex.bindings.back().guestDescriptor.assign(words, 0);
-            mock = MockVulkan{};
-            auto limited = mockContext();
-            limited.limits.maxPerStageResources = limit;
-            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(limited, vertex, fragment, state.color, 0, 0); }, reason);
-            Require(mock.live == 0, "failed shader resources leaked Vulkan objects");
-        };
-        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 0, "missing an image shape");
-        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 0, "detiler is unavailable");
-        expectStageResources(Role::GuestImages, Kind::SampledImage, 8, 1, "missing an image shape");
-        expectStageResources(Role::GuestImages, Kind::StorageImage, 8, 1, "detiler is unavailable");
-    }
     {
         ShaderRecompiler::RecompileResult vertex;
         ShaderRecompiler::RecompileResult fragment;
@@ -4401,83 +4378,6 @@ void guestSamplerSlotTests() {
                 Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLER; }), "guest samplers took descriptors in the shader's set");
             }
             Require(mock.live == 0 && mock.samplerFlags.empty(), "guest sampler slots leaked Vulkan objects");
-        }
-    }
-}
-
-void guestImageSlotTests() {
-    constexpr std::uint32_t count = 3u;
-    constexpr std::uint32_t untouched = 0xffffffffu;
-    constexpr std::uint32_t dataBase = ShaderRecompiler::RuntimeAbi::UserDataDword + 4u;
-    const std::array<std::vector<std::uint32_t>, 2> layouts{{{2u, 3u, 4u}, {2u, 2u, 3u}}};
-    for (const bool pushed : {true, false}) {
-        for (const bool sampled : {true, false}) {
-            for (const auto& offsets : layouts) {
-                mock = MockVulkan{};
-                auto context = mockContext();
-                context.limits.maxPerStageResources = pushed ? 0u : 1u;
-                context.limits.maxPerStageDescriptorSampledImages = 0;
-                context.limits.maxPerStageDescriptorStorageImages = 0;
-                context.limits.maxDescriptorSetSampledImages = 0;
-                AgcDriver::Graphics::TextureDetiler detiler(context);
-                context.detiler = &detiler;
-                AgcDriver::Graphics::TextureCache textures(context);
-                context.textureCache = &textures;
-                const auto live = mock.live;
-                ShaderRecompiler::RecompileResult program;
-                ShaderRecompiler::DescriptorBinding images{};
-                images.kind = sampled ? Kind::SampledImage : Kind::StorageImage;
-                images.role = Role::GuestImages;
-                images.descriptorSet = 0;
-                images.binding = sampled ? ShaderRecompiler::RuntimeAbi::FirstImageBinding : ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
-                images.count = count;
-                images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-                images.imageWritten.assign(count, false);
-                images.imageSamplers.resize(count);
-                images.guestDescriptor.assign(count * 8u, 0u);
-                std::uint32_t dataBinding = 0;
-                if (pushed) {
-                    images.imageSlotDwords = offsets;
-                    program.pushConstants.assign((*std::ranges::max_element(offsets) + 1u) * 4u, std::byte{0});
-                } else {
-                    for (const auto offset : offsets) images.imageSlotDwords.push_back(dataBase + offset);
-                    program.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
-                    auto data = makeBinding(Role::ShaderData, 2, 1, ShaderDataWords({}));
-                    std::fill_n(data.guestDescriptor.begin() + dataBase, 8u, untouched);
-                    dataBinding = data.binding;
-                    program.bindings.push_back(data);
-                }
-                program.bindings.push_back(images);
-                const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-                {
-                    AgcDriver::Graphics::ShaderResources resources(context, shader);
-                    std::array<std::uint32_t, count> slots{};
-                    for (std::uint32_t element = 0; element < count; ++element) {
-                        const auto dword = images.imageSlotDwords[element];
-                        if (pushed) {
-                            std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> push{};
-                            push.fill(std::byte{0xff});
-                            resources.PatchPushConstants(push);
-                            std::memcpy(&slots[element], push.data() + shader.pushConstantOffset + dword * 4u, sizeof(std::uint32_t));
-                        } else {
-                            const auto& write = findWrite(dataBinding).buffers.at(0);
-                            std::memcpy(&slots[element], bufferBytes(write.buffer).data() + write.offset + dword * 4u, sizeof(std::uint32_t));
-                        }
-                    }
-                    Require(std::all_of(slots.begin(), slots.end(), [](std::uint32_t slot) { return slot == untouched; }), "an absent guest image element wrote its slot dword");
-                    Require(std::none_of(mock.layoutBindings.begin(), mock.layoutBindings.end(), [](const auto& item) { return item.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || item.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }), "guest images took layout bindings in the shader's set");
-                    Require(std::none_of(mock.writes.begin(), mock.writes.end(), [](const auto& write) { return write.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || write.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; }), "guest images took descriptors in the shader's set");
-                    Require(resources.SampledTextures().empty() && resources.StorageImages().empty(), "an absent guest image resolved to a texture");
-                }
-                Require(mock.live == live, "guest image slots leaked Vulkan objects");
-                if (pushed) {
-                    program.pushConstants.resize(*std::ranges::max_element(offsets) * 4u + 3u);
-                    expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, shader); }, "outside the shader's push constants");
-                    program.pushConstants.resize((*std::ranges::max_element(offsets) + 1u) * 4u);
-                    program.bindings.back().imageSlotDwords.pop_back();
-                    expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, shader); }, "missing its elements' slot dwords");
-                }
-            }
         }
     }
 }
@@ -7366,7 +7266,6 @@ int main(int argc, char** argv) {
         samplerTableNonSeamlessCubeTests();
         samplerTableDeviceLimitTests();
         guestSamplerSlotTests();
-        guestImageSlotTests();
         descriptorHeapImageSlotTests();
         debugBranchTests();
         textureCacheBudgetTests();

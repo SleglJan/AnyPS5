@@ -256,29 +256,6 @@ GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side) 
     return DecodeTextureResource(words);
 }
 
-std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Block& block, std::size_t first, std::uint32_t count, bool sampled) {
-    ShaderRecompiler::DescriptorBinding binding{};
-    binding.kind = sampled ? ShaderRecompiler::DescriptorKind::SampledImage : ShaderRecompiler::DescriptorKind::StorageImage;
-    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
-    binding.descriptorSet = 0;
-    binding.binding = (sampled ? ShaderRecompiler::RuntimeAbi::FirstImageBinding : ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding) + PlaceholderDimensionsPerClass + 2u;
-    binding.count = count;
-    binding.imageSlotDwords.resize(count);
-    std::iota(binding.imageSlotDwords.begin(), binding.imageSlotDwords.end(), 0u);
-    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageWritten.assign(count, false);
-    binding.imageSamplers.resize(count);
-    for (std::uint32_t element = 0; element < count; ++element) {
-        const auto words = Descriptor(block.Surface(first + element));
-        binding.guestDescriptor.insert(binding.guestDescriptor.end(), words.begin(), words.end());
-    }
-    ShaderRecompiler::RecompileResult program;
-    program.bindings.push_back(std::move(binding));
-    program.pushConstants.assign(count * 4u, std::byte{0});
-    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
-    return std::make_shared<ShaderResources>(context, shader);
-}
-
 void viewTests(const Context& context) {
     if (context.hostImportAlignment == 0) {
         std::puts("host imports unavailable: views of storage images not tested");

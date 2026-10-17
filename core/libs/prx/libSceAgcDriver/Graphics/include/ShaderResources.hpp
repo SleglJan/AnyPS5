@@ -263,7 +263,7 @@ public:
     // milliseconds (zero when not profiling), so the draw path can total them separately from
     // dispatches. bindingsMs covers the binding plan (stage A) and the image lookups (stage B);
     // prepareMs/completeMs are the two stages' totals.
-    enum class BuildPhase : std::size_t { Bindings, Precollect, Upload, Descriptors, StageA, Images, Bda, StageB, Count };
+    enum class BuildPhase : std::size_t { Bindings, Upload, Descriptors, StageA, Images, Bda, StageB, Count };
     struct BuildTiming {
         double bindingsMs = 0;
         double uploadMs = 0;
@@ -323,14 +323,9 @@ private:
     struct Binding {
         VkDescriptorSetLayoutBinding layout;
         std::vector<std::size_t> allocations;
-        std::vector<std::size_t> imageAllocations;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
         bool noDescriptor = false;
-        bool imageSlots = false;
-        std::vector<std::uint32_t> slotDwords;
-        std::int32_t slotPushOffset = -1;
-        std::int64_t slotDataAllocation = -1;
     };
 
     struct TableStage {
@@ -374,52 +369,7 @@ private:
     // APS5_PROFILE_DRAW: closes the current sub-phase of the build into the [resources] totals.
     double phase(BuildPhase which);
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
-    // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
-    // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
-    void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
     void addGuestSamplers(const ShaderRecompiler::DescriptorBinding& binding, const CompiledShader& shader);
-    // Stage A: one record per planned image element (ImageRecord), in plan order: the decoded
-    // descriptor and its surface size (computed once for the build), the write watch walked so stage
-    // B's collects are memo hits (APS5_NO_PRECOLLECT=1 skips the pass entirely), and for a sampled
-    // element the cache entry it maps to, taken now so stage B needs only the fastRevalidate
-    // predicate under the lock (APS5_NO_STAGE_A_IMAGES=1 leaves every element to the full lookup).
-    // Whether it ran.
-    bool precollectImages();
-    struct ImageRecord {
-        bool sampled = false;
-        // The descriptor decoded and its surface described; false leaves the element to stage B's
-        // own decode (which reports the error).
-        bool decoded = false;
-        std::array<std::uint32_t, 8> words{};
-        GuestTextureResource resource{};
-        std::uint64_t guestBytes = 0;
-        VkComponentMapping components{};
-        // Sampled elements: the keys read in stage A and the collect made BEFORE stage B's checks
-        // (the generation the entry moves to when they pass).
-        DccKeys keys = DccKeys::Uncompressed;
-        std::uint64_t generation = 0;
-        // The cache entry's object, storage source, keys and generation as of stage A (texture null:
-        // no entry, the full lookup makes one).
-        std::shared_ptr<Texture> texture;
-        std::shared_ptr<StorageTexture> source;
-        DccKeys entryKeys = DccKeys::Uncompressed;
-        std::uint64_t entryGeneration = 0;
-    };
-    std::vector<ImageRecord> imageRecords;
-    struct PreviousSampled {
-        std::array<std::uint32_t, 8> words{};
-        bool depthCompare = false;
-        bool decodedCopy = false;
-        std::shared_ptr<Texture> texture;
-    };
-    PreviousSampled previousSampled;
-    // The next record resolveImageBinding consumes (records follow the deferredImages order).
-    std::size_t nextImageRecord = 0;
-    // Stage B: the record's texture when the fastRevalidate predicate proves it current under the
-    // lock and the cache still holds it; null sends the element to cachedTexture.
-    std::shared_ptr<Texture> fastTexture(const ImageRecord& record);
-    void resolveImageBinding(const ShaderRecompiler::DescriptorBinding& binding, Binding& item, std::span<const std::shared_ptr<Sampler>> shaderSamplers);
-    void applyAnisoOverride();
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders);
@@ -484,16 +434,7 @@ private:
     std::optional<ShaderRecompiler::LinearStore> linearStore;
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<bool> textureFirstLayer;
-    std::vector<bool> textureBaseLevel;
-    std::vector<bool> textureSrgb;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> stageShaders;
-    std::vector<std::shared_ptr<StorageTexture>> storageTextures;
-    std::vector<std::uint32_t> storageMips;
-    std::vector<std::uint64_t> storageKeys;
-    std::vector<StorageTexture::ViewLayers> storageLayers;
-    std::vector<bool> storageWritten;
-    std::vector<bool> storageAtomic;
-    std::vector<bool> storageAtomic64;
     std::vector<std::shared_ptr<Sampler>> samplers;
     std::shared_ptr<Sampler> paddingSampler;
     struct SamplerSource {
@@ -501,8 +442,6 @@ private:
         bool compareEnable = false;
         bool unnormalized = false;
         bool integerBorder = false;
-        bool singleLevelImage = false;
-        bool mipmappedImage = false;
     };
     std::vector<SamplerSource> samplerSources;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
@@ -521,17 +460,8 @@ private:
     std::vector<Binding> bindings;
     std::vector<VkDescriptorBindingFlags> layoutBindingFlags;
     std::vector<VkDescriptorBindingFlags> fragmentBindingFlags;
-    struct DeferredImages {
-        const ShaderRecompiler::DescriptorBinding* binding;
-        std::size_t index;
-        std::size_t firstSampler = 0;
-        std::size_t samplerCount = 0;
-    };
-    std::vector<DeferredImages> deferredImages;
     std::uint64_t storageBuffers = 0;
     bool updateAfterBind = false;
-    std::uint32_t plannedSampledImages = 0;
-    std::uint32_t plannedStorageImages = 0;
     // The compute constructor's shader and captured regions: the caller's objects, valid only until
     // the build (Complete() for a deferred one) is done, and reset then (forgetDeferredInputs).
     CompiledShader deferredCompute{};

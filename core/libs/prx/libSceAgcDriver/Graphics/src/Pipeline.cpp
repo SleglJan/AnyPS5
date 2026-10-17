@@ -141,14 +141,10 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 }
 
 bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
-    const auto any = [](const std::vector<bool>& written, std::uint32_t count) { return written.size() < count || std::ranges::any_of(written, [](bool element) { return element; }); };
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) continue;
         for (const auto& binding : shader.program->bindings) {
             switch (binding.role) {
-            case ShaderRecompiler::DescriptorRole::GuestImages:
-                if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && any(binding.imageWritten, binding.count)) return true;
-                break;
             case ShaderRecompiler::DescriptorRole::Gds:
                 return true;
             case ShaderRecompiler::DescriptorRole::BdaPagetable:

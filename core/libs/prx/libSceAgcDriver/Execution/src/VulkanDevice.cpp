@@ -4409,7 +4409,7 @@ bool VulkanDevice::RecordComputePipeline(const ShaderRecompiler::RecompileResult
     record.constants = shader.moduleConstants;
     for (const auto& binding : shader.bindings) {
         if (binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress || binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) continue;
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
         record.bindings.emplace_back(binding.binding, binding.count);
     }
     const auto added = state->pipelineManifest->Record(std::move(record));

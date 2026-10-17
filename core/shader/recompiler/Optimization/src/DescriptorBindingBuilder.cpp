@@ -73,9 +73,6 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::ImageTableMap) {
         return DescriptorRole::ImageTableMap;
     }
-    if (ImageBindingResourceClass(kind) != ImageResourceClass::None) {
-        return DescriptorRole::GuestImages;
-    }
     fail("DescriptorBindingBuilder::Populate binding kind has no descriptor role");
 }
 
@@ -277,7 +274,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
         const bool declared = remaining.erase(binding.descriptor.binding) != 0u;
-        const bool kept = binding.descriptor.kind == DescriptorKind::SamplerSlot ? samplerHeap : binding.descriptor.role == DescriptorRole::GuestImages || binding.descriptor.role == DescriptorRole::ImageTable ? imageHeap : declared || binding.descriptor.kind == DescriptorKind::DeviceAddress;
+        const bool kept = binding.descriptor.kind == DescriptorKind::SamplerSlot ? samplerHeap : binding.descriptor.role == DescriptorRole::ImageTable ? imageHeap : declared || binding.descriptor.kind == DescriptorKind::DeviceAddress;
         if (!kept) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
@@ -307,8 +304,6 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     for (const auto& entry : plan.bindings) {
         auto physical = entry.descriptor;
         switch (physical.role) {
-        case DescriptorRole::GuestImages:
-            fail("DescriptorBindingBuilder::Populate a typed image heap binding has no guest descriptors; images go through the image tables");
         case DescriptorRole::GuestSamplers:
             physical.guestDescriptor = GuestSamplersDescriptor(entry.resources, snapshot);
             for (const auto element : entry.samplerFilterElements) {
@@ -367,7 +362,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             break;
         }
 
-        if (physical.role == DescriptorRole::GuestImages || physical.role == DescriptorRole::GuestSamplers) {
+        if (physical.role == DescriptorRole::GuestSamplers) {
             if (physical.count == 0u || physical.guestDescriptor.size() % physical.count != 0u) {
                 fail("DescriptorBindingBuilder::Populate guest descriptor size is not a multiple of the binding count");
             }

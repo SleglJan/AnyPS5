@@ -810,8 +810,6 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.samplerSlotDword = bindings.layout.SamplerSlotDword();
     result.dispatchThreadLimitDword = bindings.layout.DispatchThreadLimitDword();
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
-    result.imageMetadataDword = bindings.layout.ImageMetadataDword();
-    result.runtimeImageCount = bindings.layout.runtimeImageCount;
     result.hostSubgroupSize = HostSubgroupSize(request);
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
@@ -1121,9 +1119,6 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .samplerSlotDword = artifact.samplerSlotDword,
         .dispatchThreadLimitDword = artifact.dispatchThreadLimitDword,
         .shaderDataDwords = artifact.shaderDataDwords,
-        .imageMetadataDword = artifact.imageMetadataDword,
-        .runtimeImageCount = artifact.runtimeImageCount,
-        .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .bdaWrites = artifact.bdaWrites,
@@ -1786,7 +1781,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     if (layout.descriptorSet != handle.artifact->layout.descriptorSet || layout.firstBinding != handle.artifact->layout.firstBinding) return false;
     if (layout.pushConstantOffsetBytes % 4u != 0u || layout.pushConstantSizeBytes % 4u != 0u || layout.pushConstantOffsetBytes > NativePushConstantSize || layout.pushConstantSizeBytes > NativePushConstantSize - layout.pushConstantOffsetBytes) return false;
     const auto words = prepared.ShaderDataDwords();
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
+    const bool usesPush = words != 0u && words <= layout.pushConstantSizeBytes / 4u;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

@@ -415,21 +415,15 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Value(binding.count);
     writer.Values(std::span<const std::uint32_t>(binding.guestDescriptor));
     writer.Value(binding.readOnly);
-    writer.Value(binding.imageShape.has_value());
-    writer.Value(binding.imageShape.value_or(DescriptorImageShape::Image1D));
     writer.Flags(binding.samplerDepthCompare);
     writer.Flags(binding.imageWritten);
     writer.Flags(binding.imageDepthCompare);
     writer.Flags(binding.imageDecodedCopy);
     writer.Flags(binding.imageAtomic);
-    writer.Flags(binding.imageAtomic64);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.samplerUnnormalized);
-    writer.Flags(binding.imageUnnormalized);
-    writer.Flags(binding.imageUnnormalizedBaseLevel);
     writer.Flags(binding.samplerIntegerBorder);
     writer.Flags(binding.samplerUsed);
-    writer.Values(std::span<const std::uint32_t>(binding.imageSlotDwords));
     writer.List(binding.imageSamplers, [](Writer& out, const std::vector<std::uint32_t>& samplers) { out.Values(std::span<const std::uint32_t>(samplers)); });
 }
 
@@ -441,22 +435,15 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Value(binding.count);
     reader.Values(binding.guestDescriptor);
     reader.Value(binding.readOnly);
-    const bool hasShape = reader.Get<bool>();
-    const auto shape = reader.Get<DescriptorImageShape>();
-    binding.imageShape = hasShape ? std::optional(shape) : std::nullopt;
     reader.Flags(binding.samplerDepthCompare);
     reader.Flags(binding.imageWritten);
     reader.Flags(binding.imageDepthCompare);
     reader.Flags(binding.imageDecodedCopy);
     reader.Flags(binding.imageAtomic);
-    reader.Flags(binding.imageAtomic64);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.samplerUnnormalized);
-    reader.Flags(binding.imageUnnormalized);
-    reader.Flags(binding.imageUnnormalizedBaseLevel);
     reader.Flags(binding.samplerIntegerBorder);
     reader.Flags(binding.samplerUsed);
-    reader.Values(binding.imageSlotDwords);
     reader.List(binding.imageSamplers, 4, [](Reader& in, std::vector<std::uint32_t>& samplers) { in.Values(samplers); });
 }
 
@@ -472,9 +459,6 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.samplerSlotDword);
     writer.Value(result.dispatchThreadLimitDword);
     writer.Value(result.shaderDataDwords);
-    writer.Value(result.imageMetadataDword);
-    writer.Value(result.runtimeImageCount);
-    writer.Values(std::span<const std::uint32_t>(result.runtimeImageResources));
     writer.Value(result.registrationModule);
     writer.List(result.vertexInputPatches, [](Writer& out, const VertexInputPatch& patch) {
         out.Value(patch.location);
@@ -524,9 +508,6 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.samplerSlotDword);
     reader.Value(result.dispatchThreadLimitDword);
     reader.Value(result.shaderDataDwords);
-    reader.Value(result.imageMetadataDword);
-    reader.Value(result.runtimeImageCount);
-    reader.Values(result.runtimeImageResources);
     reader.Value(result.registrationModule);
     reader.List(result.vertexInputPatches, 20, [](Reader& in, VertexInputPatch& patch) {
         in.Value(patch.location);
@@ -655,10 +636,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
     writer.Value(layout.samplerSlotCount);
-    writer.Value(layout.imageSlotCount);
-    writer.Values(std::span<const std::uint32_t>(layout.imageSlotBases));
     writer.Value(layout.dispatchThreadLimit);
-    writer.Value(layout.runtimeImageCount);
     writer.Value(layout.runtimeStateDwords);
     writer.Values(std::span<const std::uint32_t>(layout.userDataRegisters));
     writer.List(layout.descriptors, [](Writer& out, const IrDescriptorBinding& descriptor) {
@@ -673,10 +651,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
     reader.Value(layout.samplerSlotCount);
-    reader.Value(layout.imageSlotCount);
-    reader.Values(layout.imageSlotBases);
     reader.Value(layout.dispatchThreadLimit);
-    reader.Value(layout.runtimeImageCount);
     reader.Value(layout.runtimeStateDwords);
     reader.Values(layout.userDataRegisters);
     reader.List(layout.descriptors, 12, [](Reader& in, IrDescriptorBinding& descriptor) {

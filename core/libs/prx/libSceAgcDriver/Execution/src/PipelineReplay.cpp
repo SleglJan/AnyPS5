@@ -37,12 +37,6 @@ ReplayTotals& ReplayCounters() {
     return totals;
 }
 
-std::uint32_t Written(const ShaderRecompiler::DescriptorBinding& binding) {
-    const auto any = [&](const std::vector<bool>& written) { return written.size() < binding.count || std::ranges::any_of(written, [](bool element) { return element; }); };
-    if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) return any(binding.imageWritten) ? 1u : 0u;
-    return 0u;
-}
-
 bool Recordable(const Graphics::State& state, std::span<const Graphics::CompiledShader> shaders) {
     if (state.rectList) return false;
     for (const auto& shader : shaders) {
@@ -86,7 +80,7 @@ std::shared_ptr<RecordUse> PipelineReplay::Created(const Graphics::Context& cont
         stage.program = program.identity;
         stage.constants = program.moduleConstants;
         stage.pushBytes = static_cast<std::uint32_t>(program.pushConstants.size());
-        for (const auto& binding : program.bindings) stage.bindings.push_back({static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, Written(binding)});
+        for (const auto& binding : program.bindings) stage.bindings.push_back({static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count});
     }
     record.description = Graphics::EncodePipelineDescription(state, vertexInput, attachmentLayout);
     const auto decoded = Graphics::DecodePipelineDescription(record.description);
@@ -117,9 +111,9 @@ std::optional<ProgramInterface> PipelineReplay::DerivedInterface(const ShaderRec
     ProgramInterface derived;
     derived.pushBytes = static_cast<std::uint32_t>(registration->pushConstants.size());
     for (const auto& binding : registration->bindings) {
-        derived.bindings.push_back({static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, Written(binding)});
+        derived.bindings.push_back({static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count});
         if (binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress || binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) continue;
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
         derived.computeBindings.emplace_back(binding.binding, binding.count);
     }
     return derived;
@@ -198,7 +192,6 @@ void PipelineReplay::create(const GraphicsPipelineRecord& record, const std::sha
                 binding.descriptorSet = shape.descriptorSet;
                 binding.binding = shape.binding;
                 binding.count = shape.count;
-                binding.imageWritten.assign(shape.count, shape.written != 0u);
             }
             shaders.push_back({static_cast<ShaderRecompiler::ShaderStage>(stage.stage), result.get(), stage.pushOffset});
             results.push_back(std::move(result));

@@ -12,7 +12,7 @@ namespace AgcDriver {
 namespace {
 
 constexpr std::uint64_t Magic = 0x314d504335535041ull;
-constexpr std::uint32_t FormatVersion = 4;
+constexpr std::uint32_t FormatVersion = 5;
 
 class Writer {
 public:
@@ -342,7 +342,6 @@ std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, con
                 writer.Value(binding.descriptorSet);
                 writer.Value(binding.binding);
                 writer.Value(binding.count);
-                writer.Value(binding.written);
             });
         });
         writer.List(record.description, [&](std::byte value) { writer.Value(value); });
@@ -377,8 +376,8 @@ std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byt
         auto& record = entry.record;
         return reader.Usage(entry.usage) && reader.List(record.stages, 36u, [&](GraphicsStageRecord& stage) {
             return reader.Value(stage.stage) && reader.Value(stage.pushOffset) && reader.Value(stage.program[0]) && reader.Value(stage.program[1]) && reader.Constants(stage.constants) && reader.Value(stage.pushBytes)
-                && reader.List(stage.bindings, 24u, [&](GraphicsBindingShape& binding) {
-                       return reader.Value(binding.kind) && reader.Value(binding.role) && reader.Value(binding.descriptorSet) && reader.Value(binding.binding) && reader.Value(binding.count) && reader.Value(binding.written);
+                && reader.List(stage.bindings, 20u, [&](GraphicsBindingShape& binding) {
+                       return reader.Value(binding.kind) && reader.Value(binding.role) && reader.Value(binding.descriptorSet) && reader.Value(binding.binding) && reader.Value(binding.count);
                    });
         }) && reader.List(record.description, 1u, [&](std::byte& value) { return reader.Value(value); });
     });

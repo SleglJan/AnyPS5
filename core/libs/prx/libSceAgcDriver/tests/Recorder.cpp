@@ -334,15 +334,6 @@ private:
 
 using Kind = Recorder::ReadKind;
 
-std::uint32_t pushedImageSlot(const ShaderResources& resources, std::uint32_t dword) {
-    std::array<std::byte, PipelinePushConstantBytes> push;
-    push.fill(std::byte{0xff});
-    resources.PatchPushConstants(push);
-    std::uint32_t slot = 0;
-    std::memcpy(&slot, push.data() + dword * 4u, sizeof(slot));
-    return slot;
-}
-
 void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 16), "a fresh recorder reports a read");
@@ -1546,23 +1537,11 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         program.bindings.push_back(data);
         data.binding = 7;
         program.bindings.push_back(data);
-        ShaderRecompiler::DescriptorBinding images{};
-        images.kind = ShaderRecompiler::DescriptorKind::SampledImage;
-        images.role = ShaderRecompiler::DescriptorRole::GuestImages;
-        images.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
-        images.count = 2;
-        images.guestDescriptor.resize(16);
-        images.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-        images.imageSamplers.resize(2);
-        images.imageSlotDwords = {0u, 1u};
-        program.bindings.push_back(images);
-        program.pushConstants.assign(images.count * sizeof(std::uint32_t), std::byte{0});
         const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
         ShaderResources resources(context, shader);
         Require(updates.calls.size() == 1, "building resources did not write one descriptor set");
         const auto original = updates.calls.front();
         Require(original.buffers.size() == 2 && original.images.empty(), "descriptor test lacks mixed bindings, or an image array took descriptors in the set");
-        for (std::uint32_t element = 0; element < images.count; ++element) Require(pushedImageSlot(resources, element) == 0xffffffffu, "an absent image wrote its slot dword");
         for (std::size_t allocation = 0; allocation < 2; ++allocation) {
             const ShaderResources::MovedBuffer moved{allocation, 0, 16, {5, 6, 7, 8}};
             const auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
@@ -1570,7 +1549,6 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
             Require(updates.calls.size() == allocation + 2 && updates.copies == 0, "draw descriptors copied GPU memory or needed multiple updates");
             const auto& actual = updates.calls.back();
             Require(actual.buffers.size() == original.buffers.size() && actual.images.empty(), "snapshot update omitted unchanged descriptors, or wrote image descriptors");
-            for (std::uint32_t element = 0; element < images.count; ++element) Require(pushedImageSlot(resources, element) == 0xffffffffu, "snapshot update wrote an image slot");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
                 const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
@@ -4354,28 +4332,15 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     auto* second = first + 65536;
     std::memset(first, 0x11, surfaceBytes);
     std::memset(second, 0x22, surfaceBytes);
-    ShaderRecompiler::RecompileResult program;
-    ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
-    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
-    binding.descriptorSet = 0;
-    binding.binding = 1;
-    binding.count = 1;
-    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageSamplers.resize(1);
-    binding.imageSlotDwords = {0u};
-    program.bindings.push_back(binding);
-    program.pushConstants.assign(4u * sizeof(std::uint32_t), std::byte{0});
-    const CompiledShader compiled{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     std::vector<std::shared_ptr<Texture>> kept;
-    const auto sample = [&](const std::uint8_t* surface) {
-        const auto words = linearTextureWords(reinterpret_cast<std::uint64_t>(surface), width, height, 56);
-        program.bindings[0].guestDescriptor.assign(words.begin(), words.end());
-        ShaderResources resources(context, compiled);
-        Require(resources.SampledTextures().size() == 1, "the build has no sampled texture");
-        kept.push_back(resources.SampledTextures().front());
-        return kept.back();
+    const auto lookup = [&](const std::array<std::uint32_t, 8>& words) {
+        std::lock_guard gpu(GpuMutex());
+        auto texture = LookupDeviceTableTexture(context, words, DeviceTableView{}, 0u, false).texture;
+        Require(texture != nullptr, "the lookup has no sampled texture");
+        kept.push_back(texture);
+        return texture;
     };
+    const auto sample = [&](const std::uint8_t* surface) { return lookup(linearTextureWords(reinterpret_cast<std::uint64_t>(surface), width, height, 56)); };
     const auto made = sample(first);
     Require(sample(first) == made, "an unchanged sampled texture was made again");
     const auto other = sample(second);
@@ -4388,25 +4353,9 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     Require(replaced != other && sample(second) == replaced && sample(first) == remade, "the cache does not answer with the replacements");
     const auto firstWords = linearTextureWords(reinterpret_cast<std::uint64_t>(first), width, height, 56);
     const auto secondWords = linearTextureWords(reinterpret_cast<std::uint64_t>(second), width, height, 56);
-    const auto bindElements = [&](std::initializer_list<std::array<std::uint32_t, 8>> elements, std::vector<bool> depthCompare) {
-        program.bindings[0].count = static_cast<std::uint32_t>(elements.size());
-        program.bindings[0].guestDescriptor.clear();
-        for (const auto& words : elements) program.bindings[0].guestDescriptor.insert(program.bindings[0].guestDescriptor.end(), words.begin(), words.end());
-        program.bindings[0].imageDepthCompare = std::move(depthCompare);
-        program.bindings[0].imageSamplers.assign(elements.size(), std::vector<std::uint32_t>{});
-        program.bindings[0].imageSlotDwords.resize(elements.size());
-        std::iota(program.bindings[0].imageSlotDwords.begin(), program.bindings[0].imageSlotDwords.end(), 0u);
-        ShaderResources resources(context, compiled);
-        Require(resources.SampledTextures().size() == elements.size(), "the build has the wrong number of sampled textures");
-        kept.insert(kept.end(), resources.SampledTextures().begin(), resources.SampledTextures().end());
-        return resources.SampledTextures();
-    };
-    const auto repeated = bindElements({firstWords, firstWords, secondWords, firstWords}, {});
-    Require(repeated[0] == remade && repeated[1] == remade && repeated[2] == replaced && repeated[3] == remade, "repeated elements of one build do not bind the cache's textures");
-    program.bindings[0].count = 1;
-    program.bindings[0].imageDepthCompare.clear();
-    program.bindings[0].imageSamplers.assign(1, std::vector<std::uint32_t>{});
-    program.bindings[0].imageSlotDwords.assign(1, 0u);
+    std::vector<std::shared_ptr<Texture>> repeated;
+    for (const auto& words : {firstWords, firstWords, secondWords, firstWords}) repeated.push_back(lookup(words));
+    Require(repeated[0] == remade && repeated[1] == remade && repeated[2] == replaced && repeated[3] == remade, "repeated lookups do not answer with the cache's textures");
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
@@ -4505,17 +4454,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     refused([&] { AgcDriver::GuestMemory::ReadCommitted(address + 256u, texels); }, "a CPU read", "a committed CPU read");
     refused([&] { AgcDriver::GuestMemory::ReadCommittedUnsynced(address + 256u, texels); }, "a CPU read", "a committed CPU read without the flush hook");
     refused([&] { RequireNoMultisampleTarget(address, 64u, "a DMA copy"); }, "a DMA copy", "a DMA copy");
-    ShaderRecompiler::RecompileResult program;
-    ShaderRecompiler::DescriptorBinding binding;
-    binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
-    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
-    binding.descriptorSet = 0;
-    binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
-    binding.count = 1;
-    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    binding.imageSamplers.resize(1);
-    binding.imageSlotDwords = {0u};
-    binding.guestDescriptor = {
+    const std::array<std::uint32_t, 8> plainWords{
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
@@ -4525,12 +4464,9 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         0u,
         0u,
     };
-    program.bindings.push_back(binding);
-    program.pushConstants.assign(sizeof(std::uint32_t), std::byte{0});
-    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     refused([&] {
         std::lock_guard gpu(GpuMutex());
-        ShaderResources resources(context, compute);
+        static_cast<void>(LookupDeviceTableTexture(context, plainWords, DeviceTableView{}, 0u, true));
     }, "a texture read", "a texture read");
     const auto multisampledWords = [&](std::uint32_t width, std::uint32_t sampleShift, std::uint64_t base) {
         return std::vector<std::uint32_t>{
@@ -4544,38 +4480,33 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
             0u,
         };
     };
-    const auto sampledProgram = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words) {
-        ShaderRecompiler::RecompileResult result;
-        auto element = binding;
-        element.kind = kind;
-        if (kind == ShaderRecompiler::DescriptorKind::StorageImage) element.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
-        element.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
-        element.guestDescriptor = std::move(words);
-        result.bindings.push_back(std::move(element));
-        result.pushConstants = program.pushConstants;
-        return result;
+    const auto sampleTarget = [&](ShaderRecompiler::DescriptorKind kind, const std::vector<std::uint32_t>& words) -> std::shared_ptr<Texture> {
+        DeviceTableView view;
+        view.shape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
+        const std::span<const std::uint32_t, 8> descriptor(words.data(), 8);
+        if (kind == ShaderRecompiler::DescriptorKind::StorageImage) {
+            static_cast<void>(LookupDeviceTableStorage(context, descriptor, view));
+            return nullptr;
+        }
+        return LookupDeviceTableTexture(context, descriptor, view, 0u, true).texture;
     };
-    const auto refusedSample = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words, const std::string& expected, const std::string& what) {
-        const auto refusedProgram = sampledProgram(kind, std::move(words));
-        const CompiledShader refusedCompute{ShaderRecompiler::ShaderStage::Compute, &refusedProgram, 0};
+    const auto refusedSample = [&](ShaderRecompiler::DescriptorKind kind, const std::vector<std::uint32_t>& words, const std::string& expected, const std::string& what) {
         std::string message;
         try {
             std::lock_guard gpu(GpuMutex());
-            ShaderResources resources(context, refusedCompute);
+            static_cast<void>(sampleTarget(kind, words));
         } catch (const std::exception& error) {
             message = error.what();
         }
         Require(message.find(expected) != std::string::npos, what + " did not throw: " + message);
     };
     {
-        const auto sampled = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
-        const CompiledShader sampledCompute{ShaderRecompiler::ShaderStage::Compute, &sampled, 0};
         std::lock_guard gpu(GpuMutex());
-        ShaderResources first(context, sampledCompute);
-        ShaderResources second(context, sampledCompute);
-        Require(first.SampledTextures().size() == 1 && first.SampledTextures().front() != nullptr, "the multisampled target was not bound as a sampled texture");
-        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_GENERAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
-        Require(second.SampledTextures().front() == first.SampledTextures().front(), "a second lookup of the multisampled target made another texture");
+        const auto first = sampleTarget(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
+        const auto second = sampleTarget(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
+        Require(first != nullptr, "the multisampled target was not bound as a sampled texture");
+        Require(first->Layout() == VK_IMAGE_LAYOUT_GENERAL && first->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
+        Require(second == first, "a second lookup of the multisampled target made another texture");
         recorder.Submit();
         device.WaitQueue();
         recorder.Sync();
@@ -4638,13 +4569,10 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         VkImageView view = VK_NULL_HANDLE;
         std::shared_ptr<Texture> texture;
         {
-            const auto sampled = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
-            const CompiledShader sampledCompute{ShaderRecompiler::ShaderStage::Compute, &sampled, 0};
             std::lock_guard gpu(GpuMutex());
             view = MultisampleTargetView(context, target);
             Require(view != VK_NULL_HANDLE && view != previous, "a remapped allocation reused its retired multisampled image");
-            ShaderResources resources(context, sampledCompute);
-            texture = resources.SampledTextures().front();
+            texture = sampleTarget(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
             Require(texture != nullptr && texture != previousTexture, "a remapped allocation sampled its retired multisampled image");
             recorder.Submit();
             device.WaitQueue();

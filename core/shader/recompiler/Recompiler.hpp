@@ -391,7 +391,6 @@ enum class DescriptorImageShape {
 };
 
 enum class DescriptorRole {
-    GuestImages,
     GuestSamplers,
     Gds,
     BdaPagetable,
@@ -411,21 +410,16 @@ struct DescriptorBinding {
     std::uint32_t count;
     std::vector<std::uint32_t> guestDescriptor;
     bool readOnly = false;
-    std::optional<DescriptorImageShape> imageShape;
     std::vector<bool> samplerDepthCompare;
     // Guest image elements the shader stores to (or updates atomically); the others are only read.
     std::vector<bool> imageWritten;
     std::vector<bool> imageDepthCompare;
     std::vector<bool> imageDecodedCopy;
     std::vector<bool> imageAtomic;
-    std::vector<bool> imageAtomic64;
     std::vector<DescriptorImageShape> imageShapes;
     std::vector<bool> samplerUnnormalized;
     std::vector<bool> samplerIntegerBorder;
     std::vector<bool> samplerUsed;
-    std::vector<std::uint32_t> imageSlotDwords;
-    std::vector<bool> imageUnnormalized;
-    std::vector<bool> imageUnnormalizedBaseLevel;
     std::vector<std::vector<std::uint32_t>> imageSamplers;
     std::vector<std::vector<std::uint32_t>> tableSamplerElements;
 };
@@ -594,9 +588,6 @@ struct CompiledShaderArtifact {
     std::uint32_t samplerSlotDword = 0;
     std::uint32_t dispatchThreadLimitDword = 0;
     std::uint32_t shaderDataDwords = 0;
-    std::uint32_t imageMetadataDword = 0;
-    std::uint32_t runtimeImageCount = 0;
-    std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
     std::uint32_t bdaAbiVersion = 0;
     bool bdaWrites = false;

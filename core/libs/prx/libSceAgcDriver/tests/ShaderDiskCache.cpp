@@ -59,7 +59,7 @@ void setEnvironment(const char* name, const std::string& value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerUsed == right.samplerUsed && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerUsed == right.samplerUsed && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -77,7 +77,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.dispatchThreadLimitDword == right.dispatchThreadLimitDword, prefix + "dispatch limit dword differs");
-    require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
+    require(left.shaderDataDwords == right.shaderDataDwords, prefix + "compact data layout differs");
     require(left.hostSubgroupSize == right.hostSubgroupSize, prefix + "host subgroup size differs");
     require(left.registrationModule == right.registrationModule, prefix + "registration module flags differ");
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
@@ -132,14 +132,13 @@ void requireSameVariant(const CompiledVariant& left, const CompiledVariant& righ
 
 DescriptorBinding sampleBinding(std::uint32_t seed) {
     DescriptorBinding binding{};
-    binding.kind = DescriptorKind::StorageImage;
-    binding.role = DescriptorRole::GuestImages;
+    binding.kind = DescriptorKind::SampledImage;
+    binding.role = DescriptorRole::ImageTable;
     binding.descriptorSet = 0;
     binding.binding = 29 + seed;
     binding.count = 3;
     binding.guestDescriptor = {0x11111111u * seed, 0xdeadbeefu, 0x80000000u, 7u, 0u, 0xffffffffu, 42u, seed};
     binding.readOnly = seed % 2 == 0;
-    binding.imageShape = DescriptorImageShape::Image2DArray;
     binding.samplerDepthCompare = {true, false, true};
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
@@ -148,8 +147,6 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerUnnormalized = {false, true, true};
     binding.samplerIntegerBorder = {true, false, seed % 2 == 1};
     binding.samplerUsed = {seed % 2 == 0, true, false};
-    binding.imageUnnormalized = {true, false, seed % 2 == 0};
-    binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
     binding.imageSamplers = {{0u, 2u, 70u}, {}, {31u, 4000u}};
     return binding;
 }
@@ -163,7 +160,6 @@ RecompileResult sampleResult() {
     result.bindings = {sampleBinding(1), sampleBinding(2)};
     result.bindings[1].kind = DescriptorKind::StorageBuffer;
     result.bindings[1].role = DescriptorRole::Gds;
-    result.bindings[1].imageShape.reset();
     result.pushConstants = {std::byte{1}, std::byte{0xff}, std::byte{0}, std::byte{0x80}, std::byte{7}};
     result.bdaAbiVersion = 3;
     result.bdaWrites = true;

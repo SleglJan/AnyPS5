@@ -191,7 +191,7 @@ void CheckHeaps() {
     constexpr std::uint32_t manyImages = 64u;
     const auto full = allocate(image, manyImages, RuntimeAbi::SamplerHeapCapacity / 2u);
     const auto expectTables = [&](const IrBindingLayout& layout, std::string_view what) {
-        Require(layout.imageSlotBases.empty() && layout.imageSlotCount == 0u && layout.runtimeImageCount == 0u && layout.ShaderDataDwords() == layout.samplerSlotCount, std::string(what) + ": device-table images took image slots or runtime metadata in the shader data");
+        Require(layout.ShaderDataDwords() == layout.samplerSlotCount, std::string(what) + ": device-table images took image slots or runtime metadata in the shader data");
         Require(std::ranges::none_of(layout.descriptors, [](const IrDescriptorBinding& binding) { return ImageBindingResourceClass(binding.kind) != ImageResourceClass::None; }), std::string(what) + ": a device-table image was placed in a typed heap");
         Require(BindingAllocator{}.FindBinding(layout, DescriptorBindingKind::ImageTable).kind == DescriptorBindingKind::ImageTable && BindingAllocator{}.FindBinding(layout, DescriptorBindingKind::ImageTableMap).kind == DescriptorBindingKind::ImageTableMap, std::string(what) + ": device-table images did not get the image table and its map");
     };
@@ -240,7 +240,7 @@ void CheckHeaps() {
     }
     constexpr std::uint32_t hundredSamplers = 100u;
     const auto hundred = allocate(image, 0u, hundredSamplers);
-    Require(BindingAllocator{}.FindBinding(hundred.layout, DescriptorBindingKind::Samplers).resources.size() == 2u * hundredSamplers && hundred.layout.samplerSlotCount == 2u * hundredSamplers && hundred.layout.ImageSlotDword() == 2u * hundredSamplers && hundred.layout.ShaderDataDwords() == 2u * hundredSamplers, "a hundred samplers did not take a pair of slots each");
+    Require(BindingAllocator{}.FindBinding(hundred.layout, DescriptorBindingKind::Samplers).resources.size() == 2u * hundredSamplers && hundred.layout.samplerSlotCount == 2u * hundredSamplers && hundred.layout.DispatchThreadLimitDword() == 2u * hundredSamplers && hundred.layout.ShaderDataDwords() == 2u * hundredSamplers, "a hundred samplers did not take a pair of slots each");
     const std::array dimensions{RdnaImageDimension::Dim1D, RdnaImageDimension::Dim1DArray, RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D, RdnaImageDimension::Dim2DMsaa, RdnaImageDimension::Dim2DMsaaArray};
     std::set<std::uint32_t> classes;
     for (std::uint32_t group = 0u; group < 8u; ++group) {

@@ -31,8 +31,8 @@ std::vector<AgcDriver::ComputePipelineRecord> ComputeRecords() {
 
 std::vector<AgcDriver::GraphicsPipelineRecord> GraphicsRecords() {
     AgcDriver::GraphicsPipelineRecord first;
-    first.stages.push_back({1u, 0u, {0xaaaau, 0xbbbbu}, {{4096u + 5u, 2u}, {8188u, 4u}}, 64u, {{1u, 7u, 0u, 3u, 1u, 0u}}});
-    first.stages.push_back({5u, 128u, {0xccccu, 0xddddu}, {{8224u, 1u}}, 0u, {{1u, 0u, 1u, 0u, 4u, 1u}, {8u, 2u, 1u, 9u, 1u, 0u}}});
+    first.stages.push_back({1u, 0u, {0xaaaau, 0xbbbbu}, {{4096u + 5u, 2u}, {8188u, 4u}}, 64u, {{1u, 7u, 0u, 3u, 1u}}});
+    first.stages.push_back({5u, 128u, {0xccccu, 0xddddu}, {{8224u, 1u}}, 0u, {{1u, 0u, 1u, 0u, 4u}, {8u, 2u, 1u, 9u, 1u}}});
     first.description = {std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0x37}};
     auto second = first;
     second.description.back() = std::byte{0x38};
@@ -119,7 +119,7 @@ void File() {
         AgcDriver::PipelineManifest manifest(path, 78u);
         Require(manifest.RecordedByAnotherBuild() && manifest.Loaded() == 7u && manifest.Records(compute[0].program).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a manifest of another recompiler build was not loaded with its records");
         const AgcDriver::ProgramInterface computeInterface{0u, {}, {{9u, 2u}}};
-        const AgcDriver::ProgramInterface stageInterface{32u, {{1u, 7u, 0u, 4u, 1u, 0u}}, {}};
+        const AgcDriver::ProgramInterface stageInterface{32u, {{1u, 7u, 0u, 4u, 1u}}, {}};
         const auto movedCompute = manifest.Rekey(compute[0].program, rebuilt, computeInterface);
         const auto movedStage = manifest.Rekey(graphics[0].stages[0].program, rebuiltStage, stageInterface);
         Require(movedCompute.compute == 2u && movedStage.graphics == 2u && movedCompute.droppedCompute + movedCompute.droppedGraphics + movedStage.droppedCompute + movedStage.droppedGraphics == 0u, "rekeying with a derived interface dropped records or moved the wrong number");

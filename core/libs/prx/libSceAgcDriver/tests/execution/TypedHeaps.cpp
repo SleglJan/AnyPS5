@@ -31,11 +31,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     const auto instructions = store ? std::span<const std::uint32_t>(storeCode) : std::span<const std::uint32_t>(code);
     ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(instructions.data()), instructions, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.Target(), {0u, 0u, 0u, 128u}};
     auto result = ShaderRecompiler::Recompile(request);
-    Require(result.runtimeImageCount == 0u, "direct image allocated runtime image metadata");
     Require(result.shaderDataDwords < ShaderRecompiler::RuntimeAbi::ShaderDataDwords, "shader data was not compacted");
-    for (const auto& binding : result.bindings) {
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) Require(binding.count == 1u, "single image expanded into unused descriptor slots");
-    }
     return result;
 }
 
