@@ -526,7 +526,7 @@ std::uint32_t RefreshBdaReadCache(SpirvEmitterState& state, std::uint32_t addres
     const auto segmentType = state.module.Type(spv::OpTypeStruct, u64, u64, u64);
     const auto translate = [&] {
         const auto segment = state.module.AllocateId();
-        state.module.AddFunction(spv::OpFunctionCall, segmentType, segment, state.bdaSegmentFunction, address);
+        state.module.AddFunction(spv::OpFunctionCall, segmentType, segment, state.bdaSegmentFunction, address, ConstantBool(state, true));
         return segment;
     };
     const bool shared = elect && BdaSegmentsShared(state);

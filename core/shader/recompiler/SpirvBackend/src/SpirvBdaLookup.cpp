@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "BdaTouchAbi.hpp"
 #include <algorithm>
 #include <array>
@@ -479,9 +480,11 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
     const auto readable = [&](std::uint32_t permissions) { return binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(BdaAbi::Read)), constant(0u)); };
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "bda_segment");
-    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64));
+    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64, boolean));
     const auto address = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, u64, address);
+    const auto translate = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionParameter, boolean, translate);
     EmitLabel(state, state.module.AllocateId());
     const auto variable = [&](std::uint32_t type) {
         const auto id = state.module.AllocateId();
@@ -492,6 +495,7 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
     const auto high = variable(u32);
     const auto entry = variable(entryType);
     const auto shift = variable(u32);
+    none(Unary(state, spv::OpLogicalNot, boolean, translate));
     const auto table = BdaTableHeader(state, ReturnTableHeader{[&](std::uint32_t condition, BdaAbi::FaultReason) { none(condition); }});
     const auto count = table.count;
     const auto pages = table.pages;
@@ -795,7 +799,7 @@ BdaCacheProbe ProbeBdaVectorCache(SpirvEmitterState& state, std::uint32_t addres
 
 void RefreshBdaVectorCache(SpirvEmitterState& state, std::uint32_t address) {
     const auto segment = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, SegmentType(state), segment, state.bdaSegmentFunction, address);
+    state.module.AddFunction(spv::OpFunctionCall, SegmentType(state), segment, state.bdaSegmentFunction, address, ConstantBool(state, true));
     for (std::uint32_t field = 0; field < 3u; ++field) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeScalarU64(state), value, segment, field);
@@ -985,11 +989,18 @@ void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst, 
     const auto u64 = TypeScalarU64(state);
     const auto type = SegmentType(state);
     const auto high = Binary(state, spv::OpBitwiseAnd, u32, ctx.Def(words[1]), ConstantU32(state, 0xffffu));
+    const auto base = JoinU64(state, ctx.Def(words[0]), high);
+    const bool uniform = WaveUniformDescriptor(state, words);
+    auto translate = ConstantBool(state, true);
+    if (uniform) {
+        translate = state.module.AllocateId();
+        EmitSubgroupElect(state, translate);
+    }
     const auto segment = state.module.AllocateId();
-    state.module.AddFunction(spv::OpFunctionCall, type, segment, state.bdaSegmentFunction, JoinU64(state, ctx.Def(words[0]), high));
+    state.module.AddFunction(spv::OpFunctionCall, type, segment, state.bdaSegmentFunction, base, translate);
     std::array<std::uint32_t, 3> fields{};
     for (std::uint32_t field = 0; field < 3u; ++field) fields[field] = Extract(state, u64, segment, field);
-    if (WaveUniformDescriptor(state, words)) {
+    if (uniform) {
         const auto bounds = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), bounds, SplitU64(state, fields[0], false), SplitU64(state, fields[0], true), SplitU64(state, fields[1], false), SplitU64(state, fields[1], true));
         const auto delta = state.module.AllocateId();
