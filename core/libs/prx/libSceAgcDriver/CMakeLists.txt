@@ -2797,3 +2797,16 @@ target_include_directories(agc_driver_pipeline_store_budget_tests PRIVATE $<TARG
 target_include_directories(agc_driver_device_table_lookup_once_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_private_store_after_branch_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+add_test_executable(agc_branch_split_parts_tests EXCLUDE_FROM_ALL tests/BranchSplitParts.cpp)
+target_link_libraries(agc_branch_split_parts_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_branch_split_parts_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_branch_split_parts_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_branch_split_parts_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_branch_split_parts COMMAND agc_branch_split_parts_tests)
+    set_tests_properties(agc_branch_split_parts PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1")
+    if(WIN32)
+        set_tests_properties(agc_branch_split_parts PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

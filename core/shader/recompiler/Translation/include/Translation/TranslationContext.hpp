@@ -29,6 +29,8 @@ public:
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
     void TranslateTableCallBin(const RdnaInstruction& instruction, const ContinuationAbi::Shape& shape, std::uint32_t site);
+    void TranslateBranchBin(const RdnaInstruction& instruction, const ContinuationAbi::Shape& shape, std::uint32_t site);
+    void emitContinuationBin(const ContinuationAbi::Shape& shape, std::uint32_t site, const std::array<IrValue*, ContinuationAbi::KeyWords>& key);
 
 private:
     struct AddressOperands {

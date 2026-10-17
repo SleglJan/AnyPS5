@@ -1443,6 +1443,85 @@ std::vector<bool> reachableFrom(const RdnaProgram& program, const std::vector<st
     return seen;
 }
 
+bool splitBranch(const RdnaInstruction& instruction) {
+    switch (instruction.op) {
+    case RdnaOpcode::SCbranchScc0:
+    case RdnaOpcode::SCbranchScc1:
+    case RdnaOpcode::SCbranchVccz:
+    case RdnaOpcode::SCbranchVccnz:
+    case RdnaOpcode::SCbranchExecz:
+    case RdnaOpcode::SCbranchExecnz:
+        return instruction.wordCount == 1u;
+    default:
+        return false;
+    }
+}
+
+std::uint32_t branchSiteIndex(const RdnaProgram& program, std::uint32_t programCounter) {
+    const auto index = instructionIndexOfProgramCounter(program, programCounter);
+    if (index == InvalidControlFlowId || !splitBranch(program.instructions[index])) throw std::logic_error("a split site at program counter " + toHexString(programCounter) + " does not name a conditional branch");
+    return index;
+}
+
+std::uint32_t branchTargetIndex(const RdnaProgram& program, std::uint32_t index) {
+    const auto target = instructionIndexOfProgramCounter(program, program.instructions[index].branchTarget);
+    if (target == InvalidControlFlowId) throw std::invalid_argument("the branch at program counter " + toHexString(program.instructions[index].programCounter) + " targets no instruction");
+    return target;
+}
+
+void overwriteInstruction(std::vector<std::uint32_t>& code, const RdnaProgram& program, std::uint32_t index, std::uint32_t word) {
+    const auto& instruction = program.instructions[index];
+    const auto at = instruction.programCounter / 4u;
+    code[at] = word;
+    for (std::uint32_t extra = 1; extra < instruction.wordCount; ++extra) code[at + extra] = NopWord;
+}
+
+SplitCode linkBranchSplitPart(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites, std::size_t entrySite, std::optional<bool> taken) {
+    const auto program = RdnaInstructionDecoder{}.Decode(linked);
+    std::vector<std::uint32_t> indices;
+    for (const auto programCounter : sites) indices.push_back(branchSiteIndex(program, programCounter));
+    SplitCode result;
+    result.code = withoutCodeEnd(linked);
+    std::uint32_t start = 0;
+    if (taken) {
+        if (entrySite >= indices.size()) throw std::logic_error("a split continuation names a branch the program does not split at");
+        start = *taken ? branchTargetIndex(program, indices[entrySite]) : indices[entrySite] + 1u;
+    }
+    const auto live = reachableFrom(program, std::vector<std::uint32_t>{start}, indices);
+    if (taken) {
+        const auto last = indices[entrySite];
+        const auto to = program.instructions[start].programCounter / 4u;
+        const auto word = [&](std::uint32_t index) { return program.instructions[index].programCounter / 4u; };
+        for (std::uint32_t at = 0;;) {
+            if (live[at]) throw std::logic_error("a split continuation's entry passes through code the continuation runs");
+            if (to - word(at) - 1u <= 0x7fffu) {
+                overwriteInstruction(result.code, program, at, branchWord(BranchWord, word(at), to, "a split continuation's entry"));
+                break;
+            }
+            auto next = at;
+            while (next < last && word(next + 1u) - word(at) - 1u <= 0x7fffu) ++next;
+            if (next == at) throw std::logic_error("a split continuation's entry cannot reach its outcome");
+            overwriteInstruction(result.code, program, at, branchWord(BranchWord, word(at), word(next), "a split continuation's entry"));
+            at = next;
+        }
+    }
+    for (std::size_t site = 0; site < indices.size(); ++site) {
+        ContinuationAbi::BinSite bin;
+        bin.programCounter = sites[site];
+        bin.callProgramCounter = sites[site];
+        bin.keyMask = 1u;
+        result.sites.push_back(bin);
+        const auto index = indices[site];
+        if (!live[index]) continue;
+        for (const auto outcome : {branchTargetIndex(program, index), index + 1u}) {
+            if (live[outcome]) throw std::logic_error("a split point's outcome at program counter " + toHexString(program.instructions[outcome].programCounter) + " is reached without the split point");
+            overwriteInstruction(result.code, program, outcome, EndpgmWord);
+        }
+    }
+    result.code.push_back(CodeEndWord);
+    return result;
+}
+
 class RegisterReferences {
 public:
     void Include(const RdnaInstruction& instruction, TableCallAnalysis& analysis) {
@@ -1799,6 +1878,145 @@ TableCallAnalysis AnalyzeTableCallee(std::span<const std::uint32_t> callee) {
         if (instruction.op == RdnaOpcode::SBarrier) analysis.barrier = true;
     }
     references.Fill(analysis);
+    return analysis;
+}
+
+std::vector<std::uint32_t> ChooseBranchSplitSites(std::span<const std::uint32_t> code, std::size_t programWords, std::size_t boundWords) {
+    constexpr std::size_t maximumSites = 32;
+    const auto program = RdnaInstructionDecoder{}.Decode(code);
+    const auto size = static_cast<std::uint32_t>(program.instructions.size());
+    if (size == 0u) return {};
+    std::vector<bool> inLoop(size, false);
+    const auto entered = reachableFrom(program, std::vector<std::uint32_t>{0u});
+    std::size_t guestWords = 0;
+    for (std::uint32_t index = 0; index < size; ++index) {
+        const auto& instruction = program.instructions[index];
+        if (entered[index]) guestWords += instruction.wordCount;
+        if (instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64) {
+            std::uint32_t target = 0;
+            if (!resolveSetpcTarget(program, index, target)) return {};
+        }
+        if (!IsDirectBranchOpcode(instruction.op) && instruction.op != RdnaOpcode::SCallB64) continue;
+        const auto target = instructionIndexOfProgramCounter(program, instruction.branchTarget);
+        if (target == InvalidControlFlowId) return {};
+        if (target <= index) std::fill(inLoop.begin() + target, inLoop.begin() + index + 1u, true);
+    }
+    if (guestWords == 0u) return {};
+    const auto wordsPerGuestWord = static_cast<double>(programWords) / static_cast<double>(guestWords);
+    std::vector<std::uint32_t> candidates;
+    for (std::uint32_t index = 0; index < size; ++index) {
+        if (!splitBranch(program.instructions[index]) || inLoop[index] || index + 1u >= size || !entered[index]) continue;
+        const auto taken = branchTargetIndex(program, index);
+        if (taken == index + 1u) continue;
+        const std::array<std::uint32_t, 1> stop{index};
+        const auto around = reachableFrom(program, std::vector<std::uint32_t>{0u}, stop);
+        if (!around[taken] && !around[index + 1u]) candidates.push_back(index);
+    }
+    const auto estimate = [&](std::uint32_t start, std::span<const std::uint32_t> stops) {
+        const auto seen = reachableFrom(program, std::vector<std::uint32_t>{start}, stops);
+        std::size_t words = 0;
+        for (std::uint32_t index = 0; index < size; ++index) {
+            if (seen[index]) words += program.instructions[index].wordCount;
+        }
+        return static_cast<double>(words) * wordsPerGuestWord;
+    };
+    const auto parts = [&](std::span<const std::uint32_t> stops) {
+        std::vector<std::pair<double, std::uint32_t>> result{{estimate(0u, stops), 0u}};
+        for (const auto index : stops) {
+            const auto taken = branchTargetIndex(program, index);
+            result.push_back({estimate(taken, stops), taken});
+            result.push_back({estimate(index + 1u, stops), index + 1u});
+        }
+        return result;
+    };
+    const auto largest = [](const std::vector<std::pair<double, std::uint32_t>>& estimates) {
+        return *std::ranges::max_element(estimates, {}, &std::pair<double, std::uint32_t>::first);
+    };
+    std::vector<std::uint32_t> chosen;
+    auto current = largest(parts(chosen));
+    while (current.first > static_cast<double>(boundWords) && chosen.size() < maximumSites) {
+        const auto inPart = reachableFrom(program, std::vector<std::uint32_t>{current.second}, chosen);
+        std::optional<std::pair<double, std::uint32_t>> best;
+        std::uint32_t bestSite = 0;
+        for (const auto candidate : candidates) {
+            if (!inPart[candidate] || std::ranges::find(chosen, candidate) != chosen.end()) continue;
+            auto trial = chosen;
+            trial.push_back(candidate);
+            const auto worst = largest(parts(trial));
+            if (!best || worst.first < best->first) {
+                best = worst;
+                bestSite = candidate;
+            }
+        }
+        if (!best || best->first >= current.first) break;
+        chosen.push_back(bestSite);
+        current = *best;
+    }
+    std::ranges::sort(chosen);
+    std::vector<std::uint32_t> sites;
+    for (const auto index : chosen) sites.push_back(program.instructions[index].programCounter);
+    return sites;
+}
+
+SplitCode LinkBranchSplitHead(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites) {
+    return linkBranchSplitPart(linked, sites, 0u, std::nullopt);
+}
+
+SplitCode LinkBranchSplitContinuation(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites, std::size_t site, bool taken) {
+    return linkBranchSplitPart(linked, sites, site, taken);
+}
+
+TableCallAnalysis AnalyzeBranchSplit(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites) {
+    const auto program = RdnaInstructionDecoder{}.Decode(linked);
+    TableCallAnalysis analysis;
+    RegisterReferences references;
+    for (const auto& instruction : program.instructions) references.Include(instruction, analysis);
+    references.Fill(analysis);
+    if (analysis.indexedRegisters) {
+        analysis.scalarRegisters.clear();
+        for (std::uint32_t reg = 0; reg <= 105u; ++reg) analysis.scalarRegisters.push_back(reg);
+        if (!analysis.vectorRegisters.empty()) {
+            const auto last = analysis.vectorRegisters.back();
+            analysis.vectorRegisters.clear();
+            for (std::uint32_t reg = 0; reg <= last; ++reg) analysis.vectorRegisters.push_back(reg);
+        }
+        analysis.indexedRegisters = false;
+    }
+    if (sites.size() > 64u) throw std::runtime_error("a split program with " + std::to_string(sites.size()) + " split points is not implemented: at most 64 are tracked per round");
+    std::vector<std::uint32_t> indices;
+    std::vector<std::uint32_t> outcomes;
+    for (const auto programCounter : sites) {
+        const auto index = branchSiteIndex(program, programCounter);
+        indices.push_back(index);
+        outcomes.push_back(branchTargetIndex(program, index));
+        outcomes.push_back(index + 1u);
+    }
+    const auto reachable = reachableFrom(program, outcomes);
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        if (!reachable[index]) continue;
+        const auto& instruction = program.instructions[index];
+        if (instruction.family == RdnaInstructionFamily::DS && !instruction.gds) analysis.sharedMemory = true;
+        if (instruction.op == RdnaOpcode::SBarrier) analysis.barrier = true;
+    }
+    const auto sitesFrom = [&](std::uint32_t start) {
+        const auto seen = reachableFrom(program, std::vector<std::uint32_t>{start}, indices);
+        std::uint64_t found = 0;
+        for (std::size_t site = 0; site < indices.size(); ++site) {
+            if (seen[indices[site]]) found |= std::uint64_t{1} << site;
+        }
+        return found;
+    };
+    std::vector<std::uint64_t> following;
+    for (std::size_t site = 0; site < indices.size(); ++site) following.push_back(sitesFrom(outcomes[site * 2u]) | sitesFrom(outcomes[site * 2u + 1u]));
+    for (auto live = sitesFrom(0u); live != 0u && analysis.roundSites.size() < indices.size();) {
+        analysis.roundSites.push_back(live);
+        std::uint64_t next = 0;
+        for (std::size_t site = 0; site < following.size(); ++site) {
+            if (((live >> site) & 1u) != 0u) next |= following[site];
+        }
+        live = next;
+    }
+    analysis.rounds = static_cast<std::uint32_t>(analysis.roundSites.size());
     return analysis;
 }
 

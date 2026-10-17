@@ -94,6 +94,27 @@ void requireSplittable(const TableCallAnalysis& analysis, std::uint32_t wavesPer
     if (wavesPerGroup > 1u && analysis.barrier) throw std::runtime_error(std::string(what) + " waits at s_barrier after the call in a workgroup of " + std::to_string(wavesPerGroup) + " waves, which one continuation per wave cannot join");
 }
 
+void fillLayout(TableCallSplit& split, const TableCallAnalysis& analysis, const RecompileRequest& request) {
+    const auto& compute = *request.context.compute;
+    split.rounds = analysis.rounds;
+    split.roundSites = analysis.roundSites;
+    split.ldsDwords = split.wavesPerGroup == 1u ? compute.ldsSizeDwords : 0u;
+    std::set<std::uint32_t> scalars(analysis.scalarRegisters.begin(), analysis.scalarRegisters.end());
+    const auto userData = static_cast<std::uint32_t>(request.context.userData.size());
+    for (std::uint32_t index = 0; index < userData; ++index) scalars.insert(request.context.userDataBaseRegister + index);
+    const auto systemRegisters = static_cast<std::uint32_t>(std::count(compute.groupIdEnable.begin(), compute.groupIdEnable.end(), true)) + (compute.tgSizeEnable ? 1u : 0u);
+    for (std::uint32_t index = 0; index < systemRegisters; ++index) scalars.insert(request.context.userDataBaseRegister + userData + index);
+    std::erase_if(scalars, [](std::uint32_t reg) { return reg > 105u; });
+    split.scalarRegisters.assign(scalars.begin(), scalars.end());
+    for (std::uint32_t index = 0; index < userData; ++index) {
+        const auto reg = request.context.userDataBaseRegister + index;
+        if (reg <= 105u && !std::ranges::binary_search(analysis.writtenScalars, reg)) split.userDataScalars.push_back(reg);
+    }
+    std::set<std::uint32_t> vectors(analysis.vectorRegisters.begin(), analysis.vectorRegisters.end());
+    for (std::uint32_t index = 0; index < std::min(compute.threadIdComponentCount, 3u); ++index) vectors.insert(index);
+    split.vectorRegisters.assign(vectors.begin(), vectors.end());
+}
+
 }
 
 LinkedCode LinkCallees(const RecompileRequest& request, const CalleeMemory& memory) {
@@ -123,28 +144,13 @@ std::optional<TableCallSplit> SplitTableCalls(const RecompileRequest& request, c
     } catch (const std::exception& error) {
         throw std::runtime_error(tableCallError(request, split.calls.front(), error));
     }
-    split.rounds = analysis.rounds;
-    split.roundSites = analysis.roundSites;
-    split.ldsDwords = split.wavesPerGroup == 1u ? compute.ldsSizeDwords : 0u;
-    std::set<std::uint32_t> scalars(analysis.scalarRegisters.begin(), analysis.scalarRegisters.end());
-    const auto userData = static_cast<std::uint32_t>(request.context.userData.size());
-    for (std::uint32_t index = 0; index < userData; ++index) scalars.insert(request.context.userDataBaseRegister + index);
-    const auto systemRegisters = static_cast<std::uint32_t>(std::count(compute.groupIdEnable.begin(), compute.groupIdEnable.end(), true)) + (compute.tgSizeEnable ? 1u : 0u);
-    for (std::uint32_t index = 0; index < systemRegisters; ++index) scalars.insert(request.context.userDataBaseRegister + userData + index);
-    std::erase_if(scalars, [](std::uint32_t reg) { return reg > 105u; });
-    split.scalarRegisters.assign(scalars.begin(), scalars.end());
-    for (std::uint32_t index = 0; index < userData; ++index) {
-        const auto reg = request.context.userDataBaseRegister + index;
-        if (reg <= 105u && !std::ranges::binary_search(analysis.writtenScalars, reg)) split.userDataScalars.push_back(reg);
-    }
-    std::set<std::uint32_t> vectors(analysis.vectorRegisters.begin(), analysis.vectorRegisters.end());
-    for (std::uint32_t index = 0; index < std::min(compute.threadIdComponentCount, 3u); ++index) vectors.insert(index);
-    split.vectorRegisters.assign(vectors.begin(), vectors.end());
+    fillLayout(split, analysis, request);
     split.head = LinkTableCallHead(split.linked, split.calls);
     return split;
 }
 
 std::vector<TableCallTarget> ReadTableCallTargets(const RecompileRequest& request, const TableCallSplit& split, const CalleeMemory& memory) {
+    if (!split.branchSites.empty()) return BranchSplitTargets(split);
     constexpr std::uint64_t limitBytes = 64u << 20u;
     std::vector<TableCallTarget> targets;
     std::map<std::uint64_t, std::vector<std::uint32_t>> codes;
@@ -192,7 +198,35 @@ std::vector<TableCallTarget> ReadTableCallTargets(const RecompileRequest& reques
     return targets;
 }
 
+std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::size_t boundWords) {
+    if (programWords <= GiantProgramWords || request.shader.stage != ShaderStage::Compute || !request.context.compute) return std::nullopt;
+    const auto program = RdnaInstructionDecoder{}.Decode(request.shader.code);
+    if (std::ranges::any_of(program.instructions, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64; })) return std::nullopt;
+    TableCallSplit split;
+    split.linked = LinkCalls(program, {}, {}).code;
+    split.branchSites = ChooseBranchSplitSites(split.linked, programWords, boundWords);
+    if (split.branchSites.empty()) return std::nullopt;
+    const auto& compute = *request.context.compute;
+    const auto waveSize = request.context.waveSize;
+    const auto threads = std::max(compute.numThreads[0], 1u) * std::max(compute.numThreads[1], 1u) * std::max(compute.numThreads[2], 1u);
+    split.wavesPerGroup = (threads + waveSize - 1u) / waveSize;
+    const auto analysis = AnalyzeBranchSplit(split.linked, split.branchSites);
+    if (analysis.indexedRegisters || (split.wavesPerGroup > 1u && (analysis.sharedMemory || analysis.barrier))) return std::nullopt;
+    fillLayout(split, analysis, request);
+    split.head = LinkBranchSplitHead(split.linked, split.branchSites);
+    return split;
+}
+
+std::vector<TableCallTarget> BranchSplitTargets(const TableCallSplit& split) {
+    std::vector<TableCallTarget> targets;
+    for (std::uint32_t site = 0; site < split.branchSites.size(); ++site) {
+        for (const std::uint32_t taken : {0u, 1u}) targets.push_back({site, 0u, {}, {taken, 0u, 0u, 0u}});
+    }
+    return targets;
+}
+
 SplitCode TableCallContinuation(const TableCallSplit& split, const TableCallTarget& target) {
+    if (!split.branchSites.empty()) return LinkBranchSplitContinuation(split.linked, split.branchSites, target.site, target.key[0] != 0u);
     return LinkTableCallContinuation(split.linked, split.calls, target.site, target.callee);
 }
 

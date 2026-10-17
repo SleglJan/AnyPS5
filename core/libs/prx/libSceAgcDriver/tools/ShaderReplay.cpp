@@ -148,6 +148,50 @@ std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedReq
     return replayed;
 }
 
+bool ReplaySplit(const char* path, const ShaderRecompiler::RecompileRequest& whole, std::size_t wholeWords) {
+    const auto split = ShaderRecompiler::SplitBranchProgram(whole, wholeWords);
+    if (!split) {
+        if (wholeWords > ShaderRecompiler::GiantProgramWords) std::printf("  split: none, the module stays whole at %zu SPIR-V words\n", wholeWords);
+        return true;
+    }
+    std::printf("  split: %zu points, %u rounds, %zu scalar and %zu vector registers in the record\n", split->branchSites.size(), split->rounds, split->scalarRegisters.size(), split->vectorRegisters.size());
+    const auto compile = [&](const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite, const std::string& what) {
+        std::vector<std::uint32_t> userData(whole.context.userData.begin(), whole.context.userData.end());
+        userData.resize(userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
+        auto source = whole;
+        source.shader.code = part.code;
+        source.shader.linkedLiterals = {};
+        source.context.userData = userData;
+        source.context.linkedWords = {};
+        if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
+            auto compute = *whole.context.compute;
+            compute.numThreads = {whole.context.waveSize, 1u, 1u};
+            compute.partialThreads = {};
+            compute.threadsFromMemory = false;
+            source.context.compute = compute;
+        }
+        source.context.continuation = ShaderRecompiler::TableCallShape(*split, part, role, entrySite);
+        source.useCache = false;
+        const auto result = ShaderRecompiler::Recompile(source);
+        std::printf("    %s: %zu SPIR-V words\n", what.c_str(), result.spirv.size());
+        if (g_spirv) {
+            std::string name(path);
+            name = name.substr(name.find_last_of("/\\") + 1) + "." + what + ".spv";
+            std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
+        }
+        return result.spirv.size();
+    };
+    std::size_t largest = compile(split->head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u, "head");
+    for (const auto& target : ShaderRecompiler::BranchSplitTargets(*split)) {
+        const auto part = ShaderRecompiler::TableCallContinuation(*split, target);
+        char what[64];
+        std::snprintf(what, sizeof(what), "point%u-%s", target.site, target.key[0] != 0u ? "taken" : "not-taken");
+        largest = std::max(largest, compile(part, ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site, what));
+    }
+    std::printf("  split: largest part %zu SPIR-V words\n", largest);
+    return true;
+}
+
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
@@ -336,6 +380,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--spv") {
             g_spirv = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--split") {
+            g_split = true;
             continue;
         }
         if (std::string(argv[i]) == "--migrate" && i + 1 < argc) {

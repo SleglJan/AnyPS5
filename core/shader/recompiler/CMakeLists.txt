@@ -325,6 +325,8 @@ function(add_shader_recompiler target runtimeTarget)
             ContinuationAbi::RecordsDword
             ContinuationAbi::BlockDwords
             ContinuationAbi::RecordDwords
+            SplitBranchProgram
+            BranchSplitTargets
     )
     set(shaderCacheManifest)
     foreach(section IN ITEMS sources guard submodules includes reviewed)

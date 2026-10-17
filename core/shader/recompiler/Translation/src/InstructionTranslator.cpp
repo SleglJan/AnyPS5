@@ -98,6 +98,20 @@ std::optional<std::uint32_t> binSite(const TranslateOptions& options, std::uint3
     return static_cast<std::uint32_t>(found - sites.begin());
 }
 
+bool isSplitBranch(RdnaOpcode op) {
+    switch (op) {
+    case RdnaOpcode::SCbranchScc0:
+    case RdnaOpcode::SCbranchScc1:
+    case RdnaOpcode::SCbranchVccz:
+    case RdnaOpcode::SCbranchVccnz:
+    case RdnaOpcode::SCbranchExecz:
+    case RdnaOpcode::SCbranchExecnz:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool isCodeTableLoad(const ControlFlowGraph& cfg, std::uint32_t programCounter) {
     return std::find(cfg.codeTableLoadProgramCounters.begin(), cfg.codeTableLoadProgramCounters.end(), programCounter) != cfg.codeTableLoadProgramCounters.end();
 }
@@ -607,7 +621,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         vectorLimit = program.Metadata().vectorWindowBase + program.Metadata().vectorWindowSize;
     }
     if (options.continuation != nullptr && options.continuation->role == ContinuationAbi::Role::Continuation) {
-        if (program.Metadata().vectorWindowSize != 0u) throw std::runtime_error("a table call continuation cannot restore registers a program indexes dynamically");
         emitContinuationResume(program, *blocks.front(), options, vectorLimit);
     }
     if (ancillaryWindow) {
@@ -633,6 +646,12 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 if (table == cfg.codeTableLoads.end()) throw std::runtime_error("missing shader code table values");
                 context.TranslateCodeTableLoad(instruction, *table);
                 continue;
+            }
+            if (isSplitBranch(instruction.op)) {
+                if (const auto site = binSite(options, instruction.programCounter)) {
+                    context.TranslateBranchBin(instruction, *options.continuation, *site);
+                    continue;
+                }
             }
             if (isUnlinkedCall(cfg, instruction.programCounter)) {
                 if (const auto site = binSite(options, instruction.programCounter)) context.TranslateTableCallBin(instruction, *options.continuation, *site);

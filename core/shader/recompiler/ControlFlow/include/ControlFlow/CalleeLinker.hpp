@@ -32,6 +32,7 @@ struct TableCallSplit {
     std::uint32_t wavesPerGroup = 1;
     std::vector<std::uint32_t> userDataScalars;
     std::vector<std::uint64_t> roundSites;
+    std::vector<std::uint32_t> branchSites;
 };
 
 struct TableCallTarget {
@@ -45,6 +46,10 @@ struct TableCallTarget {
 [[nodiscard]] std::vector<TableCallTarget> ReadTableCallTargets(const RecompileRequest& request, const TableCallSplit& split, const CalleeMemory& memory);
 [[nodiscard]] SplitCode TableCallContinuation(const TableCallSplit& split, const TableCallTarget& target);
 [[nodiscard]] ContinuationAbi::Shape TableCallShape(const TableCallSplit& split, const SplitCode& part, ContinuationAbi::Role role, std::uint32_t entrySite = 0);
+inline constexpr std::size_t GiantProgramWords = 500000;
+inline constexpr std::size_t GiantPartWords = 400000;
+[[nodiscard]] std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::size_t boundWords = GiantPartWords);
+[[nodiscard]] std::vector<TableCallTarget> BranchSplitTargets(const TableCallSplit& split);
 
 }
 

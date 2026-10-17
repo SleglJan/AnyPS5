@@ -291,7 +291,7 @@ void TranslationContext::TranslateUnlinkedCall(const RdnaInstruction& inst) {
     sSwappcB64(inst);
 }
 
-void TranslationContext::TranslateTableCallBin(const RdnaInstruction& inst, const ContinuationAbi::Shape& shape, std::uint32_t site) {
+void TranslationContext::emitContinuationBin(const ContinuationAbi::Shape& shape, std::uint32_t site, const std::array<IrValue*, ContinuationAbi::KeyWords>& key) {
     const auto base = program.Resources().userDataBase + program.Resources().userDataCount - ContinuationAbi::UserDataWords;
     const auto word = [&](std::uint32_t index) -> IrValue& { return ir.GetUserData(static_cast<ScalarReg>(base + index)); };
     const auto builtin = [&](StageInputKind kind) -> IrValue& {
@@ -335,6 +335,11 @@ void TranslationContext::TranslateTableCallBin(const RdnaInstruction& inst, cons
         const auto ldsWord = ContinuationAbi::LdsRecordWord(scalars, static_cast<std::uint32_t>(shape.vectorRegisters.size()), program.WaveSize());
         static_cast<void>(ir.Emit(IrOpcode::ContinuationSpillLds, IrType::Void, {&blockLow, &blockHigh, slot, &lane, &ir.Constant(ldsWord), &ir.Constant(shape.ldsDwords)}));
     }
+    static_cast<void>(ir.Emit(IrOpcode::TableCallBin, IrType::Void, {&ir.Constant(site), &ir.Constant(shape.sites[site].callProgramCounter), key[0], key[1], key[2], key[3], &blockLow, &blockHigh, slot, &lane}));
+    program.Info().usesFaultBuffer = true;
+}
+
+void TranslationContext::TranslateTableCallBin(const RdnaInstruction& inst, const ContinuationAbi::Shape& shape, std::uint32_t site) {
     std::array<IrValue*, ContinuationAbi::KeyWords> key{};
     for (const auto entry : shape.sites[site].recordRegisters) {
         if (entry == ContinuationAbi::NoRecordRegister) break;
@@ -344,9 +349,26 @@ void TranslationContext::TranslateTableCallBin(const RdnaInstruction& inst, cons
     for (auto& word : key) {
         if (word == nullptr) word = &ir.Constant(0u);
     }
-    static_cast<void>(ir.Emit(IrOpcode::TableCallBin, IrType::Void, {&ir.Constant(site), &ir.Constant(shape.sites[site].callProgramCounter), key[0], key[1], key[2], key[3], &blockLow, &blockHigh, slot, &lane}));
-    program.Info().usesFaultBuffer = true;
+    emitContinuationBin(shape, site, key);
     sSwappcB64(inst);
+}
+
+void TranslationContext::TranslateBranchBin(const RdnaInstruction& inst, const ContinuationAbi::Shape& shape, std::uint32_t site) {
+    const auto anyLane = [&](IrValue& bit) -> IrValue& {
+        const auto mask = ballotMask(IrU1(bit));
+        return ir.INotEqual(ir.BitwiseOr(mask[0].Value(), mask[1].Value()), ir.Constant(0u));
+    };
+    IrValue* taken = nullptr;
+    switch (inst.op) {
+    case RdnaOpcode::SCbranchScc0: taken = &ir.LogicalNot(ir.GetScc()); break;
+    case RdnaOpcode::SCbranchScc1: taken = &ir.GetScc(); break;
+    case RdnaOpcode::SCbranchVccz: taken = &ir.LogicalNot(anyLane(ir.GetVcc())); break;
+    case RdnaOpcode::SCbranchVccnz: taken = &anyLane(ir.GetVcc()); break;
+    case RdnaOpcode::SCbranchExecz: taken = &ir.LogicalNot(anyLane(ir.GetExec())); break;
+    case RdnaOpcode::SCbranchExecnz: taken = &anyLane(ir.GetExec()); break;
+    default: throw std::runtime_error("a split point at program counter " + std::to_string(inst.programCounter) + " is not a conditional branch");
+    }
+    emitContinuationBin(shape, site, {&ir.Select(*taken, ir.Constant(1u), ir.Constant(0u)), &ir.Constant(0u), &ir.Constant(0u), &ir.Constant(0u)});
 }
 
 void TranslationContext::sCselectB32(const RdnaInstruction& inst) {
