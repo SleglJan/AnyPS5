@@ -150,6 +150,9 @@ public:
     std::vector<ResidencyRange> wholeImports;
     std::uint64_t importsGeneration = 1;
     std::map<std::uint64_t, ResidencyToken> modelPins;
+    std::uint64_t hostImports = 0;
+    std::map<std::uint64_t, std::uint64_t> hostImported;
+    std::map<std::uint64_t, std::uint64_t> hostSettled;
     std::array<Stream, FakeStreams> streams{};
     std::vector<Op> ops;
 
@@ -278,8 +281,17 @@ public:
         return CallerToken(caller);
     }
 
+    void HostImport(std::uint64_t page) { hostImported[page] = ++hostImports; }
+
+    std::uint64_t ImportStamp() override { return hostImports; }
+
+    bool ImportSettled(std::uint64_t page) override { return hostSettled[page] >= hostImported[page]; }
+
+    void SettleImport(std::uint64_t page, std::uint64_t stamp) override { hostSettled[page] = std::max(hostSettled[page], stamp); }
+
     bool Guard(std::uint64_t page) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "a write guard armed on private " + Name(page) + " before its import settled");
+        Expect(imports[page].attributes.section != 0 || ImportSettled(page), "a write guard armed on private " + Name(page) + " before its newest host import settled");
         if (guardRefused.contains(page)) return false;
         armed[imports[page].group] = true;
         return true;
@@ -291,6 +303,7 @@ public:
 
     bool GuardAccess(std::uint64_t page, ResidencyMask) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "an access guard armed on private " + Name(page) + " before its import settled");
+        Expect(imports[page].attributes.section != 0 || ImportSettled(page), "an access guard armed on private " + Name(page) + " before its newest host import settled");
         return !guardRefused.contains(page);
     }
 
@@ -1109,6 +1122,31 @@ void SettledPrivatePageKeepsDirtyMirror() {
     fixture.gpu.Drain();
 }
 
+void NewerImportRestartsSettle() {
+    scope = "a newer host import of a private page before its settle restarts the settle";
+    Fixture fixture(4, 1);
+    fixture.gpu.HostImport(BasePage + 0);
+    fixture.Use(0, BasePage + 0);
+    fixture.manager->Apply();
+    fixture.gpu.Drain();
+    fixture.gpu.HostImport(BasePage + 0);
+    const auto admitted = fixture.manager->Counts().unsettledGuards;
+    fixture.manager->Apply();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0), "a page imported again after its admission is not settled by the submission issued before that import");
+    Expect(fixture.manager->Counts().unsettledGuards == admitted + 1, std::to_string(fixture.manager->Counts().unsettledGuards - admitted) + " settles restarted, expected one");
+    Expect(fixture.manager->HotResident(BasePage + 0), "the page whose settle restarted is kept current from the write tracking");
+    fixture.manager->Apply();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0), "the restarted settle completed with no submission issued after the newer import");
+    static_cast<void>(fixture.gpu.CallerToken(0));
+    fixture.manager->Apply();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0), "the restarted settle completed while the submission issued after the newer import runs");
+    fixture.gpu.Drain();
+    fixture.manager->Apply();
+    Expect(fixture.manager->ImportSettled(BasePage + 0) && fixture.Armed(BasePage + 0), "the page is not settled and guarded after the submission issued after the newer import completed");
+    Expect(fixture.gpu.hostSettled[BasePage + 0] == 2, "the page settled at host import stamp " + std::to_string(fixture.gpu.hostSettled[BasePage + 0]) + ", expected the newer import's 2");
+    Expect(fixture.manager->Counts().importsSettled == 1 && fixture.manager->Counts().unsettledGuards == admitted + 1, "one import settled after one restart");
+}
+
 void GrantThroughAliasDemotesMirror() {
     scope = "a grant through another view demotes the mirrored view";
     Fixture fixture(8, 1);
@@ -1878,6 +1916,7 @@ int main() {
         CpuReadSettledWithoutLock();
         WriteBackAllAtTeardown();
         GrantDemotesPrivatePage();
+        NewerImportRestartsSettle();
         SettledPrivatePageKeepsDirtyMirror();
         GrantThroughAliasDemotesMirror();
         TouchedPagesAdmitted();
