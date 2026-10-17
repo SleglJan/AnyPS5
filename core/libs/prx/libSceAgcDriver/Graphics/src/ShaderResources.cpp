@@ -592,7 +592,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         normalized.format = unorm16;
         return cachedTexture(context, words, normalized, components, guestBytes, depthCompare, decodedCopy);
     }
-    static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto scanKeys = [&] {
@@ -707,12 +706,6 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
         made.accounted = made.texture->AllocationBytes();
     };
-    if (disabled) {
-        if (source != nullptr) return storageTexture();
-        CachedTexture made{};
-        surfaceTexture(made);
-        return made.texture;
-    }
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare, decodedCopy);
     std::lock_guard lock(cache.mutex);
@@ -915,8 +908,6 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     RequireNoMultisampleTarget(viewed.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a storage image access");
     if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     if (written) RetireDepthSurfaces(context.device, viewed.baseAddress, guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes);
-    static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    if (disabled) return StorageTexture::Create(context, *context.detiler, viewed, mip);
     static_cast<void>(words);
     if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->BoundKeptBytes();
     const bool profile = LookupOutcomes::Profiled();

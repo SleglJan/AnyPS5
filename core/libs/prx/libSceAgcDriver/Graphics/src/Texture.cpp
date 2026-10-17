@@ -3714,7 +3714,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
 
 void StorageTexture::markUnitsPending(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs) {
     for (const auto& [first, end] : runs) CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, end - first, static_cast<unsigned long long>(generation));
-    static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr;
     if (unitMarks.size() != trackedLayers) unitMarks.resize(trackedLayers, 0);
     std::vector<bool> unsaved(trackedLayers, false);
     bool anyUnsaved = false;
