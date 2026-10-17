@@ -37,6 +37,7 @@ struct DrawInputSource {
 DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool cpuReads);
 std::uint64_t DrawInputCopies();
 std::uint64_t DrawIndexScans();
+std::uint64_t DrawInputGathers();
 struct DrawPassCounts {
     std::uint64_t begun = 0;
     std::uint64_t continued = 0;

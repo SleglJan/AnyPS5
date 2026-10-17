@@ -815,6 +815,7 @@ namespace {
 
 std::atomic<std::uint64_t> drawInputCopies{0};
 std::atomic<std::uint64_t> drawIndexScans{0};
+std::atomic<std::uint64_t> drawInputGathers{0};
 std::atomic<std::uint64_t> drawPassesBegun{0};
 std::atomic<std::uint64_t> drawPassesContinued{0};
 
@@ -866,6 +867,10 @@ std::uint64_t DrawInputCopies() {
     return drawInputCopies.load(std::memory_order_relaxed);
 }
 
+std::uint64_t DrawInputGathers() {
+    return drawInputGathers.load(std::memory_order_relaxed);
+}
+
 std::uint64_t DrawIndexScans() {
     return drawIndexScans.load(std::memory_order_relaxed);
 }
@@ -911,6 +916,7 @@ DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, 
         return {sources.front().buffer, sources.front().offset, nullptr};
     }
     if (pieces.size() == 1 && pieces.front().buffer != VK_NULL_HANDLE && pieces.front().offset % alignment == 0) return {pieces.front().buffer, pieces.front().offset, nullptr};
+    drawInputGathers.fetch_add(1, std::memory_order_relaxed);
     auto gathered = std::make_shared<DeviceBuffer>(context, (bytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const auto commands = recorder->Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
