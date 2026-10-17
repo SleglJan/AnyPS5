@@ -807,7 +807,7 @@ private:
     std::vector<SectionObject> declaredObjects;
     bool sectionDeclared = false;
     using Epoch = std::array<std::uint64_t, MaxRecorderStreams>;
-    void dependOn(std::uint32_t other, std::uint64_t value);
+    void dependOn(const Epoch& after);
     void keepOnOtherStreams(const std::shared_ptr<void>& object);
     void sweepObjectUses();
     void closeEpoch(Epoch& epoch) const;

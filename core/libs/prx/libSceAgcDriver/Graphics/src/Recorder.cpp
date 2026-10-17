@@ -1413,11 +1413,17 @@ void Recorder::DeclareSection(std::span<const SectionObject> objects) {
     sectionDeclared = true;
 }
 
-void Recorder::dependOn(std::uint32_t other, std::uint64_t value) {
-    if (value <= streams[other].finished) return;
-    if (opens[other] != nullptr && opens[other]->value <= value) submitStream(other);
-    auto& wait = opens[streamOfCaller()]->waits[other];
-    wait = std::max(wait, value);
+void Recorder::dependOn(const Epoch& after) {
+    const auto stream = streamOfCaller();
+    Epoch waits = opens[stream] != nullptr ? opens[stream]->waits : Epoch{};
+    for (std::uint32_t other = 0; other < streams.size(); ++other) {
+        if (other == stream || after[other] <= streams[other].finished) continue;
+        if (opens[other] != nullptr && opens[other]->value <= after[other]) submitStream(other);
+        waits[other] = std::max(waits[other], after[other]);
+    }
+    ensureOpen();
+    auto& open = *opens[stream];
+    for (std::uint32_t other = 0; other < streams.size(); ++other) open.waits[other] = std::max(open.waits[other], waits[other]);
 }
 
 void Recorder::beginSection() {
@@ -1427,23 +1433,22 @@ void Recorder::beginSection() {
     ensureOpen();
     if (streams.size() == 1 || submittingStream != NoStream) return;
     const auto stream = streamOfCaller();
-    const auto value = opens[stream]->value;
+    Epoch after{};
     if (!declared) {
-        for (std::uint32_t other = 0; other < streams.size(); ++other) {
-            if (other == stream) continue;
-            dependOn(other, opens[other] != nullptr ? opens[other]->value : streams[other].submitted);
-        }
-        streams[stream].barrier = value;
+        for (std::uint32_t other = 0; other < streams.size(); ++other) after[other] = opens[other] != nullptr ? opens[other]->value : streams[other].submitted;
+        dependOn(after);
+        streams[stream].barrier = opens[stream]->value;
         return;
     }
-    for (std::uint32_t other = 0; other < streams.size(); ++other) {
-        if (other != stream) dependOn(other, streams[other].barrier);
+    for (std::uint32_t other = 0; other < streams.size(); ++other) after[other] = streams[other].barrier;
+    for (const auto& [object, written] : objects) {
+        const auto& use = objectUses[object];
+        for (std::uint32_t other = 0; other < streams.size(); ++other) after[other] = std::max(after[other], written ? std::max(use.read[other], use.written[other]) : use.written[other]);
     }
+    dependOn(after);
+    const auto value = opens[stream]->value;
     for (const auto& [object, written] : objects) {
         auto& use = objectUses[object];
-        for (std::uint32_t other = 0; other < streams.size(); ++other) {
-            if (other != stream) dependOn(other, written ? std::max(use.read[other], use.written[other]) : use.written[other]);
-        }
         (written ? use.written : use.read)[stream] = value;
     }
     if (objectUses.size() > objectSweepAt) sweepObjectUses();
@@ -1475,10 +1480,7 @@ void Recorder::OrderAfterLabel(std::uint64_t address, std::size_t bytes) {
     bool any = false;
     for (std::uint32_t other = 0; other < streams.size(); ++other) any = any || after[other] > streams[other].finished;
     if (!any) return;
-    ensureOpen();
-    for (std::uint32_t other = 0; other < streams.size(); ++other) {
-        if (other != stream) dependOn(other, after[other]);
-    }
+    dependOn(after);
 }
 
 std::uint64_t Recorder::LabelTableLookups() {
@@ -1508,8 +1510,9 @@ bool Recorder::Reached(const Token& token) const {
 
 void Recorder::OrderAfterBatch(std::uint32_t stream, std::uint64_t value) {
     if (streams.size() == 1 || stream >= streams.size() || stream == streamOfCaller() || value <= streams[stream].finished) return;
-    ensureOpen();
-    dependOn(stream, value);
+    Epoch after{};
+    after[stream] = value;
+    dependOn(after);
 }
 
 bool Recorder::TokenSignaled(const Token& token) const {
@@ -1528,8 +1531,9 @@ void Recorder::OrderAfterQueue(std::uint32_t queue) {
     if (other == streamOfCaller()) return;
     const auto value = opens[other] != nullptr ? opens[other]->value : streams[other].submitted;
     if (value <= streams[other].finished) return;
-    ensureOpen();
-    dependOn(other, value);
+    Epoch after{};
+    after[other] = value;
+    dependOn(after);
 }
 
 void Recorder::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
@@ -1561,10 +1565,7 @@ void Recorder::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
     bool any = false;
     for (std::uint32_t other = 0; other < streams.size(); ++other) any = any || after[other] > streams[other].finished;
     if (!any) return;
-    ensureOpen();
-    for (std::uint32_t other = 0; other < streams.size(); ++other) {
-        if (other != stream) dependOn(other, after[other]);
-    }
+    dependOn(after);
 }
 
 void Recorder::keepOnOtherStreams(const std::shared_ptr<void>& object) {
