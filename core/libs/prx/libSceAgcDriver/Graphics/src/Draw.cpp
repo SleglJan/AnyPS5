@@ -1925,6 +1925,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         targetViews.push_back(binding.target->View());
     }
     if (state.depth) targetViews.push_back(DepthSurfaceView(context, *state.depth));
+    const auto noteDepthWritten = [&] {
+        if (state.depth && state.depthTest && state.depthWrite) NoteDepthWritten(context, *state.depth);
+    };
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
     auto* recorder = Recorder::Active();
@@ -2118,6 +2121,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         record.waited = outcome.waited;
         record.stencilReplay = stencilReplay;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
+        noteDepthWritten();
         timing.Mark("draw_and_resource_release");
         report(outcome.waited ? (outcome.reason == SyncLease ? " recorded then waited (lease)" : " recorded then waited (copied writes)") : completion ? " recorded with completion" : " recorded");
         return;
@@ -2302,6 +2306,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     if (recorded) {
         if (resources->UsesDeviceImages()) context.deviceImages->AfterDispatch(context, *recorder);
         keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, writes, std::move(scratch), std::move(checkRecords), completion, outcome);
+        noteDepthWritten();
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -2343,6 +2348,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("Shader resources WriteBack");
     if (resources->UsesDeviceImages()) context.deviceImages->AfterDispatch(context, *recorder);
     resources->WriteBack();
+    noteDepthWritten();
     APS5_LOG_CHARS_OUT_DEBUG("Shader resources WriteBack OK");
     static const bool skipTargetWrite = std::getenv("APS5_NO_TARGET_WRITEBACK") != nullptr;
     for (const auto& binding : targets) {

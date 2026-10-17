@@ -1,5 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -13,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <deque>
 #include <limits>
 #include <shared_mutex>
 #include <cstdio>
@@ -119,7 +124,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     return state;
 }
 
-class DepthSurface {
+class DepthSurface final : public IResidencyOwner {
 public:
     DepthSurface(const Context& context, const DepthTarget& target, DepthSamplingState sampling = {}) : context(context), target(target), hostFormat(HostDepthFormat(context, target.format)), sampling(std::move(sampling)) {
         this->context.bufferPool.reset();
@@ -193,7 +198,12 @@ public:
         }
     }
 
-    ~DepthSurface() { release(); }
+    ~DepthSurface() override {
+        if (residencyOwned) {
+            if (auto* residency = ResidencyDriver::Active()) residency->Manager().Forget(this);
+        }
+        release();
+    }
     DepthSurface(const DepthSurface&) = delete;
     DepthSurface& operator=(const DepthSurface&) = delete;
 
@@ -265,6 +275,115 @@ public:
             Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
             recorder->Keep(owned);
         }
+        if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) MarkDepthStale();
+    }
+
+    bool Ownable() const {
+        if (target.samples != 1u || hostFormat != target.format || target.address == 0 || static_cast<ColorTileMode>(target.depthSwizzle) != ColorTileMode::Z64KBX) return false;
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        if (!d16 && target.format != VK_FORMAT_D32_SFLOAT && target.format != VK_FORMAT_D32_SFLOAT_S8_UINT) return false;
+        const ColorTargetLayout layout(target.extent.width, target.extent.height, ColorTileMode::Z64KBX, d16 ? 2u : 4u, target.pipeBankXor);
+        return layout.Bytes() == depthBytes();
+    }
+
+    void OwnDepth() {
+        auto* residency = ResidencyDriver::Active();
+        if (residency == nullptr || retired || !Ownable()) return;
+        auto& manager = residency->Manager();
+        if (residencyOwned && ownedSerial == manager.OwnershipSerial()) return;
+        manager.Own(target.address, depthBytes(), this);
+        residencyOwned = true;
+        ownedSerial = manager.OwnershipSerial();
+    }
+
+    void DisownDepth() {
+        if (!residencyOwned) return;
+        if (auto* residency = ResidencyDriver::Active()) residency->Manager().Disown(this);
+        residencyOwned = false;
+    }
+
+    void MarkDepthStale() {
+        auto* residency = ResidencyDriver::Active();
+        if (!residencyOwned || residency == nullptr) return;
+        std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+        if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+        residency->Manager().MarkStale(target.address, depthBytes(), this);
+    }
+
+    void Retile(std::span<const ResidencyRange> ranges) override {
+        auto* residency = ResidencyDriver::Active();
+        auto* recorder = RecorderFor(context);
+        Require(residency != nullptr && recorder != nullptr && context.detiler != nullptr, "depth surface write-back needs the residency driver, an active recorder and the detiler");
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const auto bytesPerTexel = d16 ? 2u : 4u;
+        const ColorTargetLayout layout(target.extent.width, target.extent.height, ColorTileMode::Z64KBX, bytesPerTexel, target.pipeBankXor);
+        const auto mip = ComputeColorTargetMipLayout(ColorTileMode::Z64KBX, bytesPerTexel, target.extent.width, target.extent.height, 1, 0);
+        constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (retileLinear == nullptr) retileLinear = std::make_shared<DeviceBuffer>(context, layout.LinearBytes(), usage);
+        if (retileTiled == nullptr) retileTiled = std::make_shared<DeviceBuffer>(context, layout.Bytes(), usage);
+        const auto commands = recorder->Commands();
+        const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferImageCopy region{0, 0, 0, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, {0, 0, 0}, {target.extent.width, target.extent.height, 1}};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_GENERAL, retileLinear->Handle(), 1, &region);
+        const bool overwritten = OverwrittenInMemory();
+        const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+        const auto end = target.address + layout.Bytes();
+        std::deque<std::pair<MirrorSpan, std::vector<MirrorPiece>>> sources;
+        for (const auto& range : ranges) {
+            const auto from = std::max(range.address, target.address);
+            const auto to = std::min(range.address + range.bytes, end);
+            if (from >= to) continue;
+            auto& [span, pieces] = sources.emplace_back(std::piecewise_construct, std::forward_as_tuple(residency, from, to, ResidencyAccess::Read), std::forward_as_tuple());
+            pieces = span.Pieces(from, to);
+            for (const auto& piece : pieces) {
+                const auto length = piece.end - piece.begin;
+                if (piece.buffer != VK_NULL_HANDLE) {
+                    const VkBufferCopy part{piece.offset, piece.begin - target.address, length};
+                    copy(commands, piece.buffer, retileTiled->Handle(), 1, &part);
+                    continue;
+                }
+                const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
+                Require(import != nullptr, "depth surface write-back: the depth plane has no host import");
+                const VkBufferCopy part{piece.begin - import->base, piece.begin - target.address, length};
+                copy(commands, import->buffer, retileTiled->Handle(), 1, &part);
+            }
+        }
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        context.detiler->Dispatch(commands, ColorTextureTileMode(ColorTileMode::Z64KBX), bytesPerTexel, retileLinear->Handle(), 0, retileTiled->Handle(), 0, mip, true, 0, false, {.pipeBankXor = target.pipeBankXor});
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        std::deque<std::pair<MirrorSpan, std::vector<MirrorPiece>>> spans;
+        std::uint64_t moved = 0;
+        for (const auto& range : ranges) {
+            const auto from = std::max(range.address, target.address);
+            const auto to = std::min(range.address + range.bytes, end);
+            if (from >= to) continue;
+            auto& [span, pieces] = spans.emplace_back(std::piecewise_construct, std::forward_as_tuple(residency, from, to, ResidencyAccess::Write), std::forward_as_tuple());
+            pieces = span.Pieces(from, to);
+            for (const auto& piece : pieces) {
+                const auto length = piece.end - piece.begin;
+                moved += length;
+                if (piece.buffer != VK_NULL_HANDLE) {
+                    const VkBufferCopy part{piece.begin - target.address, piece.offset, length};
+                    copy(commands, retileTiled->Handle(), piece.buffer, 1, &part);
+                    continue;
+                }
+                const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
+                Require(import != nullptr, "depth surface write-back: the depth plane has no host import");
+                const VkBufferCopy part{piece.begin - target.address, piece.begin - import->base, length};
+                copy(commands, retileTiled->Handle(), import->buffer, 1, &part);
+            }
+        }
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        Recorder::CountBarriers(Recorder::CommandClass::Copy, 5);
+        recorder->Keep(retileLinear);
+        recorder->Keep(retileTiled);
+        recorder->EndGpuTiming(timing, moved);
+        for (const auto& [span, pieces] : spans) {
+            span.NoteWritten(pieces);
+            for (const auto& piece : pieces) GuestMemory::MarkWritten(piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
+        }
+        if (!overwritten) NoteMemory();
     }
 
     bool UnormStencilView(const GuestTextureResource& resource) const {
@@ -482,6 +601,10 @@ public:
     DepthSamplingState sampling;
     std::uint64_t clearGeneration = 0u;
     std::shared_ptr<OwnedImage> owned;
+    bool residencyOwned = false;
+    std::uint64_t ownedSerial = 0;
+    std::shared_ptr<DeviceBuffer> retileLinear;
+    std::shared_ptr<DeviceBuffer> retileTiled;
 
 private:
     struct PlaneStorage {
@@ -992,6 +1115,7 @@ DepthSurface* planeSurface(VkDevice device, std::uint64_t address) {
 }
 
 void retire(DepthSurface& surface) {
+    surface.DisownDepth();
     surface.retired = true;
     for (auto* owners : {&depthOwners(), &stencilOwners()}) {
         std::erase_if(*owners, [&](const auto& entry) { return entry.second.surface == &surface; });
@@ -1224,6 +1348,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
     surface->clearDepth = target.clearDepth;
     surface->clearStencil = target.clearStencil;
     takePlanes(*surface);
+    surface->OwnDepth();
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
     if (cleared && (!created || inherits)) {
         if (target.samples != 1u) surface->sampling.refusal = "native multisample depth fast-clear transition is not implemented";
@@ -1524,10 +1649,38 @@ bool DepthSurfaceAt(std::uint64_t address) {
 }
 
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes) {
+    const auto retiring = [&](const DepthSurface& surface) { return surface.context.device == device && !surface.retired && surface.Overlaps(address, bytes); };
+    {
+        std::lock_guard lock(surfacesMutex());
+        if (std::none_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return retiring(*surface) && surface->residencyOwned; })) {
+            for (const auto& surface : surfaces()) {
+                if (retiring(*surface)) retire(*surface);
+            }
+            return;
+        }
+    }
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
-        if (surface->context.device == device && !surface->retired && surface->Overlaps(address, bytes)) retire(*surface);
+        if (retiring(*surface)) retire(*surface);
     }
+}
+
+void NoteDepthWritten(const Context& context, const DepthTarget& target) {
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    DepthSurface* found = nullptr;
+    {
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& candidate : surfaces()) {
+            if (candidate->active->load(std::memory_order_acquire) && candidate->context.device == context.device && sameSurface(candidate->target, target)) {
+                found = candidate.get();
+                break;
+            }
+        }
+    }
+    if (found != nullptr) found->MarkDepthStale();
 }
 
 }
