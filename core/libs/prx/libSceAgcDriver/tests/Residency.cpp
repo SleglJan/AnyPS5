@@ -706,6 +706,34 @@ void FlushWaitsForWriters() {
     Expect(fixture.gpu.mirrorReads == 1, "the read after the refresh went through the mirror");
 }
 
+void FaultRefreshOrderedAfterOwnWriters() {
+    scope = "a fault's refresh is ordered after the caller's own writers";
+    Fixture fixture(4, 1);
+    fixture.Use(0, BasePage + 0);
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    fixture.Use(0, BasePage + 0, 1, ResidencyAccess::Write);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0001, 55);
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0002, 77);
+    const auto waits = fixture.gpu.waits;
+    fixture.gpu.copiedIn.clear();
+    fixture.manager->Apply();
+    Expect(fixture.gpu.waits == waits, "no wait for a writer recorded earlier in the caller's stream");
+    Expect(fixture.gpu.copiedIn.size() == 1 && fixture.gpu.copiedIn[0].page == BasePage + 0, "the refresh is recorded behind the writer");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 55);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0002, 77);
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    fixture.Use(0, BasePage + 0, 1, ResidencyAccess::Write);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0004, 56);
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0008, 78);
+    fixture.gpu.caller = 1;
+    const auto crossWaits = fixture.gpu.waits;
+    fixture.manager->Apply();
+    Expect(fixture.gpu.waits == crossWaits + 1, "a writer in another stream is waited for");
+    fixture.gpu.Drain();
+}
+
 void ImportWritesRefreshMirrors() {
     scope = "import writes refresh mirrors";
     Fixture fixture(4, 1);
@@ -1725,6 +1753,7 @@ int main() {
         PinnedPagesNeverEvicted();
         TokenCompletionReleasesPins();
         FlushWaitsForWriters();
+        FaultRefreshOrderedAfterOwnWriters();
         ImportWritesRefreshMirrors();
         GuardedPagesRefreshAfterFaults();
         OrderingPointsReportQueuedWork();

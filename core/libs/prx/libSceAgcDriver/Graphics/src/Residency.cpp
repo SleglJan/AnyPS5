@@ -858,7 +858,12 @@ void ResidencyManager::waitWriters(std::span<const Fill> fills) {
         const auto writer = writers.find(pages[fill.id].index);
         if (writer != writers.end() && !settled(writer->second)) pending = MergeTokens(pending, writer->second);
     }
-    if (!TokenEmpty(pending)) waitFor(pending);
+    if (TokenEmpty(pending)) return;
+    const auto own = device.Current();
+    for (std::size_t stream = 0; stream < pending.size(); ++stream) {
+        if (own[stream] != 0 && pending[stream] <= own[stream]) pending[stream] = 0;
+    }
+    if (!TokenEmpty(pending) && !settled(pending)) waitFor(pending);
 }
 
 void ResidencyManager::refresh(std::span<const Fill> fills) {
