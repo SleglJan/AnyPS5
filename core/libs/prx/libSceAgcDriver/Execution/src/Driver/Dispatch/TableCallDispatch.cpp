@@ -6,7 +6,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "Optimization/ResourceProgram.hpp"
-#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
@@ -16,8 +15,6 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-
-constexpr std::size_t ProgramVariants = 8;
 constexpr std::uint64_t MaxHeadGroups = 65535;
 
 struct ProgramCache {
@@ -43,34 +40,13 @@ SplitCounters& Counters() {
 void Remember(std::uint64_t programKey, const std::shared_ptr<TableCallProgram>& program) {
     auto& cache = Programs();
     std::lock_guard lock(cache.mutex);
-    auto& variants = cache.programs[programKey];
-    if (variants.size() == ProgramVariants) variants.erase(variants.begin());
-    variants.push_back(program);
-}
-
-std::vector<std::uint32_t> UserDataCalleeWords(const ShaderRecompiler::RecompileRequest& request) {
-    const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
-    const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
-    std::vector<std::uint32_t> words;
-    for (const auto& call : ShaderRecompiler::FindUserDataCalls(program, swappc)) {
-        const auto slot = call.userDataRegister - request.context.userDataBaseRegister;
-        for (const auto index : {slot, slot + 1u}) words.insert(words.end(), {index, request.context.userData[index]});
-    }
-    return words;
+    cache.programs[programKey].push_back(program);
 }
 
 }
 
-TableCallProgram::TableCallProgram(ShaderRecompiler::TableCallSplit split, std::vector<std::uint32_t> calleeWords, std::vector<GuestMemory::UnchangedQuery> calleeReads)
-    : split(std::move(split)), calleeWords(std::move(calleeWords)), calleeReads(std::move(calleeReads)) {
-}
-
-bool TableCallProgram::Current(std::span<const std::uint32_t> userData) const {
-    for (std::size_t index = 0; index + 1u < calleeWords.size(); index += 2u) {
-        if (calleeWords[index] >= userData.size() || userData[calleeWords[index]] != calleeWords[index + 1u]) return false;
-    }
-    for (const auto& read : calleeReads) static_cast<void>(GuestMemory::CollectWrites(read.address, read.bytes));
-    return GuestMemory::UnchangedSinceAll(calleeReads);
+TableCallProgram::TableCallProgram(ShaderRecompiler::TableCallSplit split, LinkedCallees callees)
+    : split(std::move(split)), callees(std::move(callees)) {
 }
 
 std::vector<std::uint64_t> TableCallProgram::tablePointers(const ShaderRecompiler::RecompileRequest& request) const {
@@ -166,10 +142,10 @@ std::shared_ptr<TableCallProgram> TableCallProgramFor(std::uint64_t programKey, 
             }
         }
     }
-    std::vector<GuestMemory::UnchangedQuery> reads;
-    auto split = SplitTableCallProgram(request, &reads);
+    auto split = SplitTableCallProgram(request);
     if (!split) return nullptr;
-    auto program = std::make_shared<TableCallProgram>(std::move(*split), UserDataCalleeWords(request), std::move(reads));
+    auto callees = LinkedCalleesOf(request, split->userDataCalls, std::move(split->userDataCallees));
+    auto program = std::make_shared<TableCallProgram>(std::move(*split), std::move(callees));
     Remember(programKey, program);
     return program;
 }
@@ -182,7 +158,7 @@ std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey
         throw std::runtime_error(std::string("AGC driver: ") + error.what());
     }
     if (!split) return nullptr;
-    auto program = std::make_shared<TableCallProgram>(std::move(*split), std::vector<std::uint32_t>{}, std::vector<GuestMemory::UnchangedQuery>{});
+    auto program = std::make_shared<TableCallProgram>(std::move(*split), LinkedCallees{});
     Remember(programKey, program);
     auto& counters = Counters();
     std::lock_guard lock(counters.mutex);

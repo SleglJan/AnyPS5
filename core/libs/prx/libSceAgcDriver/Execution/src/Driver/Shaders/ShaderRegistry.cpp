@@ -597,8 +597,8 @@ bool ReadCalleeWords(void* context, std::uint64_t address, std::span<std::uint32
     return true;
 }
 
-ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* ranges) {
-    CalleeReads reads{request, ranges};
+ShaderRecompiler::LinkedCode LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+    CalleeReads reads{request};
     const ShaderRecompiler::CalleeMemory callees{&reads, &ReadCalleeWords, &ReadCalleeWords, nullptr};
     try {
         return ShaderRecompiler::LinkCallees(request, callees);
@@ -642,11 +642,34 @@ ShaderRecompiler::PreparedShaderInvocation PreparedInvocationFor(const ShaderSna
 
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse, std::vector<GuestMemory::UnchangedQuery>* linkReads) {
+LinkedCallees LinkedCalleesOf(const ShaderRecompiler::RecompileRequest& request, std::span<const ShaderRecompiler::UserDataCall> calls, std::vector<std::vector<std::uint32_t>> callees) {
+    require(calls.size() == callees.size(), "linked user-data calls and callees differ in number");
+    LinkedCallees linked;
+    for (const auto& call : calls) linked.slots.push_back(call.userDataRegister - request.context.userDataBaseRegister);
+    linked.code = std::move(callees);
+    return linked;
+}
+
+bool LinkedCallees::Current(std::span<const std::uint32_t> userData) const {
+    for (std::size_t call = 0; call < slots.size(); ++call) {
+        if (static_cast<std::size_t>(slots[call]) + 1u >= userData.size()) return false;
+        const auto address = static_cast<std::uint64_t>(userData[slots[call]]) | static_cast<std::uint64_t>(userData[slots[call] + 1u]) << 32u;
+        const auto bytes = code[call].size() * sizeof(std::uint32_t);
+        const auto* words = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address));
+        if (!GuestMemory::Accessible(words, bytes) || std::memcmp(words, code[call].data(), bytes) != 0) return false;
+    }
+    return true;
+}
+
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse, ShaderRecompiler::LinkedCode* linkedCallees) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    auto linked = LinkUserDataCallees(request, linkReads);
+    auto linked = LinkUserDataCallees(request);
+    if (linkedCallees != nullptr) {
+        linkedCallees->calls = linked.calls;
+        linkedCallees->callees = linked.callees;
+    }
     if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
     auto source = request;
     if (!linked.code.empty()) {
@@ -657,8 +680,8 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     return PreparedInvocationFor(snapshot, codeOffset, source, !linked.code.empty(), preparedAtUse);
 }
 
-std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* reads) {
-    CalleeReads callees{request, reads};
+std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request) {
+    CalleeReads callees{request};
     const ShaderRecompiler::CalleeMemory memory{&callees, &ReadCalleeWords, &ReadCalleeWords, nullptr};
     try {
         return ShaderRecompiler::SplitTableCalls(request, memory);
@@ -803,7 +826,7 @@ struct RegisteredPreparation {
 bool PlanTableCallHead(RegisteredPreparation& plan, const ShaderRecompiler::RdnaProgram& decoded) {
     std::optional<ShaderRecompiler::TableCallSplit> split;
     try {
-        split = SplitTableCallProgram(*plan.request, nullptr);
+        split = SplitTableCallProgram(*plan.request);
     } catch (const std::exception&) {
         return false;
     }

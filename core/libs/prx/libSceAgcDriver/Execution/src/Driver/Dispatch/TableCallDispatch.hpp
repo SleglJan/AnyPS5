@@ -5,6 +5,7 @@
 #include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -22,6 +23,8 @@ namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
 
+[[nodiscard]] LinkedCallees LinkedCalleesOf(const ShaderRecompiler::RecompileRequest& request, std::span<const ShaderRecompiler::UserDataCall> calls, std::vector<std::vector<std::uint32_t>> callees);
+
 struct TableCallPart {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> userData;
@@ -37,10 +40,10 @@ struct TableCallTargetSet {
 
 class TableCallProgram {
 public:
-    TableCallProgram(ShaderRecompiler::TableCallSplit split, std::vector<std::uint32_t> calleeWords, std::vector<GuestMemory::UnchangedQuery> calleeReads);
+    TableCallProgram(ShaderRecompiler::TableCallSplit split, LinkedCallees callees);
 
     [[nodiscard]] const ShaderRecompiler::TableCallSplit& Split() const { return split; }
-    [[nodiscard]] bool Current(std::span<const std::uint32_t> userData) const;
+    [[nodiscard]] bool Current(std::span<const std::uint32_t> userData) const { return callees.Current(userData); }
     [[nodiscard]] std::shared_ptr<const TableCallTargetSet> Targets(const ShaderRecompiler::RecompileRequest& request);
     [[nodiscard]] std::shared_ptr<const TableCallPart> Head(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
     [[nodiscard]] std::shared_ptr<const TableCallPart> Continuation(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallTarget& target);
@@ -50,8 +53,7 @@ private:
     std::vector<std::uint64_t> tablePointers(const ShaderRecompiler::RecompileRequest& request) const;
 
     ShaderRecompiler::TableCallSplit split;
-    std::vector<std::uint32_t> calleeWords;
-    std::vector<GuestMemory::UnchangedQuery> calleeReads;
+    LinkedCallees callees;
     std::mutex mutex;
     std::shared_ptr<const TableCallPart> head;
     struct ContinuationKey {

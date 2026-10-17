@@ -29,6 +29,7 @@ class ShaderPreparationContext;
 namespace ShaderRecompiler {
 struct SourceHandle;
 struct TableCallSplit;
+struct LinkedCode;
 struct TableCallTarget;
 class PreparedShaderInvocation;
 }
@@ -137,9 +138,16 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::vector<ShaderRecompiler::RecompileRequest> RegistrationRequests(const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse = nullptr, std::vector<GuestMemory::UnchangedQuery>* linkReads = nullptr);
+struct LinkedCallees {
+    std::vector<std::uint32_t> slots;
+    std::vector<std::vector<std::uint32_t>> code;
+
+    [[nodiscard]] bool Current(std::span<const std::uint32_t> userData) const;
+};
+
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse = nullptr, ShaderRecompiler::LinkedCode* linkedCallees = nullptr);
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request, std::vector<GuestMemory::UnchangedQuery>* reads);
+std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request);
 std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads);
 std::uint64_t TableCallContinuationsPreparedAtUse();
 ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& part, bool* preparedAtUse);

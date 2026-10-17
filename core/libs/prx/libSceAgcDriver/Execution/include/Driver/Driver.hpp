@@ -74,6 +74,7 @@ public:
     static std::uint64_t TransferFills();
     static std::uint64_t TransferCopies();
     std::uint64_t DataIndependentDispatchHits();
+    std::uint64_t RunTimeDispatchCompiles();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
 private:
@@ -137,21 +138,18 @@ private:
     static void countIndirect(int path, double readMs);
     void dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission);
     using RunTimeProgram = ShaderRecompiler::RunTimeProgram;
-    struct LinkedDispatch {
+    struct LinkedProgram {
         std::shared_ptr<const RunTimeProgram> program;
-        std::vector<std::uint32_t> linkedWords;
-        std::vector<std::uint32_t> userData;
-        std::vector<GuestMemory::UnchangedQuery> reads;
+        LinkedCallees callees;
     };
     struct DispatchProgram {
         std::shared_ptr<const RunTimeProgram> program;
-        std::shared_ptr<const LinkedDispatch> linked;
+        bool linked = false;
     };
     static bool readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value);
-    static bool linkCurrent(const LinkedDispatch& linked, std::span<const std::uint32_t> userData);
     std::shared_ptr<const RunTimeProgram> runTimeDrawStage(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t key);
-    DispatchProgram runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey, std::span<const std::uint32_t> userData);
-    static std::shared_ptr<const ShaderRecompiler::RecompileResult> runTimeResult(const RunTimeProgram& program, std::span<const std::uint32_t> userData, std::uint64_t shaderBase, std::span<const std::uint32_t> linkedWords = {});
+    DispatchProgram runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey);
+    static std::shared_ptr<const ShaderRecompiler::RecompileResult> runTimeResult(const RunTimeProgram& program, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
     static int waitTimeoutMs();
     void waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit);
     struct PendingWait {
@@ -214,7 +212,7 @@ private:
 
     std::mutex runTimeProgramsMutex;
     std::unordered_map<std::uint64_t, std::shared_ptr<const RunTimeProgram>> runTimeDispatches;
-    std::unordered_map<std::uint64_t, std::vector<std::shared_ptr<const LinkedDispatch>>> linkedDispatches;
+    std::unordered_map<std::uint64_t, std::vector<std::shared_ptr<const LinkedProgram>>> linkedPrograms;
     std::uint64_t dataIndependentHits = 0;
     std::uint64_t runTimeCompiles = 0;
 

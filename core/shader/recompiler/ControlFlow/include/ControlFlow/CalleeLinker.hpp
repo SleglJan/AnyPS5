@@ -24,6 +24,8 @@ struct CalleeMemory {
 struct TableCallSplit {
     std::vector<TableCall> calls;
     std::vector<std::uint32_t> linked;
+    std::vector<UserDataCall> userDataCalls;
+    std::vector<std::vector<std::uint32_t>> userDataCallees;
     SplitCode head;
     std::vector<std::uint32_t> scalarRegisters;
     std::vector<std::uint32_t> vectorRegisters;

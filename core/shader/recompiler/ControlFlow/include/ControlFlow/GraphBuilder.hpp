@@ -67,6 +67,8 @@ struct LinkedCode {
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> linkedLiterals;
     std::vector<std::uint32_t> linkedWords;
+    std::vector<UserDataCall> calls;
+    std::vector<std::vector<std::uint32_t>> callees;
 };
 
 [[nodiscard]] std::optional<std::uint32_t> UnresolvableSwappcTarget(const RdnaProgram& program, const SwappcInfo* swappc);

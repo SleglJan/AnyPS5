@@ -81,7 +81,10 @@ LinkedCode linkUserDataCallees(const RecompileRequest& request, const ProgramCal
                 std::to_string(call.userDataRegister + 1u) + "] at program counter " + hexText(call.programCounter) + ", but " + error.what());
         }
     }
-    return LinkCalls(calls.program, calls.userDataCalls, callees);
+    auto linked = LinkCalls(calls.program, calls.userDataCalls, callees);
+    linked.calls = calls.userDataCalls;
+    linked.callees = std::move(callees);
+    return linked;
 }
 
 std::string tableCallError(const RecompileRequest& request, const TableCall& call, const std::exception& error) {
@@ -134,7 +137,10 @@ std::optional<TableCallSplit> SplitTableCalls(const RecompileRequest& request, c
     const auto& compute = *request.context.compute;
     TableCallSplit split;
     split.calls = calls->tableCalls;
-    split.linked = linkUserDataCallees(request, *calls, memory).code;
+    auto linked = linkUserDataCallees(request, *calls, memory);
+    split.linked = std::move(linked.code);
+    split.userDataCalls = std::move(linked.calls);
+    split.userDataCallees = std::move(linked.callees);
     const auto waveSize = request.context.waveSize;
     const auto threads = std::max(compute.numThreads[0], 1u) * std::max(compute.numThreads[1], 1u) * std::max(compute.numThreads[2], 1u);
     split.wavesPerGroup = (threads + waveSize - 1u) / waveSize;
