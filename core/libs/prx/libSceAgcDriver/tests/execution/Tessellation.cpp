@@ -340,13 +340,13 @@ constexpr std::uint16_t Corner(std::uint32_t patch, std::uint32_t x, std::uint32
     return static_cast<std::uint16_t>((PatchLevels[patch] << 8u) | (patch << 4u) | (x << 2u) | y);
 }
 
-alignas(256) constexpr std::array<std::uint16_t, 9> Indices{
+const TestGuest::Array<std::uint16_t, 9> Indices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
     Corner(2, 0, 0), Corner(2, 2, 0), Corner(2, 1, 2),
 };
 
-alignas(256) constexpr std::array<std::uint16_t, 24> LatePatchIndices{
+const TestGuest::Array<std::uint16_t, 24> LatePatchIndices{
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
@@ -357,7 +357,7 @@ alignas(256) constexpr std::array<std::uint16_t, 24> LatePatchIndices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
 };
 
-alignas(256) constexpr std::array<std::uint16_t, 12> QuadIndices{
+const TestGuest::Array<std::uint16_t, 12> QuadIndices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 2, 2), Corner(0, 0, 2),
     Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 2, 2), Corner(1, 0, 2),
     Corner(2, 0, 0), Corner(2, 2, 0), Corner(2, 2, 2), Corner(2, 0, 2),
@@ -372,7 +372,7 @@ struct PatchDraw {
     std::uint32_t firstInstance = 0;
 };
 
-alignas(256) constexpr std::array<std::uint16_t, 12> NextInputIndices{
+const TestGuest::Array<std::uint16_t, 12> NextInputIndices{
     Corner(0, 0, 0), Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
     Corner(1, 0, 0), Corner(1, 0, 0), Corner(1, 2, 0), Corner(1, 1, 2),
     Corner(2, 0, 0), Corner(2, 0, 0), Corner(2, 2, 0), Corner(2, 1, 2),

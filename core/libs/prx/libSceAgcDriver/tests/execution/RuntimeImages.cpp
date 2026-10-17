@@ -11,7 +11,7 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 2> textures{};
+TestGuest::Array<std::array<std::uint32_t, 64>, 2> textures;
 TestGuest::Array<std::uint32_t, 64> output;
 constexpr std::array<std::uint32_t, 10> code{0x7e3c02ffu, 0x3fa00000u, 0x7e3e02ffu, 0x3f000000u, 0xf09c0108u, 0x00610a1eu, 0x34060082u, 0xe0701000u, 0x80000a03u, 0xbf810000u};
 

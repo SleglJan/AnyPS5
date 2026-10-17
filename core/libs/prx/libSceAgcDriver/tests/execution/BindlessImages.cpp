@@ -24,7 +24,7 @@ struct alignas(4096) GuestData {
     std::array<std::uint32_t, 64> output{};
 };
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 2> textures{};
+TestGuest::Array<std::array<std::uint32_t, 64>, 2> textures;
 TestGuest::Array<GuestData, 12> guest;
 constexpr std::array<std::uint32_t, 23> code{0xbf068002u, 0xbf850013u, 0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x93109010u, 0xf4200406u, 0x20000004u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u, 0xbf800000u};
 

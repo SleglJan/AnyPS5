@@ -37,11 +37,11 @@ constexpr std::array<std::uint32_t, 4> AnisoSampler{0x00000092u | (4u << 9u), 0x
 constexpr std::uint32_t AnisoOverride = 1u << 29u;
 
 TestGuest::Array<std::uint32_t, Threads * 8> Output;
-using Storage = std::array<std::uint8_t, 16384>;
-alignas(256) Storage SingleIntegers{};
-alignas(256) Storage SingleColors{};
-alignas(256) Storage MipIntegers{};
-alignas(256) Storage MipColors{};
+using Storage = TestGuest::Array<std::uint8_t, 16384>;
+Storage SingleIntegers;
+Storage SingleColors;
+Storage MipIntegers;
+Storage MipColors;
 
 alignas(256) constexpr std::array<std::uint32_t, 16> Code{
     0x34060085u, 0x7e2802ffu, 0x3ef00000u, 0x7e2a02ffu, 0x3f300000u, 0xf09c0f08u, 0x00610a14u, 0xf09c0f08u,
@@ -65,7 +65,7 @@ std::string Hex(std::uint32_t value) {
 
 AgcDriver::Graphics::TileMipLayout BaseLevel(std::uint32_t format, std::uint32_t levels) {
     const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, format, Size, Size, levels);
-    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Storage{}.size(), "image sample aniso override: a texture does not fit its storage");
+    Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= Storage::size(), "image sample aniso override: a texture does not fit its storage");
     return mips[0];
 }
 
