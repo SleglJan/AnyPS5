@@ -109,6 +109,15 @@ public:
         static_cast<void>(generation);
         return {};
     }
+    virtual bool ImportSettled(std::uint64_t page) {
+        static_cast<void>(page);
+        return true;
+    }
+    virtual std::uint64_t ImportStamp() { return 0; }
+    virtual void SettleImport(std::uint64_t page, std::uint64_t stamp) {
+        static_cast<void>(page);
+        static_cast<void>(stamp);
+    }
     virtual std::uint64_t Budget() { return ~std::uint64_t{0}; }
     virtual std::uint64_t GuestBytes() { return 0; }
     virtual void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) {
@@ -270,6 +279,7 @@ private:
         std::uint64_t touchFrame = 0;
         ResidencyToken pin{};
         ResidencyToken settle{};
+        std::uint64_t importStamp = 0;
         bool settleIssued = false;
     };
 
@@ -328,6 +338,7 @@ private:
     void writeBackDirty(std::span<const std::uint32_t> ids);
     void settleAccessGuards();
     void settleImports();
+    void unsettle(std::uint32_t id);
     static bool dirtyable(const Page& page) { return page.shared || page.importSettled; }
     void admitEager();
     void admitReservedTouches();

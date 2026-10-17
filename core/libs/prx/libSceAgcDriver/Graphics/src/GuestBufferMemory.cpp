@@ -323,6 +323,7 @@ const char* createHostPointerImport(const Context& context, HostImport& entry, V
         return "vkGetMemoryHostPointerPropertiesEXT";
     }
     const VkImportMemoryHostPointerInfoEXT import{VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host};
+    if (entry.alias == nullptr) GuestMemory::NoteHostImport(entry.base, entry.bytes);
     bool allocated = false;
     return bindImport(context, entry, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, &import, pointer.memoryTypeBits, allocated, failure);
 }

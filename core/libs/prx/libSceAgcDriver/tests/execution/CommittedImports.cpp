@@ -158,21 +158,31 @@ void noteGuardReport(std::span<const std::uint64_t> pages) {
 void CheckGuardOverImport(AgcDriver::VulkanDevice& device) {
     static const AgcDriver::GuestMemory::ResidencyHooks hooks{[](std::uint64_t, std::size_t) { return false; }, &noteGuardReport, nullptr, nullptr};
     AgcDriver::GuestMemory::SetResidencyHooks(&hooks);
+    const auto guardedRounds = [&](std::uint8_t* memory, const char* kind) {
+        const auto base = reinterpret_cast<std::uint64_t>(memory);
+        for (std::uint32_t round = 0; round < 64; ++round) {
+            guardReports.clear();
+            Require(ImportOf(device.Device(), pageOf(memory)) && AgcDriver::GuestMemory::GuardWrites(base, Page), std::string("an imported ") + kind + " page could not be guarded");
+            Require(fill(device, memory, Page, 0x0e0e0e0eu + round) && holds(memory, Page, 0x0e0e0e0eu + round), std::string("a GPU fill through the import of a guarded ") + kind + " page did not land");
+            Require(guardReports.empty() && AgcDriver::GuestMemory::WriteGuarded(pageOf(memory)), std::string("a GPU write tripped the CPU write guard of a ") + kind + " page");
+            memory[8 + round] = 1;
+            Require(guardReports == std::vector<std::uint64_t>{pageOf(memory)} && memory[8 + round] == 1, std::string("a CPU store to a guarded imported ") + kind + " page was not reported");
+        }
+    };
     auto* privateMemory = commit(Page);
-    Require(ImportOf(device.Device(), pageOf(privateMemory)) && !AgcDriver::GuestMemory::GuardWrites(reinterpret_cast<std::uint64_t>(privateMemory), Page), "an imported private page was guarded: the GPU would lose the device on its read-only pages");
+    const auto privateBase = reinterpret_cast<std::uint64_t>(privateMemory);
+    Require(ImportOf(device.Device(), pageOf(privateMemory)).has_value(), "a private commit was not imported");
+    Require(!AgcDriver::GuestMemory::GuardWrites(privateBase, Page) && !AgcDriver::GuestMemory::GuardAccess(privateBase, Page), "an imported private page was guarded before its import settled: the GPU would lose the device on its read-only pages");
+    Require(!AgcDriver::GuestMemory::WriteGuarded(pageOf(privateMemory)) && !AgcDriver::GuestMemory::AccessGuarded(pageOf(privateMemory)), "a refused guard armed the private page");
+    const auto stamp = AgcDriver::GuestMemory::HostImportStamp();
+    Require(fill(device, privateMemory, Page, 0x0f0f0f0fu) && holds(privateMemory, Page, 0x0f0f0f0fu), "a GPU fill through a fresh private import did not land");
+    AgcDriver::GuestMemory::SettleHostImports(privateBase, Page, stamp);
+    guardedRounds(privateMemory, "private");
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(Page), nullptr);
     Require(section != nullptr, "cannot create a section");
     auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Page, Page));
     GuestArena::GuestArenaMap_nid_postfix(memory, Page, section, 0, PAGE_READWRITE);
-    const auto base = reinterpret_cast<std::uint64_t>(memory);
-    for (std::uint32_t round = 0; round < 64; ++round) {
-        guardReports.clear();
-        Require(ImportOf(device.Device(), pageOf(memory)) && AgcDriver::GuestMemory::GuardWrites(base, Page), "an imported shared page could not be guarded");
-        Require(fill(device, memory, Page, 0x0e0e0e0eu + round) && holds(memory, Page, 0x0e0e0e0eu + round), "a GPU fill through the import of a guarded page did not land");
-        Require(guardReports.empty() && AgcDriver::GuestMemory::WriteGuarded(pageOf(memory)), "a GPU write tripped the CPU write guard");
-        memory[8 + round] = 1;
-        Require(guardReports == std::vector<std::uint64_t>{pageOf(memory)}, "a CPU store to a guarded imported page was not reported");
-    }
+    guardedRounds(memory, "shared");
     AgcDriver::GuestMemory::SetResidencyHooks(nullptr);
     std::printf("guard over an import: ok\n");
 }

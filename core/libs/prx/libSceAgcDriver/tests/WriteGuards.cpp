@@ -102,11 +102,37 @@ std::uint8_t* mapShared(std::size_t bytes, HANDLE section = nullptr) {
     return memory;
 }
 
-void CheckPrivateUnguardable() {
+void CheckPrivateGuards() {
+    auto* fresh = commitPrivate(Page, Granule);
+    clearReports();
+    Require(GuardWrites(reinterpret_cast<std::uint64_t>(fresh), Page), "an unimported private page could not be guarded");
+    Require(WriteGuarded(pageOf(fresh)) && protectionAt(fresh) == PAGE_READONLY && protectionAt(fresh + 3 * Granule) == PAGE_READONLY, "the guard did not make the whole private page read-only");
+    fresh[100] = 1;
+    Require(reported(pageOf(fresh)) == 1 && fresh[100] == 1, "the first store to a guarded private page was not reported");
+    Require(!WriteGuarded(pageOf(fresh)) && protectionAt(fresh) == PAGE_READWRITE, "the fault did not restore the private page's protection");
+
     auto* memory = commitPrivate(Page, Granule);
-    Require(!GuardWrites(reinterpret_cast<std::uint64_t>(memory), Page), "a private page was guarded: its host import would see a read-only page");
-    Require(!WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READWRITE, "a refused guard changed the page");
-    std::cout << "private pages unguardable: ok\n";
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    NoteHostImport(base, Page);
+    const auto stamp = HostImportStamp();
+    Require(!HostImportSettled(base, Page), "a fresh host import was reported settled");
+    Require(!GuardWrites(base, Page), "a private page was guarded before its host import settled: the GPU would lose the device on its read-only pages");
+    Require(!GuardAccess(base, Granule), "a private page was access guarded before its host import settled");
+    Require(!WriteGuarded(pageOf(memory)) && !AccessGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READWRITE, "a refused guard changed the page");
+    SettleHostImports(base, Page, stamp - 1);
+    Require(!GuardWrites(base, Page), "a settle mark older than the import settled it");
+    SettleHostImports(base, Page, stamp);
+    Require(HostImportSettled(base, Page), "the settle mark did not settle the import");
+    clearReports();
+    Require(GuardWrites(base, Page), "a settled private page could not be guarded");
+    Require(WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READONLY, "the guard did not make the settled private page read-only");
+    memory[200] = 2;
+    Require(reported(pageOf(memory)) == 1 && memory[200] == 2, "the first store to a guarded settled page was not reported");
+    Require(!WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READWRITE, "the fault did not restore the settled page's protection");
+    NoteHostImport(base, Page);
+    Require(!GuardWrites(base, Page), "a new host import of a settled page did not need its own settle");
+    SettleHostImports(base, Page, HostImportStamp());
+    std::cout << "private pages guarded only after their import settled: ok\n";
 }
 
 void CheckSharedGuard() {
@@ -250,7 +276,7 @@ int main() {
             return 77;
         }
         AgcDriver::GuestMemory::SetResidencyHooks(&hooks);
-        CheckPrivateUnguardable();
+        CheckPrivateGuards();
         CheckSharedGuard();
         CheckGuestProtectionPreserved();
         CheckSharedGuardAliases();

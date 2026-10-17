@@ -331,6 +331,18 @@ void ResidencyDriver::UnguardAccess(std::uint64_t page) {
     guest.UnguardAccess(page);
 }
 
+bool ResidencyDriver::ImportSettled(std::uint64_t page) {
+    return guest.ImportSettled(page);
+}
+
+std::uint64_t ResidencyDriver::ImportStamp() {
+    return guest.ImportStamp();
+}
+
+void ResidencyDriver::SettleImport(std::uint64_t page, std::uint64_t stamp) {
+    guest.SettleImport(page, stamp);
+}
+
 ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bool intoMirror) {
     std::map<std::uint64_t, ResidencyImportLocation> locations;
     std::vector<ResidencyCopy> located;

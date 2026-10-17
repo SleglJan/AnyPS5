@@ -38,6 +38,15 @@ public:
     virtual bool GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
     virtual void UnguardAccess(std::uint64_t page) = 0;
     virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) = 0;
+    virtual bool ImportSettled(std::uint64_t page) {
+        static_cast<void>(page);
+        return true;
+    }
+    virtual std::uint64_t ImportStamp() { return 0; }
+    virtual void SettleImport(std::uint64_t page, std::uint64_t stamp) {
+        static_cast<void>(page);
+        static_cast<void>(stamp);
+    }
     virtual std::uint64_t GuestBytes() = 0;
     virtual void CollectWrites(std::uint64_t address, std::uint64_t bytes) {
         static_cast<void>(address);
@@ -124,6 +133,9 @@ public:
     void Unguard(std::span<const std::uint64_t> pages) override;
     bool GuardAccess(std::uint64_t page, ResidencyMask mask) override;
     void UnguardAccess(std::uint64_t page) override;
+    std::uint64_t ImportStamp() override;
+    void SettleImport(std::uint64_t page, std::uint64_t stamp) override;
+    bool ImportSettled(std::uint64_t page) override;
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t Budget() override;
     std::uint64_t GuestBytes() override;

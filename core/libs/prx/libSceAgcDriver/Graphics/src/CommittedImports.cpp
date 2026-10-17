@@ -198,6 +198,7 @@ HostImport importRange(const Context& context, std::uint64_t base, std::uint64_t
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     allocation.allocationSize = bytes;
     allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
+    if (alias == nullptr) GuestMemory::NoteHostImport(base, bytes);
     VkDeviceMemory memory = VK_NULL_HANDLE;
     if (const auto code = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory); code != VK_SUCCESS) fail("vkAllocateMemory", code);
     const auto owner = std::make_shared<ImportMemory>(context.device, context.Function<PFN_vkFreeMemory>("vkFreeMemory"), memory, base, bytes, alias);

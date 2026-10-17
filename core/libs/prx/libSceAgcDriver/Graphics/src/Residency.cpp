@@ -554,11 +554,27 @@ void ResidencyManager::settleImports() {
     for (const auto page : settledPages) {
         const auto id = find(page);
         if (!id) continue;
+        device.SettleImport(page, pages[*id].importStamp);
+        if (!device.ImportSettled(page)) {
+            unsettle(*id);
+            continue;
+        }
         pages[*id].importSettled = true;
         ++counts.importsSettled;
         unmarkHot(page);
         rearm(*id);
     }
+}
+
+void ResidencyManager::unsettle(std::uint32_t id) {
+    auto& page = pages[id];
+    page.importSettled = false;
+    page.importStamp = device.ImportStamp();
+    page.settle = device.Newest();
+    page.settleIssued = false;
+    unsettledImports.insert(page.index);
+    ++counts.unsettledGuards;
+    markHot(page.index, Epoch());
 }
 
 bool ResidencyManager::ImportSettled(std::uint64_t page) const {
@@ -662,6 +678,7 @@ std::uint32_t ResidencyManager::newPage(std::uint64_t page, MirrorSlot slot, con
     record.shared = import.section != 0;
     record.importSettled = record.shared;
     if (!record.shared) {
+        record.importStamp = device.ImportStamp();
         record.settle = device.Newest();
         unsettledImports.insert(page);
     }
@@ -1533,6 +1550,10 @@ void ResidencyManager::rearm(std::uint32_t id) {
     }
     if (device.Guard(page.index)) {
         page.guarded = true;
+        return;
+    }
+    if (!page.shared && !device.ImportSettled(page.index)) {
+        unsettle(id);
         return;
     }
     ++counts.unguardable;

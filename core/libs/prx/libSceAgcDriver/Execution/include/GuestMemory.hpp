@@ -217,6 +217,10 @@ struct ResidencyHooks {
 constexpr unsigned ResidencyPageShift = 16;
 void SetResidencyHooks(const ResidencyHooks* hooks);
 void SetShadowWriteObserver(void (*observer)(std::span<const std::uint64_t> pages));
+void NoteHostImport(std::uint64_t address, std::size_t bytes);
+std::uint64_t HostImportStamp();
+void SettleHostImports(std::uint64_t address, std::size_t bytes, std::uint64_t stamp);
+bool HostImportSettled(std::uint64_t address, std::size_t bytes);
 bool GuardWrites(std::uint64_t address, std::size_t bytes);
 void UnguardWrites(std::uint64_t address, std::size_t bytes);
 bool WriteGuarded(std::uint64_t page);

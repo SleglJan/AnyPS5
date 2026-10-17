@@ -2272,6 +2272,43 @@ void SetShadowWriteObserver(void (*observer)(std::span<const std::uint64_t> page
     observeGuards();
 }
 
+void NoteHostImport(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    GuestArena::GuestArenaNoteImport_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+#endif
+}
+
+std::uint64_t HostImportStamp() {
+#ifdef _WIN32
+    return GuestArena::GuestArenaImportStamp_nid_postfix();
+#else
+    return 0;
+#endif
+}
+
+void SettleHostImports(std::uint64_t address, std::size_t bytes, std::uint64_t stamp) {
+#ifdef _WIN32
+    GuestArena::GuestArenaSettleImports_nid_postfix(static_cast<std::uintptr_t>(address), bytes, stamp);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    static_cast<void>(stamp);
+#endif
+}
+
+bool HostImportSettled(std::uint64_t address, std::size_t bytes) {
+#ifdef _WIN32
+    return GuestArena::GuestArenaImportSettled_nid_postfix(static_cast<std::uintptr_t>(address), bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return true;
+#endif
+}
+
 bool GuardWrites(std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     return GuestArena::GuestArenaGuardWrites_nid_postfix(static_cast<std::uintptr_t>(address), bytes);

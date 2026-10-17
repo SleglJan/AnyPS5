@@ -52,6 +52,18 @@ bool ResidencyGuest::Guard(std::uint64_t page) {
     return GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }
 
+bool ResidencyGuest::ImportSettled(std::uint64_t page) {
+    return GuestMemory::HostImportSettled(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
+}
+
+std::uint64_t ResidencyGuest::ImportStamp() {
+    return GuestMemory::HostImportStamp();
+}
+
+void ResidencyGuest::SettleImport(std::uint64_t page, std::uint64_t stamp) {
+    GuestMemory::SettleHostImports(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes), stamp);
+}
+
 bool ResidencyGuest::GuardAccess(std::uint64_t page, ResidencyMask mask) {
     const auto base = page << ResidencyPageShift;
     std::vector<std::pair<std::uint64_t, std::size_t>> guarded;

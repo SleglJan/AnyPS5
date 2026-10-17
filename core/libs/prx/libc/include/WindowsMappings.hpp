@@ -12,6 +12,7 @@
 #include <mutex>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <stdexcept>
 #include <string>
@@ -166,6 +167,7 @@ public:
     bool Guard(std::uintptr_t address, std::size_t bytes) {
         if (address % guardBytes != 0 || bytes % guardBytes != 0) throw std::invalid_argument("guest write guards cover whole 64 KiB pages");
         std::lock_guard lock(mutex);
+        if (unsettledImport(address, address + bytes)) return false;
         std::vector<std::shared_ptr<SharedPage>> pages;
         std::vector<std::uintptr_t> privates;
         for (auto piece = address; piece < address + bytes; piece += pageBytes) {
@@ -220,6 +222,40 @@ public:
         }
     }
 
+    void NoteImport(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        const auto end = address + bytes;
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end; ++it) {
+            if (it->second.accessGuarded != 0) throw std::runtime_error("host import of private guest memory over access guarded pages: their GPU stores were not written back first");
+        }
+        const auto stamp = ++importStamp;
+        for (auto page = address / guardBytes; page <= (end - 1) / guardBytes; ++page) unsettledImports.insert_or_assign(page, stamp);
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
+            auto& page = it->second;
+            dropPrivateGuard(it->first);
+            if (page.armed != 0) protectSubpages(it->first, page.armed, page.protection, "open private guest memory to a host import");
+            page.armed = 0;
+            it = pruned(it);
+        }
+    }
+
+    std::uint64_t ImportStamp() {
+        std::lock_guard lock(mutex);
+        return importStamp;
+    }
+
+    void SettleImports(std::uintptr_t address, std::size_t bytes, std::uint64_t stamp) {
+        std::lock_guard lock(mutex);
+        for (auto page = address / guardBytes; page <= (address + bytes - 1) / guardBytes; ++page) {
+            if (const auto found = unsettledImports.find(page); found != unsettledImports.end() && found->second <= stamp) unsettledImports.erase(found);
+        }
+    }
+
+    bool ImportSettled(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        return !unsettledImport(address, address + bytes);
+    }
+
     bool IsGuarded(std::uintptr_t address) {
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
@@ -238,6 +274,7 @@ public:
         if (address % subpageBytes != 0 || bytes % subpageBytes != 0) throw std::invalid_argument("guest access guards cover whole 4 KiB pages");
         std::lock_guard lock(mutex);
         const auto end = address + bytes;
+        if (unsettledImport(address, end)) return false;
         std::vector<std::pair<std::shared_ptr<SharedPage>, std::uint8_t>> pages;
         std::vector<std::uintptr_t> privates;
         for (auto piece = address & ~(pageBytes - 1); piece < end; piece += pageBytes) {
@@ -818,6 +855,14 @@ private:
         return &privatePieces.emplace(piece, page).first->second;
     }
 
+    bool unsettledImport(std::uintptr_t address, std::uintptr_t end) const {
+        if (unsettledImports.empty() || end <= address) return false;
+        for (auto page = address / guardBytes; page <= (end - 1) / guardBytes; ++page) {
+            if (unsettledImports.contains(page)) return true;
+        }
+        return false;
+    }
+
     bool guardablePrivate(std::uintptr_t piece) {
         for (const auto& [begin, end] : privateHostWrites) {
             if (begin < piece + pageBytes && piece < end) return false;
@@ -1169,6 +1214,7 @@ private:
         collectableRanges.clear();
         const auto end = address + bytes;
         privatePieces.erase(privatePieces.lower_bound(address), privatePieces.lower_bound(end));
+        for (auto page = (address + guardBytes - 1) / guardBytes; page < end / guardBytes; ++page) unsettledImports.erase(page);
         forgetClean(address, end);
         breakRun(address);
         breakRun(end);
@@ -1264,6 +1310,8 @@ private:
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::shared_ptr<Physical>> physical;
     std::map<std::uintptr_t, Run> residentRuns;
     PrivatePieces privatePieces;
+    std::unordered_map<std::uintptr_t, std::uint64_t> unsettledImports;
+    std::uint64_t importStamp = 0;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> privateHostWrites;
     std::vector<Demoted> demotedRuns;
     std::map<std::uintptr_t, std::size_t> splitAliases;

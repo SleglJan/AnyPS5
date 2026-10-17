@@ -392,6 +392,26 @@ bool GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes
     return WindowsMappings::Get().GuardAccess(address, bytes);
 }
 
+void GuestArenaNoteImport_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    if (bytes == 0 || !Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) return;
+    WindowsMappings::Get().NoteImport(address, bytes);
+    notifyGuarded(WindowsMappings::Get().TakeGuardReports());
+}
+
+std::uint64_t GuestArenaImportStamp_nid_postfix() {
+    return WindowsMappings::Get().ImportStamp();
+}
+
+void GuestArenaSettleImports_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint64_t stamp) {
+    if (bytes == 0 || !Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) return;
+    WindowsMappings::Get().SettleImports(address, bytes, stamp);
+}
+
+bool GuestArenaImportSettled_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    if (bytes == 0 || !Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) return true;
+    return WindowsMappings::Get().ImportSettled(address, bytes);
+}
+
 void GuestArenaUnguardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     WindowsMappings::Get().UnguardAccess(address, bytes);
 }

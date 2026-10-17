@@ -47,6 +47,10 @@ void GuestArenaForEachMapping_nid_postfix(void (*callback)(void* context, std::u
 bool GuestArenaGuardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnguardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes);
 bool GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes);
+void GuestArenaNoteImport_nid_postfix(std::uintptr_t address, std::size_t bytes);
+std::uint64_t GuestArenaImportStamp_nid_postfix();
+void GuestArenaSettleImports_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint64_t stamp);
+bool GuestArenaImportSettled_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnguardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes);
 bool GuestArenaAccessGuarded_nid_postfix(std::uintptr_t page);
 bool GuestArenaHandleAccess_nid_postfix(std::uintptr_t address, bool write);
