@@ -1227,6 +1227,30 @@ void OwnedPagesExemptAndForgotten() {
     fixture.gpu.Drain();
 }
 
+void ClearStaleSparesOtherSubpages() {
+    scope = "an owner clears its own stale subpages without a retile";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 5);
+    fixture.Share(BasePage + 6);
+    FakeOwner first(fixture, 907);
+    FakeOwner second(fixture, 908);
+    fixture.manager->Own(Address(BasePage + 5), ResidencyPageBytes, &first);
+    fixture.manager->Own(Address(BasePage + 6), ResidencyPageBytes, &second);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 5, 1), 2 * ResidencySubpageBytes, &first);
+    fixture.manager->MarkStale(Address(BasePage + 6, 4), ResidencySubpageBytes, &second);
+    fixture.manager->ClearStale(Address(BasePage + 5, 1), ResidencySubpageBytes, &first);
+    fixture.manager->ClearStale(Address(BasePage + 6), ResidencyPageBytes, &first);
+    Expect(fixture.manager->Stale(BasePage + 5) == 0x0004 && fixture.manager->Stale(BasePage + 6) == 0x0010 && first.retiled.empty() && second.retiled.empty(), "only the owner's cleared subpage leaves the stale state, and no owner retiles");
+    Expect(!fixture.manager->StaleIn(Address(BasePage + 5, 1), 4) && fixture.manager->StaleIn(Address(BasePage + 5, 2), 4), "the unlocked stale query follows the cleared subpage");
+    fixture.manager->ClearStale(Address(BasePage + 5), ResidencyPageBytes, &first);
+    Expect(fixture.manager->Stale(BasePage + 5) == 0 && fixture.manager->Counts().stalePages == 1, "clearing the last stale subpage of a page drops it from the stale set");
+    fixture.manager->RetileAllOwned();
+    Expect(first.retiled.empty() && second.retiled.size() == 1, "a retile asks only the owner that still has stale subpages");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 5), 2 * ResidencyPageBytes);
+    fixture.gpu.Drain();
+}
+
 void StaleOwnedPagesKeptAndDisowned() {
     scope = "stale owned pages are kept, and disowning retiles them";
     Fixture fixture(8, 1);
@@ -1720,6 +1744,7 @@ int main() {
         CpuReadRetilesStalePages();
         PrivateOwnedPagesHeldForReaders();
         OwnedPagesExemptAndForgotten();
+        ClearStaleSparesOtherSubpages();
         StaleOwnedPagesKeptAndDisowned();
         DemotionRetilesStalePages();
         AdmissionRule();

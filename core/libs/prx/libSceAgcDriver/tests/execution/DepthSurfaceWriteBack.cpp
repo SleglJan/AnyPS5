@@ -97,6 +97,7 @@ struct Planes {
     VkFormat format = VK_FORMAT_D32_SFLOAT;
     std::uint32_t samples = 1;
     std::uint64_t htile = 0;
+    bool htileStencil = false;
     std::uint32_t stencilSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
 };
 
@@ -118,10 +119,13 @@ void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const 
         state.hasColorTarget = false;
     }
     state.samples = planes.samples;
-    state.depth = Graphics::DepthTarget{planes.depth, planes.stencil, {Width, Height}, planes.format, 1.0f, 0, planes.htile, false, planes.samples};
+    state.depth = Graphics::DepthTarget{planes.depth, planes.stencil, {Width, Height}, planes.format, 1.0f, 0, planes.htile, planes.htileStencil, planes.samples};
     state.depth->depthSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
     state.depth->stencilSwizzle = planes.stencilSwizzle;
-    if (planes.htile != 0u) state.depth->htileDepthOnly = state.depth->iterate256 = state.depth->htilePipeAligned = true;
+    if (planes.htile != 0u) {
+        state.depth->htileDepthOnly = !planes.htileStencil;
+        state.depth->iterate256 = state.depth->htilePipeAligned = true;
+    }
     state.depthTest = true;
     state.depthWrite = depthWrite;
     state.depthCompare = VK_COMPARE_OP_ALWAYS;
@@ -217,6 +221,14 @@ void CheckUntouched(const std::vector<std::byte>& read, const std::vector<bool>&
         if (!element[byte] && read[byte] != expected) ++changed;
     }
     Require(changed == 0u, what + ": " + std::to_string(changed) + " bytes outside the plane's elements changed");
+}
+
+void CheckHtile(std::uint64_t address, std::uint64_t bytes, std::uint32_t expected, const std::string& what) {
+    std::vector<std::uint32_t> read(static_cast<std::size_t>(bytes / 4u));
+    AgcDriver::GuestMemory::Read(address, std::as_writable_bytes(std::span(read)));
+    std::size_t wrong = 0;
+    for (const auto word : read) wrong += word != expected ? 1u : 0u;
+    Require(wrong == 0u, what + ": " + std::to_string(wrong) + " HTILE words read after the draw are not the expanded word");
 }
 
 void CheckDepth(std::uint64_t address, VkFormat format, std::uint32_t samples, bool sloped, const std::string& what) {
@@ -333,18 +345,32 @@ void NativeMultisampledDepth(AgcDriver::VulkanDevice& device, const Shaders& slo
     DrawPlanes(device, sloped, planes, true, false);
     Require(Owned(depth.address) && Stale(depth.address) != 0u, what + ": the draw left no stale subpage in an owned plane");
     Require(Graphics::HasResidentDepthGuards_nid_no_patch(), what + ": the target is not natively sampled");
+    CheckHtile(htile.address, htileBytes, 0xfffc000fu, what);
     CheckDepth(depth.address, planes.format, 4u, true, what);
-    bool refused = false;
-    try {
-        Graphics::RequireNoResidentDepthRead_nid_no_patch(htile.address, 4u);
-    } catch (const std::exception& error) {
-        refused = std::string(error.what()).find("sample-preserving guest publication") != std::string::npos;
-    }
-    Require(refused, what + ": a read of the HTILE, which is not published, was not refused");
     DrawPlanes(device, sloped, planes, true, false);
     Require(Stale(depth.address) != 0u, what + ": the second draw left no stale subpage");
     CheckDepth(depth.address, planes.format, 4u, true, what + ", after a second draw over the published plane");
-    std::printf("%s reaches guest memory, its HTILE stays refused\n", what.c_str());
+    CheckHtile(htile.address, htileBytes, 0xfffc000fu, what + ", after a second draw");
+    std::printf("%s reaches guest memory with its HTILE expanded\n", what.c_str());
+}
+
+void HtileWithStencil(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
+    GuestPlane depth;
+    GuestPlane stencil;
+    GuestPlane htile;
+    const auto htileBytes = Graphics::HtileMetadataBytes({Width, Height});
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(htile.data);
+    for (std::size_t word = 0; word < htileBytes / 4u; ++word) words[word] = 0x00000105u;
+    Planes planes{depth.address, stencil.address, VK_FORMAT_D32_SFLOAT_S8_UINT, 1u, htile.address};
+    planes.htileStencil = true;
+    const std::string what = "single-sample depth and stencil with HTILE";
+    DrawPlanes(device, sloped, planes, true, true);
+    Require(Owned(htile.address) && Stale(htile.address) != 0u, what + ": the HTILE is not owned and stale after the draw");
+    CheckHtile(htile.address, htileBytes, 0xfffff3ffu, what);
+    Require(Stale(depth.address) == 0u && Stale(stencil.address) == 0u, what + ": the HTILE read left a plane stale");
+    CheckDepth(depth.address, planes.format, 1u, true, what + ", depth plane");
+    CheckStencil(stencil.address, 1u, what + ", stencil plane");
+    std::printf("%s reaches guest memory with its HTILE expanded\n", what.c_str());
 }
 
 void StencilSwizzle(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
@@ -392,6 +418,7 @@ int main() {
         MultisampledDepthReachesMemory(*device, sloped, VK_FORMAT_D16_UNORM);
         DepthAndStencilReachMemory(*device, sloped, 4u);
         NativeMultisampledDepth(*device, sloped);
+        HtileWithStencil(*device, sloped);
         StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
         LibcRunShutdown_nid_postfix();

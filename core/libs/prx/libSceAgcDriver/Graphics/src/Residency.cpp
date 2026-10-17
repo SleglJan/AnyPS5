@@ -385,6 +385,19 @@ void ResidencyManager::Forget(IResidencyOwner* owner) {
     ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
 }
 
+void ResidencyManager::ClearStale(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) {
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return;
+    const std::unique_lock lock(ownedMutex);
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto entry = owned.find(page);
+        if (entry == owned.end() || entry->second.owner != owner || entry->second.stale == 0) continue;
+        entry->second.stale = static_cast<ResidencyMask>(entry->second.stale & ~SubpageMask(page, address, bytes));
+        publishStale(page, entry->second.stale);
+        if (entry->second.stale == 0 && staleOwned.erase(page) != 0) --staleCount;
+    }
+}
+
 IResidencyOwner* ResidencyManager::OwnerOf(std::uint64_t page) const {
     const std::shared_lock lock(ownedMutex);
     const auto entry = owned.find(page);

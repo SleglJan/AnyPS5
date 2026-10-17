@@ -197,6 +197,7 @@ public:
     bool RetileAllOwned(std::span<const IResidencyOwner* const> except = {});
     void Disown(IResidencyOwner* owner);
     void Forget(IResidencyOwner* owner);
+    void ClearStale(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner);
     IResidencyOwner* OwnerOf(std::uint64_t page) const;
     ResidencyMask Stale(std::uint64_t page) const;
     std::vector<std::shared_ptr<IResidencyOwner>> HoldOwners(std::uint64_t address, std::uint64_t bytes) const;

@@ -503,26 +503,58 @@ public:
         return {};
     }
 
+    std::uint64_t htileBytes() const {
+        return HtileMetadataBytes(target.extent);
+    }
+
+    std::uint32_t ExpandedHtileWord() const {
+        return target.htileStencil ? 0xfffff3ffu : 0xfffc000fu;
+    }
+
     void OwnPlanes() {
         auto* residency = ResidencyDriver::Active();
         if (residency == nullptr || residency->Device() != context.device || retired) return;
         auto& manager = residency->Manager();
         if (residencyOwned && ownedSerial == manager.OwnershipSerial()) return;
+        std::array<bool, 2> imported{};
+        for (std::size_t index = 0; samplingActive && index < imported.size(); ++index) {
+            const auto& range = sampling.initial[index];
+            imported[index] = GuestMemory::CollectWritesUncached(range.address, range.bytes) != 0u && GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
+        }
         for (std::size_t plane = 0; plane < published.size(); ++plane) {
             if (!published[plane].owned && !PlaneRefusal(plane).empty()) continue;
             manager.Own(planeAddress(plane), planeBytes(plane), this);
             published[plane].owned = true;
             residencyOwned = true;
         }
+        const bool htile = target.htileAddress != 0u && published[DepthPlane].owned && (!target.htileStencil || published[StencilPlane].owned);
+        if (htile) {
+            manager.Own(target.htileAddress, htileBytes(), this);
+            if (!htileOwned) htileGeneration = GuestMemory::CollectWritesUncached(target.htileAddress, static_cast<std::size_t>(htileBytes()));
+            htileOwned = true;
+        }
+        for (std::size_t index = 0; samplingActive && index < imported.size(); ++index) {
+            auto& range = sampling.initial[index];
+            if (imported[index]) range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+        }
         depthPublished->store(published[DepthPlane].owned, std::memory_order_release);
+        htilePublished->store(htileOwned, std::memory_order_release);
         ownedSerial = manager.OwnershipSerial();
+    }
+
+    void NoteHtileBaseline() {
+        auto* residency = ResidencyDriver::Active();
+        if (!htileOwned || residency == nullptr || residency->Manager().StaleIn(target.htileAddress, htileBytes())) return;
+        htileGeneration = GuestMemory::CollectWritesUncached(target.htileAddress, static_cast<std::size_t>(htileBytes()));
     }
 
     void DisownPlanes() {
         if (!residencyOwned) return;
         if (auto* residency = ResidencyDriver::Active()) residency->Manager().Disown(this);
         for (auto& plane : published) plane.owned = false;
+        htileOwned = false;
         depthPublished->store(false, std::memory_order_release);
+        htilePublished->store(false, std::memory_order_release);
         residencyOwned = false;
     }
 
@@ -531,8 +563,16 @@ public:
         if (!residencyOwned || residency == nullptr) return;
         std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
         if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
-        if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 && published[DepthPlane].owned) residency->Manager().MarkStale(planeAddress(DepthPlane), planeBytes(DepthPlane), this);
-        if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0 && published[StencilPlane].owned) residency->Manager().MarkStale(planeAddress(StencilPlane), planeBytes(StencilPlane), this);
+        bool marked = false;
+        if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 && published[DepthPlane].owned) {
+            residency->Manager().MarkStale(planeAddress(DepthPlane), planeBytes(DepthPlane), this);
+            marked = true;
+        }
+        if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0 && published[StencilPlane].owned) {
+            residency->Manager().MarkStale(planeAddress(StencilPlane), planeBytes(StencilPlane), this);
+            marked = marked || target.htileStencil;
+        }
+        if (marked && htileOwned) residency->Manager().MarkStale(target.htileAddress, htileBytes(), this);
     }
 
     bool PlaneOwned(VkImageAspectFlagBits aspect) const {
@@ -557,6 +597,14 @@ public:
         auto* residency = ResidencyDriver::Active();
         auto* recorder = RecorderFor(context);
         Require(residency != nullptr && recorder != nullptr, "depth surface write-back needs the residency driver and an active recorder");
+        const auto overlaps = [&](std::uint64_t begin, std::uint64_t bytes) {
+            return std::any_of(ranges.begin(), ranges.end(), [&](const ResidencyRange& range) { return range.address < begin + bytes && begin < range.address + range.bytes; });
+        };
+        bool whole = false;
+        if (htileOwned) {
+            whole = overlaps(target.htileAddress, htileBytes());
+            for (std::size_t plane = 0; plane < published.size(); ++plane) whole = whole || (published[plane].owned && overlaps(planeAddress(plane), planeBytes(plane)));
+        }
         struct PlaneRanges {
             std::size_t plane;
             std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -567,19 +615,27 @@ public:
             const auto begin = planeAddress(plane);
             const auto end = begin + planeBytes(plane);
             PlaneRanges entry{plane, {}};
-            for (const auto& range : ranges) {
-                const auto from = std::max(range.address, begin);
-                const auto to = std::min(range.address + range.bytes, end);
-                if (from < to) entry.ranges.emplace_back(from, to);
+            if (whole) entry.ranges.emplace_back(begin, end);
+            else {
+                for (const auto& range : ranges) {
+                    const auto from = std::max(range.address, begin);
+                    const auto to = std::min(range.address + range.bytes, end);
+                    if (from < to) entry.ranges.emplace_back(from, to);
+                }
             }
             if (entry.ranges.empty()) continue;
             preparePlane(plane);
             work.push_back(std::move(entry));
         }
-        if (work.empty()) return;
+        if (work.empty() && !whole) return;
         auto& publisher = PublisherFor(context);
+        const auto collectedUnchanged = [](const GuestMemory::UnchangedQuery& range) {
+            return GuestMemory::CollectWritesUncached(range.address, range.bytes) != 0u && GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
+        };
         const bool overwritten = target.samples == 1u && OverwrittenInMemory();
-        const bool sampledUnchanged = samplingActive && GuestMemory::CollectWritesUncached(sampling.initial[0].address, sampling.initial[0].bytes) != 0u && GuestMemory::UnchangedSince(sampling.initial[0].address, sampling.initial[0].bytes, sampling.initial[0].generation);
+        const bool sampledUnchanged = samplingActive && collectedUnchanged(sampling.initial[0]);
+        const GuestMemory::UnchangedQuery htileRange{target.htileAddress, static_cast<std::size_t>(htileBytes()), htileGeneration};
+        const bool expandHtile = whole && (samplingActive ? clearGeneration == 0u && collectedUnchanged(sampling.initial[1]) : collectedUnchanged(htileRange));
         const auto commands = recorder->Commands();
         const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
         const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
@@ -635,6 +691,22 @@ public:
                 moved += to - from;
             }
         }
+        if (expandHtile) {
+            const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
+            auto& [span, pieces] = spans.emplace_back(std::piecewise_construct, std::forward_as_tuple(residency, target.htileAddress, target.htileAddress + htileBytes(), ResidencyAccess::Write), std::forward_as_tuple());
+            pieces = span.Pieces(target.htileAddress, target.htileAddress + htileBytes());
+            for (const auto& piece : pieces) {
+                const auto length = piece.end - piece.begin;
+                if (piece.buffer != VK_NULL_HANDLE) {
+                    fill(commands, piece.buffer, piece.offset, length, ExpandedHtileWord());
+                    continue;
+                }
+                const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
+                Require(import != nullptr, "depth surface write-back: the HTILE has no host import");
+                fill(commands, import->buffer, piece.begin - import->base, length, ExpandedHtileWord());
+            }
+            moved += htileBytes();
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::Copy, 4);
         for (const auto& entry : work) recorder->Keep(published[entry.plane].tiled);
@@ -646,6 +718,14 @@ public:
         }
         if (target.samples == 1u && !overwritten) NoteMemory();
         if (sampledUnchanged) sampling.initial[0].generation = GuestMemory::CollectWritesUncached(sampling.initial[0].address, sampling.initial[0].bytes);
+        if (expandHtile) {
+            htileGeneration = GuestMemory::CollectWritesUncached(target.htileAddress, static_cast<std::size_t>(htileBytes()));
+            if (samplingActive) sampling.initial[1].generation = htileGeneration;
+        }
+        if (whole) {
+            for (const auto& entry : work) residency->Manager().ClearStale(planeAddress(entry.plane), planeBytes(entry.plane), this);
+            residency->Manager().ClearStale(target.htileAddress, htileBytes(), this);
+        }
     }
 
     bool UnormStencilView(const GuestTextureResource& resource) const {
@@ -873,6 +953,9 @@ public:
     };
     std::array<PublishedPlane, 2> published{};
     std::shared_ptr<std::atomic<bool>> depthPublished = std::make_shared<std::atomic<bool>>(false);
+    bool htileOwned = false;
+    std::uint64_t htileGeneration = 0;
+    std::shared_ptr<std::atomic<bool>> htilePublished = std::make_shared<std::atomic<bool>>(false);
 
 private:
     struct PlaneStorage {
@@ -1696,7 +1779,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
             std::unique_lock guardLock(depthGuardMutex());
             for (std::size_t index = 0; index < fresh.sampling.initial.size(); ++index) {
                 const auto& range = fresh.sampling.initial[index];
-                depthGuards().push_back({context.device, range.address, range.bytes, fresh.active, {{range.address, range.bytes, 0u}}, index == 0 ? fresh.depthPublished : nullptr});
+                depthGuards().push_back({context.device, range.address, range.bytes, fresh.active, {{range.address, range.bytes, 0u}}, index == 0 ? fresh.depthPublished : fresh.htilePublished});
             }
             anyDepthGuard().store(true, std::memory_order_release);
             InstallResidentImageReadGuard_nid_no_patch();
@@ -1711,6 +1794,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
     surface->clearStencil = target.clearStencil;
     takePlanes(*surface);
     surface->OwnPlanes();
+    surface->NoteHtileBaseline();
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
     if (cleared && (!created || inherits)) {
         if (target.samples != 1u) surface->sampling.refusal = "native multisample depth fast-clear transition is not implemented";
