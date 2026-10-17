@@ -214,34 +214,41 @@ void ArrivalOrderCase(const GuestRegion& region, std::size_t slot) {
 }
 
 void LandingCase(const GuestRegion& region, std::size_t slot) {
+    constexpr std::size_t Attempts = 4;
+    constexpr std::size_t FirstRounds = 12;
     const auto label = region.Slot(slot);
     const auto condition = label + 16;
     const auto flag = label + 32;
-    SetLabel(region, label, 0);
-    region.Words(condition)[0] = 0;
-    region.Words(flag)[0] = 0;
-    auto writer = SlowWrites(region, label + 48, 12);
-    WriteData(writer, label, {1});
-    std::vector<std::uint32_t> waiter;
-    Wait(waiter, label, {"landing", false, 3, 0, 1, 1, 0xffffffffu});
-    waiter.insert(waiter.end(), {0xc0032200u, Low(condition), High(condition), 0u, 5u});
-    WriteData(waiter, flag, {1});
-    Submit(WriterQueue, waiter);
-    Submit(0, writer);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    AgcDriver::GuestMemory::TagGpuLockThread(0x7f);
-    while (AgcDriver::Graphics::Recorder::LookupLabelValue(label, 4) != std::optional<std::uint64_t>{1}) {
-        Require(std::chrono::steady_clock::now() < deadline, "queue label order: the writer's label was never recorded");
-        std::this_thread::yield();
+    for (std::size_t attempt = 0; attempt < Attempts; ++attempt) {
+        const std::uint64_t value = attempt + 1u;
+        SetLabel(region, label, 0);
+        region.Words(condition)[0] = 0;
+        region.Words(flag)[0] = 0;
+        auto writer = SlowWrites(region, label + 48, FirstRounds << attempt);
+        WriteData(writer, label, {Low(value)});
+        std::vector<std::uint32_t> waiter;
+        Wait(waiter, label, {"landing", false, 3, 0, value, value, 0xffffffffu});
+        waiter.insert(waiter.end(), {0xc0032200u, Low(condition), High(condition), 0u, 5u});
+        WriteData(waiter, flag, {1});
+        Submit(WriterQueue, waiter);
+        Submit(0, writer);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        AgcDriver::GuestMemory::TagGpuLockThread(0x7f);
+        while (AgcDriver::Graphics::Recorder::LookupLabelValue(label, 4) != std::optional<std::uint64_t>{value}) {
+            Require(std::chrono::steady_clock::now() < deadline, "queue label order: the writer's label was never recorded");
+            std::this_thread::yield();
+        }
+        AgcDriver::GuestMemory::TagGpuLockThread(0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const bool landedEarly = region.Words(label)[0] == Low(value);
+        region.Words(condition)[0] = 1;
+        AgcDriverWaitIdle_nid_postfix();
+        AgcDriver::GuestMemory::FlushGpuWrites(flag, 4);
+        if (landedEarly) continue;
+        if (region.Words(flag)[0] != 1) Failures().emplace_back("queue label order: a COND_EXEC behind a wait on another queue's recorded label read its condition before the label landed, and missed the CPU's store made after the submission (" + std::to_string(RecorderStreams()) + " recorder streams)");
+        return;
     }
-    AgcDriver::GuestMemory::TagGpuLockThread(0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    const bool landedEarly = region.Words(label)[0] == 1;
-    region.Words(condition)[0] = 1;
-    AgcDriverWaitIdle_nid_postfix();
-    AgcDriver::GuestMemory::FlushGpuWrites(flag, 4);
-    if (landedEarly) Failures().emplace_back("queue label order: the landing case's writer finished before the CPU's store, so it tests nothing");
-    else if (region.Words(flag)[0] != 1) Failures().emplace_back("queue label order: a COND_EXEC behind a wait on another queue's recorded label read its condition before the label landed, and missed the CPU's store made after the submission (" + std::to_string(RecorderStreams()) + " recorder streams)");
+    Failures().emplace_back("queue label order: the landing case's writer finished before the CPU's store in all " + std::to_string(Attempts) + " attempts, up to " + std::to_string(FirstRounds << (Attempts - 1u)) + " rounds of copies, so it tests nothing");
 }
 
 void CpuValueCase(const GuestRegion& region, std::size_t slot) {
