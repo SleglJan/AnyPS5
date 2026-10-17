@@ -195,6 +195,10 @@ void Predicates() {
     Expect(!Memory::SurfaceThroughMemory(Descriptor(base, {"96-bit", 74u, 27u, TypePlane, 64u, 64u, 1u, 1u}), Memory::Access::Store), "predicates: a 96-bit format takes the memory path");
     Expect(!Memory::SurfaceThroughMemory(Descriptor(base, {"sRGB", 130u, 27u, TypePlane, 64u, 64u, 1u, 1u}), Memory::Access::Load), "predicates: an sRGB format takes the memory path");
     Expect(Memory::SurfaceThroughMemory(Descriptor(base, {"64-bit atomics", 63u, 27u, TypePlane, 64u, 64u, 1u, 1u}), Memory::Access::Atomic64), "predicates: a 32_32_SINT surface does not take 64-bit atomics through memory");
+    const auto line = Descriptor(base, {"1D", 20u, 0u, TypeLine, 200u, 1u, 1u, 1u});
+    const auto atRow = Memory::Locate(line, 7u, 5u, 0u, 0u);
+    const auto atZero = Memory::Locate(line, 7u, 0u, 0u, 0u);
+    Expect(atZero.inside && atRow.inside && atRow.address == atZero.address, "predicates: a 1D texel address through memory depends on y");
     std::size_t equations = 0;
     for (const auto& driver : Graphics::kTextureSwizzleEquations) {
         ++equations;

@@ -238,6 +238,7 @@ inline Texel Locate(const std::array<std::uint32_t, 8>& words, std::uint32_t x, 
     using StorageImagePages::AlignUp;
     using StorageImagePages::ShiftCeil;
     const auto fields = Decode(words);
+    if (fields.type == 8u) y = 0u;
     const auto layout = LayoutOf(fields);
     if (layout == Layout::Unsupported) return {};
     const auto element = ElementLog2(fields.format);

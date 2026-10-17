@@ -149,7 +149,7 @@ std::uint32_t DefineTexelFunction(SpirvEmitterState& state) {
     const auto aboveVariable = variable(u64);
     const auto paddedVariable = variable(u32);
     const auto w0 = parameters[0], w1 = parameters[1], w2 = parameters[2], w3 = parameters[3], w4 = parameters[4], w5 = parameters[5];
-    const auto x = parameters[6], y = parameters[7], z = parameters[8], lod = parameters[9];
+    const auto x = parameters[6], z = parameters[8], lod = parameters[9];
     const auto base = op(spv::OpShiftLeftLogical, u64, op(spv::OpBitwiseOr, u64, widen(w0), op(spv::OpShiftLeftLogical, u64, widen(andBits(w1, 0xffu)), wide(32u))), wide(8u));
     const auto format = field(w1, 20u, 0x1ffu);
     const auto width = add(orBits(field(w1, 30u, 0x3u), shl(andBits(w2, 0xfffu), constant(2u))), constant(1u));
@@ -161,6 +161,7 @@ std::uint32_t DefineTexelFunction(SpirvEmitterState& state) {
     const auto depth = andBits(w4, 0x1fffu);
     const auto baseArray = field(w4, 16u, 0x1fffu);
     const auto maxMip = field(w5, 4u, 0xfu);
+    const auto y = pick32(is(type, 8u), constant(0u), parameters[7]);
     const auto formats = StorageImagePages::FormatTable();
     const auto formatIndex = umin(format, constant(Memory::LastMemoryFormat));
     const auto sizeCode = pick32(lessEqual(format, constant(Memory::LastMemoryFormat)), andBits(shr(ConstantAt(state, formats, shr(formatIndex, constant(3u))), shl(andBits(formatIndex, 7u), constant(2u))), 0xfu), constant(0u));
