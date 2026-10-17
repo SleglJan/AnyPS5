@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <span>
 #include <unordered_map>
@@ -32,9 +33,11 @@ public:
     Published Publish(std::span<const Source> sources, const std::shared_ptr<const Ranges>& current) {
         auto previous = std::move(published);
         published.reset();
-        if (previous == nullptr || previous != current) return Rebuild(sources);
+        if (previous == nullptr || previous != current || normal == nullptr) return Rebuild(sources);
         ++pass;
         Ranges added;
+        Ranges wrappedAdded;
+        bool wrappedChanged = false;
         for (const auto& source : sources) {
             auto& entry = tracked[source.key];
             if (entry.pass == pass) continue;
@@ -46,6 +49,7 @@ public:
                 const auto& range = source.ranges[index];
                 entry.ranges.push_back(range);
                 if (range.second > range.first) added.push_back(range);
+                else if (range.second < range.first) wrappedAdded.push_back(range);
             }
             if (source.ranges.size() > known) entry.lastNote = source.notes.size() >= source.ranges.size() ? source.notes[source.ranges.size() - 1] : 0;
         }
@@ -56,21 +60,30 @@ public:
                 continue;
             }
             for (const auto& range : it->second.ranges) {
+                if (range.second < range.first) {
+                    wrapped.erase(wrapped.find(range));
+                    wrappedChanged = true;
+                }
                 if (range.second <= range.first) continue;
                 AddEdges(range, -1);
                 removed.push_back(range);
             }
             it = tracked.erase(it);
         }
-        if (added.empty() && removed.empty()) {
+        for (const auto& range : wrappedAdded) wrapped.insert(range);
+        wrappedChanged = wrappedChanged || !wrappedAdded.empty();
+        if (added.empty() && removed.empty() && !wrappedChanged) {
             published = std::move(previous);
             return {published, false};
         }
-        auto next = std::make_shared<Ranges>(removed.empty() ? Ranges(*previous) : Remove(*previous, std::move(removed)));
-        for (const auto& range : added) AddEdges(range, 1);
-        if (!added.empty()) *next = Merge(*next, std::move(added));
-        published = next;
-        return {std::move(next), false};
+        if (!added.empty() || !removed.empty()) {
+            const bool removing = !removed.empty();
+            auto next = removing ? Remove(*normal, std::move(removed)) : Ranges();
+            for (const auto& range : added) AddEdges(range, 1);
+            if (!added.empty()) next = Merge(removing ? next : *normal, std::move(added));
+            normal = std::make_shared<const Ranges>(std::move(next));
+        }
+        return Finish(false);
     }
 
     std::size_t TrackedSources() const { return tracked.size(); }
@@ -104,9 +117,16 @@ private:
         }
     }
 
+    Published Finish(bool rebuilt) {
+        published = wrapped.empty() ? normal : std::make_shared<const Ranges>(Merge(*normal, Ranges(wrapped.begin(), wrapped.end())));
+        return {published, rebuilt};
+    }
+
     Published Rebuild(std::span<const Source> sources) {
         tracked.clear();
         edges.clear();
+        wrapped.clear();
+        normal.reset();
         ++pass;
         for (const auto& source : sources) {
             auto& entry = tracked[source.key];
@@ -116,12 +136,13 @@ private:
             entry.lastNote = !source.ranges.empty() && source.notes.size() >= source.ranges.size() ? source.notes[source.ranges.size() - 1] : 0;
             for (const auto& range : source.ranges) {
                 if (range.second > range.first) AddEdges(range, 1);
+                else if (range.second < range.first) wrapped.insert(range);
             }
         }
         auto next = std::make_shared<Ranges>();
         Sweep(edges.cbegin(), edges.cend(), *next);
-        published = next;
-        return {std::move(next), true};
+        normal = std::move(next);
+        return Finish(true);
     }
 
     Ranges Remove(const Ranges& previous, Ranges removed) const {
@@ -157,6 +178,8 @@ private:
 
     std::unordered_map<const void*, Tracked> tracked;
     std::map<std::uint64_t, std::int64_t> edges;
+    std::multiset<Range> wrapped;
+    std::shared_ptr<const Ranges> normal;
     std::shared_ptr<const Ranges> published;
     std::uint64_t pass = 0;
 };

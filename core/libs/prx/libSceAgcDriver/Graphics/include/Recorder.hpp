@@ -865,6 +865,7 @@ private:
     // snapshot (a rebuild from inside a completion must not drop them) until finish returns.
     std::vector<const Batch*> finishing;
     mutable PendingWriteRanges publishedWrites;
+    mutable std::vector<PendingWriteRanges::Source> publishSources;
     std::uint64_t submissions = 0;
     std::size_t inFlightKeptBytes = 0;
     std::uint64_t writeNoteCount = 0;

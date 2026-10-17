@@ -35,7 +35,7 @@ struct Model {
     Ranges Reference() const {
         Ranges all;
         for (const auto& batch : batches) all.insert(all.end(), batch->writes.begin(), batch->writes.end());
-        std::erase_if(all, [](const Range& range) { return range.second <= range.first; });
+        std::erase_if(all, [](const Range& range) { return range.second == range.first; });
         std::sort(all.begin(), all.end());
         Ranges merged;
         for (const auto& range : all) {
@@ -139,7 +139,7 @@ void ChangedSourcesRebuild() {
     model.Check("cleared snapshot");
 }
 
-void EmptyRangesAreIgnored() {
+void EmptyAndWrappedRanges() {
     Model model;
     model.batches.push_back(std::make_unique<Batch>());
     model.Note(*model.batches.back(), 0x1000, 0x1000);
@@ -147,8 +147,17 @@ void EmptyRangesAreIgnored() {
     Require(model.current->empty(), "an empty range publishes nothing");
     model.Note(*model.batches.back(), 0x2000, 0x1000);
     model.Note(*model.batches.back(), 0x3000, 0x3100);
-    Require(!model.Publish(), "empty ranges merge without a rebuild");
-    model.Check("empty ranges");
+    Require(!model.Publish(), "empty and wrapped ranges merge without a rebuild");
+    model.Check("empty and wrapped ranges");
+    Require(*model.current == Ranges{{0x2000, 0x1000}, {0x3000, 0x3100}}, "a wrapped range stays in the union as the merged reference keeps it");
+    model.batches.push_back(std::make_unique<Batch>());
+    model.Note(*model.batches.back(), 0x1800, 0x2800);
+    model.Note(*model.batches.back(), UINT64_MAX - 3, 4);
+    Require(!model.Publish(), "a range covering a wrapped range merges without a rebuild");
+    model.Check("a wrapped range inside a range");
+    model.batches.pop_back();
+    Require(!model.Publish(), "a retired batch with a wrapped range is removed without a rebuild");
+    model.Check("a retired wrapped range");
     model.batches.clear();
     model.Publish();
     Require(model.current->empty() && model.set.Edges() == 0, "retired empty ranges leave no edges");
@@ -167,7 +176,7 @@ void RandomSequencesMatchTheUnion() {
             const auto notes = 1 + random() % 3;
             for (std::uint64_t index = 0; index < notes; ++index) {
                 const auto begin = (random() % 512) * 0x100;
-                const auto end = begin + (random() % 16) * 0x100;
+                const auto end = random() % 32 == 0 ? (random() % 64) * 0x100 : begin + (random() % 16) * 0x100;
                 model.Note(**it, begin, end);
             }
         } else if (action < 9) {
@@ -191,7 +200,7 @@ int main() {
         MergesAndRemovesWithoutRebuild();
         CoveredNotesStayCounted();
         ChangedSourcesRebuild();
-        EmptyRangesAreIgnored();
+        EmptyAndWrappedRanges();
         RandomSequencesMatchTheUnion();
         std::puts("pending write ranges merge on record, leave on retirement and rebuild only on changed sources");
         return 0;

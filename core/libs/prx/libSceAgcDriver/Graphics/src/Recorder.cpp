@@ -3127,8 +3127,8 @@ void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::u
 void Recorder::publishPendingWrites() const {
     if (activeRecorder != this) return;
     const auto started = DrawProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    std::vector<PendingWriteRanges::Source> sources;
-    sources.reserve(opens.size() + inFlight.size() + finishing.size());
+    auto& sources = publishSources;
+    sources.clear();
     const auto add = [&](const Batch& batch) { sources.push_back({&batch, batch.writes, batch.writeNotes}); };
     forEachOpen(add);
     for (const auto& batch : inFlight) add(*batch);
