@@ -24,6 +24,9 @@ public:
 
     VkResult CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0) const;
     VkResult CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0) const;
+    bool ChecksHits() const { return cacheControl; }
+    VkResult LookupCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const;
+    VkResult CreateComputeFrom(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data) const;
     void Save();
     const std::filesystem::path& BasePath() const { return path; }
     const std::filesystem::path& SessionPath() const { return sessionPath; }
@@ -43,6 +46,7 @@ private:
     std::filesystem::path sessionPath;
     std::vector<std::filesystem::path> mergedSessions;
     bool baseStale = false;
+    bool cacheControl = false;
     std::uint64_t fileHash = 0;
     std::size_t savedSessionBytes = 0;
     std::size_t initialSessionBytes = 0;
@@ -55,6 +59,9 @@ private:
 
 VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words = 0);
+bool PipelineCacheChecksHits(const Context& context);
+VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline);
+VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data);
 
 }
 

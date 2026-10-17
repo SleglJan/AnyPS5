@@ -48,7 +48,7 @@ std::string sessionPrefix(const std::filesystem::path& base) {
 
 }
 
-PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool creationCacheControl) : context(context), properties(properties) {
+PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool creationCacheControl) : context(context), properties(properties), cacheControl(creationCacheControl) {
     const auto directory = ShaderRecompiler::ShaderCacheDirectory();
     if (!directory.empty() && !creationCacheControl) std::fprintf(stderr, "[pipeline-cache] not kept on disk: the device lacks pipelineCreationCacheControl (VK_EXT_pipeline_creation_cache_control)\n");
     if (!directory.empty() && creationCacheControl) {
@@ -144,6 +144,31 @@ VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPi
     if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
     if (words != 0) gate.emplace(words);
     return CreationThread::Run(words, [&] { return create(caller.device, session, 1, &info, nullptr, pipeline); });
+}
+
+VkResult PipelineCache::LookupCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) const {
+    if (!cacheControl) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+    const auto create = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
+    auto lookup = info;
+    lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
+    for (const auto cache : {base, session}) {
+        if (cache == VK_NULL_HANDLE) continue;
+        const auto found = create(caller.device, cache, 1, &lookup, nullptr, pipeline);
+        if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+    }
+    return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+}
+
+VkResult PipelineCache::CreateComputeFrom(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data) const {
+    if (!cacheControl || data.empty()) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+    const auto compiled = create(data);
+    if (compiled == VK_NULL_HANDLE) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+    auto lookup = info;
+    lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
+    const auto created = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(caller.device, compiled, 1, &lookup, nullptr, pipeline);
+    if (created == VK_SUCCESS) Check(context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, session != VK_NULL_HANDLE ? session : base, 1, &compiled), "vkMergePipelineCaches compiled");
+    context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, compiled, nullptr);
+    return created;
 }
 
 void PipelineCache::Save() {
@@ -260,6 +285,20 @@ VkResult CreateComputePipeline(const Context& context, const VkComputePipelineCr
     if (words != 0) gate.emplace(words);
     const auto create = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     return CreationThread::Run(words, [&] { return create(context.device, VK_NULL_HANDLE, 1, &info, nullptr, pipeline); });
+}
+
+bool PipelineCacheChecksHits(const Context& context) {
+    return context.pipelineCache != nullptr && context.pipelineCache->ChecksHits();
+}
+
+VkResult LookupComputePipeline(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline) {
+    if (context.pipelineCache == nullptr) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+    return context.pipelineCache->LookupCompute(context, info, pipeline);
+}
+
+VkResult CreateComputePipelineFrom(const Context& context, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::span<const std::byte> data) {
+    if (context.pipelineCache == nullptr) return VK_PIPELINE_COMPILE_REQUIRED_EXT;
+    return context.pipelineCache->CreateComputeFrom(context, info, pipeline, data);
 }
 
 VkResult CreateGraphicsPipeline(const Context& context, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) {

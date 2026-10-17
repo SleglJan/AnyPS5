@@ -50,6 +50,8 @@
 #include "prx/libc/include/General.hpp"
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <pthread.h>
 #endif
 #include <atomic>
 #include <chrono>
@@ -393,6 +395,9 @@ struct VulkanDevice::State {
     std::mutex computePipelinesMutex;
     std::map<std::uint64_t, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     std::map<std::uint64_t, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
+    std::mutex compileDeviceMutex;
+    std::shared_ptr<VulkanDevice> compileDevice;
+    std::size_t compileDeviceUsers = 0;
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
     std::shared_ptr<Graphics::BdaArena> bdaArena;
@@ -4271,6 +4276,99 @@ ComputeDescriptorSetLayout DescribedCaptureLayout(std::span<const std::uint32_t>
 
 }
 
+namespace {
+
+struct DisposableCompileCounters {
+    std::atomic<std::uint64_t> compiles{0};
+    std::atomic<std::uint64_t> hits{0};
+    std::atomic<std::uint64_t> misses{0};
+    std::atomic<std::uint64_t> devices{0};
+    std::atomic<std::uint64_t> deviceNanoseconds{0};
+};
+
+struct DisposableCompileJob {
+    VulkanDevice* compiler = nullptr;
+    const ComputePipelineCapture* capture = nullptr;
+    bool ahead = false;
+    std::vector<std::byte> data;
+    std::exception_ptr failure;
+};
+
+void RunDisposableCompile(DisposableCompileJob& job) {
+    std::optional<CreationAhead> marked;
+    if (job.ahead) marked.emplace();
+    try {
+        job.data = std::move(job.compiler->ReplayComputePipeline(*job.capture).cache);
+    } catch (...) {
+        job.failure = std::current_exception();
+    }
+}
+
+bool RunOnJoinedThread(DisposableCompileJob& job) {
+    constexpr std::size_t stackBytes = std::size_t{64} << 20u;
+#ifdef _WIN32
+    const auto thread = _beginthreadex(nullptr, static_cast<unsigned>(stackBytes), [](void* argument) -> unsigned {
+        RunDisposableCompile(*static_cast<DisposableCompileJob*>(argument));
+        return 0;
+    }, &job, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (thread == 0) return false;
+    WaitForSingleObject(reinterpret_cast<HANDLE>(thread), INFINITE);
+    CloseHandle(reinterpret_cast<HANDLE>(thread));
+    return true;
+#else
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0) return false;
+    pthread_t thread{};
+    const bool started = pthread_attr_setstacksize(&attributes, stackBytes) == 0 && pthread_create(&thread, &attributes, [](void* argument) -> void* {
+        RunDisposableCompile(*static_cast<DisposableCompileJob*>(argument));
+        return nullptr;
+    }, &job) == 0;
+    pthread_attr_destroy(&attributes);
+    if (started) pthread_join(thread, nullptr);
+    return started;
+#endif
+}
+
+DisposableCompileCounters& disposableCompiles() {
+    static auto* counters = new DisposableCompileCounters();
+    return *counters;
+}
+
+}
+
+VulkanDevice::DisposableCompileCounts VulkanDevice::DisposableCompiles() {
+    const auto& counters = disposableCompiles();
+    return {counters.compiles.load(), counters.hits.load(), counters.misses.load(), counters.devices.load(), static_cast<double>(counters.deviceNanoseconds.load()) / 1e6};
+}
+
+std::vector<std::byte> VulkanDevice::compileOnDisposableDevice(const ComputePipelineCapture& capture) {
+    auto& counters = disposableCompiles();
+    std::shared_ptr<VulkanDevice> compiler;
+    {
+        std::lock_guard lock(state->compileDeviceMutex);
+        if (state->compileDevice == nullptr) {
+            const auto started = std::chrono::steady_clock::now();
+            state->compileDevice = std::shared_ptr<VulkanDevice>(new VulkanDevice(nullptr, true));
+            counters.devices.fetch_add(1, std::memory_order_relaxed);
+            counters.deviceNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+        }
+        compiler = state->compileDevice;
+        ++state->compileDeviceUsers;
+    }
+    DisposableCompileJob job{compiler.get(), &capture, CreationAhead::Active(), {}, nullptr};
+    if (!RunOnJoinedThread(job)) job.failure = std::make_exception_ptr(std::runtime_error("AGC driver: the disposable compile thread did not start"));
+    std::vector<std::byte> data = std::move(job.data);
+    const auto failure = job.failure;
+    {
+        std::lock_guard lock(state->compileDeviceMutex);
+        if (--state->compileDeviceUsers == 0) state->compileDevice.reset();
+    }
+    compiler.reset();
+    if (failure != nullptr) std::rethrow_exception(failure);
+    counters.compiles.fetch_add(1, std::memory_order_relaxed);
+    return data;
+}
+
 VulkanDevice::PipelineCreations VulkanDevice::ComputePipelineCreations() {
     const auto& creations = computeCreations();
     const auto milliseconds = [&](std::size_t origin) { return static_cast<double>(creations.nanoseconds[origin].load()) / 1e6; };
@@ -4381,7 +4479,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         const VkPipelineCreateFlags pipelineFlags = (context.pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0) | VK_PIPELINE_CREATE_DISPATCH_BASE_BIT;
         const Graphics::PipelineSpecialization specialization(shader);
         const auto subgroupSize = state->computeWave32 && (shader.hostSubgroupSize == 32u || shader.hostSubgroupSize > state->maxComputeSubgroupSize) ? std::min(shader.hostSubgroupSize, state->maxComputeSubgroupSize) : 0u;
-        if (const char* directory = std::getenv("APS5_DUMP_COMPUTE_PIPELINES"); directory != nullptr && *directory != '\0' && CaptureComputePipeline(shader.spirv.size())) {
+        const auto describe = [&] {
             ComputePipelineCapture capture;
             capture.spirv = shader.spirv.Copy();
             capture.sets.push_back(DescribedCaptureLayout(described.mainKey));
@@ -4398,11 +4496,27 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
             capture.driverVersion = state->properties.driverVersion;
             capture.apiVersion = state->properties.apiVersion;
             std::copy_n(state->properties.pipelineCacheUUID, VK_UUID_SIZE, capture.pipelineCacheUuid.begin());
-            const auto path = capture.Write(directory);
+            return capture;
+        };
+        if (const char* directory = std::getenv("APS5_DUMP_COMPUTE_PIPELINES"); directory != nullptr && *directory != '\0' && CaptureComputePipeline(shader.spirv.size())) {
+            const auto path = describe().Write(directory);
             std::fprintf(stderr, "[compute-capture] %s\n", path.string().c_str());
         }
         if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
-        CreateComputePipeline([&](const VkComputePipelineCreateInfo& info, VkPipeline* created) { return Graphics::CreateComputePipeline(context, info, created, shader.spirv.size()); }, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline);
+        const bool disposable = shader.spirv.size() >= DisposableCompileWords && Graphics::PipelineCacheChecksHits(context);
+        CreateComputePipeline([&](const VkComputePipelineCreateInfo& info, VkPipeline* created) {
+            if (disposable) {
+                const auto found = Graphics::LookupComputePipeline(context, info, created);
+                if (found != VK_PIPELINE_COMPILE_REQUIRED_EXT) return found;
+                const auto made = Graphics::CreateComputePipelineFrom(context, info, created, compileOnDisposableDevice(describe()));
+                if (made != VK_PIPELINE_COMPILE_REQUIRED_EXT) {
+                    if (made == VK_SUCCESS) disposableCompiles().hits.fetch_add(1, std::memory_order_relaxed);
+                    return made;
+                }
+                disposableCompiles().misses.fetch_add(1, std::memory_order_relaxed);
+            }
+            return Graphics::CreateComputePipeline(context, info, created, shader.spirv.size());
+        }, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline);
         objects->destroyModule(objects->device, objects->module, nullptr);
         objects->module = VK_NULL_HANDLE;
         Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);

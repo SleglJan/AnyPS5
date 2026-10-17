@@ -281,6 +281,15 @@ public:
         double underLockMs = 0;
     };
     static PipelineCreations ComputePipelineCreations();
+    struct DisposableCompileCounts {
+        std::uint64_t compiles = 0;
+        std::uint64_t hits = 0;
+        std::uint64_t misses = 0;
+        std::uint64_t devices = 0;
+        double deviceMs = 0;
+    };
+    static constexpr std::size_t DisposableCompileWords = std::size_t{1} << 16u;
+    static DisposableCompileCounts DisposableCompiles();
     bool PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress = 0);
     bool RecordComputePipeline(const ShaderRecompiler::RecompileResult& shader);
     std::size_t PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle);
@@ -298,6 +307,7 @@ private:
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
     IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::optional<std::array<std::uint32_t, 3>> threadGroup = std::nullopt);
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
+    std::vector<std::byte> compileOnDisposableDevice(const ComputePipelineCapture& capture);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
     std::uint64_t presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces);
     // A DISPATCH_INDIRECT's argument path (see DispatchIndirect): GPU-side from the host import, or
