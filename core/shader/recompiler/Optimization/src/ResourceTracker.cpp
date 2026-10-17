@@ -1243,7 +1243,7 @@ private:
         }
         std::vector<const IrValue*> runtimeSamplers;
         for (const IrValue* inst : sampled) {
-            if (!DeviceTables() || !DeviceAccessKind(*inst)) continue;
+            if (!DeviceTables()) continue;
             const IrValue& image = *inst->Argument(0)->Resolve();
             const IrValue& sampler = *inst->Argument(1)->Resolve();
             const auto* column = FindTableColumn(image);
@@ -1279,7 +1279,6 @@ private:
     }
 
     bool DeviceAccess(const IrValue& inst) {
-        if (!DeviceAccessKind(inst)) return false;
         if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return true;
         if (inst.ArgumentCount() <= 1u) return false;
         const IrValue& sampler = *inst.Argument(1)->Resolve();
@@ -1316,15 +1315,6 @@ private:
 
     bool DeviceImage(const IrValue& handle) {
         return handle.Opcode() == IrOpcode::GetImageResource && handle.ArgumentCount() == 8u && FindTableColumn(handle) == nullptr && ShaderComputable(handle);
-    }
-
-    bool DeviceAccessKind(const IrValue& inst) const {
-        const auto info = ImageOpcodeInfoOf(inst.Opcode());
-        if (info.access == ImageAccess::None) return false;
-        const auto flags = inst.Flags<MemoryFlags>();
-        if (flags.index >= m_program.Resources().memoryInfo.size()) return false;
-        const auto& memory = m_program.Resources().memoryInfo[flags.index];
-        return memory.imageDimension != RdnaImageDimension::Dim2DMsaaArray;
     }
 
     void PlanDeviceColumns() {
