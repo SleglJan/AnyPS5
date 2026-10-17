@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -96,9 +97,61 @@ void LinkRequestCallees(ShaderRecompiler::DeserializedRequest& request) {
     std::printf("  linked callees: %zu code words, %zu linked literals, %zu linked words\n", linked.code.size(), linked.linkedLiterals.size(), linked.linkedWords.size());
 }
 
+std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedRequest& recorded) {
+    const auto& request = recorded.request;
+    if (!request.shader.linkedLiterals.empty() || !request.context.compute.has_value()) return std::nullopt;
+    ShaderRecompiler::RequestMemoryView view(request.context.memory);
+    auto runtime = view.MakeRuntime(request.context.userData, request.shader.codeAddress);
+    const ShaderRecompiler::CalleeMemory memory{&runtime, &ReadRequestWords, &ReadRequestWords, nullptr};
+    std::optional<ShaderRecompiler::TableCallSplit> split;
+    std::vector<ShaderRecompiler::TableCallTarget> targets;
+    try {
+        split = ShaderRecompiler::SplitTableCalls(request, memory);
+        if (!split) return std::nullopt;
+        targets = ShaderRecompiler::ReadTableCallTargets(request, *split, memory);
+    } catch (const std::exception& error) {
+        std::printf("  table-call split failed: %s\n", FirstLine(error.what()).c_str());
+        return false;
+    }
+    std::printf("  table calls: split into a head and %zu continuations (%zu calls, %zu scalar and %zu vector registers carried)\n", targets.size(), split->calls.size(), split->scalarRegisters.size(), split->vectorRegisters.size());
+    const auto compile = [&](const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite, const char* name) {
+        std::vector<std::uint32_t> userData(request.context.userData.begin(), request.context.userData.end());
+        userData.resize(userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
+        auto source = request;
+        source.shader.code = part.code;
+        source.context.userData = userData;
+        source.shader.linkedLiterals = {};
+        source.context.linkedWords = {};
+        if (role == ShaderRecompiler::ContinuationAbi::Role::Continuation) {
+            auto compute = *request.context.compute;
+            compute.numThreads = {request.context.waveSize, 1u, 1u};
+            compute.partialThreads = {};
+            compute.threadsFromMemory = false;
+            source.context.compute = compute;
+        }
+        source.context.continuation = ShaderRecompiler::ContinuationAbi::Shape{role, part.sites, split->scalarRegisters, split->vectorRegisters, split->ldsDwords, split->userDataScalars, entrySite};
+        source.useCache = false;
+        try {
+            const auto result = ShaderRecompiler::Recompile(source);
+            std::printf("  %s: %zu code words, %zu SPIR-V words\n", name, part.code.size(), result.spirv.size());
+            return true;
+        } catch (const std::exception& error) {
+            std::printf("  %s: recompile failed: %s\n", name, FirstLine(error.what()).c_str());
+            return false;
+        }
+    };
+    bool replayed = compile(split->head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u, "head");
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto name = "continuation " + std::to_string(index) + " (site " + std::to_string(targets[index].site) + ")";
+        replayed = compile(ShaderRecompiler::TableCallContinuation(*split, targets[index]), ShaderRecompiler::ContinuationAbi::Role::Continuation, targets[index].site, name.c_str()) && replayed;
+    }
+    return replayed;
+}
+
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
+    if (const auto split = ReplayTableCallSplit(request)) return *split;
     LinkRequestCallees(request);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
