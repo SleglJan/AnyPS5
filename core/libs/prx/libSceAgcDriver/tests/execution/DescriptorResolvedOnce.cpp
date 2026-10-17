@@ -35,9 +35,8 @@ const Program& LoadProgram(std::uint32_t opcode, std::uint32_t accesses) {
     return built;
 }
 
-std::size_t TranslationSites(std::span<const std::uint32_t> words) {
+std::size_t TranslationsAtLoads(std::span<const std::uint32_t> words) {
     std::map<std::uint32_t, std::string> names;
-    std::map<std::uint32_t, std::set<std::uint32_t>> callees;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> calls;
     std::uint32_t function = 0;
     for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
@@ -45,27 +44,13 @@ std::size_t TranslationSites(std::span<const std::uint32_t> words) {
         if (op == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
         if (op == spv::OpFunction) function = words[cursor + 2];
         if (op == spv::OpFunctionEnd) function = 0;
-        if (op == spv::OpFunctionCall) {
-            callees[function].insert(words[cursor + 3]);
-            calls.emplace_back(function, words[cursor + 3]);
-        }
+        if (op == spv::OpFunctionCall) calls.emplace_back(function, words[cursor + 3]);
     }
-    std::map<std::uint32_t, bool> reaches;
-    std::function<bool(std::uint32_t, std::set<std::uint32_t>&)> translates = [&](std::uint32_t id, std::set<std::uint32_t>& visiting) {
-        if (const auto known = reaches.find(id); known != reaches.end()) return known->second;
-        const auto& name = names[id];
-        if (name == "bda_translate" || name == "bda_segment") return reaches[id] = true;
-        if (!visiting.insert(id).second) return false;
-        bool any = false;
-        for (const auto callee : callees[id]) any = translates(callee, visiting) || any;
-        visiting.erase(id);
-        return reaches[id] = any;
-    };
     std::size_t sites = 0;
     for (const auto& [caller, callee] : calls) {
         if (names[caller] != "main") continue;
-        std::set<std::uint32_t> visiting;
-        if (translates(callee, visiting)) ++sites;
+        const auto& name = names[callee];
+        if (name == "bda_translate" || name == "bda_segment") ++sites;
     }
     return sites;
 }
@@ -73,9 +58,9 @@ std::size_t TranslationSites(std::span<const std::uint32_t> words) {
 void Check(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> userData, std::uint32_t opcode, const std::string& kind) {
     const auto single = Compile(device, LoadProgram(opcode, 1u), userData);
     const auto many = Compile(device, LoadProgram(opcode, Accesses), userData);
-    const auto singleSites = TranslationSites(single.result->spirv.Words());
-    const auto manySites = TranslationSites(many.result->spirv.Words());
-    Expect(manySites == singleSites, kind + ": main reaches the page-table translation from " + std::to_string(manySites) + " call sites for " + std::to_string(Accesses) + " accesses through one V#, against " + std::to_string(singleSites) + " for one access; the V# must be translated once where it is loaded");
+    const auto singleSites = TranslationsAtLoads(single.result->spirv.Words());
+    const auto manySites = TranslationsAtLoads(many.result->spirv.Words());
+    Expect(manySites == singleSites, kind + ": main calls the page-table translation itself at " + std::to_string(manySites) + " sites for " + std::to_string(Accesses) + " accesses through one V#, against " + std::to_string(singleSites) + " for one access; the V# must be translated once where it is loaded, the accesses' helpers translating only on a miss of its segment");
     for (const auto* compiled : {&single, &many}) {
         const auto accesses = compiled == &single ? 1u : Accesses;
         const auto what = kind + ", " + std::to_string(accesses) + " access(es)";
