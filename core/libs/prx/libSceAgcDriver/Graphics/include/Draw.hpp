@@ -23,6 +23,7 @@ struct DrawInputCopy {
     std::uint32_t derived = 0;
     std::uint64_t generation = 0;
     std::uint64_t registryGeneration = 0;
+    std::size_t bytes = 0;
 };
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
 DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes);
@@ -35,6 +36,7 @@ struct DrawInputSource {
 };
 DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool cpuReads);
 std::uint64_t DrawInputCopies();
+std::uint64_t DrawIndexScans();
 struct InPlaceIndices {
     std::optional<std::uint32_t> highest;
     bool reused = false;

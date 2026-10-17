@@ -1,0 +1,42 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Indices { uint data[]; } indices;
+layout(set = 0, binding = 1, std430) writeonly buffer Starts { uint data[]; } starts;
+
+layout(push_constant) uniform Push {
+    uint count;
+    uint indexBytes;
+    uint indexBase;
+    uint startsBase;
+} push;
+
+shared uint scan[256];
+
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint restart = push.indexBytes == 2u ? 0xffffu : 0xffffffffu;
+    uint carry = 0u;
+    for (uint first = 0u; first < push.count; first += 256u) {
+        uint position = first + lane;
+        uint value = 0u;
+        if (position < push.count) {
+            uint byteOffset = push.indexBase + position * push.indexBytes;
+            uint word = indices.data[byteOffset >> 2u];
+            uint index = push.indexBytes == 2u ? (word >> ((byteOffset & 2u) * 8u)) & 0xffffu : word;
+            if (index == restart) value = position + 1u;
+        }
+        scan[lane] = value;
+        barrier();
+        for (uint offset = 1u; offset < 256u; offset <<= 1u) {
+            uint previous = lane >= offset ? scan[lane - offset] : 0u;
+            barrier();
+            scan[lane] = max(scan[lane], previous);
+            barrier();
+        }
+        if (position < push.count) starts.data[push.startsBase + position] = max(carry, scan[lane]);
+        carry = max(carry, scan[255]);
+        barrier();
+    }
+}

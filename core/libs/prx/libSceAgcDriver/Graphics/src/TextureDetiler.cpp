@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecode_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SurfaceFill_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/RestartStarts_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage10_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage11_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TexelDecodeImage20_spv.h"
@@ -120,6 +121,8 @@ TextureDetiler::~TextureDetiler() {
 }
 
 void TextureDetiler::release() noexcept {
+    if (restartPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, restartPipeline, nullptr);
+    if (restartModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, restartModule, nullptr);
     if (fillPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, fillPipeline, nullptr);
     if (fillModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, fillModule, nullptr);
     for (const auto decodePipeline : decodePipelines) {
@@ -392,6 +395,52 @@ void TextureDetiler::DispatchSurfaceFill(VkCommandBuffer commands, VkBuffer surf
         const auto groupsX = static_cast<std::uint32_t>(std::min<std::uint64_t>(groups, 65535u));
         context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, static_cast<std::uint32_t>((groups + groupsX - 1u) / groupsX), 1);
     }
+}
+
+void TextureDetiler::DispatchRestartStarts(VkCommandBuffer commands, VkBuffer indices, std::uint64_t indexOffset, std::uint32_t count, std::uint32_t indexBytes, VkBuffer starts, std::uint64_t startsOffset) {
+    Require(commands != VK_NULL_HANDLE && indices != VK_NULL_HANDLE && starts != VK_NULL_HANDLE, "a restart table pass needs a command buffer, the indices and the table's buffer");
+    Require((indexBytes == 2u || indexBytes == 4u) && indexOffset % indexBytes == 0u && startsOffset % 4u == 0u && count != 0u, "a restart table pass reads aligned 16- or 32-bit indices into an aligned table");
+    if (restartModule == VK_NULL_HANDLE) {
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(RESTART_STARTS_SPV);
+        moduleInfo.pCode = RESTART_STARTS_SPV;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &restartModule), "vkCreateShaderModule restart table");
+    }
+    if (restartPipeline == VK_NULL_HANDLE) {
+        VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        createInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        createInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        createInfo.stage.module = restartModule;
+        createInfo.stage.pName = "main";
+        createInfo.layout = pipelineLayout;
+        Check(CreateComputePipeline(context, createInfo, &restartPipeline), "vkCreateComputePipelines restart table");
+    }
+    const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto indexDescriptorOffset = indexOffset - indexOffset % alignment;
+    const auto startsDescriptorOffset = startsOffset - startsOffset % alignment;
+    const auto indexBase = indexOffset - indexDescriptorOffset;
+    const auto startsBase = startsOffset - startsDescriptorOffset;
+    const auto indexRange = (indexBase + std::uint64_t{count} * indexBytes + 3u) / 4u * 4u;
+    const auto startsRange = startsBase + std::uint64_t{count} * 4u;
+    Require(indexRange <= context.limits.maxStorageBufferRange && startsRange <= context.limits.maxStorageBufferRange, "a restart table pass exceeds the device's storage buffer range");
+    const auto set = allocateSet();
+    const VkDescriptorBufferInfo indexInfo{indices, indexDescriptorOffset, indexRange};
+    const VkDescriptorBufferInfo startsInfo{starts, startsDescriptorOffset, startsRange};
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    for (std::uint32_t index = 0; index < writes.size(); ++index) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[index].pBufferInfo = index == 0u ? &indexInfo : &startsInfo;
+    }
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, restartPipeline);
+    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+    const std::array<std::uint32_t, 4> push{count, indexBytes, static_cast<std::uint32_t>(indexBase), static_cast<std::uint32_t>(startsBase / 4u)};
+    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
 }
 
 void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent) {

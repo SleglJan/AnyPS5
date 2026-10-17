@@ -135,6 +135,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcRestartStartsShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/RestartStarts.comp)
+set(agcRestartStartsShaderSpv ${agcTextureDetileGeneratedDir}/RestartStarts.spv)
+set(agcRestartStartsShaderHeader ${agcTextureDetileGeneratedDir}/RestartStarts_spv.h)
+add_custom_command(
+        OUTPUT "${agcRestartStartsShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcRestartStartsShaderSpv}" "${agcRestartStartsShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcRestartStartsShaderSpv} -DOUTPUT=${agcRestartStartsShaderHeader}
+        -DSYMBOL=RESTART_STARTS_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcRestartStartsShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcTexelDecodeImageShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TexelDecodeImage.comp)
 set(agcTexelDecodeImageShaderHeaders)
 foreach(agcTexelDecodeDimension 1 2 3)
@@ -299,6 +312,7 @@ set(agcDriverSources
         ${agcDccKeyClearShaderHeader}
         ${agcTexelDecodeShaderHeader}
         ${agcSurfaceFillShaderHeader}
+        ${agcRestartStartsShaderHeader}
         ${agcTexelDecodeImageShaderHeaders}
         ${agcMeshArgumentsShaderHeader}
         ${agcDispatchThreadsShaderHeader}

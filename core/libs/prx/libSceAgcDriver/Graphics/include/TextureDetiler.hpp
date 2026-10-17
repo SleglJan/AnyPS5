@@ -59,6 +59,7 @@ namespace AgcDriver::Graphics {
         void DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords);
         void DispatchDecode(VkCommandBuffer commands, std::uint32_t guestFormat, VkBuffer source, VkBuffer destination, std::uint64_t texels);
         void DispatchSurfaceFill(VkCommandBuffer commands, VkBuffer surface, std::uint64_t bytes, std::uint32_t elementBytes, bool expandSingle, const std::array<std::uint32_t, 4>& pattern);
+        void DispatchRestartStarts(VkCommandBuffer commands, VkBuffer indices, std::uint64_t indexOffset, std::uint32_t count, std::uint32_t indexBytes, VkBuffer starts, std::uint64_t startsOffset);
         void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent);
 
     private:
@@ -102,6 +103,8 @@ namespace AgcDriver::Graphics {
         std::array<VkPipeline, 2> decodePipelines{};
         VkShaderModule fillModule = VK_NULL_HANDLE;
         VkPipeline fillPipeline = VK_NULL_HANDLE;
+        VkShaderModule restartModule = VK_NULL_HANDLE;
+        VkPipeline restartPipeline = VK_NULL_HANDLE;
         VkDescriptorSetLayout decodeImageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout decodeImagePipelineLayout = VK_NULL_HANDLE;
         std::array<VkShaderModule, 6> decodeImageModules{};

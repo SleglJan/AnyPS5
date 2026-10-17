@@ -814,12 +814,14 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
 namespace {
 
 std::atomic<std::uint64_t> drawInputCopies{0};
+std::atomic<std::uint64_t> drawIndexScans{0};
 
 }
 
 DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use) {
     Require(use != Recorder::SnapshotUse::Storage, "a draw input is a vertex or index buffer");
     DrawInputCopy copy;
+    copy.bytes = bytes;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -830,8 +832,8 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
             return copy;
         }
     }
-    copy.buffer = std::make_shared<Buffer>(context, bytes, use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    GuestMemory::Read(address, copy.buffer->Bytes(), alignment);
+    copy.buffer = std::make_shared<Buffer>(context, (bytes + 3u) & ~std::size_t{3}, (use == Recorder::SnapshotUse::Vertex ? VK_BUFFER_USAGE_VERTEX_BUFFER_BIT : VK_BUFFER_USAGE_INDEX_BUFFER_BIT) | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    GuestMemory::Read(address, copy.buffer->Bytes().first(bytes), alignment);
     drawInputCopies.fetch_add(1, std::memory_order_relaxed);
     return copy;
 }
@@ -840,6 +842,7 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
     Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
     GuestMemory::FlushGpuWrites(address, bytes);
     DrawInputCopy copy;
+    copy.bytes = bytes;
     copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     drawInputCopies.fetch_add(1, std::memory_order_relaxed);
     const auto span = copy.buffer->Bytes();
@@ -850,11 +853,15 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
     if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
-    recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
+    recorder->KeepDrawSnapshot(address, copy.bytes, copy.generation, copy.registryGeneration, copy.buffer, use, derived);
 }
 
 std::uint64_t DrawInputCopies() {
     return drawInputCopies.load(std::memory_order_relaxed);
+}
+
+std::uint64_t DrawIndexScans() {
+    return drawIndexScans.load(std::memory_order_relaxed);
 }
 
 DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool cpuReads) {
@@ -897,7 +904,7 @@ DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, 
         recorder->NotePendingRead(address, bytes, Recorder::ReadKind::DrawInput);
         return {sources.front().buffer, sources.front().offset, nullptr};
     }
-    auto gathered = std::make_shared<DeviceBuffer>(context, (bytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto gathered = std::make_shared<DeviceBuffer>(context, (bytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const auto commands = recorder->Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     for (std::size_t index = 0; index < pieces.size(); ++index) {
@@ -916,6 +923,7 @@ InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std:
     const std::span<const std::byte> range(reinterpret_cast<const std::byte*>(address), bytes);
     InPlaceIndices indices;
     if (bytes < Recorder::KeptIndexRangeIndices * indexSize) {
+        drawIndexScans.fetch_add(1, std::memory_order_relaxed);
         indices.highest = HighestDrawIndex(range, indexSize, skipRestart);
         return indices;
     }
@@ -926,6 +934,7 @@ InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std:
         indices.reused = true;
         return indices;
     }
+    drawIndexScans.fetch_add(1, std::memory_order_relaxed);
     indices.highest = HighestDrawIndex(range, indexSize, skipRestart);
     recorder.KeepHighestIndex(address, bytes, use, generation, registryGeneration, indices.highest);
     return indices;
@@ -950,7 +959,7 @@ struct DrawInputs {
     std::set<std::uint32_t> fragmentOutputs;
     VkPipelineStageFlags shaderStages = 0;
     std::uint32_t meshGroups = 0;
-    std::vector<std::uint32_t> restartTable;
+    bool restartStarts = false;
 };
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawOutcome& outcome, DrawTimer& timer) {
@@ -1023,7 +1032,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         const auto largestIndex = draw.indexSize == 2 ? 0xffffu : 0xffffffffu;
-        const bool scanned = context.limits.maxDrawIndexedIndexValue < largestIndex || (skipRestart && state.stages.mesh && state.stages.mesh->inputPrimitive == 6) || (fanGeometry && state.primitiveRestart);
+        const bool scanned = context.limits.maxDrawIndexedIndexValue < largestIndex || (fanGeometry && state.primitiveRestart);
         const auto source = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, scanned);
         DrawInputCopy copy;
         if (!source) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use);
@@ -1034,6 +1043,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         } else if (source) {
             highest = InPlaceIndexRange(*context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, skipRestart).highest;
         } else if (!copy.reused) {
+            drawIndexScans.fetch_add(1, std::memory_order_relaxed);
             highest = HighestDrawIndex(copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes)), draw.indexSize, skipRestart);
             KeepDrawInput(context.recorder, draw.indexAddress, copy, use, skipRestart ? (highest ? *highest + 1u : 0u) : highest.value_or(0u));
         } else if (!skipRestart) {
@@ -1048,10 +1058,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
         Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = *highest;
-        if (skipRestart && state.stages.mesh && state.stages.mesh->inputPrimitive == 6) {
-            const auto indexSpan = source ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
-            inputs.restartTable = MeshRestartTable(indexSpan, draw.indexSize);
-        }
+        inputs.restartStarts = skipRestart && state.stages.mesh && state.stages.mesh->inputPrimitive == 6;
         if (source) {
             inputs.indexHandle = source.buffer;
             inputs.indexOffset = source.offset;
@@ -1223,30 +1230,31 @@ bool recordIndirectArguments(const Context& context, VkCommandBuffer commands, R
     return true;
 }
 
-std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::span<const std::uint32_t> restartTable) {
-    const auto tableBytes = restartTable.empty() ? 0u : sizeof(std::uint32_t) * (restartTable.size() + 1u);
+std::shared_ptr<Buffer> meshArgumentBuffer(const Context& context, std::uint32_t restartStarts) {
+    const auto tableBytes = restartStarts == 0u ? 0u : sizeof(std::uint32_t) * (static_cast<std::size_t>(restartStarts) + 1u);
     auto arguments = std::make_shared<Buffer>(context, ShaderRecompiler::MeshArgumentBytes + tableBytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    if (!restartTable.empty()) {
-        Require(restartTable.size() <= std::numeric_limits<std::uint32_t>::max(), "mesh restart table is too large");
-        const auto length = static_cast<std::uint32_t>(restartTable.size());
-        auto* bytes = arguments->Bytes().data() + ShaderRecompiler::MeshArgumentBytes;
-        std::memcpy(bytes, &length, sizeof(length));
-        std::memcpy(bytes + sizeof(length), restartTable.data(), restartTable.size_bytes());
-    }
+    if (restartStarts != 0u) std::memcpy(arguments->Bytes().data() + ShaderRecompiler::MeshArgumentBytes, &restartStarts, sizeof(restartStarts));
     return arguments;
 }
 
-std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::DrawParameters& draw, std::span<const std::uint32_t> restartTable) {
-    auto arguments = meshArgumentBuffer(context, restartTable);
+void recordRestartStarts(const Context& context, VkCommandBuffer commands, const DrawInputs& inputs, const Pm4::DrawParameters& draw, const Buffer& arguments) {
+    Require(context.detiler != nullptr, "the restart table of a mesh strip draw needs the detiler");
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    context.detiler->DispatchRestartStarts(commands, inputs.indexHandle, inputs.indexOffset, draw.indexCount, draw.indexSize, arguments.Handle(), ShaderRecompiler::MeshArgumentBytes + sizeof(std::uint32_t));
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+}
+
+std::shared_ptr<Buffer> directMeshArguments(const Context& context, const Pm4::DrawParameters& draw, std::uint32_t restartStarts) {
+    auto arguments = meshArgumentBuffer(context, restartStarts);
     const MeshArguments resolved{0u, 0u, 0u, draw.indexCount, 0u};
     std::memcpy(arguments->Bytes().data(), &resolved, sizeof(resolved));
     return arguments;
 }
 
-std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::span<const std::uint32_t> restartTable) {
+std::shared_ptr<Buffer> recordMeshArguments(const Context& context, VkCommandBuffer commands, Recorder* recorder, bool recorded, const State& state, const Pm4::DrawParameters& draw, const IndirectRecord& indirect, const std::function<void(std::uint32_t)>& countBarrier, std::uint32_t restartStarts) {
     const auto* args = indirect.args;
     const auto rules = MeshArgumentRulesFor(context, *state.stages.mesh, draw.indexCount);
-    auto arguments = meshArgumentBuffer(context, restartTable);
+    auto arguments = meshArgumentBuffer(context, restartStarts);
     if (indirect.path == IndirectDrawPath::Gpu && recorder != nullptr && indirect.argumentImport->address != 0) {
         const std::array<std::uint32_t, 7> words{rules.indexCount, rules.inputSize, rules.step, rules.primitivesPerGroup, rules.maxGroups, rules.maxInstances, rules.maxTotal};
         if (recorder->RecordMeshArguments(commands, indirect.argumentImport->address + (args->arguments - indirect.argumentImport->base), arguments->DeviceAddress(), words)) {
@@ -1626,7 +1634,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         recorder->DeclareSection(objects);
     }
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || inputs.restartStarts, fenced, passAccess);
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
@@ -1654,7 +1662,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     VkBuffer argumentBuffer = VK_NULL_HANDLE;
     VkDeviceSize argumentOffset = 0;
     bool rewritten = false;
-    if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    const auto restartStarts = inputs.restartStarts ? draw.indexCount : 0u;
+    if (!meshIndirect && inputs.restartStarts) meshArguments = directMeshArguments(context, draw, restartStarts);
     if (continued) {
         record.pipeline->Continue(commands, state);
     } else {
@@ -1669,10 +1678,14 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
         if (meshIndirect) {
-            meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, inputs.restartTable);
+            meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier, restartStarts);
             argumentBuffer = meshArguments->Handle();
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+        }
+        if (inputs.restartStarts) {
+            recordRestartStarts(context, commands, inputs, draw, *meshArguments);
+            countBarrier(2);
         }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
@@ -1690,7 +1703,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     record.pipeline->BindHeap(commands);
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, drawBindings.get(), meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
+    pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, drawBindings.get(), meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, inputs.restartStarts);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset);
     else {
@@ -2202,13 +2215,18 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     }
     APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
     std::shared_ptr<Buffer> meshArguments;
+    const auto restartStarts = inputs.restartStarts ? draw.indexCount : 0u;
     if (state.stages.mesh && args != nullptr) {
-        meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, inputs.restartTable);
+        meshArguments = recordMeshArguments(context, commands, recorder, recorded, state, draw, indirect, countBarrier, restartStarts);
         argumentBuffer = meshArguments->Handle();
-    } else if (!inputs.restartTable.empty()) {
-        meshArguments = directMeshArguments(context, draw, inputs.restartTable);
+    } else if (inputs.restartStarts) {
+        meshArguments = directMeshArguments(context, draw, restartStarts);
     } else if (gpuIndirect) {
         rewritten = recordIndirectArguments(context, commands, recorder, recorded, indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
+    }
+    if (inputs.restartStarts) {
+        recordRestartStarts(context, commands, inputs, draw, *meshArguments);
+        countBarrier(2);
     }
     for (auto& binding : targets) {
         if (binding.proxied) {
@@ -2242,7 +2260,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     pipeline->BindHeap(commands);
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
-    pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, nullptr, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
+    pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, nullptr, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, inputs.restartStarts);
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset);
     else {

@@ -1,5 +1,6 @@
 #include "execution/GuestTestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "MeshGeometryFixture.hpp"
 #include "execution/VulkanTestDevice.hpp"
@@ -110,6 +111,8 @@ TestGuest::Array<std::uint16_t, FanRim + 1> FanRestart;
 TestGuest::Array<Vertex, 4 * Columns> Quads;
 TestGuest::Array<std::uint16_t, 5 * Columns> QuadStrips;
 TestGuest::Array<std::uint32_t, 5 * Columns> QuadStrips32;
+constexpr std::uint32_t LongStripFirstQuad = 261;
+TestGuest::Array<std::uint16_t, LongStripFirstQuad + 5 * Columns> LongStrips;
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* vertices, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(vertices);
@@ -334,6 +337,8 @@ int main() {
             QuadStrips[5 * quad + 4] = 0xffffu;
             QuadStrips32[5 * quad + 4] = 0xffffffffu;
         }
+        for (std::uint32_t position = 0; position < LongStripFirstQuad; ++position) LongStrips[position] = position == 2u ? 0xffffu : 0u;
+        for (std::uint32_t index = 0; index < QuadStrips.size(); ++index) LongStrips[LongStripFirstQuad + index] = QuadStrips[index];
 
         const auto testDevice = OpenVulkanTestDevice();
         if (!testDevice) return VulkanTestSkipped;
@@ -454,12 +459,17 @@ int main() {
         Require(PixelIs((static_cast<std::size_t>(Height / 4u) * Width + Width / 2u) * 4u, Background), "triangle strip: the upper half changed");
 
         const auto quadBuffer = VertexBufferDescriptor(Quads.data(), static_cast<std::uint32_t>(Quads.size()));
+        const auto scansBefore = AgcDriver::Graphics::DrawIndexScans();
+        const auto copiesBefore = AgcDriver::Graphics::DrawInputCopies();
         ClearPixels();
         DrawMesh(device, {strip, {reinterpret_cast<std::uintptr_t>(QuadStrips.data()), static_cast<std::uint32_t>(QuadStrips.size()), 2, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
         CheckQuads("16-bit triangle strips with restarts", 0, Columns);
         ClearPixels();
         DrawMesh(device, {strip, {reinterpret_cast<std::uintptr_t>(QuadStrips32.data()), static_cast<std::uint32_t>(QuadStrips32.size()), 4, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
         CheckQuads("32-bit triangle strips with restarts", 0, Columns);
+        ClearPixels();
+        DrawMesh(device, {strip, {reinterpret_cast<std::uintptr_t>(LongStrips.data()), static_cast<std::uint32_t>(LongStrips.size()), 2, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("a strip restarted in the first 256 indices and continued past them", 0, Columns);
         const std::array<std::uint32_t, 5> quadWords{15u, 1u, 5u, 0u, 0u};
         std::copy(quadWords.begin(), quadWords.end(), record);
         AgcDriver::Pm4::DrawParameters quadDraw{reinterpret_cast<std::uintptr_t>(QuadStrips.data()), static_cast<std::uint32_t>(QuadStrips.size()), 2, 1, 0, true};
@@ -467,6 +477,8 @@ int main() {
         ClearPixels();
         DrawMesh(device, {strip, quadDraw, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
         CheckQuads("indirect triangle strips with restarts", 1, 3);
+        Require(AgcDriver::Graphics::DrawIndexScans() == scansBefore, "the CPU scanned the indices of a strip draw with restarts for its restart table");
+        Require(AgcDriver::Graphics::DrawInputCopies() == copiesBefore, "the indices of a strip draw with restarts were copied on the CPU");
 
         const ShaderRecompiler::MeshConfiguration fan{5u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
         ClearPixels();
