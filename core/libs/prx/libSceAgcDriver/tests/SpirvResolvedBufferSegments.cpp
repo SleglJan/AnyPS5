@@ -59,6 +59,30 @@ std::uint32_t MainCalls(std::span<const std::uint32_t> words, std::string_view c
     return calls;
 }
 
+std::uint32_t SegmentFieldReads(std::span<const std::uint32_t> words) {
+    std::uint32_t entry = 0;
+    std::uint32_t u64 = 0;
+    std::uint32_t segmentType = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        const auto count = words[cursor] >> 16u;
+        if (op == spv::OpEntryPoint) entry = words[cursor + 2];
+        if (op == spv::OpTypeInt && words[cursor + 2] == 64u && words[cursor + 3] == 0u) u64 = words[cursor + 1];
+        if (op == spv::OpTypeStruct && count == 5u && words[cursor + 2] == u64 && words[cursor + 3] == u64 && words[cursor + 4] == u64) segmentType = words[cursor + 1];
+    }
+    std::map<std::uint32_t, std::uint32_t> types;
+    std::uint32_t reads = 0;
+    std::uint32_t function = 0;
+    for (std::size_t cursor = 5; cursor < words.size() && (words[cursor] >> 16u) != 0u; cursor += words[cursor] >> 16u) {
+        const auto op = words[cursor] & 0xffffu;
+        if (op == spv::OpFunction) function = words[cursor + 2];
+        if (function != entry) continue;
+        if (op == spv::OpFunctionCall || op == spv::OpCompositeConstruct || op == spv::OpLoad) types[words[cursor + 2]] = words[cursor + 1];
+        if (op == spv::OpCompositeExtract && segmentType != 0u && types[words[cursor + 3]] == segmentType) ++reads;
+    }
+    return reads;
+}
+
 void Expect(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -77,12 +101,15 @@ int main() {
             0xe0701004u, 0x80010301u,
             0xe0701008u, 0x80010401u,
             0xbf810000u};
-        const auto calls = MainCalls(Recompiled(twoBuffers), "bda_segment");
+        const auto module = Recompiled(twoBuffers);
+        const auto calls = MainCalls(module, "bda_segment");
         Expect(calls == 2u, "main translates " + std::to_string(calls) + " V# bases for three buffer_load_dword through two V#s, expected one translation of each V# where it is loaded");
+        const auto reads = SegmentFieldReads(module);
+        Expect(reads == 3u * calls, "main reads " + std::to_string(reads) + " fields of segment records for " + std::to_string(calls) + " segments, expected the three fields of each once");
     } catch (const std::exception& error) {
         std::cerr << "SpirvResolvedBufferSegments: " << error.what() << '\n';
         return 1;
     }
-    std::puts("SpirvResolvedBufferSegments: each run-time V# is translated once where it is loaded");
+    std::puts("SpirvResolvedBufferSegments: each run-time V# is translated once where it is loaded and its fields are read once");
     return 0;
 }

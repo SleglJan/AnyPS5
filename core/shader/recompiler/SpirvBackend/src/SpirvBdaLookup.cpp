@@ -957,11 +957,11 @@ void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst, 
     const auto u64 = TypeScalarU64(state);
     const auto type = SegmentType(state);
     const auto high = Binary(state, spv::OpBitwiseAnd, u32, ctx.Def(words[1]), ConstantU32(state, 0xffffu));
-    auto segment = state.module.AllocateId();
+    const auto segment = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionCall, type, segment, state.bdaSegmentFunction, JoinU64(state, ctx.Def(words[0]), high));
+    std::array<std::uint32_t, 3> fields{};
+    for (std::uint32_t field = 0; field < 3u; ++field) fields[field] = Extract(state, u64, segment, field);
     if (WaveUniformDescriptor(state, words)) {
-        std::array<std::uint32_t, 3> fields{};
-        for (std::uint32_t field = 0; field < 3u; ++field) fields[field] = Extract(state, u64, segment, field);
         const auto bounds = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), bounds, SplitU64(state, fields[0], false), SplitU64(state, fields[0], true), SplitU64(state, fields[1], false), SplitU64(state, fields[1], true));
         const auto delta = state.module.AllocateId();
@@ -969,8 +969,12 @@ void EmitResolvedBufferSegment(SpirvValueEmitContext& ctx, const IrValue& inst, 
         const auto sharedBounds = BroadcastFirstLane(state, TypeU32Vector(state, 4u), bounds);
         const auto sharedDelta = BroadcastFirstLane(state, TypeU32Vector(state, 2u), delta);
         const auto part = [&](std::uint32_t vector, std::uint32_t index) { return Extract(state, u32, vector, index); };
-        segment = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeConstruct, type, segment, JoinU64(state, part(sharedBounds, 0u), part(sharedBounds, 1u)), JoinU64(state, part(sharedBounds, 2u), part(sharedBounds, 3u)), JoinU64(state, part(sharedDelta, 0u), part(sharedDelta, 1u)));
+        fields = {JoinU64(state, part(sharedBounds, 0u), part(sharedBounds, 1u)), JoinU64(state, part(sharedBounds, 2u), part(sharedBounds, 3u)), JoinU64(state, part(sharedDelta, 0u), part(sharedDelta, 1u))};
+    }
+    for (std::uint32_t field = 0; field < 3u; ++field) {
+        auto fieldKey = key;
+        fieldKey.push_back(field);
+        state.deviceImageLookups.emplace(std::move(fieldKey), fields[field]);
     }
     state.deviceImageLookups.emplace(std::move(key), segment);
 }
@@ -979,10 +983,15 @@ std::optional<BdaSegmentValues> ResolvedBufferSegment(SpirvValueEmitContext& ctx
     auto& state = ctx.state;
     const auto* handle = ResolvedBufferHandle(state, inst);
     if (handle == nullptr || state.module.InHelperFunction()) return std::nullopt;
-    const auto found = state.deviceImageLookups.find(ResolvedBufferKey(state, *handle));
-    if (found == state.deviceImageLookups.end()) return std::nullopt;
-    const auto u64 = TypeScalarU64(state);
-    return BdaSegmentValues{Extract(state, u64, found->second, 0u), Extract(state, u64, found->second, 1u), Extract(state, u64, found->second, 2u)};
+    auto key = ResolvedBufferKey(state, *handle);
+    if (!state.deviceImageLookups.contains(key)) return std::nullopt;
+    std::array<std::uint32_t, 3> fields{};
+    for (std::uint32_t field = 0; field < 3u; ++field) {
+        auto fieldKey = key;
+        fieldKey.push_back(field);
+        fields[field] = state.deviceImageLookups.at(fieldKey);
+    }
+    return BdaSegmentValues{fields[0], fields[1], fields[2]};
 }
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {
