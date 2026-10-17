@@ -35,6 +35,11 @@ std::atomic<std::uint64_t>& MemoryEntryCount() {
     return count;
 }
 
+std::atomic<std::uint64_t>& MemoryDemotionCount() {
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
+
 constexpr VkBufferUsageFlags DeviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 constexpr std::size_t RingWords = Abi::RingRecordsWord + static_cast<std::size_t>(DeviceImageTable::RingCapacity) * Abi::RecordWords;
 constexpr std::size_t UpdateBufferBytes = 65536u;
@@ -158,6 +163,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     add(expected, totals.expected, true, true);
     add(candidates, totals.expected, true, false);
     refreshPerUse(build, recorder, resolved);
+    demoteViewedMemory(build);
     for (const auto& key : current) {
         const auto held = entries.find(key);
         if (held == entries.end() || !held->second.memory || !held->second.written) continue;
@@ -290,6 +296,37 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
     }
 }
 
+void DeviceImageTable::demoteViewedMemory(const Context& build) {
+    for (bool demoted = true; demoted;) {
+        demoted = false;
+        for (const auto& key : current) {
+            const auto held = entries.find(key);
+            if (held == entries.end() || !held->second.memory) continue;
+            const auto& memory = held->second;
+            const bool viewed = std::ranges::any_of(current, [&](const DeviceImageKeys::Key& other) {
+                const auto view = entries.find(other);
+                if (view == entries.end() || view->second.memory || (view->second.texture == nullptr && view->second.storage == nullptr)) return false;
+                if (!memory.written && !view->second.written) return false;
+                return view->second.address < memory.address + memory.guestBytes && memory.address < view->second.address + view->second.guestBytes;
+            });
+            if (!viewed) continue;
+            viewOnly.insert(key);
+            Entry fresh;
+            const auto value = lookup(build, key, 0u, fresh, true, true);
+            Require(keys.Insert(key, value) == DeviceImageKeys::Insertion::Updated, "a device image entry demoted to its view was not in the table");
+            if (value.fault != 0u) throw std::runtime_error(rejectionText(key, value.fault));
+            fresh.used = held->second.used;
+            fresh.checked = currentState();
+            held->second = std::move(fresh);
+            if (!held->second.perUse) std::erase(perUseKeys, key);
+            ++totals.demoted;
+            MemoryDemotionCount().fetch_add(1, std::memory_order_relaxed);
+            demoted = true;
+            break;
+        }
+    }
+}
+
 namespace {
 
 constexpr std::uint32_t GuestFormatRgba8UInt = 60u;
@@ -338,7 +375,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         const auto third = key[Abi::SamplerWord + 2u];
         if ((first & Abi::SamplerUnnormalized) != 0u || ((first >> 29u) & 3u) > 2u || ((third >> 20u) & 0xfu) != 0u || ((third >> 26u) & 3u) > 1u) return rejected(Reason::DriverRejected, "2D biased sampling of a one-slice volume requires a normalized point sampler");
     }
-    if (perUse && ShaderRecompiler::MemoryPathRuntimeImage(interface->image) && ShaderRecompiler::StorageImageMemory::SurfaceThroughMemory(descriptor.dwords, ShaderRecompiler::StorageImageMemory::AccessOf(interface->image)) && !DepthSurfaceAt(DecodeTextureResource(descriptor.dwords).baseAddress)) {
+    if (perUse && !viewOnly.contains(key) && ShaderRecompiler::MemoryPathRuntimeImage(interface->image) && ShaderRecompiler::StorageImageMemory::SurfaceThroughMemory(descriptor.dwords, ShaderRecompiler::StorageImageMemory::AccessOf(interface->image)) && !DepthSurfaceAt(DecodeTextureResource(descriptor.dwords).baseAddress)) {
         const auto resource = DecodeTextureResource(descriptor.dwords);
         entry = {};
         entry.address = resource.baseAddress;
@@ -595,6 +632,10 @@ std::optional<DeviceImageTable::Rejection> DeviceImageTable::FindRejection(std::
 
 std::uint64_t DeviceImageTable::MemoryEntries() {
     return MemoryEntryCount().load(std::memory_order_relaxed);
+}
+
+std::uint64_t DeviceImageTable::MemoryDemotions() {
+    return MemoryDemotionCount().load(std::memory_order_relaxed);
 }
 
 DeviceImageTable::Counts DeviceImageTable::Totals() const {

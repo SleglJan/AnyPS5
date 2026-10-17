@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <tuple>
@@ -61,11 +62,13 @@ public:
         std::uint64_t clears = 0;
         std::uint64_t evicted = 0;
         std::uint64_t memory = 0;
+        std::uint64_t demoted = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
     };
     Counts Totals() const;
     static std::uint64_t MemoryEntries();
+    static std::uint64_t MemoryDemotions();
 
 private:
     struct ValidationState {
@@ -99,6 +102,7 @@ private:
     void record(Recorder& recorder);
     DeviceImageValue lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report);
     void refreshPerUse(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>& resolved);
+    void demoteViewedMemory(const Context& build);
     void evict(const Context& build, Recorder& recorder);
     std::uint32_t reject(const DeviceImageKeys::Key& key, std::uint32_t pc, std::uint32_t reason, const std::string& message, bool report = true);
     void insert(const DeviceImageKeys::Key& key, const DeviceImageValue& value, Recorder& recorder);
@@ -124,6 +128,7 @@ private:
     std::optional<std::array<std::uint64_t, MaxRecorderStreams>> unnamedBatch;
     std::vector<DeviceImageKeys::Key> current;
     std::vector<DeviceImageKeys::Key> perUseKeys;
+    std::set<DeviceImageKeys::Key> viewOnly;
     std::uint64_t evictionCheck = 0;
     struct DispatchStorageUse {
         DeviceImageKeys::Key key{};

@@ -231,6 +231,7 @@ constexpr std::uint32_t OutputSgpr = 8;
 constexpr std::uint32_t SliceSgpr = 12;
 constexpr std::uint32_t GroupSgpr = 13;
 constexpr std::uint32_t TableSgpr = 16;
+constexpr std::uint32_t ViewSgpr = 24;
 constexpr std::uint32_t ImageLoad = 0x00u;
 constexpr std::uint32_t ImageStore = 0x08u;
 constexpr std::uint32_t BufferStoreDwordX4 = 0x1eu;
@@ -419,6 +420,83 @@ void RoundTrip(const Shape& shape, std::uint32_t lod, Binding binding, std::vect
     }
 }
 
+const Program& SameDispatchProgram() {
+    static const Program program = [] {
+        using namespace Isa;
+        Program built;
+        built << Smem(SLoadDwordX8, TableSgpr, 0, 0)
+              << Smem(SLoadDwordX8, ViewSgpr, 0, 32u)
+              << WaitAll
+              << Vop1(VMovB32, 1, Vgpr(0))
+              << Vop1(VMovB32, 2, GroupSgpr)
+              << Vop1(VMovB32, 3, SliceSgpr)
+              << Vop2(VLshlRevB32, 10, InlineInteger(1), 2)
+              << Vop2(VAddNcU32, 4, Vgpr(1), 10)
+              << Vop2(VAddNcU32, 5, InlineInteger(5), 4)
+              << Vop2(VAddNcU32, 6, InlineInteger(10), 4)
+              << Vop2(VAddNcU32, 7, InlineInteger(15), 4)
+              << ImageOp(ImageStore, 1u, TableSgpr)
+              << ImageOp(ImageLoad, 1u, ViewSgpr)
+              << WaitAll
+              << Vop2(VLshlRevB32, 8, InlineInteger(6), 2)
+              << Vop2(VAddNcU32, 8, Vgpr(1), 8)
+              << Vop2(VLshlRevB32, 8, InlineInteger(4), 8)
+              << Mubuf(BufferStoreDwordX4, 4, 8, OutputSgpr)
+              << EndProgram;
+        return built;
+    }();
+    return program;
+}
+
+void SameDispatchViews() {
+    const std::string what = "a store through memory and a view of the same surface in one dispatch";
+    const Shape memoryShape{"64KB R_X 32_UINT", 20u, 27u, TypePlane, 64u, 8u, 1u, 1u};
+    const Shape viewShape{"64KB S 32_UINT", 20u, 9u, TypePlane, 64u, 8u, 1u, 1u};
+    PrivatePages surface(static_cast<std::uint32_t>((Graphics::DescribeSurface(Graphics::DecodeTextureResource(Descriptor(NewPath::PageBytes, memoryShape))).guestBytes + NewPath::PageBytes - 1u) / NewPath::PageBytes));
+    PrivatePages output(1u);
+    PrivatePages block(1u);
+    std::memset(surface.Data(), static_cast<int>(Background), static_cast<std::size_t>(surface.Bytes()));
+    const auto stored = Descriptor(surface.Address(), memoryShape);
+    const auto viewed = Descriptor(surface.Address(), viewShape);
+    Require(Memory::SurfaceThroughMemory(stored, Memory::Access::Store) && !Memory::SurfaceThroughMemory(viewed, Memory::Access::Load), what + ": the surfaces do not split between the memory path and a view");
+    std::memcpy(block.Data(), stored.data(), sizeof(stored));
+    std::memcpy(block.Data() + sizeof(stored), viewed.data(), sizeof(viewed));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::array<std::uint32_t, UserWords> data{};
+    data[0] = Low(block.Address());
+    data[1] = High(block.Address());
+    const auto buffer = NewPath::BufferResource(output.Address(), static_cast<std::uint32_t>(output.Bytes()));
+    std::copy(buffer.begin(), buffer.end(), data.begin() + OutputSgpr);
+    for (std::uint32_t round = 0; round < 2u; ++round) {
+        const auto memoryBefore = Graphics::DeviceImageTable::MemoryEntries();
+        const auto demotionsBefore = Graphics::DeviceImageTable::MemoryDemotions();
+        Commands commands;
+        commands.Dispatch(SameDispatchProgram(), data, Lanes, memoryShape.height);
+        const auto failure = Submit(commands);
+        Expect(failure.empty(), what + ": round " + std::to_string(round) + ": the submission failed: " + failure);
+        const auto memory = Graphics::DeviceImageTable::MemoryEntries() - memoryBefore;
+        const auto demotions = Graphics::DeviceImageTable::MemoryDemotions() - demotionsBefore;
+        if (round == 0u) Expect(memory == demotions && demotions != 0u, what + ": the first dispatch made " + std::to_string(memory) + " memory entries and demoted " + std::to_string(demotions) + " of them to views");
+        else Expect(memory == 0u && demotions == 0u, what + ": the repeated dispatch made " + std::to_string(memory) + " memory entries, expected its demoted entry to stay a view");
+        Expect(Graphics::StorageTexture::FindPending(surface.Address(), static_cast<std::size_t>(surface.Bytes())) != nullptr, what + ": round " + std::to_string(round) + ": no storage image holds the stores, so they did not take the view");
+        Graphics::StorageTexture::FlushPending(surface.Address(), static_cast<std::size_t>(surface.Bytes()), nullptr, "test");
+        NewPath::WaitIdle();
+    }
+    std::size_t wrong = 0;
+    std::string first;
+    for (std::uint32_t y = 0; y < memoryShape.height; ++y) {
+        for (std::uint32_t x = 0; x < memoryShape.width; ++x) {
+            const auto address = DriverTexelAddress(stored, x, y, 0u, 0u);
+            Require(address.has_value(), "storage image memory: a stored texel is outside the driver's layout");
+            std::uint32_t value = 0;
+            AgcDriver::GuestMemory::Read(*address, std::as_writable_bytes(std::span(&value, 1u)));
+            if (value == Component(x, y, 0u, 0u) || wrong++ != 0u) continue;
+            first = "texel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + Hex(value);
+        }
+    }
+    Expect(wrong == 0u, what + ": " + std::to_string(wrong) + " stored texels are wrong in guest memory after the flush, first " + first);
+}
+
 void RoundTrips() {
     const std::array<Shape, 10> shapes{{
         {"linear 2D 8_8_8_8_UINT", 60u, 0u, TypePlane, 64u, 8u, 1u, 1u},
@@ -449,6 +527,7 @@ void Run() {
         {"reference", Reference},
         {"predicates", Predicates},
         {"stores and loads", RoundTrips},
+        {"one dispatch with a view of a surface stored through memory", SameDispatchViews},
     });
 }
 
