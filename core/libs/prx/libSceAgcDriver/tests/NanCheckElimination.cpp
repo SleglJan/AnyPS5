@@ -172,6 +172,23 @@ int main() {
             fusedInfinities->HasUses() && sum->HasUses() && zeroTimes->HasUses() && infinityTimes->HasUses() && product->HasUses();
     });
 
+    passed &= run("a multiply-add that cannot make a NaN of its operands loses its default NaN and keeps its class", [] {
+        Builder b;
+        const auto checked = [&](std::initializer_list<IrValue*> sources) { return b.nanResult(IrOpcode::FPMad32, sources).check; };
+        IrValue* finite = checked({&b.unknown(), &b.constant(0x40000000u), &b.constant(0x3f800000u)});
+        IrValue* integerAddend = checked({&b.integer(), &b.constant(0x40000000u), &b.unknown()});
+        IrValue* infinities = checked({&b.unknown(), &b.constant(0x40000000u), &b.unknown()});
+        IrValue* integerProduct = checked({&b.integer(), &b.unknown(), &b.constant(0x3f800000u)});
+        auto& mad = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPMad32, IrType::F32, {&b.asFloat(b.integer()), &b.asFloat(b.constant(0x40000000u)), &b.asFloat(b.constant(0x3f800000u))})});
+        auto& tested = b.select(b.isNan(mad), mad, b.unknown());
+        auto& open = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPMad32, IrType::F32, {&b.asFloat(b.unknown()), &b.asFloat(b.integer()), &b.asFloat(b.integer())})});
+        auto& kept = b.select(b.isNan(open), open, b.unknown());
+        b.keep(tested);
+        b.keep(kept);
+        const auto stats = b.eliminate();
+        return stats.removedDefaultNans == 2u && !finite->HasUses() && !integerAddend->HasUses() && infinities->HasUses() && integerProduct->HasUses() && !tested.HasUses() && kept.HasUses();
+    });
+
     passed &= run("a default NaN stays when an operand that can be NaN is not tested after it", [] {
         Builder b;
         auto& source = b.unknown();

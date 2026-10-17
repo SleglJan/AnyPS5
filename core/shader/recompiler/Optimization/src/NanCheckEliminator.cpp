@@ -175,6 +175,7 @@ private:
                 const std::uint8_t rhs = Of(value.Argument(1));
                 return arithmeticResult(((lhs | rhs) & MayBeNan) != 0u || invalidProduct(lhs, rhs));
             }
+            case IrOpcode::FPMad32:
             case IrOpcode::FPFma32: {
                 const std::uint8_t lhs = Of(value.Argument(0));
                 const std::uint8_t rhs = Of(value.Argument(1));
@@ -207,6 +208,7 @@ bool sourcesCovered(const FloatClasses& classes, const IrValue& value, const std
             return (classes.Of(current.Argument(0)) & classes.Of(current.Argument(1)) & MayBeInfinite) == 0u && covered(current.Argument(0)) && covered(current.Argument(1));
         case IrOpcode::FPMul32:
             return !invalidProduct(classes.Of(current.Argument(0)), classes.Of(current.Argument(1))) && covered(current.Argument(0)) && covered(current.Argument(1));
+        case IrOpcode::FPMad32:
         case IrOpcode::FPFma32:
             return !invalidSum(classes.Of(current.Argument(0)), classes.Of(current.Argument(1)), classes.Of(current.Argument(2))) && covered(current.Argument(0)) && covered(current.Argument(1)) && covered(current.Argument(2));
         default:
