@@ -1523,6 +1523,10 @@ private:
 
 void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textures(context);
+    context.textureCache = &textures;
     DescriptorUpdates updates(context);
     {
         DescriptorCache cache(context);
