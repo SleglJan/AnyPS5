@@ -83,16 +83,22 @@
 
 namespace CreationMemory {
 
-std::atomic<PFN_vkGetPhysicalDeviceMemoryProperties2> properties2{nullptr};
-std::atomic<VkPhysicalDevice> physical{VK_NULL_HANDLE};
+std::mutex mutex;
+PFN_vkGetPhysicalDeviceMemoryProperties2 properties2 = nullptr;
+VkPhysicalDevice physical = VK_NULL_HANDLE;
+const void* owner = nullptr;
+
+bool Query(VkPhysicalDeviceMemoryProperties2& properties) {
+    std::lock_guard lock(mutex);
+    if (properties2 == nullptr || physical == VK_NULL_HANDLE) return false;
+    properties2(physical, &properties);
+    return true;
+}
 
 std::size_t DeviceLocalUsage() {
-    const auto query = properties2.load();
-    const auto device = physical.load();
-    if (query == nullptr || device == VK_NULL_HANDLE) return 0;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
-    query(device, &properties);
+    if (!Query(properties)) return 0;
     std::size_t bytes = 0;
     for (std::uint32_t heap = 0; heap < properties.memoryProperties.memoryHeapCount && heap < VK_MAX_MEMORY_HEAPS; ++heap) {
         if ((properties.memoryProperties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) bytes += static_cast<std::size_t>(reported.heapUsage[heap]);
@@ -100,11 +106,23 @@ std::size_t DeviceLocalUsage() {
     return bytes;
 }
 
-void Install(PFN_vkGetPhysicalDeviceMemoryProperties2 query, VkPhysicalDevice device) {
+void Install(PFN_vkGetPhysicalDeviceMemoryProperties2 query, VkPhysicalDevice device, const void* installer) {
     if (query == nullptr || device == VK_NULL_HANDLE) return;
-    properties2.store(query);
-    physical.store(device);
+    {
+        std::lock_guard lock(mutex);
+        properties2 = query;
+        physical = device;
+        owner = installer;
+    }
     AgcDriver::CreationGate::UseRamSide(&DeviceLocalUsage);
+}
+
+void Remove(const void* installer) {
+    std::lock_guard lock(mutex);
+    if (owner != installer) return;
+    properties2 = nullptr;
+    physical = VK_NULL_HANDLE;
+    owner = nullptr;
 }
 
 }
@@ -715,6 +733,7 @@ struct VulkanDevice::State {
     }
 
     ~State() {
+        CreationMemory::Remove(this);
         contextReady = false;
         if (deviceLostHook && Graphics::DeviceLostOwner() == this) {
             Graphics::DeviceLostHook() = nullptr;
@@ -1364,7 +1383,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->drawIndirectCount = hasExtension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     if (state->drawIndirectCount) deviceExtensions.push_back(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     state->memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    if (state->memoryBudget && !compileOnly) CreationMemory::Install(state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2"), selected);
+    if (state->memoryBudget && !compileOnly) CreationMemory::Install(state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2"), selected, state.get());
     // Guest memory is host memory: importing it lets address-based shaders use it in place instead of
     // copying every registered allocation per draw.
     if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) && std::getenv("APS5_NO_HOST_IMPORT") == nullptr) {
