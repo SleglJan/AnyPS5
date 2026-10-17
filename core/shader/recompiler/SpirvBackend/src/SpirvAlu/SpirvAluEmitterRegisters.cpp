@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvAluEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
+#include <algorithm>
 #include <functional>
 #include <span>
 #include <stdexcept>
@@ -64,8 +65,42 @@ std::uint32_t WindowSlot(const SpirvEmitterState& state, std::uint32_t entry) {
     return state.vectorWindowSlots.at(state.laneHalf).at(IndexedWindowInSlots(state) ? entry : entry - state.vectorWindowIndexed);
 }
 
+constexpr std::uint32_t WindowSegmentShift = 3u;
+
 std::uint32_t AccessWindowSlots(SpirvEmitterState& state, std::uint32_t index, std::uint32_t first, std::uint32_t end, const std::function<std::uint32_t(std::uint32_t)>& access) {
     const auto entry = state.currentLabel;
+    if (end - first > (1u << WindowSegmentShift)) {
+        const auto segment = Binary(state, spv::OpShiftRightLogical, TypeU32(state), index, ConstantU32(state, WindowSegmentShift));
+        const auto segmentsMerge = state.module.AllocateId();
+        const auto firstSegment = first >> WindowSegmentShift;
+        const auto lastSegment = (end - 1u) >> WindowSegmentShift;
+        std::vector<std::uint32_t> labels(lastSegment - firstSegment + 1u);
+        std::vector<std::uint32_t> words{spv::OpSwitch, segment, segmentsMerge};
+        for (auto at = firstSegment; at <= lastSegment; ++at) {
+            labels[at - firstSegment] = state.module.AllocateId();
+            words.push_back(at);
+            words.push_back(labels[at - firstSegment]);
+        }
+        state.module.AddFunction(spv::OpSelectionMerge, segmentsMerge, spv::SelectionControlMaskNone);
+        state.module.AddFunction(std::span<const std::uint32_t>(words));
+        std::vector<std::uint32_t> incoming;
+        for (auto at = firstSegment; at <= lastSegment; ++at) {
+            EmitLabel(state, labels[at - firstSegment]);
+            const auto from = std::max(first, at << WindowSegmentShift);
+            const auto to = std::min(end, (at + 1u) << WindowSegmentShift);
+            incoming.push_back(AccessWindowSlots(state, index, from, to, access));
+            incoming.push_back(state.currentLabel);
+            state.module.AddFunction(spv::OpBranch, segmentsMerge);
+        }
+        incoming.push_back(ConstantU32(state, 0u));
+        incoming.push_back(entry);
+        EmitLabel(state, segmentsMerge);
+        const auto value = state.module.AllocateId();
+        std::vector<std::uint32_t> phi{spv::OpPhi, TypeU32(state), value};
+        phi.insert(phi.end(), incoming.begin(), incoming.end());
+        state.module.AddFunction(std::span<const std::uint32_t>(phi));
+        return value;
+    }
     const auto slotsMerge = state.module.AllocateId();
     std::vector<std::uint32_t> labels(end - first);
     std::vector<std::uint32_t> words{spv::OpSwitch, index, slotsMerge};
