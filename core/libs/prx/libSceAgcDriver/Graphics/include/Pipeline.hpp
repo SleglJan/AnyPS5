@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include <set>
 
 namespace AgcDriver::Graphics {
@@ -94,6 +95,7 @@ private:
     std::vector<std::uint32_t> colorSlots;
     bool sampleLocationsEnabled = false;
     std::vector<CachedFramebuffer> framebuffers;
+    PipelineBudget::Charge charge;
 };
 
 // The pipeline for this configuration, shared across draws and frames: keyed by the stages'

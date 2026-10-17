@@ -39,16 +39,51 @@ constexpr std::array<VkDynamicState, 15> dynamicStates{
 
 using Key = std::vector<std::byte>;
 
+struct LibraryPart {
+    VkPipeline handle = VK_NULL_HANDLE;
+    PipelineBudget::Charge charge;
+    std::uint64_t used = 0;
+};
+
 struct DeviceLibraries {
     PFN_vkDestroyPipeline destroyPipeline = nullptr;
     PFN_vkDestroyPipelineLayout destroyLayout = nullptr;
     PFN_vkDestroyShaderModule destroyModule = nullptr;
     std::vector<VkShaderModule> modules;
     std::map<Key, VkPipelineLayout> layouts;
-    std::array<std::map<Key, VkPipeline>, 4> parts;
+    std::array<std::map<Key, LibraryPart>, 4> parts;
     std::array<std::map<Key, std::shared_future<VkPipeline>>, 4> building;
+    std::map<VkPipeline, std::size_t> pinned;
     PipelineLibraryCounters counters;
 };
+
+void Pin(DeviceLibraries& device, std::span<const VkPipeline> libraries) {
+    for (const auto library : libraries) ++device.pinned[library];
+}
+
+void Unpin(DeviceLibraries& device, VkDevice handle, std::span<const VkPipeline> libraries) {
+    for (const auto library : libraries) {
+        const auto found = device.pinned.find(library);
+        if (--found->second == 0) device.pinned.erase(found);
+    }
+    while (PipelineBudget::Over()) {
+        std::map<Key, LibraryPart>* victimPart = nullptr;
+        std::map<Key, LibraryPart>::iterator victim;
+        for (auto& part : device.parts) {
+            for (auto it = part.begin(); it != part.end(); ++it) {
+                if (device.pinned.contains(it->second.handle)) continue;
+                if (victimPart == nullptr || it->second.used < victim->second.used) {
+                    victimPart = &part;
+                    victim = it;
+                }
+            }
+        }
+        if (victimPart == nullptr) return;
+        device.destroyPipeline(handle, victim->second.handle, nullptr);
+        victimPart->erase(victim);
+        PipelineBudget::CountEvicted();
+    }
+}
 
 struct LibraryStore {
     std::mutex mutex;
@@ -177,12 +212,27 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     static const bool backgroundLinking = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
     const bool optimize = backgroundLinking && context.pipelineLinkTimeOptimization;
     std::vector<VkPipeline> libraries;
+    struct Pins {
+        std::unique_lock<std::mutex>& lock;
+        DeviceLibraries& device;
+        VkDevice handle;
+        std::vector<VkPipeline>& libraries;
+        ~Pins() {
+            if (!lock.owns_lock()) lock.lock();
+            Unpin(device, handle, libraries);
+        }
+    } pins{lock, device, context.device, libraries};
+    const auto take = [&](VkPipeline library) {
+        ++device.pinned[library];
+        libraries.push_back(library);
+    };
     for (std::size_t part = 0; part < flags.size(); ++part) {
         if (part == 0 && mesh) continue;
         const auto key = Combined(*partKeys[part], *contextKeys[part]);
         auto& cache = device.parts[part];
         if (const auto found = cache.find(key); found != cache.end()) {
-            libraries.push_back(found->second);
+            found->second.used = PipelineBudget::Tick();
+            take(found->second.handle);
             continue;
         }
         if (const auto pending = device.building[part].find(key); pending != device.building[part].end()) {
@@ -190,7 +240,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             lock.unlock();
             const auto handle = other.get();
             lock.lock();
-            libraries.push_back(handle);
+            take(handle);
             continue;
         }
         std::promise<VkPipeline> building;
@@ -239,7 +289,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         }
         lock.lock();
         device.building[part].erase(key);
-        cache.emplace(key, handle);
+        cache.emplace(key, LibraryPart{handle, PipelineBudget::Charge(PipelineBudget::PipelineBytes(partWords[part])), PipelineBudget::Tick()});
         building.set_value(handle);
         if (optimize) {
             for (std::uint32_t stage = 0; stage < create.stageCount; ++stage) {
@@ -252,7 +302,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         }
         ++device.counters.built[part];
         if (underLock) ++device.counters.builtUnderLock[part];
-        libraries.push_back(handle);
+        take(handle);
     }
     if (partsOnly) return VK_NULL_HANDLE;
     PerformanceTimer timing("Vulkan.GraphicsPipelineLink");
@@ -272,7 +322,18 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         slot->destroy = device.destroyPipeline;
         *optimized = slot;
         const auto libraryLayout = fullLayout;
+        Pin(device, libraries);
         enqueue(store, context.device, [slot, linkContext = context, libraryLayout, libraries, &store, devicePointer = &device] {
+            struct Release {
+                LibraryStore& store;
+                DeviceLibraries& device;
+                VkDevice handle;
+                const std::vector<VkPipeline>& libraries;
+                ~Release() {
+                    std::lock_guard lock(store.mutex);
+                    Unpin(device, handle, libraries);
+                }
+            } release{store, *devicePointer, linkContext.device, libraries};
             if (slot->released.load()) return;
             VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
             linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
@@ -312,7 +373,7 @@ void ClearPipelineLibraries(VkDevice device) {
     if (found == store.devices.end()) return;
     auto& libraries = found->second;
     for (auto& part : libraries.parts) {
-        for (const auto& [key, handle] : part) libraries.destroyPipeline(device, handle, nullptr);
+        for (const auto& [key, entry] : part) libraries.destroyPipeline(device, entry.handle, nullptr);
     }
     for (const auto& [key, handle] : libraries.layouts) libraries.destroyLayout(device, handle, nullptr);
     for (const auto module : libraries.modules) libraries.destroyModule(device, module, nullptr);

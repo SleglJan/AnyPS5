@@ -49,6 +49,36 @@ private:
     bool previous;
 };
 
+class PipelineBudget {
+public:
+    static constexpr std::size_t BytesPerWord = 40;
+    static constexpr std::size_t MinimumPipelineBytes = std::size_t{64} << 10u;
+    static constexpr std::size_t MinimumBudgetBytes = std::size_t{512} << 20u;
+
+    class Charge {
+    public:
+        Charge() = default;
+        explicit Charge(std::size_t bytes);
+        Charge(Charge&& other) noexcept : bytes(std::exchange(other.bytes, 0)) {}
+        Charge& operator=(Charge&& other) noexcept;
+        ~Charge();
+        std::size_t Bytes() const { return bytes; }
+
+    private:
+        std::size_t bytes = 0;
+    };
+
+    static std::size_t PipelineBytes(std::size_t words) { return std::max(MinimumPipelineBytes, words * BytesPerWord); }
+    static std::size_t DefaultBudgetBytes();
+    static std::size_t BudgetBytes();
+    static void SetBudgetBytes(std::size_t bytes);
+    static std::size_t LiveBytes();
+    static bool Over() { return LiveBytes() > BudgetBytes(); }
+    static std::uint64_t Tick();
+    static void CountEvicted();
+    static std::uint64_t Evicted();
+};
+
 class CreationThread {
 public:
     static constexpr std::size_t RetainedBudgetBytes = std::size_t{1} << 30u;

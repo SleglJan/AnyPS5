@@ -570,6 +570,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         }
         for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
         _modules.clear();
+        std::size_t words = 0;
+        for (const auto& shader : shaders) words += shader.program->spirv.size();
+        const std::size_t handles = 1u + (secondChannel != VK_NULL_HANDLE ? 1u : 0u) + (backFaces != VK_NULL_HANDLE ? 1u : 0u);
+        charge = PipelineBudget::Charge(handles * PipelineBudget::PipelineBytes(words));
         timing.Mark("create");
         LogPipelineStatistics_nid_no_patch(context, pipeline);
     } catch (...) {
@@ -1071,12 +1075,13 @@ std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& st
         store.entries.push_back({context.device, context.bufferPool, hash, ownKey, pipeline, use});
         store.index[hash] = std::prev(store.entries.end());
         constexpr std::size_t bound = 1024;
-        while (store.entries.size() > bound) {
+        while (store.entries.size() > bound || PipelineBudget::Over()) {
             const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
             if (victim == store.entries.end()) break;
             store.index.erase(victim->hash);
             store.entries.erase(victim);
             ++store.evicted;
+            PipelineBudget::CountEvicted();
         }
     }
     building.set_value(pipeline);

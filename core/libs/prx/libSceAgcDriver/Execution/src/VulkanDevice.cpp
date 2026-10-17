@@ -251,12 +251,27 @@ struct ComputePipelineObjects {
     VkPipeline pipeline = VK_NULL_HANDLE;
     std::vector<std::uint32_t> setLayoutKey;
     std::shared_ptr<RecordUse> use;
+    PipelineBudget::Charge charge;
+    std::atomic<std::uint64_t> used{0};
     ~ComputePipelineObjects() {
         if (pipeline != VK_NULL_HANDLE) destroyPipeline(device, pipeline, nullptr);
         if (layout != VK_NULL_HANDLE) destroyLayout(device, layout, nullptr);
         if (module != VK_NULL_HANDLE) destroyModule(device, module, nullptr);
     }
 };
+
+void EvictComputePipelines(std::map<std::uint64_t, std::shared_ptr<ComputePipelineObjects>>& pipelines) {
+    while (PipelineBudget::Over()) {
+        auto victim = pipelines.end();
+        for (auto it = pipelines.begin(); it != pipelines.end(); ++it) {
+            if (it->second.use_count() != 1) continue;
+            if (victim == pipelines.end() || it->second->used.load(std::memory_order_relaxed) < victim->second->used.load(std::memory_order_relaxed)) victim = it;
+        }
+        if (victim == pipelines.end()) return;
+        pipelines.erase(victim);
+        PipelineBudget::CountEvicted();
+    }
+}
 
 constexpr std::uint64_t WorkgroupMemoryGranule = 1u << 20u;
 
@@ -4426,6 +4441,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
             if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) {
+                found->second->used.store(PipelineBudget::Tick(), std::memory_order_relaxed);
                 if (use != nullptr && found->second->use == nullptr) found->second->use = use;
                 else if (use == nullptr && found->second->use != nullptr) found->second->use->Mark();
                 return found->second;
@@ -4444,7 +4460,11 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         if (pipelineKey == 0) return built;
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
-            if (built != nullptr) built = state->computePipelines.try_emplace(pipelineKey, built).first->second;
+            if (built != nullptr) {
+                built = state->computePipelines.try_emplace(pipelineKey, built).first->second;
+                built->used.store(PipelineBudget::Tick(), std::memory_order_relaxed);
+                EvictComputePipelines(state->computePipelines);
+            }
             state->computePipelinesBuilding.erase(pipelineKey);
         }
         if (error != nullptr) building.set_exception(error);
@@ -4519,6 +4539,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         }, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline);
         objects->destroyModule(objects->device, objects->module, nullptr);
         objects->module = VK_NULL_HANDLE;
+        objects->charge = PipelineBudget::Charge(PipelineBudget::PipelineBytes(shader.spirv.size()));
         Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);
         const auto origin = CreationAhead::Active() ? 1u : GuestMemory::GpuMutex().HeldByThisThread() ? 2u : 0u;
         auto& creations = computeCreations();
@@ -4555,7 +4576,10 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     std::shared_ptr<ComputePipelineObjects> objects;
     if (pipelineKey != 0) {
         std::lock_guard pipelines(state->computePipelinesMutex);
-        if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) objects = found->second;
+        if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) {
+            objects = found->second;
+            objects->used.store(PipelineBudget::Tick(), std::memory_order_relaxed);
+        }
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& d = Dispatches();

@@ -112,21 +112,91 @@ CreationGate::Shared& CreationGate::State() {
     return shared;
 }
 
+namespace {
+
+std::uint64_t PhysicalMemoryBytes() {
+    std::uint64_t physical = 0;
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status)) physical = status.ullTotalPhys;
+#else
+    const auto pages = sysconf(_SC_PHYS_PAGES);
+    const auto pageSize = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && pageSize > 0) physical = static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
+#endif
+    return physical;
+}
+
+struct PipelineBudgetState {
+    std::atomic<std::size_t> live{0};
+    std::atomic<std::size_t> budget{0};
+    std::atomic<std::uint64_t> tick{0};
+    std::atomic<std::uint64_t> evicted{0};
+};
+
+PipelineBudgetState& PipelineBudgetShared() {
+    static auto* state = new PipelineBudgetState;
+    return *state;
+}
+
+}
+
 std::size_t CreationGate::DefaultBudgetBytes() {
     static const std::size_t budget = [] {
-        std::uint64_t physical = 0;
-#ifdef _WIN32
-        MEMORYSTATUSEX status{};
-        status.dwLength = sizeof(status);
-        if (GlobalMemoryStatusEx(&status)) physical = status.ullTotalPhys;
-#else
-        const auto pages = sysconf(_SC_PHYS_PAGES);
-        const auto pageSize = sysconf(_SC_PAGESIZE);
-        if (pages > 0 && pageSize > 0) physical = static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
-#endif
+        const auto physical = PhysicalMemoryBytes();
         return static_cast<std::size_t>(physical != 0 ? physical / 16u : std::uint64_t{4} << 30u);
     }();
     return budget;
+}
+
+PipelineBudget::Charge::Charge(std::size_t bytes) : bytes(bytes) {
+    PipelineBudgetShared().live.fetch_add(bytes, std::memory_order_relaxed);
+}
+
+PipelineBudget::Charge& PipelineBudget::Charge::operator=(Charge&& other) noexcept {
+    if (this != &other) {
+        PipelineBudgetShared().live.fetch_sub(bytes, std::memory_order_relaxed);
+        bytes = std::exchange(other.bytes, 0);
+    }
+    return *this;
+}
+
+PipelineBudget::Charge::~Charge() {
+    PipelineBudgetShared().live.fetch_sub(bytes, std::memory_order_relaxed);
+}
+
+std::size_t PipelineBudget::DefaultBudgetBytes() {
+    static const std::size_t budget = [] {
+        const auto physical = PhysicalMemoryBytes();
+        return std::max(MinimumBudgetBytes, static_cast<std::size_t>(physical != 0 ? physical / 32u : std::uint64_t{2} << 30u));
+    }();
+    return budget;
+}
+
+std::size_t PipelineBudget::BudgetBytes() {
+    const auto set = PipelineBudgetShared().budget.load(std::memory_order_relaxed);
+    return set != 0 ? set : DefaultBudgetBytes();
+}
+
+void PipelineBudget::SetBudgetBytes(std::size_t bytes) {
+    PipelineBudgetShared().budget.store(bytes, std::memory_order_relaxed);
+}
+
+std::size_t PipelineBudget::LiveBytes() {
+    return PipelineBudgetShared().live.load(std::memory_order_relaxed);
+}
+
+std::uint64_t PipelineBudget::Tick() {
+    return PipelineBudgetShared().tick.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+void PipelineBudget::CountEvicted() {
+    PipelineBudgetShared().evicted.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t PipelineBudget::Evicted() {
+    return PipelineBudgetShared().evicted.load(std::memory_order_relaxed);
 }
 
 std::size_t CreationGate::RamSideBytes() {
