@@ -162,7 +162,7 @@ private:
     std::uint64_t vanishedCopies = 0;
 };
 
-void PublishForCompletionSignal(SignalKind kind);
+void PublishForCompletionSignal();
 void PublishBeforeCompletionSignal(SignalKind kind);
 
 }

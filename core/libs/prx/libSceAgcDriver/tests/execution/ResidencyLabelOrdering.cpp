@@ -182,7 +182,7 @@ void AppendDraw(Commands& commands, std::uint64_t base, const Rect& rect, const 
     DrawSubmit::DrawAuto(commands, static_cast<std::uint32_t>(FullScreen.size()));
 }
 
-enum class Signal { ReleaseMem, WriteData };
+enum class Signal { ReleaseMem, WriteData, FlushThenWriteData };
 
 bool AwaitLabel(const volatile std::uint32_t* label, std::uint32_t value) {
     for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10); std::chrono::steady_clock::now() < deadline;) {
@@ -215,8 +215,12 @@ void ReadAfterSignal(Pages& image, Signal signal, std::uint32_t seed, std::uint6
     Commands commands;
     AppendDraw(commands, image.Address(), drawn, vertices);
     const auto labelAddress = labels.Address();
-    if (signal == Signal::ReleaseMem) commands.Append(0x49u, {0x514u, (1u << 29u), NewPath::Low(labelAddress), NewPath::High(labelAddress), seed, 0u, 0u});
-    else commands.WriteData(labelAddress, {seed});
+    if (signal == Signal::ReleaseMem) {
+        commands.Append(0x49u, {0x514u, (1u << 29u), NewPath::Low(labelAddress), NewPath::High(labelAddress), seed, 0u, 0u});
+    } else {
+        if (signal == Signal::FlushThenWriteData) commands.Append(0x46u, {0x410u});
+        commands.WriteData(labelAddress, {seed});
+    }
     std::string failure;
     bool signalled = false;
     std::vector<std::uint32_t> read;
@@ -235,7 +239,7 @@ void ReadAfterSignal(Pages& image, Signal signal, std::uint32_t seed, std::uint6
     }
     Expect(failure.empty(), what + ": the submission failed: " + failure);
     Expect(signalled, what + ": the completion label never reached guest memory");
-    if (signalled) Verify(read, drawn, seed, what + ", read directly once the label was seen");
+    if (signalled) Verify(read, signal == Signal::WriteData ? Rect{0, 0, 0, 0} : drawn, seed, what + ", read directly once the label was seen");
 }
 
 template <typename Pages>
@@ -323,7 +327,12 @@ void PrivateReleaseMem() {
 
 void PrivateWriteData() {
     PrivatePages image(static_cast<std::uint32_t>((TargetBytes() + PageBytes - 1u) / PageBytes));
-    ReadAfterSignal(image, Signal::WriteData, 6u, 0u, "a render target in private memory, then a WRITE_DATA label");
+    ReadAfterSignal(image, Signal::WriteData, 6u, 0u, "a render target in private memory, then a bare WRITE_DATA label, which publishes nothing");
+}
+
+void PrivateFlushWriteData() {
+    PrivatePages image(static_cast<std::uint32_t>((TargetBytes() + PageBytes - 1u) / PageBytes));
+    ReadAfterSignal(image, Signal::FlushThenWriteData, 12u, 0u, "a render target in private memory, then a PS partial flush and a WRITE_DATA label");
 }
 
 void SharedReleaseMem() {
@@ -345,7 +354,8 @@ int main() {
     return DrawSubmit::Main("residency label ordering", [] {
         DrawSubmit::Cases({
             {"private memory, RELEASE_MEM", PrivateReleaseMem},
-            {"private memory, WRITE_DATA", PrivateWriteData},
+            {"private memory, bare WRITE_DATA", PrivateWriteData},
+            {"private memory, PS partial flush then WRITE_DATA", PrivateFlushWriteData},
             {"shared view, RELEASE_MEM", SharedReleaseMem},
             {"resident shared view, RELEASE_MEM", ResidentSharedReleaseMem},
             {"view-path storage image in private memory, RELEASE_MEM", StorageImageKeptOnViewPrivate},
