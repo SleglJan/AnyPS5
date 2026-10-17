@@ -19,6 +19,7 @@ bool HotResident(std::uint64_t address) {
 
 void Run(MirrorReader& reader) {
     PrivatePages pages(HotPages);
+    GuestArena::GuestArenaPinWritable_nid_postfix(pages.Data(), pages.Bytes());
     Fill(pages.Words(), HotPages, Tag);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     bool stored = false;
@@ -30,7 +31,7 @@ void Run(MirrorReader& reader) {
     ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read that admits the pages");
     std::uint32_t hot = 0;
     for (std::uint32_t page = 0; page < HotPages; ++page) hot += HotResident(pages.Address(std::uint64_t{page} * PageBytes)) ? 1u : 0u;
-    Expect(hot == HotPages, "hot refresh: " + std::to_string(hot) + " of " + std::to_string(HotPages) + " private pages admitted by a read are kept current from the write tracking");
+    Expect(hot == HotPages, "hot refresh: " + std::to_string(hot) + " of " + std::to_string(HotPages) + " pinned private pages admitted by a read are kept current from the write tracking");
     const auto quiet = Counts();
     for (std::uint32_t round = 0; round < 3; ++round) ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: a read with no CPU store since the last one");
     const auto afterQuiet = Counts();
@@ -48,6 +49,7 @@ void Run(MirrorReader& reader) {
     ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read after the refresh");
     Expect(Counts().copiedInBytes == settled.copiedInBytes, "hot refresh: a refreshed page was copied again with no CPU store");
     Settle();
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(pages.Data(), pages.Bytes());
 }
 
 }

@@ -315,7 +315,7 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
             continue;
         }
         ResidencyMask guarded = 0;
-        if (id && pages[*id].shared && !aliasKeys.contains(page)) {
+        if (id && dirtyable(pages[*id]) && !aliasKeys.contains(page)) {
             auto& record = pages[*id];
             const auto adding = static_cast<ResidencyMask>(mask & ~record.accessMask);
             if (adding != 0) {
@@ -530,6 +530,42 @@ void ResidencyManager::WriteBackAll() {
     accessGuards.clear();
 }
 
+void ResidencyManager::settleImports() {
+    std::vector<std::uint64_t> settledPages;
+    for (auto it = unsettledImports.begin(); it != unsettledImports.end();) {
+        const auto id = find(*it);
+        if (id && !pages[*id].settleIssued) {
+            const auto newest = device.Newest();
+            if (newest != pages[*id].settle) {
+                pages[*id].settle = newest;
+                pages[*id].settleIssued = true;
+            }
+        }
+        if (id && (!pages[*id].settleIssued || !settled(pages[*id].settle))) {
+            ++it;
+            continue;
+        }
+        if (id) settledPages.push_back(*it);
+        it = unsettledImports.erase(it);
+    }
+    if (settledPages.empty()) return;
+    for (const auto page : settledPages) device.CollectWrites(page, 1);
+    applyQueued();
+    for (const auto page : settledPages) {
+        const auto id = find(page);
+        if (!id) continue;
+        pages[*id].importSettled = true;
+        ++counts.importsSettled;
+        unmarkHot(page);
+        rearm(*id);
+    }
+}
+
+bool ResidencyManager::ImportSettled(std::uint64_t page) const {
+    const auto id = find(page);
+    return id && pages[*id].importSettled;
+}
+
 bool ResidencyManager::settled(const ResidencyToken& token) {
     return TokenEmpty(token) || device.Reached(token);
 }
@@ -624,6 +660,11 @@ std::uint32_t ResidencyManager::newPage(std::uint64_t page, MirrorSlot slot, con
     record.gpuWritable = import.gpuWritable;
     record.cpuWritable = import.cpuWritable;
     record.shared = import.section != 0;
+    record.importSettled = record.shared;
+    if (!record.shared) {
+        record.settle = device.Newest();
+        unsettledImports.insert(page);
+    }
     record.importSerial = import.serial;
     record.guarded = guarded;
     {
@@ -652,6 +693,7 @@ void ResidencyManager::forget(std::uint32_t id) {
     pages[id].dirty = 0;
     publishDirty(page, 0);
     unmarkHot(page);
+    unsettledImports.erase(page);
     eraseUnsettled(writers, page, UnsettledWriter);
     if (const auto key = aliasKeys.find(page); key != aliasKeys.end()) {
         canonical.erase(key->second);
@@ -1063,6 +1105,7 @@ bool ResidencyManager::Advance() {
 }
 
 void ResidencyManager::Apply() {
+    settleImports();
     applyQueued();
     retireReached();
     settleAccessGuards();
@@ -1302,10 +1345,11 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
         }
         recordWriteBacks(writeBacks);
         bool guarded = false;
-        if (import.cpuWritable) guarded = device.Guard(page);
+        if (import.cpuWritable && import.section != 0) guarded = device.Guard(page);
         const auto id = newPage(page, *slot, import, guarded);
         if (import.cpuWritable && !guarded) {
-            ++counts.unguardable;
+            if (import.section != 0) ++counts.unguardable;
+            else ++counts.unsettledGuards;
             markHot(page, Epoch());
         }
         fills.push_back({id});
@@ -1400,7 +1444,7 @@ void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes
         }
         const auto mask = RunMask(fill.begin, fill.end);
         const auto adding = static_cast<ResidencyMask>(mask & ~page.accessMask);
-        if (!page.shared || aliasKeys.contains(page.index)) {
+        if (!dirtyable(page) || aliasKeys.contains(page.index)) {
             unguardable.push_back(fill.id);
             stored.push_back(fill);
             continue;
@@ -1482,6 +1526,11 @@ void ResidencyManager::rearm(std::uint32_t id) {
     auto& page = pages[id];
     if (!page.cpuWritable || page.guarded) return;
     if (hotResident.contains(page.index)) return;
+    if (!page.importSettled) {
+        ++counts.unsettledGuards;
+        markHot(page.index, Epoch());
+        return;
+    }
     if (device.Guard(page.index)) {
         page.guarded = true;
         return;
@@ -1592,6 +1641,7 @@ void ResidencyManager::RefreshHot() {
 }
 
 void ResidencyManager::Retire() {
+    settleImports();
     applyQueued();
     retireReached();
     settleAccessGuards();
@@ -1611,7 +1661,7 @@ std::optional<MirrorSlot> ResidencyManager::Slot(std::uint64_t page) {
 std::optional<MirrorSlot> ResidencyManager::WriteSlot(std::uint64_t page) {
     applyDrops();
     const auto id = find(page);
-    if (!id || !pages[*id].shared) return std::nullopt;
+    if (!id || !dirtyable(pages[*id])) return std::nullopt;
     return pages[*id].slot;
 }
 

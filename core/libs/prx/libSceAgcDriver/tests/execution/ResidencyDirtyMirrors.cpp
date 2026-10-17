@@ -492,24 +492,59 @@ void UnmapDirtyPage(MirrorReader& reader) {
     Expect(gpuStale == 0u, what + ": a dispatch read " + std::to_string(gpuStale) + " non-zero words from the new section");
 }
 
+bool ImportSettled(std::uint64_t address) {
+    bool settled = false;
+    Locked([&] { settled = Residency().Manager().ImportSettled(PageOf(address)); });
+    return settled;
+}
+
 void PrivatePagesDemote(MirrorReader& reader) {
     PrivatePages pages(ReadPages);
     Model model(pages.Address(), pages.Bytes(), 12);
     Settle();
-    const std::string what = "private pages";
+    const std::string what = "private pages before their imports settled";
     Expect(!Resident(model.Address(2)), what + ": a private page has a mirror before any use");
-    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": the read that admits the pages");
-    Expect(Resident(model.Address(2)), what + ": page 2 was not admitted by the read");
-    Expect(!AgcDriver::GuestMemory::WriteGuarded(PageOf(model.Address(2))) && !AgcDriver::GuestMemory::AccessGuarded(PageOf(model.Address(2))), what + ": an admitted private page is guarded");
+    Use(model.Address(0), ReadPages);
+    Expect(Resident(model.Address(2)), what + ": page 2 was not admitted by the use");
+    Expect(!ImportSettled(model.Address(2)), what + ": page 2's import settled with no submission after its admission");
+    Expect(!AgcDriver::GuestMemory::WriteGuarded(PageOf(model.Address(2))) && !AgcDriver::GuestMemory::AccessGuarded(PageOf(model.Address(2))), what + ": an admitted private page is guarded before its import settled");
     const auto before = Counts();
     Store(model, 2, what);
     const auto after = Counts();
     Expect(!Resident(model.Address(2)) && after.demoted > before.demoted, what + ": a write grant into a private page did not demote it (" + std::to_string(after.demoted - before.demoted) + " demotions)");
-    Expect(DirtyMask(model.Address(2)) == 0u && after.dirty == before.dirty, what + ": a private page is dirty in its mirror");
+    Expect(DirtyMask(model.Address(2)) == 0u && after.dirty == before.dirty, what + ": an unsettled private page is dirty in its mirror");
     Expect(!AgcDriver::GuestMemory::WriteGuarded(PageOf(model.Address(2))) && !AgcDriver::GuestMemory::AccessGuarded(PageOf(model.Address(2))), what + ": the stored private page is guarded");
     Expect(ReadableProtection(Protection(model.Address(2))), what + ": the stored private page is not readable (protection " + Hex(Protection(model.Address(2))) + ")");
     ExpectBytes(model, 2, what + ": the test's own read of the stored page");
     ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the store");
+}
+
+void SettledPrivatePagesDirty(MirrorReader& reader) {
+    PrivatePages pages(ReadPages);
+    Model model(pages.Address(), pages.Bytes(), 14);
+    Settle();
+    const std::string what = "private pages after their imports settled";
+    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": the read that admits the pages");
+    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a read issued after the admission");
+    Settle();
+    Expect(ImportSettled(model.Address(2)), what + ": page 2's import did not settle after a submission issued after its admission completed");
+    Expect(AgcDriver::GuestMemory::WriteGuarded(PageOf(model.Address(2))), what + ": the settled CPU-writable page 2 has no write guard");
+    const auto before = Counts();
+    Expect(before.importsSettled != 0, what + ": no import was counted as settled");
+    Store(model, 2, what);
+    ExpectResident(model, 2, 1, what + ": after a dispatch stored into page 2");
+    ExpectDirtySubpages(model, 2, WholePage, what + ": before the CPU read");
+    ExpectClean(model, 3, what + ": a page the GPU did not store into");
+    const auto stored = Counts();
+    Expect(stored.demoted == before.demoted && stored.writtenBackBytes == before.writtenBackBytes, what + ": the store demoted " + std::to_string(stored.demoted - before.demoted) + " pages and wrote back " + std::to_string(stored.writtenBackBytes - before.writtenBackBytes) + " bytes before any CPU read");
+    ExpectBytes(model, 2, what + ": the test's own read of page 2 after the store");
+    const auto read = Counts();
+    Expect(read.writtenBackBytes == stored.writtenBackBytes + PageBytes, what + ": the CPU read wrote back " + std::to_string(read.writtenBackBytes - stored.writtenBackBytes) + " bytes, expected the page's 16 dirty subpages");
+    ExpectClean(model, 2, what + ": after the CPU read wrote page 2 back");
+    model.Store(2, 7 * WordsPerSubpage, CpuStored + 2u);
+    model.Store(5, 0, CpuStored + 3u);
+    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the CPU stored into the guarded pages 2 and 5");
+    ExpectResident(model, 2, 1, what + ": after the CPU stores");
 }
 
 void EvictionWritesBack(MirrorReader& reader) {
@@ -576,6 +611,7 @@ int main() {
                  {"unmap of a dirty view", UnmapDirtyView},
                  {"unmap of a dirty page", UnmapDirtyPage},
                  {"private pages", PrivatePagesDemote},
+                 {"settled private pages", SettledPrivatePagesDirty},
                  {"eviction", EvictionWritesBack},
              }) {
             try {

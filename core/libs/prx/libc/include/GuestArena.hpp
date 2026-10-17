@@ -36,7 +36,7 @@ bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address);
 bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address);
 void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes);
 void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes);
-bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection);
+bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection, std::uintptr_t* end = nullptr);
 bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaCollectArmedWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);
 bool GuestArenaCollectFreshWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear);

@@ -145,6 +145,8 @@ struct ResidencyCounts {
     std::uint64_t writtenBackBytes = 0;
     std::uint64_t touchAdmitted = 0;
     std::uint64_t touchDeferred = 0;
+    std::uint64_t importsSettled = 0;
+    std::uint64_t unsettledGuards = 0;
     std::uint64_t aliasDemoted = 0;
     std::uint64_t recordRefreshed = 0;
     std::uint64_t hotRefreshed = 0;
@@ -226,6 +228,7 @@ public:
     std::uint64_t Epoch() const { return epoch.load(std::memory_order_relaxed); }
     bool Hot(std::uint64_t page) const { return hot.contains(page); }
     bool HotResident(std::uint64_t page) const { return hotResident.contains(page); }
+    bool ImportSettled(std::uint64_t page) const;
     std::uint64_t BudgetBytes() { return budgetBytes(); }
     bool FullResidency() { return fullResidency(); }
     ResidencyCounts Counts() const;
@@ -259,12 +262,15 @@ private:
         bool gpuWritable = false;
         bool cpuWritable = false;
         bool shared = false;
+        bool importSettled = false;
         bool guarded = false;
         bool accessGuarded = false;
         ResidencyMask accessMask = 0;
         std::uint64_t importSerial = 0;
         std::uint64_t touchFrame = 0;
         ResidencyToken pin{};
+        ResidencyToken settle{};
+        bool settleIssued = false;
     };
 
     struct Cooling {
@@ -321,6 +327,8 @@ private:
     std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false, std::vector<std::uint64_t>* reserved = nullptr);
     void writeBackDirty(std::span<const std::uint32_t> ids);
     void settleAccessGuards();
+    void settleImports();
+    static bool dirtyable(const Page& page) { return page.shared || page.importSettled; }
     void admitEager();
     void admitReservedTouches();
     void rearm(std::uint32_t id);
@@ -399,6 +407,7 @@ private:
     std::deque<std::pair<std::uint64_t, std::uint64_t>> hotCooling;
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
+    std::unordered_set<std::uint64_t> unsettledImports;
     mutable std::shared_mutex ownedMutex;
     std::unordered_map<std::uint64_t, Owned> owned;
     std::unordered_set<std::uint64_t> staleOwned;

@@ -611,9 +611,10 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
         }
         const auto base = reinterpret_cast<std::uintptr_t>(memory.BaseAddress);
         if (memory.RegionSize > std::numeric_limits<std::uintptr_t>::max() - base || base + memory.RegionSize <= cursor) return false;
-        const auto regionEnd = base + memory.RegionSize;
         std::uint32_t logicalProtection = memory.Protect;
-        GuestArena::GuestArenaProtection_nid_postfix(cursor, &logicalProtection);
+        std::uintptr_t logicalEnd = ~std::uintptr_t{0};
+        GuestArena::GuestArenaProtection_nid_postfix(cursor, &logicalProtection, &logicalEnd);
+        const auto regionEnd = std::min<std::uintptr_t>(base + memory.RegionSize, logicalEnd);
         const auto protection = logicalProtection & 0xffu;
         const bool committed = memory.State == MEM_COMMIT && ((memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 || GuestArena::GuestArenaAccessGuarded_nid_postfix(cursor));
         const bool readable = committed && readableProtection(protection);

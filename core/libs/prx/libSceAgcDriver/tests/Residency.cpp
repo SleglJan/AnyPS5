@@ -279,6 +279,7 @@ public:
     }
 
     bool Guard(std::uint64_t page) override {
+        Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "a write guard armed on private " + Name(page) + " before its import settled");
         if (guardRefused.contains(page)) return false;
         armed[imports[page].group] = true;
         return true;
@@ -288,7 +289,10 @@ public:
         for (const auto page : pages) armed[imports[page].group] = false;
     }
 
-    bool GuardAccess(std::uint64_t page, ResidencyMask) override { return !guardRefused.contains(page); }
+    bool GuardAccess(std::uint64_t page, ResidencyMask) override {
+        Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "an access guard armed on private " + Name(page) + " before its import settled");
+        return !guardRefused.contains(page);
+    }
 
     void UnguardAccess(std::uint64_t page) override { accessUnguarded.insert(page); }
 
@@ -758,6 +762,8 @@ void GuardedPagesRefreshAfterFaults() {
     scope = "guarded pages refresh after faults";
     Fixture fixture(4, 1);
     fixture.gpu.imports[BasePage + 1].attributes.cpuWritable = false;
+    fixture.Share(BasePage + 0);
+    fixture.Share(BasePage + 1);
     fixture.Use(0, BasePage + 0, 2);
     fixture.gpu.Drain();
     Expect(fixture.Armed(BasePage + 0), "a CPU-writable page is guarded before its copy-in");
@@ -781,6 +787,7 @@ void GuardedPagesRefreshAfterFaults() {
 void OrderingPointsReportQueuedWork() {
     scope = "ordering points report queued work";
     Fixture fixture(4, 1);
+    fixture.Share(BasePage + 0);
     fixture.Use(0, BasePage + 0);
     fixture.gpu.Drain();
     const auto epoch = fixture.manager->Epoch();
@@ -799,6 +806,8 @@ void OrderingPointsReportQueuedWork() {
 void HotPagesStayAndCool() {
     scope = "hot pages stay resident and cool";
     Fixture fixture(4, 1, 2, 2);
+    fixture.Share(BasePage + 0);
+    fixture.Share(BasePage + 2);
     fixture.Use(0, BasePage + 0);
     fixture.Use(0, BasePage + 2);
     fixture.gpu.Drain();
@@ -843,6 +852,8 @@ void UnguardablePages() {
     scope = "unguardable pages";
     Fixture fixture(8, 1);
     fixture.gpu.guardRefused.insert(BasePage + 3);
+    fixture.Share(BasePage + 3);
+    fixture.Share(BasePage + 4);
     fixture.Use(0, BasePage + 3, 2);
     Expect(fixture.manager->Slot(BasePage + 3) && fixture.manager->Slot(BasePage + 4), "a page whose guard cannot be armed is admitted");
     Expect(fixture.manager->HotResident(BasePage + 3) && !fixture.Armed(BasePage + 3) && !fixture.manager->HotResident(BasePage + 4), "and kept current from the write tracking instead of a guard");
@@ -1056,18 +1067,46 @@ void WriteBackAllAtTeardown() {
 }
 
 void GrantDemotesPrivatePage() {
-    scope = "a grant demotes a private page";
+    scope = "a grant demotes a private page whose import has not settled";
     Fixture fixture(4, 1);
     fixture.Use(0, BasePage + 0, 2);
-    fixture.gpu.Drain();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0) && fixture.manager->HotResident(BasePage + 0), "a private page admitted before a submission after it completed is unguarded and kept current from the write tracking");
     const auto demoted = fixture.manager->Counts().demoted;
     fixture.Grant(0, BasePage + 0, 0x0001);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0001, 31, true);
     Expect(!fixture.manager->Slot(BasePage + 0) && fixture.manager->Counts().demoted == demoted + 1, "a private page leaves residency before the store");
     Expect(fixture.manager->Slot(BasePage + 1).has_value(), "the page beside it stays");
-    Expect(fixture.manager->Counts().dirty == 0, "a private page is never dirty in a mirror");
+    Expect(fixture.manager->Counts().dirty == 0, "an unsettled private page is never dirty in a mirror");
     fixture.gpu.Drain();
     Expect(fixture.Stored(BasePage + 0, 0) == 31, "the store went to guest memory");
+}
+
+void SettledPrivatePageKeepsDirtyMirror() {
+    scope = "a settled private page is guarded and keeps a granted store in its mirror";
+    Fixture fixture(4, 1);
+    fixture.Use(0, BasePage + 0, 2);
+    fixture.manager->Apply();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0), "the import is not settled while the submission issued after the admission runs");
+    fixture.gpu.Drain();
+    Expect(!fixture.manager->ImportSettled(BasePage + 0) && !fixture.Armed(BasePage + 0), "a completed submission is not seen before an ordering point");
+    fixture.manager->Apply();
+    Expect(fixture.manager->ImportSettled(BasePage + 0) && fixture.manager->ImportSettled(BasePage + 1), "the ordering point after the submission completed settles both imports");
+    Expect(fixture.Armed(BasePage + 0) && !fixture.manager->HotResident(BasePage + 0), "the settled CPU-writable page is guarded, no longer kept current from the write tracking");
+    Expect(fixture.manager->Counts().importsSettled == 2, "two imports settled, not " + std::to_string(fixture.manager->Counts().importsSettled));
+    const auto demoted = fixture.manager->Counts().demoted;
+    fixture.Grant(0, BasePage + 0, 0x0001);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0001, 31, true);
+    Expect(fixture.manager->Slot(BasePage + 0).has_value() && fixture.manager->Counts().demoted == demoted, "the settled private page stays resident");
+    Expect(fixture.manager->Dirty(BasePage + 0) == 0x0001, "the store stays dirty in its mirror");
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 0, 0) == 0 && fixture.gpu.writtenBack.empty(), "the store has not reached guest memory before a CPU read");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), 16);
+    Expect(fixture.Stored(BasePage + 0, 0) == 31 && fixture.manager->Dirty(BasePage + 0) == 0, "a CPU read writes the store back");
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0002, 41);
+    Expect(fixture.gpu.faults == 1, "a CPU store into the guarded private page faults");
+    fixture.manager->Prepare();
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0002, 41);
+    fixture.gpu.Drain();
 }
 
 void GrantThroughAliasDemotesMirror() {
@@ -1603,7 +1642,7 @@ struct Stress {
             const bool tracked = fixture.gpu.armed[group(page)] || fixture.manager->HotResident(page);
             Expect(!fixture.gpu.guardRefused.contains(page) || !attributes.cpuWritable || tracked, Name(page) + " resident while its guard was refused and its writes are not tracked");
             if (attributes.cpuWritable) Expect(tracked, "CPU-writable " + Name(page) + " resident with neither an armed guard nor write tracking after " + name);
-            if (attributes.section == 0) Expect(fixture.manager->Dirty(page) == 0, "private " + Name(page) + " dirty in its mirror after " + name);
+            if (attributes.section == 0 && !fixture.manager->ImportSettled(page)) Expect(fixture.manager->Dirty(page) == 0, "private " + Name(page) + " dirty in its mirror before its import settled, after " + name);
             ++residentPerGroup[group(page)];
         }
         for (const auto& [backing, count2] : residentPerGroup) Expect(count2 == 1, "two aliases of one backing resident");
@@ -1801,6 +1840,7 @@ void RandomSequences() {
         total.cooled += counts.cooled;
         total.unguardable += counts.unguardable;
         total.aliasSkipped += counts.aliasSkipped;
+        total.importsSettled += counts.importsSettled;
         total.waits += counts.waits;
         total.writtenBackBytes += counts.writtenBackBytes;
         total.chunksReleased += counts.chunksReleased;
@@ -1813,7 +1853,7 @@ void RandomSequences() {
         static_cast<unsigned long long>(total.cooled), static_cast<unsigned long long>(total.unguardable), static_cast<unsigned long long>(total.aliasSkipped), static_cast<unsigned long long>(total.waits),
         static_cast<unsigned long long>(total.writtenBackBytes >> 10), static_cast<unsigned long long>(total.chunksReleased), static_cast<unsigned long long>(mirrorReads), static_cast<unsigned long long>(importReads));
     Expect(total.evicted > 0 && total.deferred > 0 && total.demoted > 0 && total.refreshed > 0 && total.writtenBackBytes > 0 && total.chunksReleased > 0 && mirrorReads > 0 && importReads > 0, "the sequences exercise eviction, deferral, demotion, refresh, write-back, chunk release and both read paths");
-    Expect(total.faults > 0 && total.hot > 0 && total.cooled > 0 && total.unguardable > 0 && total.aliasSkipped > 0, "the sequences exercise faults, hot pages, cooling, refused guards and aliases");
+    Expect(total.faults > 0 && total.hot > 0 && total.cooled > 0 && total.unguardable > 0 && total.aliasSkipped > 0 && total.importsSettled > 0, "the sequences exercise faults, hot pages, cooling, refused guards, aliases and settled private imports");
 }
 
 }
@@ -1838,6 +1878,7 @@ int main() {
         CpuReadSettledWithoutLock();
         WriteBackAllAtTeardown();
         GrantDemotesPrivatePage();
+        SettledPrivatePageKeepsDirtyMirror();
         GrantThroughAliasDemotesMirror();
         TouchedPagesAdmitted();
         TouchedPagesTakeEvictedSlotsWhenTheyRetire();

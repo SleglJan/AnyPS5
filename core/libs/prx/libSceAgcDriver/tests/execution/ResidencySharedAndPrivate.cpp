@@ -28,8 +28,8 @@ void SharedViewsAdmittedEagerly(MirrorReader& reader) {
     Settle();
 }
 
-void PrivatePagesNeverGuarded(MirrorReader& reader) {
-    const std::string what = "a bounded store into private pages";
+void UnsettledPrivatePagesUnguarded(MirrorReader& reader) {
+    const std::string what = "a bounded store into private pages before their imports settled";
     PrivatePages pages(2);
     Fill(pages.Words(), 2, 11);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
@@ -42,7 +42,7 @@ void PrivatePagesNeverGuarded(MirrorReader& reader) {
         if (protection == PAGE_READWRITE) continue;
         if (guarded++ == 0u) first = "subpage " + std::to_string(subpage) + " has protection " + Hex(protection);
     }
-    Expect(guarded == 0u, what + ": " + std::to_string(guarded) + " subpages are protected after the store, first " + first + "; private pages are never guarded");
+    Expect(guarded == 0u, what + ": " + std::to_string(guarded) + " subpages are protected after the store, first " + first + "; private pages are not guarded before their imports settled");
     AgcDriver::GuestMemory::FlushGpuWrites(pages.Address(), PageBytes);
     std::uint32_t wrong = 0;
     for (std::uint32_t word = 0; word < WordsPerPage; ++word) {
@@ -56,7 +56,7 @@ void PrivatePagesNeverGuarded(MirrorReader& reader) {
 
 void Run(MirrorReader& reader) {
     SharedViewsAdmittedEagerly(reader);
-    PrivatePagesNeverGuarded(reader);
+    UnsettledPrivatePagesUnguarded(reader);
 }
 
 }

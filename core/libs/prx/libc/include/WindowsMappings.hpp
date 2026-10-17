@@ -66,6 +66,7 @@ public:
                     invalidate(*mapped->second.page);
                     dropGuard(*mapped->second.page);
                 }
+                reprotectPrivate(cursor, stop, protection);
                 DWORD previous;
                 if (!VirtualProtect(reinterpret_cast<void*>(cursor), stop - cursor, protection, &previous)) fail("protect guest memory");
                 cursor = stop;
@@ -159,19 +160,43 @@ public:
             invalidate(*it->second.page);
             dropGuard(*it->second.page);
         }
+        reprotectPrivate(address, address + bytes, protection);
     }
 
     bool Guard(std::uintptr_t address, std::size_t bytes) {
         if (address % guardBytes != 0 || bytes % guardBytes != 0) throw std::invalid_argument("guest write guards cover whole 64 KiB pages");
         std::lock_guard lock(mutex);
         std::vector<std::shared_ptr<SharedPage>> pages;
+        std::vector<std::uintptr_t> privates;
         for (auto piece = address; piece < address + bytes; piece += pageBytes) {
             const auto view = views.find(piece);
-            if (view == views.end() || view->second.resident || view->second.page->pins != 0) return false;
+            if (view == views.end()) {
+                if (!guardablePrivate(piece)) {
+                    prunePrivate(privates);
+                    return false;
+                }
+                privates.push_back(piece);
+                continue;
+            }
+            if (view->second.resident || view->second.page->pins != 0) {
+                prunePrivate(privates);
+                return false;
+            }
             for (const auto alias : view->second.page->aliases) {
-                if (views.at(alias).hostWrites != 0) return false;
+                if (views.at(alias).hostWrites != 0) {
+                    prunePrivate(privates);
+                    return false;
+                }
             }
             pages.push_back(view->second.page);
+        }
+        for (const auto piece : privates) {
+            auto& page = privatePieces.at(piece);
+            page.guarded = true;
+            const auto arming = static_cast<std::uint8_t>(allSubpages & ~page.armed & ~page.accessGuarded);
+            if (!writable(page.protection) || arming == 0) continue;
+            protectSubpages(piece, arming, readOnly(page.protection), "arm a private guest write guard");
+            page.armed |= arming;
         }
         for (const auto& page : pages) {
             page->guarded = true;
@@ -189,12 +214,19 @@ public:
     void Unguard(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < address + bytes; ++it) it->second.page->guarded = false;
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < address + bytes;) {
+            it->second.guarded = false;
+            it = pruned(it);
+        }
     }
 
     bool IsGuarded(std::uintptr_t address) {
         std::lock_guard lock(mutex);
-        const auto view = views.find(address & ~(pageBytes - 1));
-        return view != views.end() && view->second.page->guarded;
+        const auto base = address & ~(pageBytes - 1);
+        const auto view = views.find(base);
+        if (view != views.end()) return view->second.page->guarded;
+        const auto piece = privatePieces.find(base);
+        return piece != privatePieces.end() && piece->second.guarded;
     }
 
     bool IsView(std::uintptr_t address) {
@@ -207,13 +239,36 @@ public:
         std::lock_guard lock(mutex);
         const auto end = address + bytes;
         std::vector<std::pair<std::shared_ptr<SharedPage>, std::uint8_t>> pages;
+        std::vector<std::uintptr_t> privates;
         for (auto piece = address & ~(pageBytes - 1); piece < end; piece += pageBytes) {
             const auto view = views.find(piece);
-            if (view == views.end() || view->second.resident || view->second.page->pins != 0) return false;
+            if (view == views.end()) {
+                if (!guardablePrivate(piece)) {
+                    prunePrivate(privates);
+                    return false;
+                }
+                privates.push_back(piece);
+                continue;
+            }
+            if (view->second.resident || view->second.page->pins != 0) {
+                prunePrivate(privates);
+                return false;
+            }
             for (const auto alias : view->second.page->aliases) {
-                if (views.at(alias).hostWrites != 0) return false;
+                if (views.at(alias).hostWrites != 0) {
+                    prunePrivate(privates);
+                    return false;
+                }
             }
             pages.emplace_back(view->second.page, subpagesOf(piece, address, end));
+        }
+        for (const auto piece : privates) {
+            auto& page = privatePieces.at(piece);
+            const auto adding = static_cast<std::uint8_t>(subpagesOf(piece, address, end) & ~page.accessGuarded);
+            if (adding == 0) continue;
+            page.accessGuarded |= adding;
+            protectSubpages(piece, adding, PAGE_NOACCESS, "arm a private guest access guard");
+            page.armed &= static_cast<std::uint8_t>(~adding);
         }
         for (const auto& [page, mask] : pages) {
             const auto adding = static_cast<std::uint8_t>(mask & ~page->accessGuarded);
@@ -232,7 +287,9 @@ public:
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
         const auto view = views.find(base);
-        return view != views.end() && (view->second.page->accessGuarded & subpagesOf(base, address, address + 1)) != 0;
+        if (view != views.end()) return (view->second.page->accessGuarded & subpagesOf(base, address, address + 1)) != 0;
+        const auto piece = privatePieces.find(base);
+        return piece != privatePieces.end() && (piece->second.accessGuarded & subpagesOf(base, address, address + 1)) != 0;
     }
 
     void UnguardAccess(std::uintptr_t address, std::size_t bytes) {
@@ -252,6 +309,20 @@ public:
                     protectSubpages(alias, dropping, view.protection, "drop a guest access guard");
                 }
             }
+        }
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
+            auto& page = it->second;
+            const auto dropping = static_cast<std::uint8_t>(page.accessGuarded & subpagesOf(it->first, address, end));
+            if (dropping != 0) {
+                page.accessGuarded &= static_cast<std::uint8_t>(~dropping);
+                if (page.guarded && writable(page.protection)) {
+                    protectSubpages(it->first, dropping, readOnly(page.protection), "drop a private guest access guard behind a write guard");
+                    page.armed |= dropping;
+                } else {
+                    protectSubpages(it->first, dropping, page.protection, "drop a private guest access guard");
+                }
+            }
+            it = pruned(it);
         }
     }
 
@@ -335,6 +406,15 @@ public:
             }
             invalidate(page);
         }
+        for (auto piece = address & ~(pageBytes - 1); piece < address + bytes; piece += pageBytes) {
+            if (views.contains(piece)) continue;
+            auto* page = privatePiece(piece);
+            if (page == nullptr) continue;
+            ++page->pins;
+            if (page->armed != 0) protectSubpages(piece, page->armed, page->protection, "pin private guest page writable");
+            page->armed = 0;
+            dropPrivateGuard(piece);
+        }
     }
 
     void Unpin(std::uintptr_t address, std::size_t bytes) {
@@ -344,13 +424,18 @@ public:
             if (page.pins != 0) --page.pins;
             invalidate(page);
         }
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < address + bytes;) {
+            if (it->second.pins != 0) --it->second.pins;
+            it = pruned(it);
+        }
     }
 
     bool HandleWrite(std::uintptr_t address) {
         std::lock_guard lock(mutex);
         const auto base = address & ~(pageBytes - 1);
         const auto found = views.find(base);
-        if (found == views.end() || !writable(found->second.protection)) return false;
+        if (found == views.end()) return handlePrivateWrite(base, address);
+        if (!writable(found->second.protection)) return false;
         auto& view = found->second;
         if (view.resident) {
             const auto memory = query(address);
@@ -394,6 +479,18 @@ public:
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             if (!writable(it->second.protection)) return false;
         }
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end; ++it) {
+            if (!writable(it->second.protection)) return false;
+        }
+        privateHostWrites.emplace_back(address, end);
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
+            auto& page = it->second;
+            dropPrivateGuard(it->first);
+            const auto opened = static_cast<std::uint8_t>(page.armed & subpagesOf(it->first, address, end));
+            if (opened != 0) protectSubpages(it->first, opened, page.protection, "open private memory to a host write");
+            page.armed &= static_cast<std::uint8_t>(~opened);
+            it = pruned(it);
+        }
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
             ++view.hostWrites;
@@ -415,6 +512,8 @@ public:
             --it->second.hostWrites;
             invalidate(*it->second.page, subpagesOf(it->first, address, end));
         }
+        const auto open = std::find(privateHostWrites.begin(), privateHostWrites.end(), std::make_pair(address, end));
+        if (open != privateHostWrites.end()) privateHostWrites.erase(open);
     }
 
     void* MapAlias(std::uintptr_t address, std::size_t bytes) {
@@ -475,12 +574,22 @@ public:
         if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(base), 0)) fail("unmap shared guest alias");
     }
 
-    bool Protection(std::uintptr_t address, std::uint32_t* protection) {
+    bool Protection(std::uintptr_t address, std::uint32_t* protection, std::uintptr_t* end = nullptr) {
         std::lock_guard lock(mutex);
-        const auto found = views.find(address & ~(pageBytes - 1));
-        if (found == views.end()) return false;
-        *protection = found->second.protection;
-        return true;
+        const auto base = address & ~(pageBytes - 1);
+        const auto found = views.find(base);
+        if (found != views.end()) {
+            *protection = found->second.protection;
+            return true;
+        }
+        const auto piece = privatePieces.lower_bound(base);
+        if (piece != privatePieces.end() && piece->first == base) {
+            if (end != nullptr) *end = base + pageBytes;
+            *protection = piece->second.protection;
+            return true;
+        }
+        if (end != nullptr) *end = piece != privatePieces.end() ? piece->first : ~std::uintptr_t{0};
+        return false;
     }
 
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
@@ -687,6 +796,82 @@ private:
             }
         }
     }
+    struct PrivatePiece {
+        DWORD protection = PAGE_NOACCESS;
+        std::uint8_t armed = 0;
+        std::uint8_t accessGuarded = 0;
+        std::uint32_t pins = 0;
+        bool guarded = false;
+    };
+    using PrivatePieces = std::map<std::uintptr_t, PrivatePiece>;
+
+    static DWORD readOnly(DWORD protection) {
+        return protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY;
+    }
+
+    PrivatePiece* privatePiece(std::uintptr_t piece) {
+        if (const auto found = privatePieces.find(piece); found != privatePieces.end()) return &found->second;
+        const auto memory = query(piece);
+        if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE || memory.RegionSize < pageBytes || (memory.Protect & ~DWORD{0xff}) != 0) return nullptr;
+        PrivatePiece page;
+        page.protection = memory.Protect;
+        return &privatePieces.emplace(piece, page).first->second;
+    }
+
+    bool guardablePrivate(std::uintptr_t piece) {
+        for (const auto& [begin, end] : privateHostWrites) {
+            if (begin < piece + pageBytes && piece < end) return false;
+        }
+        const auto* page = privatePiece(piece);
+        return page != nullptr && page->pins == 0;
+    }
+
+    PrivatePieces::iterator pruned(PrivatePieces::iterator it) {
+        const auto& page = it->second;
+        if (page.guarded || page.armed != 0 || page.accessGuarded != 0 || page.pins != 0) return std::next(it);
+        return privatePieces.erase(it);
+    }
+
+    void prunePrivate(const std::vector<std::uintptr_t>& pieces) {
+        for (const auto piece : pieces) {
+            if (const auto found = privatePieces.find(piece); found != privatePieces.end()) pruned(found);
+        }
+    }
+
+    void dropPrivateGuard(std::uintptr_t piece) {
+        const auto found = privatePieces.find(piece);
+        if (found == privatePieces.end() || !found->second.guarded) return;
+        const auto guardPage = piece & ~(guardBytes - 1);
+        for (auto it = privatePieces.lower_bound(guardPage); it != privatePieces.end() && it->first < guardPage + guardBytes; ++it) it->second.guarded = false;
+        if (std::find(guardReports.begin(), guardReports.end(), guardPage) == guardReports.end()) guardReports.push_back(guardPage);
+    }
+
+    void reprotectPrivate(std::uintptr_t address, std::uintptr_t end, DWORD protection) {
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
+            dropPrivateGuard(it->first);
+            it->second.protection = protection;
+            it->second.armed = 0;
+            it = pruned(it);
+        }
+    }
+
+    bool handlePrivateWrite(std::uintptr_t base, std::uintptr_t address) {
+        const auto found = privatePieces.find(base);
+        if (found == privatePieces.end()) return false;
+        auto& page = found->second;
+        const auto written = subpagesOf(base, address, address + 1);
+        if ((page.armed & written) == 0) {
+            if (!writable(page.protection) || (page.accessGuarded & written) != 0) return false;
+            const auto memory = query(address);
+            return memory.State == MEM_COMMIT && writable(memory.Protect & 0xffu);
+        }
+        protectSubpages(base, written, page.protection, "resume private memory write");
+        page.armed &= static_cast<std::uint8_t>(~written);
+        dropPrivateGuard(base);
+        pruned(found);
+        return true;
+    }
+
     struct Section {
         HANDLE handle;
         explicit Section(HANDLE handle) : handle(handle) {}
@@ -983,6 +1168,7 @@ private:
     void reset(std::uintptr_t address, std::size_t bytes) {
         collectableRanges.clear();
         const auto end = address + bytes;
+        privatePieces.erase(privatePieces.lower_bound(address), privatePieces.lower_bound(end));
         forgetClean(address, end);
         breakRun(address);
         breakRun(end);
@@ -1077,6 +1263,8 @@ private:
     }
     std::map<std::pair<std::uintptr_t, std::uint64_t>, std::shared_ptr<Physical>> physical;
     std::map<std::uintptr_t, Run> residentRuns;
+    PrivatePieces privatePieces;
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> privateHostWrites;
     std::vector<Demoted> demotedRuns;
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;

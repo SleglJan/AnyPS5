@@ -432,6 +432,7 @@ bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address) {
 void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) return;
     WindowsMappings::Get().Pin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    notifyGuarded(WindowsMappings::Get().TakeGuardReports());
 }
 
 void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
@@ -439,8 +440,8 @@ void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes)
     WindowsMappings::Get().Unpin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
 
-bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection) {
-    return WindowsMappings::Get().Protection(address, protection);
+bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection, std::uintptr_t* end) {
+    return WindowsMappings::Get().Protection(address, protection, end);
 }
 
 bool GuestArenaCollectWrites_nid_postfix(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear) {

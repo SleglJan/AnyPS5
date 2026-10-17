@@ -480,7 +480,9 @@ void WriteBackAcrossStreams(Harness& harness) {
 void FaultsAtOrderingPoints(Harness& harness) {
     harness.OnStream(0, true, [&] { harness.Use(4, 2); });
     harness.Drain();
-    Expect(faultLog.guarded[4].load(), "a resident CPU-writable page is guarded");
+    Expect(!faultLog.guarded[4].load(), "a private page is not guarded before an ordering point after a submission issued after its admission completed");
+    harness.OnStream(0, true, [&] { harness.driver.Manager().Retire(); });
+    Expect(faultLog.guarded[4].load(), "a resident CPU-writable page is guarded once its import settled");
     const auto applied = harness.driver.Counts().appliedAtOrderingPoints;
     harness.Store(4, 5 * WordsPerSubpage, 0x12345678u);
     Expect(faultLog.count.load() == 1 && !faultLog.guarded[4].load(), "the store faulted and disarmed the guard");
@@ -501,7 +503,7 @@ void GrantsAndDrops(Harness& harness) {
         const std::array<ResidencyRange, 1> grants{ResidencyRange{harness.region.Address(5), 16}};
         harness.driver.BeforeWritingDispatch(grants, false);
     });
-    Expect(!harness.driver.Manager().Slot(harness.Page(5)) && harness.driver.Manager().Slot(harness.Page(4)), "a write grant demotes its page only");
+    Expect(harness.driver.Manager().Slot(harness.Page(5)) && harness.driver.Manager().Dirty(harness.Page(5)) == 0x0001 && harness.driver.Manager().Slot(harness.Page(4)), "a write grant into a settled private page keeps it resident with the granted subpage dirty");
     harness.OnStream(0, true, [&] { harness.driver.BeforeWritingDispatch({}, true); });
     Expect(harness.driver.Manager().Counts().resident == 0, "a dispatch that may write any writable import demotes every GPU-writable mirror");
     harness.Drain();
