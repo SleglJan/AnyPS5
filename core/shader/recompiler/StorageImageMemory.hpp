@@ -151,6 +151,10 @@ constexpr std::uint32_t ElementLog2(std::uint32_t format) {
     return StorageImagePages::ElementSizeCode(format) - 1u;
 }
 
+constexpr bool DepthSwizzle(std::uint32_t tileMode) {
+    return tileMode == 4u || tileMode == 8u || tileMode == 16u || tileMode == 20u || tileMode == 24u;
+}
+
 constexpr bool ThickTile(std::uint32_t tileMode) {
     return tileMode == 5u || tileMode == 9u || tileMode == 25u || tileMode == 26u;
 }
@@ -200,11 +204,18 @@ constexpr std::uint32_t BlockLog2(const Fields& fields, Layout layout) {
     return StorageImagePages::BlockLog2(StorageImagePages::ClassOf(fields.tileMode));
 }
 
+constexpr bool DepthLayout(const Fields& fields) {
+    if (!DepthSwizzle(fields.tileMode) || (fields.type != 9u && fields.type != 13u) || !MemoryFormat(fields.format)) return false;
+    const auto element = ElementLog2(fields.format);
+    return element == 1u || element == 2u;
+}
+
 inline bool SurfaceThroughMemory(const std::array<std::uint32_t, 8>& words, Access access) {
     const auto fields = Decode(words);
     if (fields.base == 0u || fields.metaCompress || fields.arrayPitch != 0u || fields.type < 8u || fields.type > 13u) return false;
     if (fields.baseLevel > fields.maxMip || fields.baseLevel > fields.lastLevel) return false;
     if (fields.type == 11u && fields.width != fields.height) return false;
+    if (access != Access::Load && DepthLayout(fields)) return false;
     const auto layout = LayoutOf(fields);
     if (layout == Layout::Unsupported) return false;
     if ((fields.base & ((std::uint64_t{1} << BlockLog2(fields, layout)) - 1u)) != 0u) return false;

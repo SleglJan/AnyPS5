@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "StorageImageMemory.hpp"
@@ -89,7 +90,7 @@ void ShaderResources::selectMemoryImages(std::span<const CompiledShader> shaders
                 }
                 const auto code = element < binding.imageMemoryAccess.size() ? binding.imageMemoryAccess[element] : std::uint8_t{0};
                 const auto access = static_cast<Memory::Access>(code == 0u ? 0u : code - 1u);
-                const bool memory = code != 0u && element < binding.imageSlotDwords.size() && end > begin && Memory::SurfaceThroughMemory(words, access);
+                const bool memory = code != 0u && element < binding.imageSlotDwords.size() && end > begin && Memory::SurfaceThroughMemory(words, access) && !DepthSurfaceAt(begin);
                 elements.push_back({&binding, element, begin, end, access, memory});
             }
         }

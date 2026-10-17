@@ -158,7 +158,10 @@ void Reference() {
     for (const auto& shape : shapes) {
         const auto words = Descriptor(base, shape);
         const std::string what = std::string("reference, ") + shape.name;
-        Expect(Memory::SurfaceThroughMemory(words, Memory::Access::Store), what + ": the surface does not take the memory path");
+        Expect(Memory::SurfaceThroughMemory(words, Memory::Access::Load), what + ": the surface does not take the memory path");
+        const auto elementBytes = Graphics::BytesPerElement(shape.format);
+        const bool depthLayout = (shape.tileMode == 4u || shape.tileMode == 8u || shape.tileMode == 16u || shape.tileMode == 20u || shape.tileMode == 24u) && (shape.type == TypePlane || shape.type == TypePlaneArray) && (elementBytes == 2u || elementBytes == 4u);
+        Expect(Memory::SurfaceThroughMemory(words, Memory::Access::Store) != depthLayout, what + (depthLayout ? ": the surface, which a depth target can take over, takes stores through memory" : ": the surface does not take stores through memory"));
         std::size_t checked = 0;
         std::size_t wrong = 0;
         std::string first;
@@ -199,6 +202,12 @@ void Predicates() {
     const auto atRow = Memory::Locate(line, 7u, 5u, 0u, 0u);
     const auto atZero = Memory::Locate(line, 7u, 0u, 0u, 0u);
     Expect(atZero.inside && atRow.inside && atRow.address == atZero.address, "predicates: a 1D texel address through memory depends on y");
+    const auto depth = Descriptor(base, {"64KB Z_X 32_FLOAT", 22u, 24u, TypePlane, 64u, 64u, 1u, 1u});
+    Expect(!Memory::SurfaceThroughMemory(depth, Memory::Access::Store) && !Memory::SurfaceThroughMemory(depth, Memory::Access::Atomic32), "predicates: a 32-bit 64KB Z_X 2D surface, which a depth target can take over, takes stores or atomics through memory");
+    Expect(Memory::SurfaceThroughMemory(depth, Memory::Access::Load), "predicates: a 32-bit 64KB Z_X 2D surface does not take loads through memory");
+    Expect(!Memory::SurfaceThroughMemory(Descriptor(base, {"4KB Z_X 16_UNORM array", 7u, 20u, TypePlaneArray, 64u, 64u, 2u, 1u}), Memory::Access::Store), "predicates: a 16-bit 4KB Z_X 2D array, which a depth target can take over, takes stores through memory");
+    Expect(Memory::SurfaceThroughMemory(Descriptor(base, {"64KB Z_X 8_UINT", 5u, 24u, TypePlane, 64u, 64u, 1u, 1u}), Memory::Access::Store), "predicates: an 8-bit 64KB Z_X surface does not take stores through memory");
+    Expect(Memory::SurfaceThroughMemory(Descriptor(base, {"cube 64KB Z_X 32_UINT", 20u, 24u, TypeCube, 64u, 64u, 6u, 1u}), Memory::Access::Store), "predicates: a 32-bit 64KB Z_X cube does not take stores through memory");
     std::size_t equations = 0;
     for (const auto& driver : Graphics::kTextureSwizzleEquations) {
         ++equations;
@@ -391,10 +400,11 @@ void RoundTrip(const Shape& shape, std::uint32_t lod, std::vector<std::unique_pt
 }
 
 void RoundTrips() {
-    const std::array<Shape, 9> shapes{{
+    const std::array<Shape, 10> shapes{{
         {"linear 2D 8_8_8_8_UINT", 60u, 0u, TypePlane, 64u, 8u, 1u, 1u},
         {"64KB R_X 32_UINT with a pipe-bank XOR", 20u, 27u, TypePlane, 48u, 16u, 1u, 1u, 0x2000u},
-        {"64KB Z_X 16_16_UINT, level 1", 27u, 24u, TypePlane, 128u, 32u, 1u, 3u, 0u, 1u, 1u},
+        {"64KB R_X 16_16_UINT, level 1", 27u, 27u, TypePlane, 128u, 32u, 1u, 3u, 0u, 1u, 1u},
+        {"64KB Z_X 8_UINT, level 1", 5u, 24u, TypePlane, 128u, 32u, 1u, 3u, 0u, 1u, 1u},
         {"4KB S_X 8_UINT with a pipe-bank XOR", 5u, 21u, TypePlane, 40u, 20u, 1u, 1u, 0x300u},
         {"64KB D 32_32_UINT", 62u, 10u, TypePlane, 32u, 32u, 1u, 1u},
         {"256B D 32_32_32_32_UINT", 75u, 2u, TypePlane, 16u, 16u, 1u, 1u},

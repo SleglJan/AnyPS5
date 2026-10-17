@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "DepthFastClearHarness.hpp"
+#include "StorageImageMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -150,6 +151,8 @@ void RequireCount(std::uint32_t covered, std::uint32_t expected, const std::stri
 
 void NewSurfaceCase(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint8_t* plane, VkFormat format, bool flushed, const std::string& what, std::uint32_t layers = 1) {
     for (std::uint32_t layer = 0; layer < layers; ++layer) Fill(plane + layer * PlaneBytes, format);
+    namespace ImageMemory = ShaderRecompiler::StorageImageMemory;
+    Require(!ImageMemory::SurfaceThroughMemory(StorageView(Address(plane), format == VK_FORMAT_D16_UNORM ? Format16Unorm : Format32Float, layers), ImageMemory::Access::Store), what + ": the storage view, which the depth surface takes over, takes stores through memory");
     StoreRow(device, plane, format, layers);
     if (layers > 1u) {
         Require(AgcDriver::Graphics::StorageTexture::FindPending(Address(plane), PlaneBytes) != nullptr && AgcDriver::Graphics::StorageTexture::FindLive(Address(plane), PlaneBytes) == nullptr, what + ": the stored row is not pending in a storage image larger than the plane, or a cached image of the plane's size holds it");
