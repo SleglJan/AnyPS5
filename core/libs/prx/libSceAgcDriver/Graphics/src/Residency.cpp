@@ -1560,7 +1560,12 @@ void ResidencyManager::rearm(std::uint32_t id) {
     markHot(page.index, Epoch());
 }
 
-void ResidencyManager::writeBackDirty(std::span<const std::uint32_t> ids) {
+bool ResidencyManager::writePending(std::uint64_t page) {
+    const auto writer = writers.find(page);
+    return writer != writers.end() && !settled(writer->second);
+}
+
+void ResidencyManager::writeBackDirty(std::span<const std::uint32_t> ids, bool keepPendingWrites) {
     std::vector<ResidencyCopy> copies;
     std::vector<std::uint32_t> written;
     for (const auto id : ids) {
@@ -1569,7 +1574,9 @@ void ResidencyManager::writeBackDirty(std::span<const std::uint32_t> ids) {
         written.push_back(id);
     }
     if (copies.empty()) return;
-    for (const auto id : written) clearAllDirty(id);
+    for (const auto id : written) {
+        if (!keepPendingWrites || !writePending(pages[id].index)) clearAllDirty(id);
+    }
     const auto token = device.WriteBack(copies);
     for (const auto& copy : copies) counts.writtenBackBytes += copy.bytes;
     for (const auto id : written) {
@@ -1584,7 +1591,7 @@ void ResidencyManager::PrepareImportWrite(std::uint64_t address, std::uint64_t b
     std::vector<std::uint32_t> ids;
     for (const auto& fill : withAliases(address, bytes)) ids.push_back(fill.id);
     if (ids.empty()) return;
-    writeBackDirty(ids);
+    writeBackDirty(ids, true);
 }
 
 void ResidencyManager::settleAccessGuards() {

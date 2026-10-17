@@ -335,7 +335,8 @@ private:
     std::optional<std::uint32_t> victim(std::uint64_t protectFirst, std::uint64_t protectLast);
     void admit(std::uint64_t first, std::uint64_t last);
     std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false, std::vector<std::uint64_t>* reserved = nullptr);
-    void writeBackDirty(std::span<const std::uint32_t> ids);
+    void writeBackDirty(std::span<const std::uint32_t> ids, bool keepPendingWrites = false);
+    bool writePending(std::uint64_t page);
     void settleAccessGuards();
     void settleImports();
     void unsettle(std::uint32_t id);
