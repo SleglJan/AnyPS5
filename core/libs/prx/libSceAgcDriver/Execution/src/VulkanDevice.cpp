@@ -3654,8 +3654,8 @@ namespace {
 
 // The phases of VulkanDevice::dispatch (APS5_PROFILE_DRAW), followed by one row per image lookup
 // outcome (Graphics::LookupOutcomes) on the [indirect] line.
-enum DispatchPhase : std::size_t { PhaseReap, PhaseResources, PhaseResourcesInsert, PhaseResourcesComplete, PhaseResourcesImages, PhaseResourcesUpload, PhaseResourcesDescriptors, PhaseResourcesOther, PhaseResourcesALocked, PhaseResourcesAddress, PhaseResourcesAUnlocked, PhaseResourcesRevalidate, PhaseResourcesFullBuild, PhaseResourcesHookWaits, PhaseProof, PhasePipeline, PhaseDecide, PhaseArgumentRead, PhaseRecordCommands, PhaseRecordKeeps, PhaseRecordDataRefresh, PhaseRecordBind, PhaseRecordMarks, PhaseRecordCompletion, PhaseRecord, PhaseSync, DispatchPhaseCount };
-constexpr std::array<const char*, DispatchPhaseCount> DispatchPhaseNames{"reap", "resources", "resources: cache insert", "resources: complete (wall)", "resources: B images", "resources: B upload", "resources: B descriptors", "resources: B bda+other", "resources: A locked (bda)", "resources: address bindings (bda)", "resources A (unlocked)", "resources: revalidate", "resources: full build (locked)", "resources: hook waits", "proof", "pipeline", "decide", "argument read", "record: commands", "record: keeps", "record: data refresh", "record: bind+dispatch", "record: marks", "record: completion", "record", "sync"};
+enum DispatchPhase : std::size_t { PhaseReap, PhaseResources, PhaseResourcesComplete, PhaseResourcesImages, PhaseResourcesUpload, PhaseResourcesDescriptors, PhaseResourcesOther, PhaseResourcesALocked, PhaseResourcesAddress, PhaseResourcesAUnlocked, PhaseResourcesFullBuild, PhaseResourcesHookWaits, PhasePipeline, PhaseDecide, PhaseArgumentRead, PhaseRecordCommands, PhaseRecordKeeps, PhaseRecordBind, PhaseRecordMarks, PhaseRecordCompletion, PhaseRecord, PhaseSync, DispatchPhaseCount };
+constexpr std::array<const char*, DispatchPhaseCount> DispatchPhaseNames{"reap", "resources", "resources: complete (wall)", "resources: B images", "resources: B upload", "resources: B descriptors", "resources: B bda+other", "resources: A locked (bda)", "resources: address bindings (bda)", "resources A (unlocked)", "resources: full build (locked)", "resources: hook waits", "pipeline", "decide", "argument read", "record: commands", "record: keeps", "record: bind+dispatch", "record: marks", "record: completion", "record", "sync"};
 constexpr std::size_t DispatchRows = static_cast<std::size_t>(DispatchPhaseCount) + static_cast<std::size_t>(Graphics::LookupOutcomes::Count);
 
 const char* DispatchRowName(std::size_t row) {
@@ -3800,7 +3800,6 @@ struct DispatchCounters {
     std::uint64_t profiledDispatches = 0;
     IndirectHold indirectHold;
     std::uint64_t cacheHits = 0, cacheMisses = 0, cacheInvalidated = 0, templateRefreshed = 0, templateSameWords = 0;
-    double templateRevalidateMs = 0;
     std::uint64_t procLookups = 0, preBarriersRecorded = 0, preBarriersSkipped = 0;
     std::chrono::steady_clock::time_point cacheReport = std::chrono::steady_clock::now();
 };
@@ -3997,16 +3996,6 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
     };
     prepared->resources = std::make_shared<Graphics::ShaderResources>(context, compute, true, dispatchThreads, linearThreads);
     phase(PreparedDispatch::PrepareStageA);
-    // The pre-sync. Stage B's image lookups that read guest memory on the CPU (PresyncSurfaces)
-    // wait, through the flush hook and under the mutex, for the recorded work writing those
-    // surfaces: every other worker queues behind that wait. So the wait is made here instead,
-    // without the mutex: the lock-free pending-write snapshot says whether any recorded batch
-    // writes a surface; if so the mutex is taken only long enough to learn the newest such batch
-    // (submitting the open one when it is that batch), the timeline wait runs unlocked, and the
-    // dispatch reaps those batches at its own lock so the hook then finds nothing pending. Work
-    // noted in between falls back to the locked wait as before. A cached object's Revalidate
-    // repeats the same lookups when its stamps fail, so it gets the same pre-sync. Needs timeline
-    // semaphores.
     if (!NoPresync() && CanWaitUnlocked()) {
         Presyncs().checked.fetch_add(1, std::memory_order_relaxed);
         const auto surfaces = prepared->resources->PresyncSurfaces();
@@ -4610,8 +4599,6 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     // hook waiting for recorded work (a locked wait: it overlaps the other rows).
     const auto subPhaseStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto waitedBefore = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    // The image lookups of this call by outcome (stage B, a Revalidate or a locked build), for the
-    // [indirect] line: reset here, read after the resources phase.
     if (profile && arguments != 0) Graphics::ThreadLookupOutcomes() = {};
     if (prepared != nullptr && prepared->resources != nullptr) {
         // Stage A ran without the mutex (PrepareDispatch); stage B completes the build here.

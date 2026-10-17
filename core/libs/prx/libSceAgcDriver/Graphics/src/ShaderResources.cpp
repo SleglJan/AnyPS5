@@ -352,9 +352,6 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fastMisses{0};
     std::atomic<std::uint64_t> storageHits{0};
     std::atomic<std::uint64_t> storageCreated{0};
-    // Storage images a Revalidate refreshed directly instead of through the lookups (T1, see
-    // ShaderResources::refreshOwnObjects).
-    std::atomic<std::uint64_t> ownRefreshes{0};
     std::atomic<std::uint64_t> tablesReused{0};
     std::atomic<std::uint64_t> tablesResolved{0};
     std::atomic<std::int64_t> lastReport{0};
@@ -385,14 +382,9 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu gathered, %llu cleared, %llu storage-path fallbacks; stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved\n", count(counters.fromStorage), count(counters.gathers), count(counters.clears), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu gathered, %llu cleared, %llu storage-path fallbacks; stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created; image tables %llu reused, %llu resolved\n", count(counters.fromStorage), count(counters.gathers), count(counters.clears), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.tablesReused), count(counters.tablesResolved));
 }
 
-// What the sampled-texture lookups on this thread proved their returned objects current against,
-// taken by object into the ShaderResources being built or revalidated (captureValidation), which
-// then repeats the proof from write stamps on its next Revalidate. The lookups run inside one build
-// on one thread; records nobody takes (a build that threw, a resident target looked up outside a
-// build, a thread that never captures) are dropped by the next capture or by the bound below.
 struct LookupRecord {
     const void* object;
     GuestTextureResource resource;
@@ -2502,13 +2494,6 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::PresyncSur
         if (!gpuDirect) surfaces.emplace_back(address, guestBytes);
     };
     if (completed) {
-        // A cached object (the resource cache): Revalidate repeats the lookups of the objects the
-        // build made, which never change afterwards (a lookup returning another object fails the
-        // revalidation instead), so the surfaces come from the build's own record of them. A
-        // sampled texture viewing a storage image refreshes like that image; a snapshot texture
-        // over an eligible surface is replaced by a view without reading. Storage images are
-        // checked on their own surface (a mip chain can exceed the element's descriptor). Read
-        // without the device lock: these members are fixed once the build completed.
         std::size_t textureIndex = 0;
         for (const auto& range : describedRanges) {
             if (std::strcmp(range.kind, "texture") == 0 && textureIndex < textures.size()) {

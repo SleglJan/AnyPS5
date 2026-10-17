@@ -774,8 +774,6 @@ void CountDrawSkip(DrawSkip kind, double us) {
 
 namespace {
 
-// APS5_PROFILE_DRAW: the per-phase timers of one draw (DrawPhase), shared by Draw's parts and
-// DrawWithRecipe.
 struct DrawTimer {
     bool profile;
     std::chrono::steady_clock::time_point phaseStart;
@@ -1037,10 +1035,6 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     return inputs;
 }
 
-// The resident-target proof of one attachment (StorageTexture::Refresh: FlushPending, CollectWrites
-// over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
-// [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
-// the stored object instead.
 std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
     const auto lookupStart = std::chrono::steady_clock::now();
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
@@ -1336,10 +1330,6 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     }
 }
 
-// What recordDraw records from: the recorder, the resources, the pipeline and framebuffer, the
-// resident targets with their views, the indirect records (null for a direct draw), how the
-// completion work is handled (`listed`, `completion`, `waited`: see Draw) and, from a recipe, the
-// push constant block (else assembled from the stages).
 struct RecordedDraw {
     Recorder* recorder = nullptr;
     std::shared_ptr<ShaderResources> resources;

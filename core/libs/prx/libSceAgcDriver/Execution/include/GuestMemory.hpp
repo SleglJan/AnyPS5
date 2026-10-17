@@ -270,10 +270,8 @@ PacketTag CurrentPacket();
 // write after a pending GPU write, so whether the bytes change says nothing about its necessity.
 // MirrorRefresh: an address-based build bringing an image mirror up to date with guest memory
 // (GuestBufferMemory.cpp: the flush before a writable mirror's compare, a new mirror's fill).
-// DrawCache: a draw entry's per-stage value validation (Driver.cpp drawCache), where a draw
-// capture's hook waits reappear on a hit.
 // Every enumerator needs its name in ReadSiteName's table (GuestMemory.cpp).
-enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, Count };
+enum class ReadSite : std::uint8_t { Unknown = 0, TextureCompare, TextureRead, Registers, IndirectArguments, Wait, Scanout, Store, MirrorRefresh, Count };
 const char* ReadSiteName(ReadSite site);
 // Sets the calling thread's read site and returns the previous one (nested scopes restore it).
 ReadSite SetReadSite(ReadSite site);

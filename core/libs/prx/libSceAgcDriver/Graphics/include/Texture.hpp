@@ -283,10 +283,6 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
-    // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
-    // whether an image other than `except` has results pending, or is being stored right now, over
-    // [begin, end), and `found` the image FindPending would return for the range (null: none);
-    // returns whether every query's `pending` image, when given, is still that image.
     struct PendingQuery {
         std::uint64_t begin;
         std::uint64_t end;
@@ -330,7 +326,6 @@ public:
         std::uint64_t flushedAfterSkipSameSite;
     };
     static HookSkipCounts TakeHookSkipCounts();
-    // A consumer found the image current and used it (Refresh, the fast revalidation).
     void NoteProved() const;
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the
     // clear before the eviction's flush): what a lookup of its surface would return.
@@ -398,9 +393,6 @@ public:
     // validates textures copied from this image.
     std::uint64_t Version() const { return version; }
     std::uint64_t Generation() const { return generation; }
-    // The DCC keys the content was uploaded under and the last scan of the surface's keys
-    // (ProvedClearKeys): Refresh's own key rule for the fast revalidation. Under
-    // GuestMemory::GpuMutex only, as Refresh is; never from a build's stage A.
     DccKeys UploadedKeys() const { return uploadedKeys; }
     DccKeys FilledKeys() const { return filledKeys; }
     bool GuestSnapshotValid() const { return originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); }

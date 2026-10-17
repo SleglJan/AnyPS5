@@ -60,7 +60,7 @@ std::vector<std::uint64_t>& Driver::prePassReads() {
 }
 
 std::uint64_t Driver::DataIndependentDispatchHits() {
-    std::lock_guard cacheLock(dispatchCacheMutex);
+    std::lock_guard cacheLock(runTimeProgramsMutex);
     return dataIndependentHits;
 }
 
@@ -96,7 +96,7 @@ Driver::DispatchProgram Driver::runTimeDispatch(const ShaderSnapshot& snapshot, 
     require(std::ranges::none_of(compiled->bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt; }), "a compute program that binds a flattened SRT is not implemented");
     require(std::ranges::all_of(compiled->imageTableReadRanges, [](const auto& ranges) { return ranges.empty(); }), "a compute program that reads image tables on the CPU is not implemented");
     auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
-    std::lock_guard cacheLock(dispatchCacheMutex);
+    std::lock_guard cacheLock(runTimeProgramsMutex);
     ++dataIndependentHits;
     ++runTimeCompiles;
     if (!linked && entry->compiled->spirv.size() > ShaderRecompiler::GiantProgramWords) return {std::move(entry), nullptr};
@@ -225,7 +225,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     std::shared_ptr<const LinkedDispatch> linked;
     std::vector<std::shared_ptr<const LinkedDispatch>> variants;
     {
-        std::lock_guard cacheLock(dispatchCacheMutex);
+        std::lock_guard cacheLock(runTimeProgramsMutex);
         if (const auto found = runTimeDispatches.find(programKey); found != runTimeDispatches.end()) {
             program = found->second;
             ++dataIndependentHits;
@@ -257,7 +257,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 if (linked == nullptr && words > ShaderRecompiler::GiantProgramWords) {
                     tableCalls = BranchSplitProgramFor(programKey, request, words);
                     if (tableCalls == nullptr) {
-                        std::lock_guard cacheLock(dispatchCacheMutex);
+                        std::lock_guard cacheLock(runTimeProgramsMutex);
                         program = runTimeDispatches.try_emplace(programKey, program).first->second;
                     }
                 }
@@ -396,14 +396,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         pending.outcome = DispatchOutcome::Real;
         pending.phases = true;
         pending.hit = true;
-        pending.validated = false;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }
     if (profile && ++dispatches % 100 == 0) {
         std::uint64_t hits = 0, compiles = 0;
         {
-            std::lock_guard cacheLock(dispatchCacheMutex);
+            std::lock_guard cacheLock(runTimeProgramsMutex);
             hits = dataIndependentHits;
             compiles = runTimeCompiles;
         }

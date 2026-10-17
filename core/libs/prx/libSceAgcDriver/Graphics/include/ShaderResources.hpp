@@ -51,8 +51,6 @@ std::shared_ptr<StorageTexture> CachedStorageSurface(const Context& context, con
 bool StorageImageCached(const Context& context, const StorageTexture* image);
 bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress);
 
-// Defined in Texture.cpp beside the pending-results registry, for the fast Revalidate below: whether
-// a storage image other than `except` has results pending in [address, address + bytes).
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
 struct PipelineSetLayouts {
@@ -271,13 +269,6 @@ public:
         double completeMs = 0;
     };
     const BuildTiming& Timing() const { return timing; }
-    // The image surfaces (address, bytes) whose stage-B lookup reads guest memory on the CPU and so
-    // would wait, under the device lock, for recorded work writing them: a surface without a host
-    // import, or a sampled one that stays a CPU snapshot (block compressed, or the storage-view path
-    // is off). VulkanDevice::PrepareDispatch waits for that work before the lock (the pre-sync).
-    // Usable right after the deferred constructor, for address-based builds too (it decodes the
-    // compiled shader's bindings itself when stage A has not run), and on a completed object from
-    // the resource cache (its Revalidate repeats the same lookups), without the device lock.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> PresyncSurfaces() const;
 
 private:

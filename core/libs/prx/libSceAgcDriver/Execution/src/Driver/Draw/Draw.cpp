@@ -124,7 +124,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (!profile) return DrawVerdict::Drawn;
         auto& pending = pendingDrawPhases();
         pending.phases = true;
-        pending.captures = 0;
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
         return DrawVerdict::Drawn;

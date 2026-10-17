@@ -96,9 +96,6 @@ class Recorder;
 // work using the import is recorded) the imports are left as they are.
 std::uint64_t HostImportSerial(const Context& context, std::uint64_t address, std::size_t bytes, bool reconcile);
 
-// The import table's identity (the fast Revalidate): serials proved under one identity stand
-// while the table still has it, i.e. the same device, the same epoch (bumped by every retire)
-// and the registry generation it was reconciled with, which must still be the live one.
 struct HostImportsProof {
     VkDevice device = VK_NULL_HANDLE;
     std::uint64_t epoch = 0;

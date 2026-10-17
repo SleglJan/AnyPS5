@@ -107,11 +107,11 @@ private:
     std::optional<DrawVerdict> precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect);
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
     DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::string& rejected);
-    void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated);
+    void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit);
     static PendingDispatchPhases& pendingDispatchPhases();
     static std::chrono::steady_clock::time_point& packetStartedAt();
     static PendingDrawPhases& pendingDrawPhases();
-    void addDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn, std::uint64_t captures);
+    void addDrawPhases(const std::array<double, DrawDriverPhaseCount>& ms, bool drawn);
     void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
@@ -212,7 +212,7 @@ private:
     std::atomic<std::uint64_t> eventSerial{0};
     alignas(64) std::shared_ptr<ShaderRegistry> shaders = std::make_shared<ShaderRegistry>();
 
-    std::mutex dispatchCacheMutex;
+    std::mutex runTimeProgramsMutex;
     std::unordered_map<std::uint64_t, std::shared_ptr<const RunTimeProgram>> runTimeDispatches;
     std::unordered_map<std::uint64_t, std::vector<std::shared_ptr<const LinkedDispatch>>> linkedDispatches;
     std::uint64_t dataIndependentHits = 0;

@@ -4,13 +4,12 @@
 
 namespace AgcDriver::DriverDetail {
 
-void Driver::addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated) {
+void Driver::addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit) {
     std::lock_guard lock(driverPhasesMutex);
     auto& totals = driverPhaseTotals[which];
     for (std::size_t i = 0; i < DriverPhaseCount; ++i) totals.ms[i] += ms[i];
     ++totals.dispatches;
     if (hit) ++totals.hits;
-    if (validated) ++totals.validations;
     const auto now = std::chrono::steady_clock::now();
     if (now - driverPhasesReport < std::chrono::seconds(10)) return;
     driverPhasesReport = now;
@@ -25,8 +24,7 @@ void Driver::addDriverPhases(DispatchClass which, const std::array<double, Drive
             report += text;
             total += line.ms[i];
         }
-        const double perValidation = line.validations != 0 ? 1000 / static_cast<double>(line.validations) : 0.0;
-        AgcDriver::ProfilePrint_nid_no_patch("[dispatch] driver phases %s (10 s, %llu dispatches, %llu cache hits), us per dispatch:%s, total %.1f (%.1f ms); validate %.1f us per validation (%llu validations; GPU waits inside it %.1f us per validation apart)\n", DispatchClassNames[cls], static_cast<unsigned long long>(line.dispatches), static_cast<unsigned long long>(line.hits), report.c_str(), total * 1000 / static_cast<double>(line.dispatches), total, line.ms[PhaseValidate] * perValidation, static_cast<unsigned long long>(line.validations), line.ms[PhaseValidateWait] * perValidation);
+        AgcDriver::ProfilePrint_nid_no_patch("[dispatch] driver phases %s (10 s, %llu dispatches, %llu cache hits), us per dispatch:%s, total %.1f (%.1f ms)\n", DispatchClassNames[cls], static_cast<unsigned long long>(line.dispatches), static_cast<unsigned long long>(line.hits), report.c_str(), total * 1000 / static_cast<double>(line.dispatches), total);
         line = {};
     }
 }
