@@ -56,6 +56,7 @@ constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 128;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t TileRenderTarget64KB = 0x1b;
+constexpr std::uint32_t TileStandard64KB = 0x09;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = 65536;
 constexpr std::size_t KeyBytes = SurfaceBytes / 256;
@@ -592,6 +593,7 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(block, 0x55, BlockBytes);
     auto descriptor = TextureDescriptor(block, nullptr);
     descriptor[2] = ((Side - 1u) >> 2u) | ((2 * Side - 1u) << 14u);
+    descriptor[3] = 0xfacu | (TileStandard64KB << 20u) | (Type2D << 28u);
     descriptor[6] = 0;
     descriptor[7] = 0;
     TestGuest::Vector<std::uint32_t> userData(16, 0u);
@@ -686,6 +688,7 @@ void RunHintedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     std::memset(block, 0x55, BlockBytes);
     auto descriptor = TextureDescriptor(block, nullptr);
     descriptor[2] = ((Side - 1u) >> 2u) | ((2 * Side - 1u) << 14u);
+    descriptor[3] = 0xfacu | (TileStandard64KB << 20u) | (Type2D << 28u);
     descriptor[6] = 0;
     descriptor[7] = 0;
     TestGuest::Vector<std::uint32_t> userData(16, 0u);

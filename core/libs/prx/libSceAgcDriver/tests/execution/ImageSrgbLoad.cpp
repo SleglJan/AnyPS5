@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
+#include "StorageImageMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
 #ifdef _WIN32
@@ -220,7 +221,13 @@ void CheckStoredLoad(AgcDriver::VulkanDevice& device, GuestBlock& block, std::sp
     const auto bytes = Width * (format == Srgb8 ? 1u : 2u);
     std::fill(block.Data(), block.Data() + BlockBytes, std::uint8_t{0x5au});
     Run(device, format == Srgb8 ? std::span<const std::uint32_t>(StoreX) : std::span<const std::uint32_t>(StoreXy), block.Data(), format == Srgb8 ? Unorm8 : Unorm8_8, SwizzleXY01, Groups);
-    Require(AgcDriver::Graphics::StorageTexture::FindPending(address, bytes) != nullptr, what + ": the image_store results are not pending in the storage image");
+    namespace ImageMemory = ShaderRecompiler::StorageImageMemory;
+    if (ImageMemory::SurfaceThroughMemory(TextureDescriptor(block.Data(), format == Srgb8 ? Unorm8 : Unorm8_8, SwizzleXY01), ImageMemory::Access::Store)) {
+        Require(AgcDriver::Graphics::StorageTexture::FindPending(address, bytes) == nullptr, what + ": the image_store through memory left a storage image over the texels");
+        Require(static_cast<std::size_t>(std::count(block.Data(), block.Data() + bytes, std::uint8_t{0x5au})) != bytes, what + ": the image_store through memory did not reach guest memory");
+    } else {
+        Require(AgcDriver::Graphics::StorageTexture::FindPending(address, bytes) != nullptr, what + ": the image_store results are not pending in the storage image");
+    }
     Run(device, code, block.Data(), format, swizzle, Groups);
     Verify(dmask, format, swizzle, what);
     AgcDriver::Graphics::StorageTexture::FlushPending(address, BlockBytes, nullptr, "test");

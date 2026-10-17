@@ -12,7 +12,9 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
+#include "StorageImageMemory.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +29,11 @@ namespace AgcDriver::Graphics {
 namespace Abi = ShaderRecompiler::DeviceImageTableAbi;
 
 namespace {
+
+std::atomic<std::uint64_t>& MemoryEntryCount() {
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
 
 constexpr VkBufferUsageFlags DeviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 constexpr std::size_t RingWords = Abi::RingRecordsWord + static_cast<std::size_t>(DeviceImageTable::RingCapacity) * Abi::RecordWords;
@@ -136,7 +143,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
             const auto value = lookup(build, miss.key, miss.pc, entry, named, required || !named);
             insert(miss.key, value, recorder);
             if (required && value.fault != 0u) throw std::runtime_error(rejectionText(miss.key, value.fault));
-            if (entry.texture == nullptr && entry.storage == nullptr) continue;
+            if (entry.texture == nullptr && entry.storage == nullptr && !entry.memory) continue;
             if (entry.perUse) {
                 perUseKeys.push_back(miss.key);
                 resolved.push_back(miss.key);
@@ -153,6 +160,11 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
     refreshPerUse(build, recorder, resolved);
     for (const auto& key : current) {
         const auto held = entries.find(key);
+        if (held == entries.end() || !held->second.memory || !held->second.written) continue;
+        dispatchMemoryWrites.emplace_back(held->second.address, held->second.address + held->second.guestBytes);
+    }
+    for (const auto& key : current) {
+        const auto held = entries.find(key);
         if (held != entries.end() && held->second.texture != nullptr && std::ranges::find(dispatchTextures, held->second.texture) == dispatchTextures.end()) dispatchTextures.push_back(held->second.texture);
         if (held == entries.end() || held->second.storage == nullptr) continue;
         if (std::ranges::none_of(dispatchStorage, [&](const DispatchStorageUse& used) { return used.key == key; })) dispatchStorage.push_back({key, held->second.storage, held->second.written});
@@ -164,6 +176,12 @@ void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder, s
     std::lock_guard lock(mutex);
     const auto uses = std::exchange(dispatchStorage, {});
     dispatchTextures.clear();
+    for (const auto& [begin, end] : std::exchange(dispatchMemoryWrites, {})) {
+        GuestMemory::MarkWritten(begin, static_cast<std::size_t>(end - begin));
+        for (auto& [key, entry] : entries) {
+            if (entry.texture != nullptr && entry.address < end && begin < entry.address + entry.guestBytes) entry.overwritten = true;
+        }
+    }
     std::exception_ptr failure;
     for (const auto& use : uses) {
         recorder.Keep(use.image);
@@ -238,6 +256,13 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
             continue;
         }
         if (std::ranges::find(current, key) == current.end()) {
+            if (entry.memory && !entry.written) {
+                const auto dropped = key;
+                entries.erase(held);
+                it = perUseKeys.erase(it);
+                totals.evicted += keys.Retain([&](const DeviceImageKeys::Key& kept) { return kept != dropped; });
+                continue;
+            }
             if (!entry.parked) {
                 const auto fault = reject(key, 0u, static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected), "a depth surface or a copy remade per use is read through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented", false);
                 Require(keys.Insert(key, DeviceImageValue{0u, 0u, fault + 1u, 0u}) == DeviceImageKeys::Insertion::Updated, "a parked device image entry was not in the table");
@@ -312,6 +337,18 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
         const auto first = key[Abi::SamplerWord];
         const auto third = key[Abi::SamplerWord + 2u];
         if ((first & Abi::SamplerUnnormalized) != 0u || ((first >> 29u) & 3u) > 2u || ((third >> 20u) & 0xfu) != 0u || ((third >> 26u) & 3u) > 1u) return rejected(Reason::DriverRejected, "2D biased sampling of a one-slice volume requires a normalized point sampler");
+    }
+    if (perUse && ShaderRecompiler::MemoryPathRuntimeImage(interface->image) && ShaderRecompiler::StorageImageMemory::SurfaceThroughMemory(descriptor.dwords, ShaderRecompiler::StorageImageMemory::AccessOf(interface->image)) && !DepthSurfaceAt(DecodeTextureResource(descriptor.dwords).baseAddress)) {
+        const auto resource = DecodeTextureResource(descriptor.dwords);
+        entry = {};
+        entry.address = resource.baseAddress;
+        entry.guestBytes = DescribeSurface(resource).guestBytes;
+        entry.perUse = true;
+        entry.memory = true;
+        entry.written = interface->image.written || interface->image.atomic;
+        ++totals.memory;
+        MemoryEntryCount().fetch_add(1, std::memory_order_relaxed);
+        return {ShaderRecompiler::StorageImageMemory::MemorySlot, *match.mode, 0u, 0u};
     }
     if (interface->image.resourceClass == ShaderRecompiler::ImageResourceClass::Storage) {
         if (!perUse) return rejected(Reason::DriverRejected, "a storage image is read or written through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented");
@@ -421,7 +458,7 @@ DeviceImageTable::ValidationState DeviceImageTable::currentState() {
 void DeviceImageTable::refresh(const Context& build, Recorder& recorder, const std::vector<DeviceImageKeys::Key>* scope) {
     if (entries.empty()) return;
     const auto state = currentState();
-    const auto due = [&](const Entry& entry) { return !entry.perUse && (state.epoch == 0u || entry.checked != state); };
+    const auto due = [&](const Entry& entry) { return !entry.perUse && (entry.overwritten || state.epoch == 0u || entry.checked != state); };
     std::vector<std::map<DeviceImageKeys::Key, Entry>::iterator> checked;
     if (scope != nullptr) {
         for (const auto& key : *scope) {
@@ -453,7 +490,7 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder, const s
         const bool all = everything(entry);
         const bool written = collect(entry) || entry.checked.ownWrites != state.ownWrites;
         const bool pendingChanged = all || entry.checked.pending != state.pending;
-        bool stale = all || (written && !GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation));
+        bool stale = all || entry.overwritten || (written && !GuestMemory::UnchangedSince(entry.address, static_cast<std::size_t>(entry.guestBytes), entry.generation));
         if (!stale && pendingChanged) {
             const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{entry.address, entry.address + entry.guestBytes}}};
             stale = !entry.snapshot || StorageTexture::AnyPendingOverlaps(range);
@@ -554,6 +591,10 @@ std::optional<DeviceImageTable::Rejection> DeviceImageTable::FindRejection(std::
     std::lock_guard lock(mutex);
     if (index >= rejections.size()) return std::nullopt;
     return rejections[index];
+}
+
+std::uint64_t DeviceImageTable::MemoryEntries() {
+    return MemoryEntryCount().load(std::memory_order_relaxed);
 }
 
 DeviceImageTable::Counts DeviceImageTable::Totals() const {

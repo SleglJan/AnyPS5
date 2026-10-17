@@ -132,7 +132,7 @@ public:
         CheckTableStores();
         AssignTables();
         for (const auto& image : m_info.images) {
-            if (!MemoryPathImage(image)) continue;
+            if (!MemoryPathImage(image) && !MemoryPathRuntimeImage(image)) continue;
             m_info.usesDma = true;
             m_info.bdaWrites = m_info.bdaWrites || image.resourceClass == ImageResourceClass::Storage;
         }

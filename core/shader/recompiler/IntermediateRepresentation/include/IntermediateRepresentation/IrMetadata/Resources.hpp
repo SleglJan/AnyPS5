@@ -87,8 +87,8 @@ struct ImageResource {
     bool operator==(const ImageResource& other) const = default;
 };
 
-inline bool MemoryPathImage(const ImageResource& image) {
-    if (image.table != NoTable || image.deviceTable || image.r128 || image.packed || image.byElements != 0u) return false;
+inline bool MemoryPathImageShape(const ImageResource& image) {
+    if (image.r128 || image.packed || image.byElements != 0u) return false;
     switch (image.dimension) {
         case RdnaImageDimension::Dim1D:
         case RdnaImageDimension::Dim1DArray:
@@ -102,6 +102,14 @@ inline bool MemoryPathImage(const ImageResource& image) {
     if (image.resourceClass == ImageResourceClass::Storage) return image.written || image.atomic;
     if (image.resourceClass == ImageResourceClass::Sampled) return image.read && !image.written && !image.atomic && image.fmaskCompatible && image.srgbDecodeCompatible && !image.depthCompare && image.emulatedCompare == 0u;
     return false;
+}
+
+inline bool MemoryPathImage(const ImageResource& image) {
+    return image.table == NoTable && !image.deviceTable && MemoryPathImageShape(image);
+}
+
+inline bool MemoryPathRuntimeImage(const ImageResource& image) {
+    return image.table != NoTable && image.deviceTable && image.directRuntime && image.tableOperation == TableOperation::Supported && MemoryPathImageShape(image);
 }
 
 enum SamplerUse : std::uint16_t {

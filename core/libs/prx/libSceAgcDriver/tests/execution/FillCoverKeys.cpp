@@ -39,6 +39,7 @@ constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Side = 128;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t TileRenderTarget64KB = 0x1b;
+constexpr std::uint32_t TileStandard64KB = 0x09;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = 65536;
 constexpr std::size_t KeyBytes = SurfaceBytes / 256;
@@ -128,7 +129,7 @@ std::array<std::uint32_t, 8> SurfaceWords(std::uint64_t address, std::uint64_t k
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
-        0xfacu | (TileRenderTarget64KB << 20u) | (Type2D << 28u),
+        0xfacu | ((keys != 0 ? TileRenderTarget64KB : TileStandard64KB) << 20u) | (Type2D << 28u),
         0u,
         0u,
         metaBits | (static_cast<std::uint32_t>(meta & 0xffu) << 24u),

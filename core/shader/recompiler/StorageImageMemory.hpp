@@ -228,6 +228,10 @@ inline bool ResourceThroughMemory(const ShaderInfo& info, const ImageResource& i
     return info.usesDma && MemoryPathImage(image) && (image.resourceClass != ImageResourceClass::Storage || info.bdaWrites);
 }
 
+inline bool RuntimeResourceThroughMemory(const ShaderInfo& info, const ImageResource& image) {
+    return info.usesDma && MemoryPathRuntimeImage(image) && (image.resourceClass != ImageResourceClass::Storage || info.bdaWrites);
+}
+
 inline Access AccessOf(const ImageResource& image) {
     if (image.resourceClass == ImageResourceClass::Sampled) return Access::Load;
     if (image.atomic64) return Access::Atomic64;

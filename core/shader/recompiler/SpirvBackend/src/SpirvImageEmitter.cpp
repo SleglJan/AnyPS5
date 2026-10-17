@@ -943,7 +943,7 @@ std::uint32_t EmitMemoryRead(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
             const std::array<std::uint32_t, 4> components{MemoryExtract(state, decoded, 0u), MemoryExtract(state, decoded, 1u), MemoryExtract(state, decoded, 2u), MemoryExtract(state, decoded, 3u)};
             const auto one = MemoryExtract(state, decoded, 4u);
             const auto channels = MemoryVector(state, components);
-            const auto numericClass = access.image.numericClass;
+            const auto numericClass = IrTextureNumericClass::Uint;
             std::array<std::uint32_t, 4> color{};
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 const auto selector = MemoryField(state, texel.words[3], component * 3u, 7u);
@@ -951,11 +951,12 @@ std::uint32_t EmitMemoryRead(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
                 state.module.AddFunction(spv::OpVectorExtractDynamic, u32, picked, channels, Binary(state, spv::OpBitwiseAnd, u32, selector, ConstantU32(state, 3u)));
                 const auto constant = Select(state, u32, Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), one, ConstantU32(state, 0u));
                 const auto value = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), selector, ConstantU32(state, 4u)), picked, constant);
-                color[component] = numericClass == IrTextureNumericClass::Uint ? value : Unary(state, spv::OpBitcast, ImageScalarType(state, numericClass), value);
+                color[component] = value;
             }
             const auto texelColor = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, numericClass, 4u), texelColor, color[0], color[1], color[2], color[3]);
             auto plain = access.image;
+            plain.numericClass = numericClass;
             plain.depthBits = false;
             plain.depthUnorm16 = false;
             const ImageEmitAccess plainAccess{access.inst, access.mem, plain, access.address};
@@ -2464,23 +2465,57 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
         RecordBdaFaultWords(state, zero, zero, Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, Abi::FaultFlag), Binary(state, spv::OpISub, u32, fault, ConstantU32(state, 1u))), pc, BdaAbi::FaultReason::ImageTable);
     });
     const auto valid = both(both(Unary(state, spv::OpLogicalNot, boolean, null), hit), Unary(state, spv::OpLogicalNot, boolean, faulted));
-    state.tableAccess = {};
-    state.tableAccess.element = Select(state, u32, valid, slot, zero);
-    DecorateTableNonUniform(state, state.tableAccess.element);
-    state.tableAccess.dword3 = words[3];
-    if (plan->deviceSampler) {
-        state.tableAccess.samplerElement = Select(state, u32, valid, Binary(state, spv::OpISub, u32, found, ConstantU32(state, 1u)), zero);
-        DecorateTableNonUniform(state, state.tableAccess.samplerElement);
-        state.tableAccess.unnormalized = arguments.unnormalized;
+    const auto viewAccess = [&] {
+        state.tableAccess = {};
+        state.tableAccess.element = Select(state, u32, valid, slot, zero);
+        DecorateTableNonUniform(state, state.tableAccess.element);
+        state.tableAccess.dword3 = words[3];
+        if (plan->deviceSampler) {
+            state.tableAccess.samplerElement = Select(state, u32, valid, Binary(state, spv::OpISub, u32, found, ConstantU32(state, 1u)), zero);
+            DecorateTableNonUniform(state, state.tableAccess.samplerElement);
+            state.tableAccess.unnormalized = arguments.unnormalized;
+        }
+        state.tableAccess.active = true;
+        auto selector = mode;
+        if (std::ranges::any_of(modes, [](const ImageResource& candidate) { return (candidate.emulatedCompare & EmulatedCompare::Enabled) != 0u; })) {
+            state.tableAccess.compare = Binary(state, spv::OpShiftRightLogical, u32, mode, ConstantU32(state, Abi::ModeCompareShift));
+            selector = Binary(state, spv::OpBitwiseAnd, u32, mode, ConstantU32(state, (1u << Abi::ModeCompareShift) - 1u));
+        }
+        EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), plan->deviceSampler, true);
+        state.tableAccess = {};
+    };
+    if (!StorageImageMemory::RuntimeResourceThroughMemory(state.program.Info(), base)) {
+        viewAccess();
+        return;
     }
-    state.tableAccess.active = true;
-    auto selector = mode;
-    if (std::ranges::any_of(modes, [](const ImageResource& candidate) { return (candidate.emulatedCompare & EmulatedCompare::Enabled) != 0u; })) {
-        state.tableAccess.compare = Binary(state, spv::OpShiftRightLogical, u32, mode, ConstantU32(state, Abi::ModeCompareShift));
-        selector = Binary(state, spv::OpBitwiseAnd, u32, mode, ConstantU32(state, (1u << Abi::ModeCompareShift) - 1u));
+    const auto* functions = StorageImageMemoryFunctionsOf(state);
+    if (functions == nullptr || functions->texel == 0u) ctx.Fail(inst, "accesses a device-table image through memory without the texel helper");
+    const auto* address = ctx.ImageAddress(inst.Argument(ImageOpcodeInfoOf(inst.Opcode()).needsSampler ? 2u : 1u));
+    if (address == nullptr) ctx.Fail(inst, "has no image address");
+    const ImageEmitAccess access{inst, memory, base, *address};
+    const auto selected = both(valid, equal(slot, ConstantU32(state, StorageImageMemory::MemorySlot)));
+    if (inst.Opcode() == IrOpcode::ImageWrite) {
+        EmitIfCondition(state, selected, [&] { EmitMemoryWrite(ctx, access, *functions); });
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, boolean, selected), viewAccess);
+        return;
     }
-    EmitTableImageCall(ctx, inst, memory, modes, Select(state, u32, valid, selector, ConstantU32(state, InvalidTableSelector)), plan->deviceSampler, true);
-    state.tableAccess = {};
+    const bool atomic = ImageOpcodeInfoOf(inst.Opcode()).access == ImageAccess::Atomic;
+    if (!atomic && inst.Opcode() != IrOpcode::ImageRead) {
+        viewAccess();
+        return;
+    }
+    ctx.definitions.erase(&inst);
+    const auto value = EmitValueIfElse(state, selected, TypeId(state, inst.Type()), [&] {
+        return atomic ? EmitMemoryAtomic(ctx, access, *functions) : EmitMemoryRead(ctx, access, *functions, exec);
+    }, [&] {
+        viewAccess();
+        const auto defined = ctx.definitions.find(&inst);
+        if (defined == ctx.definitions.end()) ctx.Fail(inst, "left its device-table image access without a result");
+        const auto result = defined->second;
+        ctx.definitions.erase(defined);
+        return result;
+    });
+    ctx.definitions.emplace(&inst, value);
 }
 
 }

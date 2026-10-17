@@ -192,10 +192,13 @@ inline void ExpectUntouched(std::span<const std::uint32_t> words, const std::str
     ExpectRows(words, 0, Value, what);
 }
 
+constexpr std::uint32_t ImageTileStandard64KB = 0x09u;
+
 inline std::array<std::uint32_t, 9> ImageStoreUserData(const void* texels, std::uint32_t seed) {
     std::array<std::uint32_t, 9> userData{};
     const auto image = Image(texels, Format32Float);
     std::copy(image.begin(), image.end(), userData.begin());
+    userData[3] |= ImageTileStandard64KB << 20u;
     userData[8] = seed;
     return userData;
 }
@@ -209,14 +212,18 @@ inline bool ImagePending(const void* texels) {
     return AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(range);
 }
 
+inline std::uint32_t StandardTexelOffset(std::uint32_t x, std::uint32_t y) {
+    const auto small = ((y << 4u) & 0x070u) ^ ((y << 5u) & 0x100u) ^ ((y << 6u) & 0x400u) ^ ((x << 2u) & 0x00cu) ^ ((x << 5u) & 0x080u) ^ ((x << 6u) & 0x200u) ^ ((x << 7u) & 0x800u);
+    return small ^ ((x << 8u) & 0x2000u) ^ ((x << 9u) & 0x8000u) ^ ((y << 7u) & 0x1000u) ^ ((y << 8u) & 0x4000u);
+}
+
 inline void ExpectImage(const void* texels, std::uint32_t seed, const std::string& what) {
-    const auto layout = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format32Float, Width, Height, 1u).at(0);
-    AgcDriver::GuestMemory::FlushGpuWrites(AddressOf(texels), layout.tiledOffset + layout.tiledSize);
+    AgcDriver::GuestMemory::FlushGpuWrites(AddressOf(texels), BlockBytes);
     const auto* bytes = static_cast<const std::byte*>(texels);
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             float texel = 0.0f;
-            std::memcpy(&texel, bytes + layout.tiledOffset + y * layout.pitchBytes + x * 4u, sizeof(texel));
+            std::memcpy(&texel, bytes + StandardTexelOffset(x, y), sizeof(texel));
             if (texel == StoredTexel(seed, x, y)) continue;
             Expect(false, what + ": texel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + std::to_string(texel) + ", expected " + std::to_string(StoredTexel(seed, x, y)));
             return;

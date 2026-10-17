@@ -27,7 +27,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Threads = 8;
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
-constexpr std::uint32_t TileR64KBX = 0x1b;
+constexpr std::uint32_t TileStandard64KB = 0x09;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t BlockBytes = 0x60000;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
@@ -55,7 +55,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const std::uint32_t* texels, std:
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
-        0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
+        0xfacu | (TileStandard64KB << 20u) | (Type2D << 28u),
         0u,
         maxMip << 4u,
         0u,

@@ -7,6 +7,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
+#include "StorageImageMemory.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -213,7 +214,16 @@ std::uint64_t SurfaceBytes(std::uint8_t* texels, const Shape& shape) {
     return surface.guestBytes;
 }
 
-std::uint64_t PendingVersion(std::uint8_t* texels, std::uint64_t bytes, const std::string& what) {
+bool ThroughMemory(std::uint8_t* texels, const Shape& shape) {
+    namespace ImageMemory = ShaderRecompiler::StorageImageMemory;
+    return ImageMemory::SurfaceThroughMemory(TextureDescriptor(texels, shape), ImageMemory::Access::Store);
+}
+
+std::uint64_t PendingVersion(std::uint8_t* texels, std::uint64_t bytes, const std::string& what, bool memory) {
+    if (memory) {
+        Require(AgcDriver::Graphics::StorageTexture::FindPending(reinterpret_cast<std::uintptr_t>(texels), bytes) == nullptr, what + ": a store through memory left a storage image over the surface");
+        return 0;
+    }
     const auto source = AgcDriver::Graphics::StorageTexture::FindPending(reinterpret_cast<std::uintptr_t>(texels), bytes);
     Require(source != nullptr, what + ": no storage image holds the surface's results");
     return source->Version();
@@ -251,16 +261,20 @@ void SingleLevelCase(AgcDriver::VulkanDevice& device, const Shape& shape, const 
     GuestBlock block;
     auto* texels = block.Data();
     const auto bytes = SurfaceBytes(texels, shape);
+    const bool memory = ThroughMemory(texels, shape);
     Store(device, texels, shape, StoreQuarterCode);
     Settle(device, texels, bytes);
     AgcDriver::Graphics::Texture::TakeDepthCopyCounts();
     Store(device, texels, shape, StoreHalfCode);
-    const auto before = PendingVersion(texels, bytes, name);
+    if (memory && shape.format == Format32Float) RequireGuestTexels(texels, 1.0f / 32.0f, name + ": the store through memory");
+    const auto before = PendingVersion(texels, bytes, name, memory);
     const auto program = SampleProgram(device, texels, shape);
     Sample(device, program, shape, 1.0f / 32.0f, name + ": comparison sample of pending results");
     RequireCounts(1, 1, name + ": first comparison sample");
     Store(device, texels, shape, StoreQuarterCode);
-    RequireNewerVersion(before, PendingVersion(texels, bytes, name), name + ": second store");
+    const auto after = PendingVersion(texels, bytes, name, memory);
+    if (memory && shape.format == Format32Float) RequireGuestTexels(texels, 1.0f / 64.0f, name + ": the second store through memory");
+    if (!memory) RequireNewerVersion(before, after, name + ": second store");
     Sample(device, program, shape, 1.0f / 64.0f, name + ": comparison sample of the same descriptor set after a second store");
     RequireCounts(0, 1, name + ": comparison sample after a second store");
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), bytes, nullptr, "test");
@@ -274,13 +288,14 @@ void LayersAndMipsCase(AgcDriver::VulkanDevice& device) {
     GuestBlock block;
     auto* texels = block.Data();
     const auto bytes = SurfaceBytes(texels, shape);
+    const bool memory = ThroughMemory(texels, shape);
     Store(device, texels, shape, StoreLayerMipCode, 0, 0, 1.0f / 512.0f);
     Settle(device, texels, bytes);
     AgcDriver::Graphics::Texture::TakeDepthCopyCounts();
     Store(device, texels, shape, StoreLayerMipCode, 0, 0, 1.0f / 32.0f);
     Store(device, texels, shape, StoreLayerMipCode, 2, 1, 1.0f / 64.0f);
     Store(device, texels, shape, StoreLayerMipCode, 3, 2, 1.0f / 128.0f);
-    const auto before = PendingVersion(texels, bytes, name);
+    const auto before = PendingVersion(texels, bytes, name, memory);
     const auto first = SampleProgram(device, texels, shape, 0, 0);
     const auto second = SampleProgram(device, texels, shape, 2, 1);
     const auto third = SampleProgram(device, texels, shape, 3, 2);
@@ -289,7 +304,8 @@ void LayersAndMipsCase(AgcDriver::VulkanDevice& device) {
     Sample(device, third, shape, 1.0f / 128.0f, name + ": layer 3 mip 2", 3, 2);
     RequireCounts(1, 1, name + ": first comparison samples");
     Store(device, texels, shape, StoreLayerMipCode, 2, 1, 1.0f / 256.0f);
-    RequireNewerVersion(before, PendingVersion(texels, bytes, name), name + ": second store");
+    const auto after = PendingVersion(texels, bytes, name, memory);
+    if (!memory) RequireNewerVersion(before, after, name + ": second store");
     Sample(device, second, shape, 1.0f / 256.0f, name + ": layer 2 mip 1 after a second store", 2, 1);
     Sample(device, first, shape, 1.0f / 32.0f, name + ": layer 0 mip 0 after a second store", 0, 0);
     RequireCounts(0, 1, name + ": comparison samples after a second store");

@@ -1,4 +1,5 @@
 #include "DrawSubmitFixture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -229,6 +230,7 @@ constexpr std::uint32_t UserWords = 13;
 constexpr std::uint32_t OutputSgpr = 8;
 constexpr std::uint32_t SliceSgpr = 12;
 constexpr std::uint32_t GroupSgpr = 13;
+constexpr std::uint32_t TableSgpr = 16;
 constexpr std::uint32_t ImageLoad = 0x00u;
 constexpr std::uint32_t ImageStore = 0x08u;
 constexpr std::uint32_t BufferStoreDwordX4 = 0x1eu;
@@ -238,22 +240,27 @@ std::uint32_t DimOf(std::uint32_t type) {
     return type == TypeVolume ? 2u : type == TypePlaneArray ? 5u : 1u;
 }
 
-constexpr std::array<std::uint32_t, 2> ImageOp(std::uint32_t opcode, std::uint32_t dim) {
-    return {0xf0000000u | (opcode << 18u) | 0x1000u | (0xfu << 8u) | (dim << 3u), (4u << 8u) | 1u};
+constexpr std::array<std::uint32_t, 2> ImageOp(std::uint32_t opcode, std::uint32_t dim, std::uint32_t resource) {
+    return {0xf0000000u | (opcode << 18u) | 0x1000u | (0xfu << 8u) | (dim << 3u), ((resource / 4u) << 16u) | (4u << 8u) | 1u};
 }
+
+enum class Binding { UserData, Table };
 
 struct Programs {
     Program store;
     Program load;
 };
 
-Programs& ProgramsFor(std::uint32_t dim) {
-    static std::array<std::unique_ptr<Programs>, 6> built;
-    auto& entry = built.at(dim);
+Programs& ProgramsFor(std::uint32_t dim, Binding binding) {
+    static std::array<std::unique_ptr<Programs>, 12> built;
+    const bool table = binding == Binding::Table;
+    auto& entry = built.at(dim * 2u + (table ? 1u : 0u));
     if (entry != nullptr) return *entry;
     entry = std::make_unique<Programs>();
     using namespace Isa;
-    const auto coordinates = [](Program& program) {
+    const auto resource = table ? TableSgpr : 0u;
+    const auto coordinates = [&](Program& program) {
+        if (table) program << Smem(SLoadDwordX8, TableSgpr, 0, 0) << WaitAll;
         program << Vop1(VMovB32, 1, Vgpr(0))
                 << Vop1(VMovB32, 2, GroupSgpr)
                 << Vop1(VMovB32, 3, SliceSgpr);
@@ -266,10 +273,10 @@ Programs& ProgramsFor(std::uint32_t dim) {
                  << Vop2(VAddNcU32, 5, InlineInteger(5), 4)
                  << Vop2(VAddNcU32, 6, InlineInteger(10), 4)
                  << Vop2(VAddNcU32, 7, InlineInteger(15), 4)
-                 << ImageOp(ImageStore, dim)
+                 << ImageOp(ImageStore, dim, resource)
                  << EndProgram;
     coordinates(entry->load);
-    entry->load << ImageOp(ImageLoad, dim)
+    entry->load << ImageOp(ImageLoad, dim, resource)
                 << WaitAll
                 << Vop2(VLshlRevB32, 8, InlineInteger(6), 2)
                 << Vop2(VAddNcU32, 8, Vgpr(1), 8)
@@ -315,8 +322,8 @@ std::string Submit(Commands& commands) {
     return failure;
 }
 
-void RoundTrip(const Shape& shape, std::uint32_t lod, std::vector<std::unique_ptr<PrivatePages>>& kept) {
-    const std::string what = std::string("stores and loads, ") + shape.name;
+void RoundTrip(const Shape& shape, std::uint32_t lod, Binding binding, std::vector<std::unique_ptr<PrivatePages>>& kept) {
+    const std::string what = std::string("stores and loads, ") + shape.name + (binding == Binding::Table ? ", T# loaded from memory" : ", T# in user data");
     const auto layout = UintLayout(shape.format);
     const auto probe = Descriptor(NewPath::PageBytes, shape);
     const auto bytes = Graphics::DescribeSurface(Graphics::DecodeTextureResource(probe)).guestBytes + shape.xorBits;
@@ -336,20 +343,31 @@ void RoundTrip(const Shape& shape, std::uint32_t lod, std::vector<std::unique_pt
     const auto dispatched = layered ? slices + 1u : slices;
     Require(width <= Lanes, "storage image memory: a tested level is wider than a wave");
     const auto dim = DimOf(shape.type);
-    auto& programs = ProgramsFor(dim);
+    auto& programs = ProgramsFor(dim, binding);
+    kept.push_back(std::make_unique<PrivatePages>(1u));
+    auto& block = *kept.back();
+    std::memcpy(block.Data(), words.data(), sizeof(words));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
     const auto userData = [&](std::uint32_t slice) {
         std::array<std::uint32_t, UserWords> data{};
-        std::copy(words.begin(), words.end(), data.begin());
+        if (binding == Binding::Table) {
+            data[0] = Low(block.Address());
+            data[1] = High(block.Address());
+        } else {
+            std::copy(words.begin(), words.end(), data.begin());
+        }
         const auto buffer = NewPath::BufferResource(output.Address(), static_cast<std::uint32_t>(output.Bytes()));
         std::copy(buffer.begin(), buffer.end(), data.begin() + OutputSgpr);
         data[SliceSgpr] = slice;
         return data;
     };
     {
+        const auto before = Graphics::DeviceImageTable::MemoryEntries();
         Commands commands;
         for (std::uint32_t slice = 0; slice < dispatched; ++slice) commands.Dispatch(programs.store, userData(slice), Lanes, height + 1u);
         const auto failure = Submit(commands);
         Expect(failure.empty(), what + ": the store submission failed: " + failure);
+        Expect(Graphics::DeviceImageTable::MemoryEntries() > before, what + ": the stores did not bind the surface through memory");
     }
     std::vector<std::uint8_t> expected(static_cast<std::size_t>(surface.Bytes()), static_cast<std::uint8_t>(Background));
     for (std::uint32_t slice = 0; slice < slices; ++slice) {
@@ -377,10 +395,12 @@ void RoundTrip(const Shape& shape, std::uint32_t lod, std::vector<std::unique_pt
     for (std::uint32_t slice = 0; slice < dispatched; ++slice) {
         std::memset(output.Data(), 0xee, static_cast<std::size_t>(output.Bytes()));
         AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto before = Graphics::DeviceImageTable::MemoryEntries();
         Commands commands;
         commands.Dispatch(programs.load, userData(slice), Lanes, height + 1u);
         const auto failure = Submit(commands);
         Expect(failure.empty(), what + ": the load submission failed: " + failure);
+        Expect(Graphics::DeviceImageTable::MemoryEntries() > before, what + ": slice " + std::to_string(slice) + ": the loads did not bind the surface through memory");
         const auto loaded = ReadBack(reinterpret_cast<const std::uint32_t*>(output.Data()), static_cast<std::size_t>((height + 1u) * Lanes * 4u));
         std::size_t mismatched = 0;
         std::string firstLoad;
@@ -413,11 +433,13 @@ void RoundTrips() {
         {"3D 4KB S 16_UINT", 11u, 5u, TypeVolume, 16u, 16u, 8u, 1u},
     }};
     std::vector<std::unique_ptr<PrivatePages>> kept;
-    for (const auto& shape : shapes) {
-        try {
-            RoundTrip(shape, 0u, kept);
-        } catch (const std::exception& error) {
-            Expect(false, std::string("stores and loads, ") + shape.name + ": exception: " + error.what());
+    for (const auto binding : {Binding::UserData, Binding::Table}) {
+        for (const auto& shape : shapes) {
+            try {
+                RoundTrip(shape, 0u, binding, kept);
+            } catch (const std::exception& error) {
+                Expect(false, std::string("stores and loads, ") + shape.name + ": exception: " + error.what());
+            }
         }
     }
 }

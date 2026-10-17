@@ -38,9 +38,9 @@ using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
-constexpr std::uint32_t TileR64KBX = 0x1b;
-constexpr std::uint32_t TileLinear = 0;
-std::uint32_t surfaceTile = TileR64KBX;
+constexpr std::uint32_t TileStandard64KB = 0x09;
+constexpr std::uint32_t TileStandard4KB = 0x05;
+std::uint32_t surfaceTile = TileStandard64KB;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t Page = 0x1000;
 constexpr std::size_t Block = 0x10000;
@@ -322,7 +322,7 @@ Outcome Run(const Case& test) {
     if (test.kind == Kind::Copied || test.kind == Kind::NeighbourCopied) source.emplace();
     const bool neighbour = test.kind == Kind::NeighbourLeftWatch;
     const bool leaves = test.kind == Kind::LeftWatch || test.kind == Kind::WrittenThenLeftWatch || test.kind == Kind::ImportLeftWatch || neighbour;
-    surfaceTile = neighbour ? TileLinear : TileR64KBX;
+    surfaceTile = neighbour ? TileStandard4KB : TileStandard64KB;
     Surface surface(leaves, neighbour ? Page : 0);
     struct WaitForWork {
         ~WaitForWork() {

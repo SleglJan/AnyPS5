@@ -60,10 +60,12 @@ public:
         std::uint64_t replaced = 0;
         std::uint64_t clears = 0;
         std::uint64_t evicted = 0;
+        std::uint64_t memory = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
     };
     Counts Totals() const;
+    static std::uint64_t MemoryEntries();
 
 private:
     struct ValidationState {
@@ -87,6 +89,8 @@ private:
         bool written = false;
         std::uint64_t used = 0;
         ValidationState checked;
+        bool memory = false;
+        bool overwritten = false;
     };
     static ValidationState currentState();
 
@@ -127,6 +131,7 @@ private:
         bool written = false;
     };
     std::vector<DispatchStorageUse> dispatchStorage;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> dispatchMemoryWrites;
     std::vector<std::shared_ptr<Texture>> dispatchTextures;
     std::vector<Rejection> rejections;
     std::map<std::tuple<DeviceImageKeys::Key, std::uint32_t, std::string>, std::uint32_t> rejectionIndex;

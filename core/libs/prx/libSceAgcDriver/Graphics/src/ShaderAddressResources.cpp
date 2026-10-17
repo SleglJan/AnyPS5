@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceImageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "StorageImageMemory.hpp"
 #include <algorithm>
 #include <chrono>
@@ -68,6 +69,7 @@ void ShaderResources::selectMemoryImages(std::span<const CompiledShader> shaders
         std::uint64_t end;
         Memory::Access access;
         bool memory;
+        bool device = false;
     };
     std::vector<Element> elements;
     for (const auto& shader : shaders) {
@@ -95,10 +97,34 @@ void ShaderResources::selectMemoryImages(std::span<const CompiledShader> shaders
             }
         }
     }
+    for (const auto& shader : shaders) {
+        namespace Keys = ShaderRecompiler::DeviceImageTableAbi;
+        for (const auto& expectation : shader.program->deviceImages) {
+            const auto& key = expectation.key;
+            const auto id = static_cast<std::uint64_t>(key[Keys::InterfaceWord]) | (static_cast<std::uint64_t>(key[Keys::InterfaceWord + 1u]) << 32u);
+            const auto interface = ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface(id);
+            if (interface == nullptr || !ShaderRecompiler::MemoryPathRuntimeImage(interface->image)) continue;
+            std::array<std::uint32_t, 8> words{};
+            std::copy_n(key.begin(), words.size(), words.begin());
+            const auto access = Memory::AccessOf(interface->image);
+            if (IsNullTextureResource(words) || !Memory::SurfaceThroughMemory(words, access)) continue;
+            std::uint64_t begin = 0;
+            std::uint64_t end = 0;
+            try {
+                const auto resource = DecodeTextureResource(words);
+                begin = resource.baseAddress;
+                end = begin + DescribeSurface(resource).guestBytes;
+            } catch (const std::runtime_error&) {
+                continue;
+            }
+            if (DepthSurfaceAt(begin)) continue;
+            elements.push_back(Element{nullptr, 0u, begin, end, access, true, true});
+        }
+    }
     for (bool changed = true; changed;) {
         changed = false;
         for (auto& element : elements) {
-            if (!element.memory) continue;
+            if (!element.memory || element.device) continue;
             const bool viewed = std::any_of(elements.begin(), elements.end(), [&](const Element& other) { return !other.memory && other.begin < element.end && element.begin < other.end; });
             if (!viewed) continue;
             element.memory = false;
@@ -107,7 +133,7 @@ void ShaderResources::selectMemoryImages(std::span<const CompiledShader> shaders
     }
     for (const auto& element : elements) {
         if (!element.memory) continue;
-        memoryImages.emplace(element.binding, element.element);
+        if (!element.device) memoryImages.emplace(element.binding, element.element);
         const std::pair<std::uint64_t, std::uint64_t> range{element.begin, element.end};
         accessRanges.push_back(range);
         if (element.access != Memory::Access::Store) readRanges.push_back(range);

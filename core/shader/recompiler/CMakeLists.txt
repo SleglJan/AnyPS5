@@ -313,6 +313,9 @@ function(add_shader_recompiler target runtimeTarget)
             LinkCalls
             LinkCallees
             WriteFileAtomically
+            MemoryPathRuntimeImage
+            StorageImageMemory::SurfaceThroughMemory
+            StorageImageMemory::AccessOf
             SplitTableCalls
             ReadTableCallTargets
             TableCallContinuation

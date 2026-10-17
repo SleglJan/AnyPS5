@@ -1,6 +1,7 @@
 #include "DeviceTableFixture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "StorageImageMemory.hpp"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -299,7 +300,9 @@ void RunRect(const RectCase& rectCase, const Program& program, std::uint32_t see
     }
     NewPath::Settle();
     if (rectCase.pendingByUnit) {
-        Expect(StorageTexture::FindPending(surface.base, surface.Bytes()) != nullptr, what + ": the store left no image with pending results over the surface");
+        const bool memory = ShaderRecompiler::StorageImageMemory::SurfaceThroughMemory(surface.Descriptor(), ShaderRecompiler::StorageImageMemory::Access::Store);
+        if (memory) Expect(StorageTexture::FindPending(surface.base, surface.Bytes()) == nullptr, what + ": a store through memory left an image with pending results over the surface");
+        else Expect(StorageTexture::FindPending(surface.base, surface.Bytes()) != nullptr, what + ": the store left no image with pending results over the surface");
         const auto layerBytes = surface.LayerBytes();
         const auto flush = [&](std::uint64_t offset, std::uint64_t bytes) {
             bool stored = false;
@@ -317,10 +320,10 @@ void RunRect(const RectCase& rectCase, const Program& program, std::uint32_t see
             {std::uint64_t{1u - rectCase.slice} * layerBytes, layerBytes, "the other layer"},
         }};
         for (const auto& read : reads) {
-            Expect(!flush(read.offset, read.bytes), what + ": a flush of " + read.name + ", which the store did not write, stored the image: the store left units it did not write pending");
+            if (!memory) Expect(!flush(read.offset, read.bytes), what + ": a flush of " + read.name + ", which the store did not write, stored the image: the store left units it did not write pending");
             VerifyRect(GpuRead(surface.base + read.offset, read.bytes, output, what), read.offset / 4u, surface, rectCase.slice, seed, what + ", " + read.name + " read alone by a buffer dispatch");
         }
-        Expect(flush(std::uint64_t{rectCase.slice} * layerBytes, layerBytes / 2u), what + ": a flush of the units the store wrote stored nothing");
+        if (!memory) Expect(flush(std::uint64_t{rectCase.slice} * layerBytes, layerBytes / 2u), what + ": a flush of the units the store wrote stored nothing");
     }
     const auto all = GpuRead(surface.base, surface.Bytes(), output, what);
     VerifyRect(all, 0u, surface, rectCase.slice, seed, what + ", read by a buffer dispatch");
