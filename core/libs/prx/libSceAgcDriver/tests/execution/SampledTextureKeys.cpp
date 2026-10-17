@@ -146,19 +146,17 @@ void ExpectColor(std::span<const float, 4> sampled, const std::array<float, 4>& 
 }
 
 struct Sources {
-    std::uint64_t snapshots;
     std::uint64_t gathers;
     std::uint64_t clears;
 };
 
 Sources Taken() {
     const auto counts = AgcDriver::Graphics::SampledTextureSources();
-    return {counts.snapshots, counts.gathers, counts.clears};
+    return {counts.gathers, counts.clears};
 }
 
 void ExpectSources(const Sources& before, bool gathered, bool cleared, const std::string& what) {
     const auto after = Taken();
-    Require(after.snapshots == before.snapshots, what + ": the sampled texture was read into a CPU snapshot");
     Require((after.gathers > before.gathers) == gathered, what + (gathered ? ": the sampled texture was not gathered from guest memory on the GPU" : ": the sampled texture was gathered from guest memory"));
     Require((after.clears > before.clears) == cleared, what + (cleared ? ": the sampled texture was not cleared on the GPU" : ": the sampled texture was cleared instead of read"));
 }

@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
 #include <memory>
 #include <vector>
 
@@ -17,17 +18,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
-struct DrawInputCopy {
-    std::shared_ptr<Buffer> buffer;
-    bool reused = false;
-    std::uint32_t derived = 0;
-    std::uint64_t generation = 0;
-    std::uint64_t registryGeneration = 0;
-    std::size_t bytes = 0;
+struct GuestDevicePiece {
+    std::uint64_t begin = 0;
+    std::uint64_t end = 0;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceSize offset = 0;
+    bool imported = false;
+    std::shared_ptr<Buffer> mirror;
 };
-DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uint64_t address, std::size_t bytes, std::size_t alignment, Recorder::SnapshotUse use);
-DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes);
-void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived);
+std::vector<GuestDevicePiece> GuestDevicePieces(const Context& context, const MirrorSpan& span, std::uint64_t begin, std::uint64_t end, const char* what);
 struct DrawInputSource {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceSize offset = 0;
@@ -35,7 +34,6 @@ struct DrawInputSource {
     explicit operator bool() const { return buffer != VK_NULL_HANDLE; }
 };
 DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool cpuReads);
-std::uint64_t DrawInputCopies();
 std::uint64_t DrawIndexScans();
 std::uint64_t DrawInputGathers();
 struct DrawPassCounts {

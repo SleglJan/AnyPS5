@@ -65,8 +65,7 @@ struct Counter {
     bool perDraw;
 };
 
-constexpr std::array<Counter, 20> Counters{{
-    {"draw-input copies", false},
+constexpr std::array<Counter, 19> Counters{{
     {"draw-input gathers", false},
     {"index scans", false},
     {"render passes begun", false},
@@ -98,7 +97,7 @@ Sample Take() {
     const auto rebuilt = spaces.rebuiltFirst + spaces.rebuiltGeneration + spaces.rebuiltEpoch + spaces.rebuiltDevice + spaces.rebuiltWaiterDrop;
     const auto mirrors = MirrorCounters();
     const auto leases = LeaseCounters();
-    return {DrawInputCopies(), DrawInputGathers(), DrawIndexScans(), passes.begun, passes.continued, Recorder::LabelTableLookups(), Recorder::WriteGeneration(), Recorder::PublishGeneration(), proofs.scanned, proofs.rangeScanned, HtileStoreBackReads(), StorageTexture::RegistryStores(), StorageTexture::RefreshesProved(), StorageTexture::UntrackedCompares(), StorageTexture::SinglePassMoves(), spaces.hits + rebuilt, rebuilt, mirrors.rebuilds, mirrors.sweeps, leases.contentionWaits};
+    return {DrawInputGathers(), DrawIndexScans(), passes.begun, passes.continued, Recorder::LabelTableLookups(), Recorder::WriteGeneration(), Recorder::PublishGeneration(), proofs.scanned, proofs.rangeScanned, HtileStoreBackReads(), StorageTexture::RegistryStores(), StorageTexture::RefreshesProved(), StorageTexture::UntrackedCompares(), StorageTexture::SinglePassMoves(), spaces.hits + rebuilt, rebuilt, mirrors.rebuilds, mirrors.sweeps, leases.contentionWaits};
 }
 
 void Begin(Commands& commands) {

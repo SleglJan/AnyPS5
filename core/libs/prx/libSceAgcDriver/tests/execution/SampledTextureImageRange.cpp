@@ -153,12 +153,11 @@ void Run(AgcDriver::VulkanDevice& device) {
     Sample(device, "a texture in a read-only range of the main image");
     const auto first = AgcDriver::Graphics::SampledTextureSources();
     const auto mirrors = AgcDriver::Graphics::MirrorCounters();
-    Require(first.snapshots == before.snapshots, "a texture no import serves was read into a CPU snapshot");
     Require(first.gathers == before.gathers + 1u, "a texture no import serves was not gathered on the GPU");
     Require(mirrors.rebuilds > mirrorsBefore.rebuilds && mirrors.deviceBytes == mirrors.bytes, "the texture's range was not mirrored in device memory");
     Sample(device, "the same texture sampled again");
     const auto again = AgcDriver::Graphics::SampledTextureSources();
-    Require(again.snapshots == before.snapshots && again.gathers == first.gathers, "a texture whose read-only range did not change was gathered again");
+    Require(again.gathers == first.gathers, "a texture whose read-only range did not change was gathered again");
     GuestAllocations::Mutation().UnregisterImage(GetModuleHandleW(nullptr));
 }
 

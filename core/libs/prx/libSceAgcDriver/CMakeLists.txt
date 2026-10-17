@@ -1367,15 +1367,13 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_baseline_settled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test(NAME agc_draw_snapshot_eviction COMMAND agc_driver_recorder_tests --draw-snapshot-eviction-only)
-    add_test(NAME agc_draw_input_reuse COMMAND agc_driver_recorder_tests --draw-input-reuse-only)
     add_test(NAME agc_storage_refresh COMMAND agc_driver_recorder_tests --storage-refresh-only)
     add_test(NAME agc_storage_write_back_padding COMMAND agc_driver_recorder_tests --write-back-padding-only)
     add_test(NAME agc_storage_single_pass COMMAND agc_driver_recorder_tests --single-pass-only)
     add_test(NAME agc_storage_stale_generation COMMAND agc_driver_recorder_tests --stale-generation-only)
-    set_tests_properties(agc_draw_snapshot_eviction agc_draw_input_reuse agc_storage_refresh agc_storage_write_back_padding agc_storage_single_pass agc_storage_stale_generation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(agc_storage_refresh agc_storage_write_back_padding agc_storage_single_pass agc_storage_stale_generation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(agc_draw_snapshot_eviction agc_draw_input_reuse agc_storage_refresh agc_storage_write_back_padding agc_storage_single_pass agc_storage_stale_generation PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_storage_refresh agc_storage_write_back_padding agc_storage_single_pass agc_storage_stale_generation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_storage_split_writeback COMMAND agc_driver_recorder_tests --split-writeback-only)
@@ -1738,7 +1736,7 @@ foreach(agcDeviceTableTest IN ITEMS user_data_sample srt_sample load_query two_t
     target_include_directories(agc_driver_device_table_${agcDeviceTableTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 
-foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges emulated_color_compare scalar_load_spans runtime_color_compare shader_base_image written_image_cpu_written written_image_same_submission written_image_repeated_reads written_image_group_selected written_image_group_selected_repeated data_independent_dispatch new_path_residency_rules new_path_residency_subpage_refresh run_time_dispatch_resources run_time_draw_resources vertex_pulling zero_stride_vertex_fetch zero_position_vertex vertex_fetch draw_offset_indices scalar_swappc_fetch dcc_key_store_mirror register_soffset_ranges address_build_passes device_image_scoped_refresh batch_fault_records color_target_units sampled_unit_uploads draw_keys_without_waits storage_store_units same_batch_image_readers storage_shadow_ordering index_input_ordering texture_view_first_use residency_owned_targets draw_pass_continuation index_range_label_lookups residency_label_ordering draw_work_constant)
+foreach(agcCaptureTest IN ITEMS draw_device_images memory_buffer_ranges memory_buffer_pending_images memory_buffer_refresh srt_read_ranges emulated_color_compare scalar_load_spans runtime_color_compare shader_base_image written_image_cpu_written written_image_same_submission written_image_repeated_reads written_image_group_selected written_image_group_selected_repeated data_independent_dispatch new_path_residency_rules new_path_residency_subpage_refresh run_time_dispatch_resources run_time_draw_resources vertex_pulling zero_stride_vertex_fetch zero_position_vertex vertex_fetch draw_offset_indices scalar_swappc_fetch dcc_key_store_mirror register_soffset_ranges address_build_passes device_image_scoped_refresh batch_fault_records color_target_units sampled_unit_uploads draw_keys_without_waits storage_store_units same_batch_image_readers storage_shadow_ordering index_input_ordering texture_view_first_use residency_owned_targets draw_pass_continuation index_range_label_lookups residency_label_ordering draw_work_constant draw_inputs_from_mirrors)
     target_include_directories(agc_driver_${agcCaptureTest}_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 endforeach()
 

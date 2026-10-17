@@ -180,7 +180,6 @@ void Settle(const std::string& what) {
 void WrittenInSubmission(Scene& scene, const std::string& memory) {
     const std::string what = "an indexed draw over " + memory + " whose indices a dispatch earlier in its submission wrote";
     scene.Reset(Stale);
-    const auto copies = AgcDriver::Graphics::DrawInputCopies();
     Commands commands;
     scene.WriterDispatch(commands, Fresh);
     scene.Draw(commands);
@@ -189,13 +188,11 @@ void WrittenInSubmission(Scene& scene, const std::string& memory) {
     Expect(scene.AwaitLabel(), what + ": the label never landed");
     Settle(what);
     scene.Check(Fresh, what);
-    Expect(AgcDriver::Graphics::DrawInputCopies() == copies, what + ": the indices were copied on the CPU instead of read in place");
 }
 
 void WrittenByCpu(Scene& scene, const std::string& memory) {
     const std::string what = "an indexed draw over " + memory + " whose indices the CPU wrote";
     scene.Reset(Fresh);
-    const auto copies = AgcDriver::Graphics::DrawInputCopies();
     Commands commands;
     scene.Draw(commands);
     commands.WriteData(scene.Label(), {1u});
@@ -203,7 +200,6 @@ void WrittenByCpu(Scene& scene, const std::string& memory) {
     Expect(scene.AwaitLabel(), what + ": the label never landed");
     Settle(what);
     scene.Check(Fresh, what);
-    Expect(AgcDriver::Graphics::DrawInputCopies() == copies, what + ": the indices were copied on the CPU instead of read in place");
 }
 
 void InImageRange() {
@@ -214,7 +210,6 @@ void InImageRange() {
     GuestAllocations::Mutation().Protect(ImageIndices.data(), sizeof(ImageIndices), true, false, true, [] {});
     Scene scene(reinterpret_cast<std::uint8_t*>(const_cast<std::uint32_t*>(ImageIndices.data())), sizeof(ImageIndices), false);
     scene.Reset(Fresh);
-    const auto copies = AgcDriver::Graphics::DrawInputCopies();
     const auto mirrors = AgcDriver::Graphics::MirrorCounters();
     Commands commands;
     scene.Draw(commands);
@@ -223,7 +218,6 @@ void InImageRange() {
     Expect(scene.AwaitLabel(), what + ": the label never landed");
     Settle(what);
     scene.Check(Fresh, what);
-    Expect(AgcDriver::Graphics::DrawInputCopies() == copies, what + ": the indices were copied on the CPU instead of read from the range's device mirror");
     const auto mirrored = AgcDriver::Graphics::MirrorCounters();
     Expect(mirrored.rebuilds > mirrors.rebuilds && mirrored.deviceBytes == mirrored.bytes, what + ": the range was not mirrored in device memory");
     GuestAllocations::Mutation().UnregisterImage(GetModuleHandleW(nullptr));

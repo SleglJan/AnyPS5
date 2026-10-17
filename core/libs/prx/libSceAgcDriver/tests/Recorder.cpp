@@ -1564,120 +1564,6 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
     recorder.Activate();
 }
 
-void drawSnapshotEvictionTests(const Device& device) {
-    using namespace AgcDriver::GuestMemory;
-    constexpr std::size_t bytes = 65536;
-    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "write watching unavailable: draw snapshot eviction not tested\n";
-        return;
-    }
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, bytes); }
-    } release{block};
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    Recorder cache(device.GetContext());
-    const auto buffer = std::make_shared<Buffer>(device.GetContext(), 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
-    const auto generation = CollectWrites(address, 4096);
-    Require(generation != 0, "the watched block has no generation");
-    constexpr auto cap = Recorder::DrawSnapshotEntries;
-    cache.KeepDrawSnapshot(address, 16, generation, registry, buffer, Recorder::SnapshotUse::Vertex);
-    for (std::size_t size = 1; size <= cap; ++size) cache.KeepDrawSnapshot(address, size, generation, registry, buffer);
-    Require(cache.ReusableDrawSnapshot(address, 1) == buffer, "a kept snapshot is not reusable");
-    cache.KeepDrawSnapshot(address, cap + 1, generation, registry, buffer);
-    Require(cache.ReusableDrawSnapshot(address, 2) == nullptr, "the least recently used snapshot survived the cap");
-    Require(cache.ReusableDrawSnapshot(address, 1) == buffer && cache.ReusableDrawSnapshot(address, 3) == buffer && cache.ReusableDrawSnapshot(address, cap + 1) == buffer, "eviction dropped a more recently used snapshot");
-    cache.KeepDrawSnapshot(address, cap + 2, generation, registry, buffer);
-    Require(cache.ReusableDrawSnapshot(address, 4) == nullptr && cache.ReusableDrawSnapshot(address, 1) == buffer, "the second eviction did not take the next oldest");
-    Require(cache.ReusableDrawSnapshot(address, 16, Recorder::SnapshotUse::Vertex) == buffer, "storage snapshots evicted a vertex snapshot");
-    cache.KeepDrawSnapshot(address, 1, generation, registry, buffer);
-    Require(cache.ReusableDrawSnapshot(address, 1) == buffer && cache.ReusableDrawSnapshot(address, 5) == buffer, "replacing a kept snapshot evicted another");
-    cache.KeepDrawSnapshot(address + 8192, Recorder::DrawSnapshotBudget, generation, registry, buffer);
-    Require(cache.ReusableDrawSnapshot(address, 1) == nullptr && cache.ReusableDrawSnapshot(address, 5) == nullptr, "the byte budget did not evict the older snapshots");
-    cache.KeepDrawSnapshot(address, 16, generation, registry, buffer);
-    std::memset(block, 0x5a, 16);
-    CollectWrites(address, 16);
-    Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
-}
-
-void drawInputReuseTests(const Device& device, Recorder& recorder) {
-    using namespace AgcDriver::GuestMemory;
-    using Use = Recorder::SnapshotUse;
-    constexpr std::size_t bytes = 65536;
-    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "write watching unavailable: draw input reuse not tested\n";
-        return;
-    }
-    struct Release {
-        void* block;
-        ~Release() { ReleaseWatched(block, bytes); }
-    } release{block};
-    const auto& context = device.GetContext();
-    auto* words = static_cast<std::uint32_t*>(block);
-    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 3;
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    constexpr std::size_t size = 256;
-    const auto equalsGuest = [&](const DrawInputCopy& copy) {
-        const auto contents = copy.buffer->Bytes();
-        return contents.size() == size && std::memcmp(contents.data(), block, size) == 0;
-    };
-    const auto first = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
-    Require(!first.reused && first.generation != 0 && equalsGuest(first), "the first draw input copy is wrong");
-    KeepDrawInput(&recorder, address, first, Use::Index32, 189);
-    const auto second = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
-    Require(second.reused && second.buffer == first.buffer && second.derived == 189, "an unchanged draw input was copied again");
-    const auto vertex = CopyDrawInput(context, &recorder, address, size, 1, Use::Vertex);
-    const auto narrow = CopyDrawInput(context, &recorder, address, size, 2, Use::Index16);
-    Require(!vertex.reused && !narrow.reused && equalsGuest(vertex) && equalsGuest(narrow), "a draw input reused another use's copy");
-    KeepDrawInput(&recorder, address, vertex, Use::Vertex, 0);
-    Require(CopyDrawInput(context, &recorder, address, size, 1, Use::Vertex).buffer == vertex.buffer && CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).buffer == first.buffer, "the uses' copies displaced each other");
-    Require(!CopyDrawInput(context, nullptr, address, size, 4, Use::Index32).reused, "a draw input was reused without a recorder");
-    words[5] = 0xdead;
-    const auto stored = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
-    Require(!stored.reused && stored.buffer != first.buffer && equalsGuest(stored), "a draw input outlived a CPU store");
-    KeepDrawInput(&recorder, address, stored, Use::Index32, 0xdead);
-    Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).derived == 0xdead, "the new copy was not kept");
-    MarkWritten(address + 128, 4);
-    const auto marked = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
-    Require(!marked.reused && equalsGuest(marked), "a draw input outlived a stamped GPU store");
-    KeepDrawInput(&recorder, address, marked, Use::Index32, 1);
-    Require(CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused, "the copy after the GPU store was not kept");
-    alignas(64) static std::byte other[64];
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(other, sizeof(other), true, true, true);
-    }
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Remove(other);
-    }
-    Require(!CopyDrawInput(context, &recorder, address, size, 4, Use::Index32).reused, "a draw input outlived a registry mutation");
-    const auto pool = address + 8192;
-    const auto whole = CopyDrawInput(context, &recorder, pool, 12288, 1, Use::Vertex);
-    Require(!whole.reused && std::memcmp(whole.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 12288) == 0, "the vertex pool copy is wrong");
-    KeepDrawInput(&recorder, pool, whole, Use::Vertex, 0);
-    const auto prefix = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(prefix.reused && prefix.buffer == whole.buffer, "a shorter vertex read did not reuse the longer snapshot");
-    Require(!CopyDrawInput(context, &recorder, pool, 16384, 1, Use::Vertex).reused, "a longer vertex read reused a shorter snapshot");
-    Require(!CopyDrawInput(context, &recorder, pool + 4, 4096, 1, Use::Vertex).reused, "a vertex read at another address reused the snapshot");
-    Require(!CopyDrawInput(context, &recorder, pool, 4096, 4, Use::Index32).reused, "an index read reused a longer vertex snapshot");
-    const auto shorter = CopyDrawInput(context, &recorder, pool, 8192, 4, Use::Index32);
-    KeepDrawInput(&recorder, pool, shorter, Use::Index32, 3);
-    Require(!CopyDrawInput(context, &recorder, pool, 4096, 4, Use::Index32).reused, "an index read reused a longer index snapshot");
-    words[(8192 + 8192 + 16) / 4] = 0xbeef;
-    const auto prefixAfter = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(std::memcmp(prefixAfter.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 4096) == 0, "a shorter vertex read after a store got other bytes");
-    const auto after = CopyDrawInput(context, &recorder, pool, 12288, 1, Use::Vertex);
-    Require(!after.reused && std::memcmp(after.buffer->Bytes().data(), reinterpret_cast<const void*>(pool), 12288) == 0, "a vertex read over the store reused the old bytes");
-    KeepDrawInput(&recorder, pool, after, Use::Vertex, 0);
-    const auto small = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
-    Require(small.reused && small.buffer == after.buffer, "the new vertex snapshot does not serve shorter reads");
-    recorder.Sync();
-}
-
 void drawInputInPlaceTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     constexpr std::size_t bytes = 65536;
@@ -1730,10 +1616,18 @@ void drawInputInPlaceTests(const Device& device, Recorder& recorder) {
     Require(InPlaceDrawInput(context, address + 12288, 256, 4, false) && !recorder.QueuedStoreOverlaps(address + 12288, 4), "a draw input under a queued label store was bound before the store was recorded");
     Require(static_cast<bool>(InPlaceDrawInput(context, address + 16384, 256, 4, false)), "a disjoint draw input was not bound in place");
     alignas(64) static std::array<std::byte, 256> unregistered{};
-    Require(!InPlaceDrawInput(context, reinterpret_cast<std::uint64_t>(unregistered.data()), unregistered.size(), 4, false), "memory without a host import was bound in place");
+    const auto refused = [](const auto& read) {
+        try {
+            static_cast<void>(read());
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    Require(refused([&] { return InPlaceDrawInput(context, reinterpret_cast<std::uint64_t>(unregistered.data()), unregistered.size(), 4, false); }), "memory no import or mirror serves was bound in place");
     auto unrecorded = context;
     unrecorded.recorder = nullptr;
-    Require(!InPlaceDrawInput(unrecorded, vertices, 256, 4, false), "a draw without a recorder bound its input in place");
+    Require(refused([&] { return InPlaceDrawInput(unrecorded, vertices, 256, 4, false); }), "a draw without a recorder bound its input in place");
     recorder.Sync();
     Require(!recorder.PendingReadOverlaps(vertices, 256), "an in-place draw input's read outlived its batch");
     if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
@@ -5991,16 +5885,6 @@ int main(int argc, char** argv) {
             fmaskDecompressMsaaTests(device, recorder);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-eviction-only") {
-            drawSnapshotEvictionTests(device);
-            std::cout << "Draw snapshot eviction tests passed\n";
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-reuse-only") {
-            drawInputReuseTests(device, recorder);
-            std::cout << "Draw input reuse tests passed\n";
-            return 0;
-        }
         if (argc == 2 && std::string_view(argv[1]) == "--storage-refresh-only") {
             storageRefreshTests(device, recorder, false);
             storageRefreshTests(device, recorder, true);
@@ -6054,8 +5938,6 @@ int main(int argc, char** argv) {
         tiledResolveTests(device, recorder);
         fmaskDecompressMsaaTests(device, recorder);
         drawDescriptorWriteTests(device, recorder);
-        drawSnapshotEvictionTests(device);
-        drawInputReuseTests(device, recorder);
         drawInputInPlaceTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);

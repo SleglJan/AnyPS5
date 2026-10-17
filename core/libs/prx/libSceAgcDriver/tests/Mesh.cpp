@@ -460,7 +460,6 @@ int main() {
 
         const auto quadBuffer = VertexBufferDescriptor(Quads.data(), static_cast<std::uint32_t>(Quads.size()));
         const auto scansBefore = AgcDriver::Graphics::DrawIndexScans();
-        const auto copiesBefore = AgcDriver::Graphics::DrawInputCopies();
         ClearPixels();
         DrawMesh(device, {strip, {reinterpret_cast<std::uintptr_t>(QuadStrips.data()), static_cast<std::uint32_t>(QuadStrips.size()), 2, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
         CheckQuads("16-bit triangle strips with restarts", 0, Columns);
@@ -478,7 +477,6 @@ int main() {
         DrawMesh(device, {strip, quadDraw, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
         CheckQuads("indirect triangle strips with restarts", 1, 3);
         Require(AgcDriver::Graphics::DrawIndexScans() == scansBefore, "the CPU scanned the indices of a strip draw with restarts for its restart table");
-        Require(AgcDriver::Graphics::DrawInputCopies() == copiesBefore, "the indices of a strip draw with restarts were copied on the CPU");
 
         const ShaderRecompiler::MeshConfiguration fan{5u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
         ClearPixels();
