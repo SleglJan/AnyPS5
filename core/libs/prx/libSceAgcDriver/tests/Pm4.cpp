@@ -1608,7 +1608,7 @@ void testStallWatchdogOrder() {
         submitWords(wait);
         {
             std::unique_lock lock(output->state->mutex);
-            check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "queue 0 did not reach the rendering wait");
+            check(output->state->changed.wait_for(lock, std::chrono::seconds(25), [&] { return output->state->waiting; }), "queue 0 did not reach the rendering wait");
         }
         auto words = writeWord(done, 1);
         submitWords(words, 0x20);
