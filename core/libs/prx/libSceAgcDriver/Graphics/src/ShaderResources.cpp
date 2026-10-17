@@ -437,13 +437,6 @@ bool SampledFromStorageEligible(const Context& context, const GuestTextureResour
     return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes, importOnDemand);
 }
 
-// Whether a sampled texture over a fast-cleared, storage-eligible surface views the cleared storage
-// image (see cachedTexture). APS5_NO_CLEARED_VIEW=1 keeps such surfaces snapshots, as before.
-bool ClearedViewEnabled() {
-    static const bool disabled = std::getenv("APS5_NO_CLEARED_VIEW") != nullptr;
-    return !disabled;
-}
-
 std::uint64_t DepthCopyMinBytes() {
     static const std::uint64_t bytes = [] {
         const char* text = std::getenv("APS5_DEPTH_COPY_MIN_KIB");
@@ -644,7 +637,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         if (*keys == DccKeys::Uncompressed) {
             source = sampledStorageSource(context, resource, guestBytes);
             if (source != nullptr && ((depthCompare && !Texture::CanDepthCopyFrom(*source, resource)) || (decodedCopy && !Texture::CanDecodedCopyFrom(*source, resource)))) source.reset();
-        } else if (!depthCompare && ClearedViewEnabled() && StorageClearAvailable(context, resource.format, *keys)) {
+        } else if (!depthCompare && StorageClearAvailable(context, resource.format, *keys)) {
             // A fast-cleared surface is viewed as well, through its image cleared on the GPU (the
             // lookup's Refresh, see StorageTexture::upload), when the image's own descriptor names
             // the same DCC metadata so the refresh sees the keys. A snapshot of the clear texels
