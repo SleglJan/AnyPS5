@@ -9,6 +9,7 @@ namespace AgcDriver::Graphics::DeviceMemoryAccounting {
 struct HeapUsage {
     std::uint64_t allocated = 0;
     std::uint64_t mirrors = 0;
+    std::uint64_t changes = 0;
 };
 
 PFN_vkGetDeviceProcAddr Wrap(PFN_vkGetDeviceProcAddr real);

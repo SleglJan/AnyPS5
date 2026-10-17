@@ -51,6 +51,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice device, const VkMemoryAllocateI
     if (heap < 0) return result;
     tracked.live[*memory] = {static_cast<std::uint32_t>(heap), info->allocationSize, false};
     tracked.heaps[static_cast<std::uint32_t>(heap)].allocated += info->allocationSize;
+    ++tracked.heaps[static_cast<std::uint32_t>(heap)].changes;
     return result;
 }
 
@@ -66,6 +67,7 @@ VKAPI_ATTR void VKAPI_CALL Free(VkDevice device, VkDeviceMemory memory, const Vk
             auto& heap = tracked.heaps[allocation->second.heap];
             heap.allocated -= allocation->second.bytes;
             if (allocation->second.mirror) heap.mirrors -= allocation->second.bytes;
+            ++heap.changes;
             tracked.live.erase(allocation);
         }
     }

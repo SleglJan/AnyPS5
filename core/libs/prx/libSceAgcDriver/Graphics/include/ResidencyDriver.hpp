@@ -163,6 +163,11 @@ private:
     Recorder& recorder;
     IResidencyGuestMemory& guest;
     std::uint32_t deviceHeap = 0;
+    std::array<std::uint64_t, VK_MAX_MEMORY_HEAPS> reportedUsage{};
+    std::uint64_t reportedBudget = 0;
+    std::uint64_t heapOthers = 0;
+    std::uint64_t reportedChanges = 0;
+    bool usageStale = true;
     ResidencyMirrors mirrors;
     ResidencyManager manager;
     std::shared_ptr<Buffer> touchTable;

@@ -83,27 +83,44 @@ void ResidencyDriver::BeforeDispatch() {
 }
 
 std::uint64_t ResidencyDriver::Budget() {
-    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
-    VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
-    properties.pNext = &reported;
-    context.memoryProperties2(context.physical, &properties);
-    const auto usage = DeviceMemoryAccounting::Usage(context.device, deviceHeap);
-    const auto others = usage.allocated > usage.mirrors ? usage.allocated - usage.mirrors : 0;
+    const auto others = OtherDeviceBytes();
     const auto guestBytes = guest.GuestBytes();
     auto limit = guestBytes > others ? guestBytes - others : 0;
-    if (reported.heapBudget[deviceHeap] != 0) {
-        const auto used = reported.heapUsage[deviceHeap];
-        const auto beside = used > usage.mirrors ? used - usage.mirrors : 0;
-        const auto room = reported.heapBudget[deviceHeap] > beside ? reported.heapBudget[deviceHeap] - beside : 0;
-        limit = std::min<std::uint64_t>(limit, room);
-    }
+    if (reportedBudget != 0) limit = std::min<std::uint64_t>(limit, reportedBudget > heapOthers ? reportedBudget - heapOthers : 0);
     budgetBytes = limit;
     return budgetBytes;
 }
 
 std::uint64_t ResidencyDriver::OtherDeviceBytes() {
-    const auto usage = DeviceMemoryAccounting::Usage(context.device, deviceHeap);
-    return usage.allocated > usage.mirrors ? usage.allocated - usage.mirrors : 0;
+    const auto heaps = std::min<std::uint32_t>(context.memory.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
+    std::array<DeviceMemoryAccounting::HeapUsage, VK_MAX_MEMORY_HEAPS> counted{};
+    std::uint64_t changes = 0;
+    for (std::uint32_t heap = 0; heap < heaps; ++heap) {
+        if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
+        counted[heap] = DeviceMemoryAccounting::Usage(context.device, heap);
+        changes += counted[heap].changes;
+    }
+    if (usageStale || changes != reportedChanges) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        context.memoryProperties2(context.physical, &properties);
+        std::copy(std::begin(reported.heapUsage), std::end(reported.heapUsage), reportedUsage.begin());
+        reportedBudget = reported.heapBudget[deviceHeap];
+        reportedChanges = changes;
+        usageStale = false;
+    }
+    std::uint64_t others = 0;
+    for (std::uint32_t heap = 0; heap < heaps; ++heap) {
+        if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
+        const auto& usage = counted[heap];
+        const auto allocated = usage.allocated > usage.mirrors ? usage.allocated - usage.mirrors : 0;
+        const auto used = reportedUsage[heap] > usage.mirrors ? reportedUsage[heap] - usage.mirrors : 0;
+        const auto beside = std::max(allocated, used);
+        if (heap == deviceHeap) heapOthers = beside;
+        others += beside;
+    }
+    return others;
 }
 
 std::uint64_t ResidencyDriver::GuestBytes() {
@@ -125,6 +142,7 @@ VkDeviceAddress ResidencyDriver::TouchTableAddress() const {
 void ResidencyDriver::frameBoundary() {
     namespace Touch = ShaderRecompiler::BdaTouchAbi;
     ++frames;
+    usageStale = true;
     manager.ApplyBudget();
     if (!context.bufferDeviceAddress) return;
     const auto commands = recorder.Commands();
