@@ -2351,9 +2351,7 @@ DeviceTableStorage LookupDeviceTableStorage(const Context& context, std::span<co
     if (view.mipRun) {
         Require(!view.atomic && !view.atomic64, "a storage image with dynamic mips is accessed atomically through the device image table, which is not implemented");
         Require(resource.lastLevel >= resource.baseLevel && resource.lastLevel - resource.baseLevel < ShaderRecompiler::RuntimeAbi::StorageMipSlots, "guest storage texture descriptor names an invalid range of mip levels");
-        std::vector<VkImageView> views;
-        for (auto level = resource.baseLevel; level <= resource.lastLevel; ++level) views.push_back(image->StorageView(std::min(level, resource.mipCount - 1u), layers));
-        result.slot = image->StorageSlotRun(views);
+        result.slot = image->StorageSlotRun(resource.baseLevel, resource.lastLevel, layers);
     } else {
         result.slot = image->StorageSlot(mip, layers, view.atomic64 ? StorageTexture::StorageViewKind::Atomic64 : view.atomic ? StorageTexture::StorageViewKind::Atomic : StorageTexture::StorageViewKind::Storage);
     }

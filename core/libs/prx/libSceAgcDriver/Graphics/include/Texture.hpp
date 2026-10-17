@@ -239,14 +239,12 @@ public:
         bool operator==(const ViewLayers&) const = default;
     };
     static ViewLayers LayersOf(const GuestTextureResource& viewed, bool flat);
-    VkImageView StorageView(std::uint32_t mip, ViewLayers layers);
     const PooledView* ElementView();
     const PooledView& DecodeSourceView(std::uint32_t mip);
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
     enum class StorageViewKind : std::uint8_t { Storage, Atomic, Atomic64 };
     std::uint32_t StorageSlot(std::uint32_t mip, ViewLayers layers, StorageViewKind kind);
-    std::uint32_t StorageSlotRun(std::span<const VkImageView> views);
     std::uint32_t StorageSlotRun(std::uint32_t firstMip, std::uint32_t lastMip, ViewLayers layers);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
@@ -646,7 +644,6 @@ private:
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize memoryBytes = 0;
     std::mutex slotMutex;
-    std::map<std::pair<VkImageView, std::uint32_t>, std::uint32_t> storageRuns;
     std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, bool>, std::uint32_t> pooledRuns;
     std::uint32_t defaultMip = 0;
     std::mutex viewMutex;

@@ -2118,10 +2118,6 @@ VkFormat StorageTexture::storageViewFormat(StorageViewKind kind) const {
     return format;
 }
 
-VkImageView StorageTexture::StorageView(std::uint32_t mip, ViewLayers layers) {
-    return layerView(mip, layers, storageViewFormat(StorageViewKind::Storage));
-}
-
 const PooledView* StorageTexture::ElementView() {
     if (elementViewChecked) return elementView.get();
     elementViewChecked = true;
@@ -5932,21 +5928,7 @@ std::uint32_t StorageTexture::StorageSlotRun(std::uint32_t firstMip, std::uint32
     return slot;
 }
 
-std::uint32_t StorageTexture::StorageSlotRun(std::span<const VkImageView> imageViews) {
-    Require(!imageViews.empty() && context.descriptorHeap != nullptr, "a storage image slot run needs views and the descriptor heap");
-    std::lock_guard lock(slotMutex);
-    const std::pair key{imageViews.front(), static_cast<std::uint32_t>(imageViews.size())};
-    if (const auto found = storageRuns.find(key); found != storageRuns.end()) return found->second;
-    const auto slot = context.descriptorHeap->AllocateImageRun(DescriptorHeap::Array::StorageImages, imageViews, VK_IMAGE_LAYOUT_GENERAL);
-    storageRuns.emplace(key, slot);
-    return slot;
-}
-
 void StorageTexture::release() noexcept {
-    for (const auto& [key, slot] : storageRuns) {
-        for (std::uint32_t index = 0; index < key.second; ++index) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + index);
-    }
-    storageRuns.clear();
     for (const auto& [key, pooled] : pooledViews) pooled->Destroy();
     for (const auto& [key, slot] : pooledRuns) {
         for (auto level = std::get<0>(key); level <= std::get<1>(key); ++level) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + (level - std::get<0>(key)));
