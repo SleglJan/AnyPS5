@@ -47,9 +47,9 @@ public:
     [[nodiscard]] std::shared_ptr<const TableCallTargetSet> Targets(const ShaderRecompiler::RecompileRequest& request);
     [[nodiscard]] std::shared_ptr<const TableCallPart> Head(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
     [[nodiscard]] std::shared_ptr<const TableCallPart> Continuation(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallTarget& target);
+    void Prepared(std::shared_ptr<const TableCallPart> preparedHead, std::span<const std::shared_ptr<const TableCallPart>> outcomes);
 
 private:
-    std::shared_ptr<const TableCallPart> prepare(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite);
     std::vector<std::uint64_t> tablePointers(const ShaderRecompiler::RecompileRequest& request) const;
 
     ShaderRecompiler::TableCallSplit split;
@@ -65,10 +65,11 @@ private:
     std::shared_ptr<const TableCallTargetSet> targets;
 };
 
+[[nodiscard]] std::shared_ptr<const TableCallPart> PrepareTableCallPart(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite);
 [[nodiscard]] ShaderRecompiler::RecompileRequest TableCallPartRequest(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, TableCallPart& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite);
 [[nodiscard]] std::shared_ptr<const ShaderRecompiler::RunTimeProgram> TableCallPartProgram(const ShaderRecompiler::PreparedShaderInvocation& invocation);
 [[nodiscard]] std::shared_ptr<TableCallProgram> TableCallProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request);
-[[nodiscard]] std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords);
+[[nodiscard]] std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords, const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, LinkedCallees callees = {});
 
 struct BranchSplitCounts {
     std::uint64_t programs = 0;

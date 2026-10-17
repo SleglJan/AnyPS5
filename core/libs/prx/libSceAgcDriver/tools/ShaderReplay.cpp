@@ -77,24 +77,25 @@ void ShowCallTable(void* context, const ShaderRecompiler::TableCall& call, std::
     }
 }
 
-void LinkRequestCallees(ShaderRecompiler::DeserializedRequest& request) {
+const ShaderRecompiler::LinkedCode* LinkRequestCallees(ShaderRecompiler::DeserializedRequest& request) {
     static ShaderRecompiler::LinkedCode linked;
-    if (!request.request.shader.linkedLiterals.empty()) return;
+    if (!request.request.shader.linkedLiterals.empty()) return nullptr;
     ShaderRecompiler::RequestMemoryView view(request.request.context.memory);
     auto runtime = view.MakeRuntime(request.request.context.userData, request.request.shader.codeAddress);
     const ShaderRecompiler::CalleeMemory memory{&runtime, &ReadRequestWords, &ReadRequestWords, &ShowCallTable};
     try {
         auto result = ShaderRecompiler::LinkCallees(request.request, memory);
-        if (result.code.empty()) return;
+        if (result.code.empty()) return nullptr;
         linked = std::move(result);
     } catch (const std::exception& error) {
         std::printf("  callees not linked, replaying the request as recorded: %s\n", FirstLine(error.what()).c_str());
-        return;
+        return nullptr;
     }
     request.request.shader.code = linked.code;
     request.request.shader.linkedLiterals = linked.linkedLiterals;
     request.request.context.linkedWords = linked.linkedWords;
     std::printf("  linked callees: %zu code words, %zu linked literals, %zu linked words\n", linked.code.size(), linked.linkedLiterals.size(), linked.linkedWords.size());
+    return &linked;
 }
 
 std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedRequest& recorded) {
@@ -148,14 +149,10 @@ std::optional<bool> ReplayTableCallSplit(const ShaderRecompiler::DeserializedReq
     return replayed;
 }
 
-bool ReplaySplit(const char* path, const ShaderRecompiler::RecompileRequest& whole, std::size_t wholeWords) {
-    const auto split = ShaderRecompiler::SplitBranchProgram(whole, wholeWords);
-    if (!split) {
-        if (wholeWords > ShaderRecompiler::GiantProgramWords) std::printf("  split: none, the module stays whole at %zu SPIR-V words\n", wholeWords);
-        return true;
-    }
-    std::printf("  split: %zu points, %u rounds, %zu scalar and %zu vector registers in the record\n", split->branchSites.size(), split->rounds, split->scalarRegisters.size(), split->vectorRegisters.size());
-    const auto compile = [&](const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite, const std::string& what) {
+bool ReplaySplit(const char* path, const ShaderRecompiler::RecompileRequest& linkedWhole, std::size_t wholeWords, std::span<const std::uint32_t> recordedCode, const ShaderRecompiler::LinkedCode* callees) {
+    auto whole = linkedWhole;
+    whole.shader.code = recordedCode;
+    const auto compile = [&](const ShaderRecompiler::TableCallSplit& split, const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
         std::vector<std::uint32_t> userData(whole.context.userData.begin(), whole.context.userData.end());
         userData.resize(userData.size() + ShaderRecompiler::ContinuationAbi::UserDataWords, 0u);
         auto source = whole;
@@ -170,23 +167,53 @@ bool ReplaySplit(const char* path, const ShaderRecompiler::RecompileRequest& who
             compute.threadsFromMemory = false;
             source.context.compute = compute;
         }
-        source.context.continuation = ShaderRecompiler::TableCallShape(*split, part, role, entrySite);
+        source.context.continuation = ShaderRecompiler::TableCallShape(split, part, role, entrySite);
         source.useCache = false;
-        const auto result = ShaderRecompiler::Recompile(source);
-        std::printf("    %s: %zu SPIR-V words\n", what.c_str(), result.spirv.size());
-        if (g_spirv) {
-            std::string name(path);
-            name = name.substr(name.find_last_of("/\\") + 1) + "." + what + ".spv";
-            std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
-        }
-        return result.spirv.size();
+        return ShaderRecompiler::Recompile(source);
     };
-    std::size_t largest = compile(split->head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u, "head");
+    std::size_t attempts = 0;
+    std::vector<std::uint32_t> measuredSites;
+    std::vector<std::size_t> measured;
+    const ShaderRecompiler::BranchSplitPartWords partWords = [&](const ShaderRecompiler::TableCallSplit& split, const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
+        if (split.branchSites != measuredSites || measured.empty()) {
+            ++attempts;
+            measuredSites = split.branchSites;
+            measured.clear();
+        }
+        measured.push_back(compile(split, part, role, entrySite).spirv.size());
+        return measured.back();
+    };
+    const auto split = ShaderRecompiler::SplitBranchProgram(whole, wholeWords, callees != nullptr ? std::span<const std::vector<std::uint32_t>>(callees->callees) : std::span<const std::vector<std::uint32_t>>{}, partWords);
+    if (!split) {
+        if (wholeWords > ShaderRecompiler::GiantProgramWords) std::printf("  split: none, the module stays whole at %zu SPIR-V words\n", wholeWords);
+        return true;
+    }
+    std::printf("  split: %zu points, %u rounds, %zu scalar and %zu vector registers in the record, %zu linked callees, %zu measured attempts\n", split->branchSites.size(), split->rounds, split->scalarRegisters.size(), split->vectorRegisters.size(), split->userDataCallees.size(), attempts);
+    const bool reuse = split->branchSites == measuredSites && !g_spirv;
+    std::size_t index = 0;
+    const auto show = [&](const ShaderRecompiler::SplitCode& part, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite, const std::string& what) {
+        std::size_t words = 0;
+        if (reuse) {
+            words = measured.at(index);
+        } else {
+            const auto result = compile(*split, part, role, entrySite);
+            words = result.spirv.size();
+            if (g_spirv) {
+                std::string name(path);
+                name = name.substr(name.find_last_of("/\\") + 1) + "." + what + ".spv";
+                std::ofstream(name, std::ios::binary).write(reinterpret_cast<const char*>(result.spirv.data()), static_cast<std::streamsize>(result.spirv.size() * sizeof(result.spirv[0])));
+            }
+        }
+        ++index;
+        std::printf("    %s: %zu SPIR-V words\n", what.c_str(), words);
+        return words;
+    };
+    std::size_t largest = show(split->head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u, "head");
     for (const auto& target : ShaderRecompiler::BranchSplitTargets(*split)) {
         const auto part = ShaderRecompiler::TableCallContinuation(*split, target);
         char what[64];
         std::snprintf(what, sizeof(what), "point%u-%s", target.site, target.key[0] != 0u ? "taken" : "not-taken");
-        largest = std::max(largest, compile(part, ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site, what));
+        largest = std::max(largest, show(part, ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site, what));
     }
     std::printf("  split: largest part %zu SPIR-V words\n", largest);
     return true;
@@ -196,7 +223,8 @@ bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (const auto split = ReplayTableCallSplit(request)) return *split;
-    LinkRequestCallees(request);
+    const auto recordedCode = request.request.shader.code;
+    const auto* callees = LinkRequestCallees(request);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
         std::printf("  compute: threads %ux%ux%u, lds %u dwords, group ids %d%d%d, tg size %d, thread id components %u\n", compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords, compute.groupIdEnable[0], compute.groupIdEnable[1], compute.groupIdEnable[2], compute.tgSizeEnable, compute.threadIdComponentCount);

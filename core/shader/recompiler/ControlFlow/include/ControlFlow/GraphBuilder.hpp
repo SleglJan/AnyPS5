@@ -98,7 +98,8 @@ struct TableCallAnalysis {
 [[nodiscard]] SplitCode LinkTableCallContinuation(std::span<const std::uint32_t> linked, std::span<const TableCall> calls, std::size_t site, std::span<const std::uint32_t> callee);
 [[nodiscard]] TableCallAnalysis AnalyzeTableCalls(std::span<const std::uint32_t> linked, std::span<const TableCall> calls, std::uint32_t waveSize);
 [[nodiscard]] TableCallAnalysis AnalyzeTableCallee(std::span<const std::uint32_t> callee);
-[[nodiscard]] std::vector<std::uint32_t> ChooseBranchSplitSites(std::span<const std::uint32_t> code, std::size_t programWords, std::size_t boundWords);
+[[nodiscard]] std::vector<std::uint32_t> ChooseBranchSplitSites(std::span<const std::uint32_t> code, std::size_t programWords, std::size_t boundWords, std::size_t calleeWord = SIZE_MAX, std::span<const double> corrections = {});
+[[nodiscard]] std::vector<double> CorrectBranchSplitEstimates(std::span<const std::uint32_t> code, std::size_t programWords, std::span<const std::uint32_t> sites, std::span<const double> corrections, std::span<const std::size_t> partWords);
 [[nodiscard]] SplitCode LinkBranchSplitHead(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites);
 [[nodiscard]] SplitCode LinkBranchSplitContinuation(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites, std::size_t site, bool taken);
 [[nodiscard]] TableCallAnalysis AnalyzeBranchSplit(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites);

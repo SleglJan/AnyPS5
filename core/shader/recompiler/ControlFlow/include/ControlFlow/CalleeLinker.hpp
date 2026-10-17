@@ -6,6 +6,7 @@
 #include "Recompiler.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -50,7 +51,9 @@ struct TableCallTarget {
 [[nodiscard]] ContinuationAbi::Shape TableCallShape(const TableCallSplit& split, const SplitCode& part, ContinuationAbi::Role role, std::uint32_t entrySite = 0);
 inline constexpr std::size_t GiantProgramWords = 500000;
 inline constexpr std::size_t GiantPartWords = 400000;
-[[nodiscard]] std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::size_t boundWords = GiantPartWords);
+inline constexpr std::size_t BranchSplitAttempts = 3;
+using BranchSplitPartWords = std::function<std::size_t(const TableCallSplit& split, const SplitCode& part, ContinuationAbi::Role role, std::uint32_t entrySite)>;
+[[nodiscard]] std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees = {}, const BranchSplitPartWords& partWords = {}, std::size_t boundWords = GiantPartWords);
 [[nodiscard]] std::vector<TableCallTarget> BranchSplitTargets(const TableCallSplit& split);
 
 }

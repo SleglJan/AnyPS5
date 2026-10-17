@@ -5,6 +5,7 @@
 #include <array>
 #include <bit>
 #include <cstdio>
+#include <functional>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -1881,81 +1882,182 @@ TableCallAnalysis AnalyzeTableCallee(std::span<const std::uint32_t> callee) {
     return analysis;
 }
 
-std::vector<std::uint32_t> ChooseBranchSplitSites(std::span<const std::uint32_t> code, std::size_t programWords, std::size_t boundWords) {
+namespace {
+
+class BranchSplitEstimator {
+public:
+    struct Part {
+        std::uint32_t start = 0;
+        std::vector<bool> live;
+        double words = 0.0;
+    };
+
+    BranchSplitEstimator(std::span<const std::uint32_t> code, std::size_t programWords, std::span<const double> corrections)
+        : program(RdnaInstructionDecoder{}.Decode(code)), size(static_cast<std::uint32_t>(program.instructions.size())), entered(reachableFrom(program, std::vector<std::uint32_t>{0u})) {
+        double guestWeight = 0.0;
+        for (std::uint32_t index = 0; index < size; ++index) {
+            weights.push_back(static_cast<double>(std::max(estimatedSpirvWords(program.instructions[index]), 1u)));
+            if (entered[index]) guestWeight += weights.back();
+            if (index < corrections.size()) weights.back() *= corrections[index];
+        }
+        wordsPerWeight = guestWeight == 0.0 ? 0.0 : static_cast<double>(programWords) / guestWeight;
+    }
+
+    [[nodiscard]] Part Estimate(std::uint32_t start, std::span<const std::uint32_t> stops) const {
+        Part part{start, reachableFrom(program, std::vector<std::uint32_t>{start}, stops), 0.0};
+        double weight = 0.0;
+        for (std::uint32_t index = 0; index < size; ++index) {
+            if (part.live[index]) weight += weights[index];
+        }
+        part.words = weight * wordsPerWeight;
+        return part;
+    }
+
+    [[nodiscard]] std::vector<Part> Parts(std::span<const std::uint32_t> stops) const {
+        std::vector<Part> parts{Estimate(0u, stops)};
+        for (const auto stop : stops) {
+            parts.push_back(Estimate(branchTargetIndex(program, stop), stops));
+            parts.push_back(Estimate(stop + 1u, stops));
+        }
+        return parts;
+    }
+
+    [[nodiscard]] std::vector<std::uint32_t> Indices(std::span<const std::uint32_t> sites) const {
+        std::vector<std::uint32_t> indices;
+        for (const auto programCounter : sites) indices.push_back(branchSiteIndex(program, programCounter));
+        return indices;
+    }
+
+    RdnaProgram program;
+    std::uint32_t size = 0;
+    std::vector<bool> entered;
+    std::vector<double> weights;
+    double wordsPerWeight = 0.0;
+};
+
+}
+
+std::vector<std::uint32_t> ChooseBranchSplitSites(std::span<const std::uint32_t> code, std::size_t programWords, std::size_t boundWords, std::size_t calleeWord, std::span<const double> corrections) {
     constexpr std::size_t maximumSites = 32;
-    const auto program = RdnaInstructionDecoder{}.Decode(code);
-    const auto size = static_cast<std::uint32_t>(program.instructions.size());
-    if (size == 0u) return {};
+    const BranchSplitEstimator estimator(code, programWords, corrections);
+    const auto& program = estimator.program;
+    const auto size = estimator.size;
+    if (size == 0u || estimator.wordsPerWeight == 0.0) return {};
     std::vector<bool> inLoop(size, false);
-    const auto entered = reachableFrom(program, std::vector<std::uint32_t>{0u});
-    std::size_t guestWords = 0;
     for (std::uint32_t index = 0; index < size; ++index) {
         const auto& instruction = program.instructions[index];
-        if (entered[index]) guestWords += instruction.wordCount;
         if (instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64) {
             std::uint32_t target = 0;
-            if (!resolveSetpcTarget(program, index, target)) return {};
+            if (instruction.programCounter / 4u < calleeWord && !resolveSetpcTarget(program, index, target)) return {};
         }
         if (!IsDirectBranchOpcode(instruction.op) && instruction.op != RdnaOpcode::SCallB64) continue;
         const auto target = instructionIndexOfProgramCounter(program, instruction.branchTarget);
         if (target == InvalidControlFlowId) return {};
         if (target <= index) std::fill(inLoop.begin() + target, inLoop.begin() + index + 1u, true);
     }
-    if (guestWords == 0u) return {};
-    const auto wordsPerGuestWord = static_cast<double>(programWords) / static_cast<double>(guestWords);
+    const auto bound = static_cast<double>(boundWords);
     std::vector<std::uint32_t> candidates;
     for (std::uint32_t index = 0; index < size; ++index) {
-        if (!splitBranch(program.instructions[index]) || inLoop[index] || index + 1u >= size || !entered[index]) continue;
+        if (!splitBranch(program.instructions[index]) || inLoop[index] || index + 1u >= size || !estimator.entered[index] || program.instructions[index].programCounter / 4u >= calleeWord) continue;
         const auto taken = branchTargetIndex(program, index);
         if (taken == index + 1u) continue;
         const std::array<std::uint32_t, 1> stop{index};
         const auto around = reachableFrom(program, std::vector<std::uint32_t>{0u}, stop);
         if (!around[taken] && !around[index + 1u]) candidates.push_back(index);
     }
-    const auto estimate = [&](std::uint32_t start, std::span<const std::uint32_t> stops) {
-        const auto seen = reachableFrom(program, std::vector<std::uint32_t>{start}, stops);
-        std::size_t words = 0;
-        for (std::uint32_t index = 0; index < size; ++index) {
-            if (seen[index]) words += program.instructions[index].wordCount;
+    using Part = BranchSplitEstimator::Part;
+    const auto separates = [&](const Part& part, std::span<const std::uint32_t> stops) {
+        return std::ranges::none_of(stops, [&](std::uint32_t stop) { return part.live[stop] && (part.live[branchTargetIndex(program, stop)] || part.live[stop + 1u]); });
+    };
+    struct Score {
+        std::vector<double> over;
+        double largest = 0.0;
+
+        void Add(double words, double bound) {
+            if (words > bound) over.push_back(words);
+            largest = std::max(largest, words);
         }
-        return static_cast<double>(words) * wordsPerGuestWord;
-    };
-    const auto parts = [&](std::span<const std::uint32_t> stops) {
-        std::vector<std::pair<double, std::uint32_t>> result{{estimate(0u, stops), 0u}};
-        for (const auto index : stops) {
-            const auto taken = branchTargetIndex(program, index);
-            result.push_back({estimate(taken, stops), taken});
-            result.push_back({estimate(index + 1u, stops), index + 1u});
+
+        void Sort() {
+            std::ranges::sort(over, std::greater<>{});
         }
-        return result;
+
+        [[nodiscard]] int Compare(const Score& other, double tolerance) const {
+            for (std::size_t index = 0; index < std::max(over.size(), other.over.size()); ++index) {
+                const auto mine = index < over.size() ? over[index] : 0.0;
+                const auto theirs = index < other.over.size() ? other.over[index] : 0.0;
+                if (mine + tolerance < theirs) return -1;
+                if (theirs + tolerance < mine) return 1;
+            }
+            return 0;
+        }
     };
-    const auto largest = [](const std::vector<std::pair<double, std::uint32_t>>& estimates) {
-        return *std::ranges::max_element(estimates, {}, &std::pair<double, std::uint32_t>::first);
-    };
+    const auto tolerance = bound / 64.0;
     std::vector<std::uint32_t> chosen;
-    auto current = largest(parts(chosen));
-    while (current.first > static_cast<double>(boundWords) && chosen.size() < maximumSites) {
-        const auto inPart = reachableFrom(program, std::vector<std::uint32_t>{current.second}, chosen);
-        std::optional<std::pair<double, std::uint32_t>> best;
+    std::vector<Part> parts{estimator.Estimate(0u, chosen)};
+    Score current;
+    current.Add(parts.front().words, bound);
+    while (!current.over.empty() && chosen.size() < maximumSites) {
+        std::optional<Score> best;
         std::uint32_t bestSite = 0;
         for (const auto candidate : candidates) {
-            if (!inPart[candidate] || std::ranges::find(chosen, candidate) != chosen.end()) continue;
+            if (std::ranges::find(chosen, candidate) != chosen.end()) continue;
+            if (std::ranges::none_of(parts, [&](const Part& part) { return part.words > bound && part.live[candidate]; })) continue;
             auto trial = chosen;
             trial.push_back(candidate);
-            const auto worst = largest(parts(trial));
-            if (!best || worst.first < best->first) {
-                best = worst;
+            Score score;
+            bool valid = true;
+            for (const auto& part : parts) {
+                if (!part.live[candidate]) {
+                    score.Add(part.words, bound);
+                    continue;
+                }
+                const auto split = estimator.Estimate(part.start, trial);
+                valid = valid && separates(split, trial);
+                score.Add(split.words, bound);
+            }
+            for (const auto start : {branchTargetIndex(program, candidate), candidate + 1u}) {
+                const auto outcome = estimator.Estimate(start, trial);
+                valid = valid && separates(outcome, trial);
+                score.Add(outcome.words, bound);
+            }
+            score.Sort();
+            const auto order = best ? score.Compare(*best, tolerance) : -1;
+            if (valid && (order < 0 || (order == 0 && score.largest < best->largest))) {
+                best = std::move(score);
                 bestSite = candidate;
             }
         }
-        if (!best || best->first >= current.first) break;
+        if (!best || best->Compare(current, tolerance) >= 0) break;
         chosen.push_back(bestSite);
-        current = *best;
+        for (auto& part : parts) {
+            if (part.live[bestSite]) part = estimator.Estimate(part.start, chosen);
+        }
+        for (const auto start : {branchTargetIndex(program, bestSite), bestSite + 1u}) parts.push_back(estimator.Estimate(start, chosen));
+        current = std::move(*best);
     }
     std::ranges::sort(chosen);
     std::vector<std::uint32_t> sites;
     for (const auto index : chosen) sites.push_back(program.instructions[index].programCounter);
     return sites;
+}
+
+std::vector<double> CorrectBranchSplitEstimates(std::span<const std::uint32_t> code, std::size_t programWords, std::span<const std::uint32_t> sites, std::span<const double> corrections, std::span<const std::size_t> partWords) {
+    const BranchSplitEstimator estimator(code, programWords, corrections);
+    const auto parts = estimator.Parts(estimator.Indices(sites));
+    if (partWords.size() != parts.size()) throw std::logic_error("a split program's measured parts and its estimated parts differ in number");
+    std::vector<double> corrected(estimator.size, 1.0);
+    std::copy_n(corrections.begin(), std::min<std::size_t>(corrections.size(), corrected.size()), corrected.begin());
+    std::vector<double> ratios(estimator.size, 1.0);
+    for (std::size_t part = 0; part < parts.size(); ++part) {
+        if (parts[part].words <= 0.0) continue;
+        const auto ratio = static_cast<double>(partWords[part]) / parts[part].words;
+        for (std::uint32_t index = 0; index < estimator.size; ++index) {
+            if (parts[part].live[index]) ratios[index] = std::max(ratios[index], ratio);
+        }
+    }
+    for (std::uint32_t index = 0; index < estimator.size; ++index) corrected[index] *= ratios[index];
+    return corrected;
 }
 
 SplitCode LinkBranchSplitHead(std::span<const std::uint32_t> linked, std::span<const std::uint32_t> sites) {

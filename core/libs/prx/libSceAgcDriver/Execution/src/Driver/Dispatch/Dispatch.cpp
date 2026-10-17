@@ -248,8 +248,22 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 program = made.program;
                 linked = made.linked;
                 const auto words = program->compiled->spirv.size();
-                if (!linked && words > ShaderRecompiler::GiantProgramWords) {
-                    tableCalls = BranchSplitProgramFor(programKey, request, words);
+                if (linked && words > ShaderRecompiler::GiantProgramWords) {
+                    std::shared_ptr<const LinkedProgram> entry;
+                    {
+                        std::lock_guard cacheLock(runTimeProgramsMutex);
+                        auto& candidates = linkedPrograms[programKey];
+                        const auto found = std::ranges::find_if(candidates, [&](const std::shared_ptr<const LinkedProgram>& candidate) { return candidate->program == program; });
+                        if (found != candidates.end()) entry = *found;
+                    }
+                    require(entry != nullptr, "a linked compute program over the giant bound is not registered");
+                    tableCalls = BranchSplitProgramFor(programKey, request, words, localDevice, snapshot, codeOffset, entry->callees);
+                    if (tableCalls != nullptr) {
+                        std::lock_guard cacheLock(runTimeProgramsMutex);
+                        std::erase(linkedPrograms[programKey], entry);
+                    }
+                } else if (!linked && words > ShaderRecompiler::GiantProgramWords) {
+                    tableCalls = BranchSplitProgramFor(programKey, request, words, localDevice, snapshot, codeOffset);
                     if (tableCalls == nullptr) {
                         std::lock_guard cacheLock(runTimeProgramsMutex);
                         program = runTimeDispatches.try_emplace(programKey, program).first->second;

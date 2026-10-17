@@ -204,23 +204,51 @@ std::vector<TableCallTarget> ReadTableCallTargets(const RecompileRequest& reques
     return targets;
 }
 
-std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::size_t boundWords) {
+std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees, const BranchSplitPartWords& partWords, std::size_t boundWords) {
     if (programWords <= GiantProgramWords || request.shader.stage != ShaderStage::Compute || !request.context.compute) return std::nullopt;
     const auto program = RdnaInstructionDecoder{}.Decode(request.shader.code);
-    if (std::ranges::any_of(program.instructions, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SSetpcB64 || instruction.op == RdnaOpcode::SSwappcB64; })) return std::nullopt;
-    TableCallSplit split;
-    split.linked = LinkCalls(program, {}, {}).code;
-    split.branchSites = ChooseBranchSplitSites(split.linked, programWords, boundWords);
-    if (split.branchSites.empty()) return std::nullopt;
+    const SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
+    auto calls = userDataCallees.empty() ? std::vector<UserDataCall>{} : FindUserDataCalls(program, swappc);
+    if (calls.size() != userDataCallees.size()) throw std::logic_error("a split program's user-data calls and linked callees differ in number");
+    const auto userDataCall = [&](const RdnaInstruction& instruction) {
+        return std::ranges::any_of(calls, [&](const UserDataCall& call) { return call.programCounter == instruction.programCounter; });
+    };
+    if (std::ranges::any_of(program.instructions, [&](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SSetpcB64 || (instruction.op == RdnaOpcode::SSwappcB64 && !userDataCall(instruction)); })) return std::nullopt;
+    const auto programEnd = (program.instructions.back().programCounter / 4u) + program.instructions.back().wordCount;
+    TableCallSplit base;
+    base.linked = LinkCalls(program, calls, userDataCallees).code;
+    base.userDataCalls = std::move(calls);
+    base.userDataCallees.assign(userDataCallees.begin(), userDataCallees.end());
     const auto& compute = *request.context.compute;
     const auto waveSize = request.context.waveSize;
     const auto threads = std::max(compute.numThreads[0], 1u) * std::max(compute.numThreads[1], 1u) * std::max(compute.numThreads[2], 1u);
-    split.wavesPerGroup = (threads + waveSize - 1u) / waveSize;
-    const auto analysis = AnalyzeBranchSplit(split.linked, split.branchSites);
-    if (analysis.indexedRegisters || (split.wavesPerGroup > 1u && (analysis.sharedMemory || analysis.barrier))) return std::nullopt;
-    fillLayout(split, analysis, request);
-    split.head = LinkBranchSplitHead(split.linked, split.branchSites);
-    return split;
+    base.wavesPerGroup = (threads + waveSize - 1u) / waveSize;
+    std::optional<TableCallSplit> best;
+    std::size_t bestWords = 0;
+    std::vector<double> corrections;
+    std::vector<std::vector<std::uint32_t>> tried;
+    for (std::size_t attempt = 0; attempt < BranchSplitAttempts; ++attempt) {
+        auto sites = ChooseBranchSplitSites(base.linked, programWords, boundWords, programEnd, corrections);
+        if (sites.empty() || std::ranges::find(tried, sites) != tried.end()) break;
+        tried.push_back(sites);
+        auto split = base;
+        split.branchSites = std::move(sites);
+        const auto analysis = AnalyzeBranchSplit(split.linked, split.branchSites);
+        if (analysis.indexedRegisters || (split.wavesPerGroup > 1u && (analysis.sharedMemory || analysis.barrier))) break;
+        fillLayout(split, analysis, request);
+        split.head = LinkBranchSplitHead(split.linked, split.branchSites);
+        if (!partWords) return split;
+        std::vector<std::size_t> measured{partWords(split, split.head, ContinuationAbi::Role::Head, 0u)};
+        for (const auto& target : BranchSplitTargets(split)) measured.push_back(partWords(split, TableCallContinuation(split, target), ContinuationAbi::Role::Continuation, target.site));
+        const auto largest = *std::ranges::max_element(measured);
+        if (!best || largest < bestWords) {
+            best = split;
+            bestWords = largest;
+        }
+        if (largest <= GiantProgramWords) break;
+        corrections = CorrectBranchSplitEstimates(split.linked, programWords, split.branchSites, corrections, measured);
+    }
+    return best;
 }
 
 std::vector<TableCallTarget> BranchSplitTargets(const TableCallSplit& split) {

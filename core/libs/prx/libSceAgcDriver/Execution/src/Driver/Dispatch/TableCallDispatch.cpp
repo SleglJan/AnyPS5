@@ -103,7 +103,7 @@ std::shared_ptr<const ShaderRecompiler::RunTimeProgram> TableCallPartProgram(con
     return std::make_shared<const ShaderRecompiler::RunTimeProgram>(ShaderRecompiler::RunTimeProgram{invocation.Plan(), std::move(compiled)});
 }
 
-std::shared_ptr<const TableCallPart> TableCallProgram::prepare(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
+std::shared_ptr<const TableCallPart> PrepareTableCallPart(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, ShaderRecompiler::SplitCode code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
     auto part = std::make_shared<TableCallPart>();
     part->code = std::move(code.code);
     part->sites = std::move(code.sites);
@@ -117,8 +117,17 @@ std::shared_ptr<const TableCallPart> TableCallProgram::prepare(const std::shared
 
 std::shared_ptr<const TableCallPart> TableCallProgram::Head(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     std::lock_guard lock(mutex);
-    if (head == nullptr) head = prepare(device, snapshot, codeOffset, request, split.head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u);
+    if (head == nullptr) head = PrepareTableCallPart(device, snapshot, codeOffset, request, split, split.head, ShaderRecompiler::ContinuationAbi::Role::Head, 0u);
     return head;
+}
+
+void TableCallProgram::Prepared(std::shared_ptr<const TableCallPart> preparedHead, std::span<const std::shared_ptr<const TableCallPart>> outcomes) {
+    const auto targets = ShaderRecompiler::BranchSplitTargets(split);
+    if (outcomes.size() != targets.size()) throw std::logic_error("AGC driver: a split program's prepared parts and its outcomes differ in number");
+    std::lock_guard lock(mutex);
+    head = std::move(preparedHead);
+    continuations.clear();
+    for (std::size_t index = 0; index < targets.size(); ++index) continuations.push_back({{targets[index].site, targets[index].key[0], {}}, outcomes[index]});
 }
 
 std::shared_ptr<const TableCallPart> TableCallProgram::Continuation(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallTarget& target) {
@@ -127,7 +136,7 @@ std::shared_ptr<const TableCallPart> TableCallProgram::Continuation(const std::s
     for (const auto& [key, part] : continuations) {
         if (key.site == target.site && key.outcome == outcome && key.callee == target.callee) return part;
     }
-    auto part = prepare(device, snapshot, codeOffset, request, ShaderRecompiler::TableCallContinuation(split, target), ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site);
+    auto part = PrepareTableCallPart(device, snapshot, codeOffset, request, split, ShaderRecompiler::TableCallContinuation(split, target), ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site);
     continuations.push_back({{target.site, outcome, target.callee}, part});
     return part;
 }
@@ -150,15 +159,27 @@ std::shared_ptr<TableCallProgram> TableCallProgramFor(std::uint64_t programKey, 
     return program;
 }
 
-std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords) {
+std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords, const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, LinkedCallees callees) {
+    std::vector<std::uint32_t> measuredSites;
+    std::vector<std::shared_ptr<const TableCallPart>> measured;
+    const ShaderRecompiler::BranchSplitPartWords partWords = [&](const ShaderRecompiler::TableCallSplit& candidate, const ShaderRecompiler::SplitCode& code, ShaderRecompiler::ContinuationAbi::Role role, std::uint32_t entrySite) {
+        if (candidate.branchSites != measuredSites) {
+            measuredSites = candidate.branchSites;
+            measured.clear();
+        }
+        measured.push_back(PrepareTableCallPart(device, snapshot, codeOffset, request, candidate, code, role, entrySite));
+        return measured.back()->program->compiled->spirv.size();
+    };
     std::optional<ShaderRecompiler::TableCallSplit> split;
     try {
-        split = ShaderRecompiler::SplitBranchProgram(request, programWords);
+        split = ShaderRecompiler::SplitBranchProgram(request, programWords, callees.code, partWords);
     } catch (const std::runtime_error& error) {
         throw std::runtime_error(std::string("AGC driver: ") + error.what());
     }
     if (!split) return nullptr;
-    auto program = std::make_shared<TableCallProgram>(std::move(*split), LinkedCallees{});
+    const bool prepared = split->branchSites == measuredSites && measured.size() == 1u + 2u * measuredSites.size();
+    auto program = std::make_shared<TableCallProgram>(std::move(*split), std::move(callees));
+    if (prepared) program->Prepared(measured.front(), std::span(measured).subspan(1u));
     Remember(programKey, program);
     auto& counters = Counters();
     std::lock_guard lock(counters.mutex);
