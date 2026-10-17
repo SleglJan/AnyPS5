@@ -6,13 +6,19 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
 constexpr std::array<std::uint32_t, 4> BarrierExport{0xbf8a0000u, 0xf80008cfu, 0u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 6> BarrierLdsExport{0xd8340000u, 0u, 0xbf8a0000u, 0xf80008cfu, 0u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 6> BarrierThenStoreExport{0xbf8a0000u, 0xdc708000u, 0x007d0200u, 0xf80008cfu, 0u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 6> StoreThenBarrierExport{0xdc708000u, 0x007d0200u, 0xbf8a0000u, 0xf80008cfu, 0u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 7> LoopedBarrierStoreExport{0xbf8a0000u, 0xdc708000u, 0x007d0200u, 0xbf85fffcu, 0xf80008cfu, 0u, 0xbf810000u};
 
 constexpr std::array<std::uint32_t, 1> VertexCapabilities{spv::CapabilityClipDistance};
+constexpr std::array<std::uint32_t, 6> MemoryCapabilities{spv::CapabilityClipDistance, spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+constexpr std::array<std::string_view, 3> MemoryExtensions{"SPV_KHR_storage_buffer_storage_class", "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
 
 ShaderRecompiler::RecompileRequest vertexRequest(std::span<const std::uint32_t> code) {
     using namespace ShaderRecompiler;
@@ -29,6 +35,14 @@ ShaderRecompiler::RecompileRequest vertexRequest(std::span<const std::uint32_t> 
     return request;
 }
 
+ShaderRecompiler::RecompileRequest memoryVertexRequest(std::span<const std::uint32_t> code) {
+    auto request = vertexRequest(code);
+    request.target.bdaAbiVersion = 1;
+    request.target.supportedCapabilities = MemoryCapabilities;
+    request.target.supportedExtensions = MemoryExtensions;
+    return request;
+}
+
 bool hasControlBarrier(const ShaderRecompiler::RecompileResult& result) {
     const auto& words = result.spirv.Words();
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
@@ -42,14 +56,28 @@ void verifyBarrierWithoutMemory() {
     if (hasControlBarrier(result)) throw std::runtime_error("a vertex program's s_barrier became a workgroup OpControlBarrier, which the Vertex execution model does not allow");
 }
 
-void verifyBarrierWithLds() {
+void verifyRefused(std::span<const std::uint32_t> code, const std::string& what) {
     try {
-        (void)ShaderRecompiler::Recompile(vertexRequest(BarrierLdsExport));
+        (void)ShaderRecompiler::Recompile(memoryVertexRequest(code));
     } catch (const std::exception& error) {
         if (std::string(error.what()).find("s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented") != std::string::npos) return;
         throw;
     }
-    throw std::runtime_error("a vertex program with s_barrier and an LDS write compiled");
+    throw std::runtime_error("a vertex program with " + what + " compiled");
+}
+
+void verifyBarrierWithLds() {
+    verifyRefused(BarrierLdsExport, "an LDS write before its s_barrier");
+}
+
+void verifyBarrierBeforeMemory() {
+    const auto result = ShaderRecompiler::Recompile(memoryVertexRequest(BarrierThenStoreExport));
+    if (hasControlBarrier(result)) throw std::runtime_error("a vertex program's s_barrier that no memory access precedes became an OpControlBarrier");
+}
+
+void verifyMemoryBeforeBarrier() {
+    verifyRefused(StoreThenBarrierExport, "a memory write before its s_barrier");
+    verifyRefused(LoopedBarrierStoreExport, "a memory write after its s_barrier in a loop that reaches the barrier again");
 }
 
 } // namespace
@@ -58,6 +86,8 @@ int main() {
     try {
         verifyBarrierWithoutMemory();
         verifyBarrierWithLds();
+        verifyBarrierBeforeMemory();
+        verifyMemoryBeforeBarrier();
         std::cout << "vertex barrier tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -2683,6 +2683,7 @@ if(BUILD_TESTING)
 endif()
 
 target_include_directories(agc_driver_draw_input_in_place_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+target_include_directories(agc_driver_vertex_barrier_lds_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 target_include_directories(agc_driver_sampled_texture_gather_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 add_test_executable(agc_pending_write_ranges_tests EXCLUDE_FROM_ALL tests/PendingWriteRanges.cpp)

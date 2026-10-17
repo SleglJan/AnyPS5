@@ -877,6 +877,51 @@ bool CommunicatesThroughMemory(IrOpcode opcode) {
     return SharedAccessOf(opcode) != SharedAccess::None || buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || address == AddressAccess::Write || address == AddressAccess::Atomic || image == ImageAccess::Write || image == ImageAccess::Atomic;
 }
 
+bool AccessesMemory(IrOpcode opcode) {
+    if (BufferAccessOf(opcode) != BufferAccess::None || SharedAccessOf(opcode) != SharedAccess::None || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || ImageOpcodeInfoOf(opcode).access != ImageAccess::None) return true;
+    switch (opcode) {
+        case IrOpcode::ReadConst:
+        case IrOpcode::UnlinkedCall:
+        case IrOpcode::TableCallBin:
+        case IrOpcode::ContinuationSpill:
+        case IrOpcode::ContinuationSpillLds:
+        case IrOpcode::ContinuationSlot:
+        case IrOpcode::ContinuationLoad:
+        case IrOpcode::ContinuationRestoreLds:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool MemoryAccessPrecedes(const IrProgram& program, const IrValue& barrier) {
+    const IrBlock* home = nullptr;
+    for (const auto* block : program.BlockOrder()) {
+        if (std::find(block->Instructions().begin(), block->Instructions().end(), &barrier) != block->Instructions().end()) {
+            home = block;
+            break;
+        }
+    }
+    if (home == nullptr) return true;
+    for (const auto* instruction : home->Instructions()) {
+        if (instruction == &barrier) break;
+        if (AccessesMemory(instruction->Opcode())) return true;
+    }
+    std::vector<const IrBlock*> pending(home->Predecessors().begin(), home->Predecessors().end());
+    std::vector<const IrBlock*> seen;
+    while (!pending.empty()) {
+        const auto* block = pending.back();
+        pending.pop_back();
+        if (std::find(seen.begin(), seen.end(), block) != seen.end()) continue;
+        seen.push_back(block);
+        for (const auto* instruction : block->Instructions()) {
+            if (AccessesMemory(instruction->Opcode())) return true;
+        }
+        pending.insert(pending.end(), block->Predecessors().begin(), block->Predecessors().end());
+    }
+    return false;
+}
+
 struct FunctionLayout {
     std::vector<std::vector<std::size_t>> blocks;
     std::vector<std::uint32_t> callee;
@@ -1291,6 +1336,7 @@ void EmitVoid(SpirvValueEmitContext&) {
 void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     if (state.program.Resources().stage == IrShaderStage::Vertex) {
+        if (state.functionParents.empty() && !MemoryAccessPrecedes(state.program, inst)) return;
         for (const auto* block : state.program.BlockOrder()) {
             for (const auto* instruction : block->Instructions()) {
                 if (CommunicatesThroughMemory(instruction->Opcode())) ctx.Fail(inst, "s_barrier in a vertex program that accesses LDS or GDS or writes memory is not implemented");
