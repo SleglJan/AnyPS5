@@ -12,6 +12,11 @@
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -33,6 +38,43 @@ struct Case {
     std::uint32_t baseOffset;
     std::uint32_t records;
     bool present;
+};
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -140,13 +182,24 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         input[1] |= 0x40000000u;
         std::copy(input.begin(), input.end(), userData.begin());
         const auto result = ShaderRecompiler::Recompile(request);
+        StderrCapture capture;
+        std::string failure;
         try {
             device.Dispatch(result, 1, 1, 1);
+            device.WaitIdle();
         } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("buffer descriptor has reserved bits set") != std::string::npos, "vector or mixed buffer descriptor failed for another reason");
+            failure = error.what();
+        }
+        const auto log = capture.Finish();
+        if (!failure.empty()) {
+            Require(failure.find("buffer descriptor has reserved bits set") != std::string::npos, "vector or mixed buffer descriptor failed for another reason");
             continue;
         }
-        throw std::runtime_error("a vector or mixed buffer access accepted reserved descriptor bits");
+        char words[64];
+        std::snprintf(words, sizeof(words), "(buffer 0 V# %08x %08x %08x %08x)", userData[0], userData[1], userData[2], userData[3]);
+        const auto report = log.find("buffer descriptor has reserved bits set");
+        Require(report != std::string::npos, "a vector or mixed buffer access accepted reserved descriptor bits");
+        Require(log.find(words, report) != std::string::npos, std::string("the reserved bits report does not name ") + words + ": " + log);
     }
 }
 
