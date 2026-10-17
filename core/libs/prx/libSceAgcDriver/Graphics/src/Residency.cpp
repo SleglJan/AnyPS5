@@ -105,6 +105,52 @@ void ResidencyManager::publishStale(std::uint64_t page, ResidencyMask mask) {
     leaf->stale[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].store(mask, std::memory_order_release);
 }
 
+void ResidencyManager::publishUnsettled(std::uint64_t page, std::uint8_t reason, bool set) {
+    const auto leafIndex = page >> DirtyLeafShift;
+    if (leafIndex >= DirtyLeaves) throw std::out_of_range("residency: page " + std::to_string(page) + " lies past the 47-bit guest address space");
+    auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+    if (leaf == nullptr) {
+        if (!set) return;
+        leaf = new DirtyLeaf();
+        dirtyLeaves[leafIndex].store(leaf, std::memory_order_release);
+    }
+    auto& bits = leaf->unsettled[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)];
+    const auto before = bits.load(std::memory_order_relaxed);
+    const auto after = static_cast<std::uint8_t>(set ? before | reason : before & ~reason);
+    if (after == before) return;
+    if (before == 0) unsettledPages.fetch_add(1, std::memory_order_acq_rel);
+    bits.store(after, std::memory_order_release);
+    if (after == 0) unsettledPages.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+void ResidencyManager::addUnsettled(std::unordered_map<std::uint64_t, ResidencyToken>& entries, std::uint64_t page, const ResidencyToken& token, std::uint8_t reason) {
+    auto& entry = entries[page];
+    entry = MergeTokens(entry, token);
+    publishUnsettled(page, reason, true);
+}
+
+void ResidencyManager::eraseUnsettled(std::unordered_map<std::uint64_t, ResidencyToken>& entries, std::uint64_t page, std::uint8_t reason) {
+    if (entries.erase(page) != 0) publishUnsettled(page, reason, false);
+}
+
+bool ResidencyManager::CpuReadSettled(std::uint64_t address, std::uint64_t bytes) const {
+    if (DirtyIn(address, bytes)) return false;
+    if (unsettledPages.load(std::memory_order_acquire) == 0) return true;
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return true;
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto leafIndex = page >> DirtyLeafShift;
+        if (leafIndex >= DirtyLeaves) return true;
+        const auto* leaf = dirtyLeaves[leafIndex].load(std::memory_order_acquire);
+        if (leaf == nullptr) {
+            page |= (std::uint64_t{1} << DirtyLeafShift) - 1;
+            continue;
+        }
+        if (leaf->unsettled[page & ((std::uint64_t{1} << DirtyLeafShift) - 1)].load(std::memory_order_acquire) != 0) return false;
+    }
+    return true;
+}
+
 bool ResidencyManager::DirtyIn(std::uint64_t address, std::uint64_t bytes) const {
     const auto span = PagesOf(address, bytes);
     if (span.empty || (dirtyPages.load(std::memory_order_acquire) == 0 && staleCount.load(std::memory_order_acquire) == 0)) return false;
@@ -428,7 +474,7 @@ void ResidencyManager::WriteBackAll() {
     ResidencyToken wait{};
     for (const auto& [page, token] : writingBack) wait = MergeTokens(wait, token);
     if (!settled(wait)) waitFor(wait);
-    writingBack.clear();
+    eraseUnsettledIf(writingBack, UnsettledWriteBack, [](const auto&) { return true; });
     for (auto id = oldest; id != None; id = pages[id].newer) {
         if (!pages[id].accessGuarded) continue;
         accessGuards.insert(pages[id].index);
@@ -561,7 +607,7 @@ void ResidencyManager::forget(std::uint32_t id) {
     pages[id].dirty = 0;
     publishDirty(page, 0);
     unmarkHot(page);
-    writers.erase(page);
+    eraseUnsettled(writers, page, UnsettledWriter);
     if (const auto key = aliasKeys.find(page); key != aliasKeys.end()) {
         canonical.erase(key->second);
         aliasKeys.erase(key);
@@ -762,10 +808,7 @@ void ResidencyManager::recordWriteBacks(WriteBacks& writeBacks) {
     for (const auto& copy : writeBacks.copies) counts.writtenBackBytes += copy.bytes;
     const auto newestToken = device.Newest();
     for (const auto& entry : writeBacks.slots) retiring.push_back({entry.slot, MergeTokens(MergeTokens(entry.token, token), newestToken)});
-    for (const auto page : writeBacks.pages) {
-        auto& pending = writingBack[page];
-        pending = MergeTokens(pending, token);
-    }
+    for (const auto page : writeBacks.pages) addUnsettled(writingBack, page, token, UnsettledWriteBack);
     writeBacks = WriteBacks{};
 }
 
@@ -829,7 +872,7 @@ void ResidencyManager::applyDrops() {
                 accessGuards.erase(page);
             }
             retiring.push_back({pages[id].slot, MergeTokens(pages[id].pin, device.Newest())});
-            writingBack.erase(page);
+            eraseUnsettled(writingBack, page, UnsettledWriteBack);
             forget(id);
         }
         const auto span = PagesOf(range.address, range.bytes);
@@ -857,7 +900,7 @@ void ResidencyManager::applyDrops() {
             }
             ownershipSerial.fetch_add(1, std::memory_order_acq_rel);
         }
-        std::erase_if(writingBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
+        eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         for (auto it = accessGuards.begin(); it != accessGuards.end();) {
             if (*it < span.first || *it > span.last) {
@@ -1054,8 +1097,7 @@ void ResidencyManager::Pin(std::uint64_t address, std::uint64_t bytes, Residency
         auto& page = pages[id];
         page.pin = MergeTokens(page.pin, token);
         if (access == ResidencyAccess::Write) {
-            auto& writer = writers[page.index];
-            writer = MergeTokens(writer, token);
+            addUnsettled(writers, page.index, token, UnsettledWriter);
         }
     }
 }
@@ -1340,8 +1382,8 @@ void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t byte
         if (inSpan(page)) wait = MergeTokens(wait, token);
     }
     if (!settled(wait)) waitFor(wait);
-    std::erase_if(writingBack, [&](const auto& entry) { return inSpan(entry.first); });
-    std::erase_if(writers, [&](const auto& entry) { return inSpan(entry.first) && settled(entry.second); });
+    eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return inSpan(entry.first); });
+    eraseUnsettledIf(writers, UnsettledWriter, [&](const auto& entry) { return inSpan(entry.first) && settled(entry.second); });
     for (auto page = span.first; page <= span.last; ++page) {
         const auto id = find(page);
         if (id && !pages[*id].dirtyRuns.empty()) continue;
@@ -1383,8 +1425,7 @@ void ResidencyManager::writeBackDirty(std::span<const std::uint32_t> ids) {
     for (const auto id : written) {
         auto& page = pages[id];
         page.pin = MergeTokens(page.pin, token);
-        auto& pendingToken = writingBack[page.index];
-        pendingToken = MergeTokens(pendingToken, token);
+        addUnsettled(writingBack, page.index, token, UnsettledWriteBack);
     }
 }
 
@@ -1402,7 +1443,7 @@ void ResidencyManager::settleAccessGuards() {
         if (settled(token)) settledPages.push_back(page);
     }
     for (const auto page : settledPages) {
-        writingBack.erase(page);
+        eraseUnsettled(writingBack, page, UnsettledWriteBack);
         if (!accessGuards.contains(page)) continue;
         const auto id = find(page);
         if (id && !pages[*id].dirtyRuns.empty()) continue;
@@ -1476,8 +1517,8 @@ void ResidencyManager::Retire() {
     settleAccessGuards();
     admitEager();
     evictDraining();
-    std::erase_if(writers, [&](const auto& entry) { return settled(entry.second); });
-    std::erase_if(writingBack, [&](const auto& entry) { return settled(entry.second); });
+    eraseUnsettledIf(writers, UnsettledWriter, [&](const auto& entry) { return settled(entry.second); });
+    eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return settled(entry.second); });
 }
 
 std::optional<MirrorSlot> ResidencyManager::Slot(std::uint64_t page) {

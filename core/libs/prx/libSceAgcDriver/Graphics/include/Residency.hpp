@@ -206,6 +206,7 @@ public:
     bool AnyStale() const { return staleCount.load(std::memory_order_acquire) != 0; }
     bool DirtyIn(std::uint64_t address, std::uint64_t bytes) const;
     bool StaleIn(std::uint64_t address, std::uint64_t bytes) const;
+    bool CpuReadSettled(std::uint64_t address, std::uint64_t bytes) const;
     void Retire();
 
     std::optional<MirrorSlot> Slot(std::uint64_t page);
@@ -234,7 +235,10 @@ private:
     struct DirtyLeaf {
         std::array<std::atomic<ResidencyMask>, std::size_t{1} << DirtyLeafShift> masks{};
         std::array<std::atomic<ResidencyMask>, std::size_t{1} << DirtyLeafShift> stale{};
+        std::array<std::atomic<std::uint8_t>, std::size_t{1} << DirtyLeafShift> unsettled{};
     };
+    static constexpr std::uint8_t UnsettledWriteBack = 1u;
+    static constexpr std::uint8_t UnsettledWriter = 2u;
     static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
 
     using Run = std::pair<std::uint32_t, std::uint32_t>;
@@ -328,6 +332,20 @@ private:
     void clearAllDirty(std::uint32_t id);
     void publishDirty(std::uint64_t page, ResidencyMask mask);
     void publishStale(std::uint64_t page, ResidencyMask mask);
+    void publishUnsettled(std::uint64_t page, std::uint8_t reason, bool set);
+    void addUnsettled(std::unordered_map<std::uint64_t, ResidencyToken>& entries, std::uint64_t page, const ResidencyToken& token, std::uint8_t reason);
+    void eraseUnsettled(std::unordered_map<std::uint64_t, ResidencyToken>& entries, std::uint64_t page, std::uint8_t reason);
+    template<typename TPredicate>
+    void eraseUnsettledIf(std::unordered_map<std::uint64_t, ResidencyToken>& entries, std::uint8_t reason, TPredicate predicate) {
+        for (auto it = entries.begin(); it != entries.end();) {
+            if (!predicate(*it)) {
+                ++it;
+                continue;
+            }
+            publishUnsettled(it->first, reason, false);
+            it = entries.erase(it);
+        }
+    }
     void publishPage(std::uint64_t page);
     bool retileStale(std::span<const std::uint64_t> stalePages, std::span<const IResidencyOwner* const> except = {});
     std::vector<std::uint64_t> staleIn(std::uint64_t address, std::uint64_t bytes) const;
@@ -391,6 +409,7 @@ private:
     std::uint64_t rangesSerial = ~std::uint64_t{0};
     std::vector<ResidencyRange> ranges;
     std::atomic<std::uint32_t> dirtyPages{0};
+    std::atomic<std::uint64_t> unsettledPages{0};
     std::unique_ptr<std::atomic<DirtyLeaf*>[]> dirtyLeaves;
     std::uint64_t touchFrame = 0;
     ResidencyCounts counts;

@@ -952,6 +952,60 @@ void DirtyQueryWithoutLock() {
     fixture.gpu.Drain();
 }
 
+void CpuReadSettledWithoutLock() {
+    scope = "CPU read settled without the lock";
+    Fixture fixture(4, 1);
+    fixture.Share(BasePage + 0);
+    fixture.Share(BasePage + 1);
+    fixture.Use(0, BasePage + 0, 2);
+    fixture.gpu.Drain();
+    const auto locked = [&](std::uint64_t page, std::uint32_t reads) {
+        std::uint32_t count = 0;
+        for (std::uint32_t read = 0; read < reads; ++read) {
+            const auto address = Address(page, read % ResidencySubpages) + (read * 24u) % ResidencySubpageBytes;
+            if (fixture.manager->AnyResident(address, 16) && !fixture.manager->CpuReadSettled(address, 16)) ++count;
+        }
+        return count;
+    };
+    Expect(locked(BasePage + 0, 256) == 0 && locked(BasePage + 1, 256) == 0, "reads over clean resident pages take no GPU mutex");
+    const auto waits = fixture.gpu.waits;
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
+    Expect(fixture.gpu.waits == waits && fixture.gpu.writtenBack.empty(), "a clean resident read has nothing to wait for or write back");
+
+    fixture.Use(1, BasePage + 0, 1, ResidencyAccess::Write);
+    fixture.Grant(1, BasePage + 0, 0x0001);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0001, 7171, true);
+    Expect(!fixture.manager->CpuReadSettled(Address(BasePage + 0), 16), "a read over a GPU-dirty subpage takes the GPU mutex");
+    Expect(locked(BasePage + 1, 64) == 0, "the clean page beside it still takes none");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), 16);
+    Expect(fixture.Stored(BasePage + 0, 0) == 7171, "the read over the dirty page gets the GPU's bytes");
+    Expect(fixture.manager->CpuReadSettled(Address(BasePage + 0), ResidencyPageBytes), "the page is settled once its write-back landed");
+
+    fixture.Use(1, BasePage + 1, 1, ResidencyAccess::Write);
+    fixture.Grant(1, BasePage + 1, 0x0002);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 1, 0x0002, 7272, true);
+    fixture.gpu.Drain();
+    fixture.manager->PrepareImportWrite(Address(BasePage + 1, 1), 16);
+    Expect(!fixture.manager->DirtyIn(Address(BasePage + 1, 1), 16), "the write-back in flight already published the page clean");
+    Expect(!fixture.manager->CpuReadSettled(Address(BasePage + 1, 1), 16), "a read during an in-flight write-back takes the GPU mutex");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 1, 1), 16);
+    Expect(fixture.Stored(BasePage + 1, 1) == 7272, "the read after the write-back landed gets the GPU's bytes");
+    Expect(fixture.manager->CpuReadSettled(Address(BasePage + 1), ResidencyPageBytes), "the page is settled once the in-flight write-back settled");
+
+    fixture.Use(2, BasePage + 0, 1, ResidencyAccess::Write);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, BasePage + 0, 0x0010, 7373);
+    Expect(!fixture.manager->DirtyIn(Address(BasePage + 0, 4), 16) && !fixture.manager->CpuReadSettled(Address(BasePage + 0, 4), 16), "a read during a GPU write in flight to the page takes the GPU mutex");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0, 4), 16);
+    Expect(fixture.Stored(BasePage + 0, 4) == 7373, "the read after the writer settled gets the GPU's bytes");
+    fixture.manager->QueueGpuWritten(Address(BasePage + 1, 4), 32);
+    Expect(fixture.manager->CpuReadSettled(Address(BasePage + 1, 4), 32), "a queued recorded write went to guest memory, so its read takes no GPU mutex");
+    fixture.manager->Apply();
+    Expect(fixture.manager->CpuReadSettled(Address(BasePage + 1, 4), 32), "applying the recorded write refreshes the mirror and leaves the read settled");
+    fixture.gpu.Drain();
+    fixture.manager->Retire();
+    Expect(locked(BasePage + 0, 256) == 0 && locked(BasePage + 1, 256) == 0, "after everything settled, reads over the resident pages take no GPU mutex again");
+}
+
 void WriteBackAllAtTeardown() {
     scope = "write-back of every dirty page at teardown";
     Fixture fixture(8, 1);
@@ -1655,6 +1709,7 @@ int main() {
         CpuReadWritesDirtyBytesBack();
         ExactDirtyRanges();
         DirtyQueryWithoutLock();
+        CpuReadSettledWithoutLock();
         WriteBackAllAtTeardown();
         GrantDemotesPrivatePage();
         GrantThroughAliasDemotesMirror();
