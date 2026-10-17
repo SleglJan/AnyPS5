@@ -1930,12 +1930,6 @@ void ShaderResources::buildComplete() {
                 const auto index = binding.imageAllocations[element];
                 if (index == std::numeric_limits<std::size_t>::max()) continue;
                 std::array<std::uint32_t, 1> slot{};
-                if (index == MemoryAllocation) {
-                    slot[0] = ShaderRecompiler::StorageImageMemory::MemorySlot;
-                    const auto position = binding.slotDwords[element] * 4u;
-                    patchShaderData(binding.slotPushOffset >= 0 ? binding.slotPushOffset + static_cast<std::int32_t>(position) : -1, binding.slotDataAllocation, position, slot);
-                    continue;
-                }
                 if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
                     auto& image = *storageTextures[index];
                     slot[0] = image.StorageSlot(storageMips[index], storageLayers[index], storageAtomic64[index] ? StorageTexture::StorageViewKind::Atomic64 : storageAtomic[index] ? StorageTexture::StorageViewKind::Atomic : StorageTexture::StorageViewKind::Storage);
@@ -2452,11 +2446,6 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                 --plannedSampledImages;
                 continue;
             }
-            if (memoryImages.contains({&binding, element})) {
-                item.imageAllocations.push_back(MemoryAllocation);
-                --plannedSampledImages;
-                continue;
-            }
             const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
             const bool forcedSrgb = ForcesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
@@ -2525,11 +2514,6 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         const auto* record = nextRecord();
         if (IsNullTextureResource(words)) {
             item.imageAllocations.push_back(std::numeric_limits<std::size_t>::max());
-            --plannedStorageImages;
-            continue;
-        }
-        if (memoryImages.contains({&binding, element})) {
-            item.imageAllocations.push_back(MemoryAllocation);
             --plannedStorageImages;
             continue;
         }

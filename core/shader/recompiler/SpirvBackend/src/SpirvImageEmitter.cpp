@@ -848,19 +848,6 @@ void EmitQueryLodOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     ctx.Define(access.inst, result);
 }
 
-const StorageImageMemoryFunctions* MemoryFunctions(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
-    if (!StorageImageMemory::ResourceThroughMemory(ctx.state.program.Info(), ImageResourceOf(ctx.state, access.mem))) return nullptr;
-    const auto* functions = StorageImageMemoryFunctionsOf(ctx.state);
-    if (functions == nullptr || functions->texel == 0u) ctx.Fail(access.inst, "accesses an image through memory without the texel helper");
-    return functions;
-}
-
-std::uint32_t MemorySlotSelected(SpirvEmitterState& state, std::uint32_t resource) {
-    const auto& layout = state.program.Metadata().bindings;
-    const auto slot = EmitShaderDataDwordLoad(state, layout.ImageSlotDword() + layout.imageSlotBases.at(resource));
-    return Binary(state, spv::OpIEqual, TypeBool(state), slot, ConstantU32(state, StorageImageMemory::MemorySlot));
-}
-
 struct MemoryTexel {
     std::uint32_t address;
     std::uint32_t element;
@@ -1178,12 +1165,7 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     if (access.mem.imageDimension == RdnaImageDimension::Dim3D && (access.image.dimension == RdnaImageDimension::Dim2D || access.image.dimension == RdnaImageDimension::Dim1D)) {
         condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
     }
-    const auto* memory = MemoryFunctions(ctx, access);
-    if (memory == nullptr) {
-        ctx.Define(access.inst, EmitViewRead(ctx, access, condition));
-        return;
-    }
-    ctx.Define(access.inst, EmitValueIfElse(state, MemorySlotSelected(state, access.mem.resource), TypeU32Vector(state, 4u), [&] { return EmitMemoryRead(ctx, access, *memory, condition); }, [&] { return EmitViewRead(ctx, access, condition); }));
+    ctx.Define(access.inst, EmitViewRead(ctx, access, condition));
 }
 
 std::uint32_t ImageSampleIndex(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1212,15 +1194,7 @@ void EmitViewWrite(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
 }
 
 void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
-    auto& state = ctx.state;
-    const auto* memory = MemoryFunctions(ctx, access);
-    if (memory == nullptr) {
-        EmitViewWrite(ctx, access);
-        return;
-    }
-    const auto selected = MemorySlotSelected(state, access.mem.resource);
-    EmitIfCondition(state, selected, [&] { EmitMemoryWrite(ctx, access, *memory); });
-    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), selected), [&] { EmitViewWrite(ctx, access); });
+    EmitViewWrite(ctx, access);
 }
 
 std::uint32_t EmitViewAtomic(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1277,14 +1251,7 @@ std::uint32_t EmitViewAtomic(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
 }
 
 void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
-    auto& state = ctx.state;
-    const auto* memory = MemoryFunctions(ctx, access);
-    if (memory == nullptr) {
-        ctx.Define(access.inst, EmitViewAtomic(ctx, access));
-        return;
-    }
-    const auto type = IsImageAtomic64Opcode(access.inst.Opcode()) ? TypeU64(state) : TypeU32(state);
-    ctx.Define(access.inst, EmitValueIfElse(state, MemorySlotSelected(state, access.mem.resource), type, [&] { return EmitMemoryAtomic(ctx, access, *memory); }, [&] { return EmitViewAtomic(ctx, access); }));
+    ctx.Define(access.inst, EmitViewAtomic(ctx, access));
 }
 
 SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -2527,7 +2494,6 @@ void EmitImageStoreRecord(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto info = ImageOpcodeInfoOf(inst.Opcode());
     if (state.imageStoreRecordFunction == 0u || (inst.Opcode() != IrOpcode::ImageWrite && info.access != ImageAccess::Atomic)) return;
     auto active = ctx.Arg(inst, inst.ArgumentCount() - 1u);
-    if (StorageImageMemory::ResourceThroughMemory(state.program.Info(), base)) active = Binary(state, spv::OpLogicalAnd, TypeBool(state), active, Unary(state, spv::OpLogicalNot, TypeBool(state), MemorySlotSelected(state, memory.resource)));
     const auto* handle = inst.Argument(0)->Resolve();
     const auto* address = ctx.ImageAddress(inst.Argument(info.needsSampler ? 2u : 1u));
     const auto dimension = memory.imageDimension;

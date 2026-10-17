@@ -104,10 +104,6 @@ inline bool MemoryPathImageShape(const ImageResource& image) {
     return false;
 }
 
-inline bool MemoryPathImage(const ImageResource& image) {
-    return image.table == NoTable && !image.deviceTable && MemoryPathImageShape(image);
-}
-
 inline bool MemoryPathRuntimeImage(const ImageResource& image) {
     return image.table != NoTable && image.deviceTable && image.directRuntime && image.tableOperation == TableOperation::Supported && MemoryPathImageShape(image);
 }

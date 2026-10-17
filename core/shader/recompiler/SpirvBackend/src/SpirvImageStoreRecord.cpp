@@ -432,7 +432,7 @@ void DefineStorageImageMemory(SpirvEmitterState& state) {
     bool loads = false;
     bool writes = false;
     for (const auto& image : info.images) {
-        if (!Memory::ResourceThroughMemory(info, image) && !Memory::RuntimeResourceThroughMemory(info, image)) continue;
+        if (!Memory::RuntimeResourceThroughMemory(info, image)) continue;
         loads = loads || image.resourceClass == ImageResourceClass::Sampled;
         writes = writes || image.resourceClass == ImageResourceClass::Storage;
     }

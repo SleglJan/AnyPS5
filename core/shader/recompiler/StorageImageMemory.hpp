@@ -224,10 +224,6 @@ inline bool SurfaceThroughMemory(const std::array<std::uint32_t, 8>& words, Acce
     return true;
 }
 
-inline bool ResourceThroughMemory(const ShaderInfo& info, const ImageResource& image) {
-    return info.usesDma && MemoryPathImage(image) && (image.resourceClass != ImageResourceClass::Storage || info.bdaWrites);
-}
-
 inline bool RuntimeResourceThroughMemory(const ShaderInfo& info, const ImageResource& image) {
     return info.usesDma && MemoryPathRuntimeImage(image) && (image.resourceClass != ImageResourceClass::Storage || info.bdaWrites);
 }
