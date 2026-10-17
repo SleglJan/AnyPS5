@@ -52,6 +52,10 @@ bool ResidencyGuest::Guard(std::uint64_t page) {
     return GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }
 
+void ResidencyGuest::SettleWrites(std::uint64_t page) {
+    static_cast<void>(GuestMemory::SettleWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes)));
+}
+
 bool ResidencyGuest::ImportSettled(std::uint64_t page) {
     return GuestMemory::HostImportSettled(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
 }

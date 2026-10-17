@@ -331,6 +331,10 @@ void ResidencyDriver::UnguardAccess(std::uint64_t page) {
     guest.UnguardAccess(page);
 }
 
+void ResidencyDriver::SettleWrites(std::uint64_t page) {
+    guest.SettleWrites(page);
+}
+
 bool ResidencyDriver::ImportSettled(std::uint64_t page) {
     return guest.ImportSettled(page);
 }

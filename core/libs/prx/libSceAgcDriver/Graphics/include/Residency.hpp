@@ -109,6 +109,9 @@ public:
         static_cast<void>(generation);
         return {};
     }
+    virtual void SettleWrites(std::uint64_t page) {
+        static_cast<void>(page);
+    }
     virtual bool ImportSettled(std::uint64_t page) {
         static_cast<void>(page);
         return true;

@@ -22,6 +22,7 @@ public:
     void Unguard(std::span<const std::uint64_t> pages) override;
     bool GuardAccess(std::uint64_t page, ResidencyMask mask) override;
     void UnguardAccess(std::uint64_t page) override;
+    void SettleWrites(std::uint64_t page) override;
     std::uint64_t ImportStamp() override;
     bool ImportSettled(std::uint64_t page) override;
     void SettleImport(std::uint64_t page, std::uint64_t stamp) override;

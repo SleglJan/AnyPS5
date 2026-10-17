@@ -1363,6 +1363,7 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
         recordWriteBacks(writeBacks);
         bool guarded = false;
         if (import.cpuWritable && import.section != 0) guarded = device.Guard(page);
+        else if (import.cpuWritable) device.SettleWrites(page);
         const auto id = newPage(page, *slot, import, guarded);
         if (import.cpuWritable && !guarded) {
             if (import.section != 0) ++counts.unguardable;
