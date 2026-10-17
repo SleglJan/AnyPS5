@@ -189,32 +189,6 @@ public:
     bool SplitSets() const;
     PipelineSetLayouts SetLayouts() const;
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
-    struct DrawBindings {
-        DrawBindings() = default;
-        DrawBindings(const DrawBindings&) = delete;
-        DrawBindings& operator=(const DrawBindings&) = delete;
-        struct Snapshot {
-            std::uint64_t address;
-            std::shared_ptr<Buffer> buffer;
-        };
-        DescriptorCache* cache = nullptr;
-        DescriptorCache::SetAllocation fragmentAllocation;
-        DescriptorCache::SetAllocation allocation;
-        std::vector<Snapshot> snapshots;
-        std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
-        bool HasSets() const { return allocation.set != VK_NULL_HANDLE || fragmentAllocation.set != VK_NULL_HANDLE; }
-        void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
-            for (const auto& [position, value] : pushPatches) bytes[position] = static_cast<std::byte>(value);
-        }
-        ~DrawBindings();
-    };
-    struct MovedBuffer {
-        std::size_t allocation;
-        std::uint64_t address;
-        std::size_t size;
-        std::vector<std::uint32_t> words;
-    };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}) const;
     void WriteBack();
     // Deferred completion: MarkGpuWrites registers the results the recorded work leaves on the GPU
     // (storage images stay there; buffer ranges are noted so CPU reads wait); WriteBackBuffers runs

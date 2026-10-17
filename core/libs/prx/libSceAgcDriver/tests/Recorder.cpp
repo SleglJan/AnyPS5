@@ -1545,19 +1545,6 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         Require(updates.calls.size() == 1, "building resources did not write one descriptor set");
         const auto original = updates.calls.front();
         Require(original.buffers.size() == 2 && original.images.empty(), "descriptor test lacks mixed bindings, or an image array took descriptors in the set");
-        for (std::size_t allocation = 0; allocation < 2; ++allocation) {
-            const ShaderResources::MovedBuffer moved{allocation, 0, 16, {5, 6, 7, 8}};
-            const auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
-            Require(draw != nullptr && draw->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
-            Require(updates.calls.size() == allocation + 2 && updates.copies == 0, "draw descriptors copied GPU memory or needed multiple updates");
-            const auto& actual = updates.calls.back();
-            Require(actual.buffers.size() == original.buffers.size() && actual.images.empty(), "snapshot update omitted unchanged descriptors, or wrote image descriptors");
-            for (const auto& [key, before] : original.buffers) {
-                const auto after = actual.buffers.at(key);
-                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
-                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
-            }
-        }
         snapshots.Sync();
     }
     recorder.Activate();
@@ -5910,7 +5897,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-descriptors-only") {
             drawDescriptorWriteTests(device, recorder);
-            std::cout << "Draw descriptor writes and snapshot overrides passed\n";
+            std::cout << "Draw descriptor writes passed\n";
             return 0;
         }
 
