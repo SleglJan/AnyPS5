@@ -762,8 +762,8 @@ void DeferredRegistration() {
     commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     sceAgcDriverSubmitAcb(0x20, &packet);
-    AgcDriverWaitIdle_nid_postfix();
-    AgcDriverShutdown_nid_postfix();
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "not statically resolvable");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "not statically resolvable");
 }
 
 void DeferredUndecodableRegistration() {
