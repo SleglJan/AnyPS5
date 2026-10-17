@@ -381,6 +381,7 @@ std::optional<std::vector<TextureGatherCopy>> gatherSurface(const Context& conte
             copies.push_back({piece.buffer, piece.offset, piece.begin - address, piece.end - piece.begin});
             continue;
         }
+        if (!HostImportCovers(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin))) return std::nullopt;
         const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
         if (import == nullptr) return std::nullopt;
         copies.push_back({import->buffer, piece.begin - import->base, piece.begin - address, piece.end - piece.begin});
