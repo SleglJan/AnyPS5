@@ -705,6 +705,28 @@ ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderS
     return PreparedInvocationFor(snapshot, codeOffset, part, true, preparedAtUse);
 }
 
+ShaderRecompiler::PreparedShaderInvocation TableCallPartAhead(const ShaderRecompiler::RecompileRequest& part) {
+    auto handle = PrepareShaderWithDiagnostics(part);
+    auto request = part;
+    request.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+    request.shader.linkedLiterals = ShaderRecompiler::GetPreparedLinkedLiterals(*handle);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
+    require(invocation.has_value(), "a table-call program part prepared ahead of its dispatch does not match its invocation");
+    return std::move(*invocation);
+}
+
+std::shared_ptr<TableCallProgram> RegisteredBranchSplit(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+    std::unique_lock lock(snapshot.prepared->mutex);
+    AwaitRegisteredPreparation(*snapshot.prepared, lock);
+    if (snapshot.prepared->branchSplits.empty()) return nullptr;
+    std::vector<std::uint64_t> key;
+    ShaderRecompiler::BuildPreparedShaderKey(request, key);
+    for (const auto& split : snapshot.prepared->branchSplits) {
+        if (split.codeOffset == codeOffset && split.key == key) return split.program;
+    }
+    return nullptr;
+}
+
 std::uint64_t TableCallContinuationsPreparedAtUse() {
     return continuationsPreparedAtUse.load(std::memory_order_relaxed);
 }
@@ -1193,11 +1215,40 @@ void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const Sh
     }
 }
 
+std::vector<PreparedBranchSplit> PrepareBranchSplitsAhead(const ShaderSnapshot& snapshot, const RegisteredPreparation& plan, std::span<const PreparedShaders::Entry> entries) {
+    std::vector<PreparedBranchSplit> splits;
+    if (plan.prebuildDevice == nullptr || plan.tableCallHead != nullptr || plan.request->shader.stage != ShaderRecompiler::ShaderStage::Compute) return splits;
+    auto* replay = snapshot.header.empty() ? nullptr : plan.prebuildDevice->Replay();
+    const auto recorded = replay != nullptr ? replay->BranchSplits(snapshot.code) : std::vector<BranchSplitRecord>{};
+    const auto requests = RegistrationRequests(*plan.request);
+    for (std::size_t index = 0; index < entries.size() && index < requests.size(); ++index) {
+        const auto& request = requests[index];
+        if (ShaderRecompiler::GetPreparedArtifact(*entries[index].handle).spirv.Words().size() <= ShaderRecompiler::GiantProgramWords) continue;
+        const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, entries[index].handle);
+        if (!invocation) continue;
+        const auto compiled = invocation->MaterializeAtRunTime();
+        if (compiled == nullptr || compiled->spirv.size() <= ShaderRecompiler::GiantProgramWords) continue;
+        const auto identity = ShaderRecompiler::ArtifactIdentity(request);
+        const auto record = std::ranges::find_if(recorded, [&](const BranchSplitRecord& candidate) { return candidate.codeOffset == plan.codeOffset && candidate.identity == identity; });
+        const bool replayed = record != recorded.end();
+        auto program = BranchSplitProgramAhead(request, compiled->spirv.size(), plan.prebuildDevice, snapshot, plan.codeOffset, replayed ? std::span<const std::uint32_t>(record->sites) : std::span<const std::uint32_t>{});
+        if (program == nullptr) continue;
+        if (!replayed && replay != nullptr) {
+            replay->RecordBranchSplit(snapshot.code, plan.codeOffset, identity, program->PreparedParts().front()->program->compiled->identity, program->Split().branchSites);
+        }
+        std::vector<std::uint64_t> key;
+        ShaderRecompiler::BuildPreparedShaderKey(request, key);
+        splits.push_back({plan.codeOffset, std::move(key), std::move(program)});
+    }
+    return splits;
+}
+
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
     const auto* preparedKey = snapshot->prepared.get();
     SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
         PerformanceContext timingContext(FrameTiming::Preparation());
         std::vector<PreparedShaders::Entry> entries;
+        std::vector<PreparedBranchSplit> splits;
         std::exception_ptr failure;
         try {
             entries = PrepareRegistered(*plan);
@@ -1207,10 +1258,26 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         } catch (...) {
             failure = std::current_exception();
         }
+        if (failure == nullptr) {
+            try {
+                splits = PrepareBranchSplitsAhead(*snapshot, *plan, entries);
+            } catch (const std::exception& error) {
+                APS5_LOG_ERR("Shader 0x%llx could not be split at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+            }
+        }
         auto& prepared = *snapshot->prepared;
         const auto published = entries;
+        const auto splitParts = [&] {
+            std::vector<std::shared_ptr<const TableCallPart>> parts;
+            for (const auto& split : splits) {
+                const auto own = split.program->PreparedParts();
+                parts.insert(parts.end(), own.begin(), own.end());
+            }
+            return parts;
+        }();
         {
             std::lock_guard lock(prepared.mutex);
+            prepared.branchSplits.insert(prepared.branchSplits.end(), std::make_move_iterator(splits.begin()), std::make_move_iterator(splits.end()));
             prepared.entries.insert(prepared.entries.end(), std::make_move_iterator(entries.begin()), std::make_move_iterator(entries.end()));
             if (failure == nullptr && !plan->abiKey.empty()) prepared.registeredAbis.push_back(std::move(plan->abiKey));
             prepared.failure = failure;
@@ -1219,7 +1286,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         prepared.settled.notify_all();
         if (failure == nullptr) OfferPreparedArtifacts(plan->prebuildDevice, published);
         if (failure != nullptr || plan->prebuildDevice == nullptr || plan->request->shader.stage != ShaderRecompiler::ShaderStage::Compute) return;
-        SubmitLibraryPrebuild([snapshot, plan, published] {
+        SubmitLibraryPrebuild([snapshot, plan, published, splitParts] {
             try {
                 const auto requests = RegistrationRequests(*plan->request);
                 for (std::size_t index = 0; index < published.size() && index < requests.size(); ++index) static_cast<void>(plan->prebuildDevice->PrepareRecordedComputePipelines(requests[index], *published[index].handle));
@@ -1227,6 +1294,13 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
                 APS5_LOG_ERR("Shader 0x%llx: a compute pipeline recorded by an earlier run could not be created at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
                 std::lock_guard lock(snapshot->prepared->mutex);
                 snapshot->prepared->failure = std::current_exception();
+            }
+            for (const auto& part : splitParts) {
+                try {
+                    if (plan->prebuildDevice->PrepareComputePipeline(*part->program->compiled, plan->request->shader.codeAddress)) static_cast<void>(plan->prebuildDevice->RecordComputePipeline(*part->program->compiled));
+                } catch (const std::exception& error) {
+                    APS5_LOG_ERR("Shader 0x%llx: a part of its split program could not be created at registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+                }
             }
             if (plan->tableCallHead == nullptr || published.empty()) return;
             try {

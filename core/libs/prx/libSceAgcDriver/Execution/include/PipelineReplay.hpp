@@ -51,6 +51,8 @@ public:
     void Drop(const PreparedProgramRecord& recorded);
     void RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request);
     std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
+    void RecordBranchSplit(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, const std::array<std::uint64_t, 2>& identity, const std::array<std::uint64_t, 2>& head, std::span<const std::uint32_t> sites);
+    std::vector<BranchSplitRecord> BranchSplits(std::span<const std::uint32_t> registeredCode) const;
     static void CountProgramReplay(ProgramReplay outcome);
     static std::array<std::uint64_t, 2> ProgramKey(std::span<const std::uint32_t> registeredCode);
     static Counters Totals();

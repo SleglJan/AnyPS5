@@ -48,6 +48,12 @@ std::vector<AgcDriver::PreparedProgramRecord> PreparedRecords() {
     return {first, second, other};
 }
 
+std::vector<AgcDriver::BranchSplitRecord> SplitRecords() {
+    AgcDriver::BranchSplitRecord named{{7u, 8u}, 0u, {3u, 4u}, {0xaaaau, 0xbbbbu}, {12u, 40u}};
+    AgcDriver::BranchSplitRecord unnamed{{7u, 8u}, 64u, {5u, 6u}, {1u, 2u}, {9u}};
+    return {named, unnamed};
+}
+
 template <typename TRecord>
 std::vector<AgcDriver::Recorded<TRecord>> WithUsage(const std::vector<TRecord>& records, std::uint32_t misses) {
     std::vector<AgcDriver::Recorded<TRecord>> result;
@@ -56,7 +62,7 @@ std::vector<AgcDriver::Recorded<TRecord>> WithUsage(const std::vector<TRecord>& 
 }
 
 AgcDriver::ManifestRecords Records() {
-    return {WithUsage(ComputeRecords(), 1u), WithUsage(GraphicsRecords(), 2u), PreparedRecords()};
+    return {WithUsage(ComputeRecords(), 1u), WithUsage(GraphicsRecords(), 2u), PreparedRecords(), SplitRecords()};
 }
 
 void Codec() {
@@ -96,13 +102,15 @@ void File() {
     const auto compute = ComputeRecords();
     const auto graphics = GraphicsRecords();
     const auto prepared = PreparedRecords();
+    const auto splits = SplitRecords();
     {
         AgcDriver::PipelineManifest manifest(path, 77u);
         Require(manifest.Loaded() == 0u && manifest.Size() == 0u, "a manifest without a file has records");
         for (const auto& record : compute) Require(manifest.Record(record).added, "a new compute record was refused");
         for (const auto& record : graphics) Require(manifest.Record(record).added, "a new graphics record was refused");
         for (const auto& record : prepared) Require(manifest.Record(record), "a new record of a program prepared at use was refused");
-        Require(!manifest.Record(compute[1]).added && !manifest.Record(graphics[1]).added && !manifest.Record(prepared[1]), "a record seen before was recorded again");
+        for (const auto& record : splits) Require(manifest.Record(record), "a new record of a split program was refused");
+        Require(!manifest.Record(compute[1]).added && !manifest.Record(graphics[1]).added && !manifest.Record(prepared[1]) && !manifest.Record(splits[1]), "a record seen before was recorded again");
         Require(manifest.Records(compute[0].program).size() == 2u && manifest.Records(compute[2].program).size() == 1u && manifest.Records({9u, 9u}).empty(), "the records of a program are not the records recorded for it");
     }
     {
@@ -111,13 +119,14 @@ void File() {
         Require(loaded.compute.size() == 3u && loaded.graphics.size() == 2u && manifest.Records(compute[0].program).front().first == compute[0], "a manifest did not load the pipeline records the previous one saved");
         Require(loaded.prepared == std::vector<AgcDriver::PreparedProgramRecord>{prepared[0], prepared[1]}, "a manifest kept a program prepared at use that no pipeline record names, or lost one");
         Require(manifest.PreparedPrograms({7u, 8u}).size() == 2u && manifest.PreparedPrograms({9u, 9u}).empty(), "the programs prepared at use of a registered program are not the ones saved");
+        Require(manifest.BranchSplits({7u, 8u}) == splits && manifest.BranchSplits({9u, 9u}).empty(), "the splits of a registered program are not the ones saved");
         for (const auto& entry : loaded.compute) Require(entry.usage.misses == 0u && entry.usage.progress != 0u, "a record made in a run was saved without that run's use");
     }
     const std::array<std::uint64_t, 2> rebuilt{0x9999u, 0x9898u};
     const std::array<std::uint64_t, 2> rebuiltStage{0x7777u, 0x7676u};
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
-        Require(manifest.RecordedByAnotherBuild() && manifest.Loaded() == 7u && manifest.Records(compute[0].program).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a manifest of another recompiler build was not loaded with its records");
+        Require(manifest.RecordedByAnotherBuild() && manifest.Loaded() == 9u && manifest.Records(compute[0].program).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a manifest of another recompiler build was not loaded with its records");
         const AgcDriver::ProgramInterface computeInterface{0u, {}, {{9u, 2u}}};
         const AgcDriver::ProgramInterface stageInterface{32u, {{1u, 7u, 0u, 4u, 1u}}, {}};
         const auto movedCompute = manifest.Rekey(compute[0].program, rebuilt, computeInterface);
@@ -192,10 +201,10 @@ void Expiry() {
 }
 
 void Unnamed() {
-    AgcDriver::ManifestRecords records{WithUsage(ComputeRecords(), AgcDriver::PipelineManifest::ExpiryRuns), WithUsage(GraphicsRecords(), 0u), PreparedRecords()};
+    AgcDriver::ManifestRecords records{WithUsage(ComputeRecords(), AgcDriver::PipelineManifest::ExpiryRuns), WithUsage(GraphicsRecords(), 0u), PreparedRecords(), SplitRecords()};
     std::size_t dropped = 0;
     const auto kept = AgcDriver::PipelineManifest::Unexpired(records, &dropped);
-    Require(kept.compute.empty() && kept.graphics.size() == 2u && kept.prepared == std::vector<AgcDriver::PreparedProgramRecord>{PreparedRecords()[1]} && dropped == 5u, "expiry did not drop the expired pipelines and the programs only they named");
+    Require(kept.compute.empty() && kept.graphics.size() == 2u && kept.prepared == std::vector<AgcDriver::PreparedProgramRecord>{PreparedRecords()[1]} && kept.splits == std::vector<AgcDriver::BranchSplitRecord>{SplitRecords()[0]} && dropped == 6u, "expiry did not drop the expired pipelines and the programs and splits only they named");
 }
 
 }

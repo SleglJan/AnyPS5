@@ -204,7 +204,7 @@ std::vector<TableCallTarget> ReadTableCallTargets(const RecompileRequest& reques
     return targets;
 }
 
-std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees, const BranchSplitPartWords& partWords, std::size_t boundWords) {
+std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees, const BranchSplitPartWords& partWords, std::size_t boundWords, std::span<const std::uint32_t> recordedSites) {
     if (programWords <= GiantProgramWords || request.shader.stage != ShaderStage::Compute || !request.context.compute) return std::nullopt;
     const auto program = RdnaInstructionDecoder{}.Decode(request.shader.code);
     const SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
@@ -228,7 +228,7 @@ std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request
     std::vector<double> corrections;
     std::vector<std::vector<std::uint32_t>> tried;
     for (std::size_t attempt = 0; attempt < BranchSplitAttempts; ++attempt) {
-        auto sites = ChooseBranchSplitSites(base.linked, programWords, boundWords, programEnd, corrections);
+        auto sites = recordedSites.empty() ? ChooseBranchSplitSites(base.linked, programWords, boundWords, programEnd, corrections) : std::vector<std::uint32_t>(recordedSites.begin(), recordedSites.end());
         if (sites.empty() || std::ranges::find(tried, sites) != tried.end()) break;
         tried.push_back(sites);
         auto split = base;
@@ -245,7 +245,7 @@ std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request
             best = split;
             bestWords = largest;
         }
-        if (largest <= GiantProgramWords) break;
+        if (largest <= GiantProgramWords || !recordedSites.empty()) break;
         corrections = CorrectBranchSplitEstimates(split.linked, programWords, split.branchSites, corrections, measured);
     }
     return best;

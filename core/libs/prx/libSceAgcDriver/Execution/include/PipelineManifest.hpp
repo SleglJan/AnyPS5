@@ -67,6 +67,16 @@ struct PreparedProgramRecord {
     bool operator==(const PreparedProgramRecord&) const = default;
 };
 
+struct BranchSplitRecord {
+    std::array<std::uint64_t, 2> program{};
+    std::uint64_t codeOffset = 0;
+    std::array<std::uint64_t, 2> identity{};
+    std::array<std::uint64_t, 2> head{};
+    std::vector<std::uint32_t> sites;
+
+    bool operator==(const BranchSplitRecord&) const = default;
+};
+
 struct ProgramInterface {
     std::uint32_t pushBytes = 0;
     std::vector<GraphicsBindingShape> bindings;
@@ -101,6 +111,7 @@ struct ManifestRecords {
     std::vector<Recorded<ComputePipelineRecord>> compute;
     std::vector<Recorded<GraphicsPipelineRecord>> graphics;
     std::vector<PreparedProgramRecord> prepared;
+    std::vector<BranchSplitRecord> splits;
 
     bool operator==(const ManifestRecords&) const = default;
 };
@@ -123,11 +134,13 @@ public:
     Added Record(ComputePipelineRecord record);
     Added Record(GraphicsPipelineRecord record);
     bool Record(PreparedProgramRecord record);
+    bool Record(BranchSplitRecord record);
     std::vector<std::pair<ComputePipelineRecord, std::shared_ptr<RecordUse>>> Records(const std::array<std::uint64_t, 2>& program) const;
     std::vector<std::pair<GraphicsPipelineRecord, std::shared_ptr<RecordUse>>> GraphicsRecords() const;
     std::vector<PreparedProgramRecord> PreparedPrograms(const std::array<std::uint64_t, 2>& program) const;
+    std::vector<BranchSplitRecord> BranchSplits(const std::array<std::uint64_t, 2>& program) const;
     std::size_t Size() const;
-    std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size(); }
+    std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size() + loaded.splits.size(); }
     std::size_t Expired() const { return expired; }
     bool RecordedByAnotherBuild() const { return recordedSource != sourceVersion; }
     Rekeyed Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to, const std::optional<ProgramInterface>& derived);
@@ -162,6 +175,7 @@ private:
     std::map<std::array<std::uint64_t, 2>, std::vector<Stored<ComputePipelineRecord>>> compute;
     std::vector<Stored<GraphicsPipelineRecord>> graphics;
     std::vector<PreparedProgramRecord> prepared;
+    std::vector<BranchSplitRecord> splits;
     std::size_t count = 0;
     std::uint64_t savedUses = 0;
     bool dirty = false;

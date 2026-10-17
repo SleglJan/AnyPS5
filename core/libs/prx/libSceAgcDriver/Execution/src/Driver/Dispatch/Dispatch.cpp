@@ -240,6 +240,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::shared_ptr<TableCallProgram> tableCalls;
         try {
             tableCalls = TableCallProgramFor(programKey, request);
+            if (tableCalls == nullptr) tableCalls = RegisteredBranchSplitFor(programKey, snapshot, codeOffset, request);
             if (tableCalls == nullptr) {
                 const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
                 program = made.program;

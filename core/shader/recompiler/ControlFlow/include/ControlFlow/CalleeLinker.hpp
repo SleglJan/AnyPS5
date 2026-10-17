@@ -53,7 +53,7 @@ inline constexpr std::size_t GiantProgramWords = 500000;
 inline constexpr std::size_t GiantPartWords = 400000;
 inline constexpr std::size_t BranchSplitAttempts = 3;
 using BranchSplitPartWords = std::function<std::size_t(const TableCallSplit& split, const SplitCode& part, ContinuationAbi::Role role, std::uint32_t entrySite)>;
-[[nodiscard]] std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees = {}, const BranchSplitPartWords& partWords = {}, std::size_t boundWords = GiantPartWords);
+[[nodiscard]] std::optional<TableCallSplit> SplitBranchProgram(const RecompileRequest& request, std::size_t programWords, std::span<const std::vector<std::uint32_t>> userDataCallees = {}, const BranchSplitPartWords& partWords = {}, std::size_t boundWords = GiantPartWords, std::span<const std::uint32_t> recordedSites = {});
 [[nodiscard]] std::vector<TableCallTarget> BranchSplitTargets(const TableCallSplit& split);
 
 }

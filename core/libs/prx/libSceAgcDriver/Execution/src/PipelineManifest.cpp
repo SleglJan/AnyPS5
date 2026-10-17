@@ -12,7 +12,7 @@ namespace AgcDriver {
 namespace {
 
 constexpr std::uint64_t Magic = 0x314d504335535041ull;
-constexpr std::uint32_t FormatVersion = 5;
+constexpr std::uint32_t FormatVersion = 6;
 
 class Writer {
 public:
@@ -96,6 +96,7 @@ PipelineManifest::PipelineManifest(std::filesystem::path path, std::uint64_t sou
             for (const auto& entry : loaded.compute) compute[entry.record.program].push_back({entry.record, entry.usage, std::make_shared<RecordUse>(uses)});
             for (const auto& entry : loaded.graphics) graphics.push_back({entry.record, entry.usage, std::make_shared<RecordUse>(uses)});
             prepared = loaded.prepared;
+            splits = loaded.splits;
             count = Loaded();
             dirty = expired != 0 || recordedSource != sourceVersion;
             if (recordedSource != sourceVersion) std::fprintf(stderr, "[pipeline-manifest] %s was recorded by another recompiler build: its programs are prepared again from their requests\n", this->path.string().c_str());
@@ -218,6 +219,24 @@ void PipelineManifest::Forget(const PreparedProgramRecord& record) {
     dirty = true;
 }
 
+bool PipelineManifest::Record(BranchSplitRecord record) {
+    std::lock_guard lock(mutex);
+    if (std::ranges::any_of(splits, [&](const BranchSplitRecord& existing) { return existing.identity == record.identity && existing.program == record.program && existing.codeOffset == record.codeOffset; })) return false;
+    splits.push_back(std::move(record));
+    ++count;
+    dirty = true;
+    return true;
+}
+
+std::vector<BranchSplitRecord> PipelineManifest::BranchSplits(const std::array<std::uint64_t, 2>& program) const {
+    std::lock_guard lock(mutex);
+    std::vector<BranchSplitRecord> result;
+    for (const auto& record : splits) {
+        if (record.program == program) result.push_back(record);
+    }
+    return result;
+}
+
 std::vector<PreparedProgramRecord> PipelineManifest::PreparedPrograms(const std::array<std::uint64_t, 2>& program) const {
     std::lock_guard lock(mutex);
     std::vector<PreparedProgramRecord> result;
@@ -264,11 +283,12 @@ ManifestRecords PipelineManifest::Current() const {
     }
     for (const auto& stored : graphics) all.graphics.push_back({stored.record, usageNow(stored.usage, *stored.use, extent)});
     all.prepared = prepared;
+    all.splits = splits;
     return all;
 }
 
 ManifestRecords PipelineManifest::Unexpired(ManifestRecords records, std::size_t* dropped) {
-    const auto before = records.compute.size() + records.graphics.size() + records.prepared.size();
+    const auto before = records.compute.size() + records.graphics.size() + records.prepared.size() + records.splits.size();
     std::erase_if(records.compute, [](const auto& entry) { return entry.usage.misses >= ExpiryRuns; });
     std::erase_if(records.graphics, [](const auto& entry) { return entry.usage.misses >= ExpiryRuns; });
     std::set<std::array<std::uint64_t, 2>> named;
@@ -277,7 +297,8 @@ ManifestRecords PipelineManifest::Unexpired(ManifestRecords records, std::size_t
         for (const auto& stage : entry.record.stages) named.insert(stage.program);
     }
     std::erase_if(records.prepared, [&](const auto& record) { return !named.contains(record.identity); });
-    if (dropped != nullptr) *dropped = before - (records.compute.size() + records.graphics.size() + records.prepared.size());
+    std::erase_if(records.splits, [&](const auto& record) { return !named.contains(record.head); });
+    if (dropped != nullptr) *dropped = before - (records.compute.size() + records.graphics.size() + records.prepared.size() + records.splits.size());
     return records;
 }
 
@@ -355,6 +376,16 @@ std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, con
         writer.Value(static_cast<std::uint32_t>(record.request.size()));
         for (const char character : record.request) writer.Value(character);
     });
+    writer.List(records.splits, [&](const BranchSplitRecord& record) {
+        writer.Value(record.program[0]);
+        writer.Value(record.program[1]);
+        writer.Value(record.codeOffset);
+        writer.Value(record.identity[0]);
+        writer.Value(record.identity[1]);
+        writer.Value(record.head[0]);
+        writer.Value(record.head[1]);
+        writer.List(record.sites, [&](std::uint32_t site) { writer.Value(site); });
+    });
     return out;
 }
 
@@ -390,7 +421,11 @@ std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byt
         }
         return true;
     });
-    if (!prepared || reader.Remaining() != 0) return std::nullopt;
+    const bool splits = prepared && reader.List(records.splits, 60u, [&](BranchSplitRecord& record) {
+        return reader.Value(record.program[0]) && reader.Value(record.program[1]) && reader.Value(record.codeOffset) && reader.Value(record.identity[0]) && reader.Value(record.identity[1]) && reader.Value(record.head[0]) && reader.Value(record.head[1])
+            && reader.List(record.sites, 4u, [&](std::uint32_t& site) { return reader.Value(site); });
+    });
+    if (!splits || reader.Remaining() != 0) return std::nullopt;
     return records;
 }
 

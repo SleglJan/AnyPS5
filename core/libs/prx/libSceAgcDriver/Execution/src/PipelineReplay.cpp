@@ -227,6 +227,14 @@ std::vector<PreparedProgramRecord> PipelineReplay::PreparedPrograms(std::span<co
     return manifest.PreparedPrograms(ProgramKey(registeredCode));
 }
 
+void PipelineReplay::RecordBranchSplit(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, const std::array<std::uint64_t, 2>& identity, const std::array<std::uint64_t, 2>& head, std::span<const std::uint32_t> sites) {
+    static_cast<void>(manifest.Record(BranchSplitRecord{ProgramKey(registeredCode), codeOffset, identity, head, {sites.begin(), sites.end()}}));
+}
+
+std::vector<BranchSplitRecord> PipelineReplay::BranchSplits(std::span<const std::uint32_t> registeredCode) const {
+    return manifest.BranchSplits(ProgramKey(registeredCode));
+}
+
 void PipelineReplay::CountProgramReplay(ProgramReplay outcome) {
     auto& counters = ReplayCounters();
     switch (outcome) {

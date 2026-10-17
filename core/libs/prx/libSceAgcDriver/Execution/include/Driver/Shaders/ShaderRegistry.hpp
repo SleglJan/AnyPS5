@@ -41,6 +41,7 @@ class VulkanDevice;
 namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
+class TableCallProgram;
 using ShaderRegistry = std::map<std::uint64_t, std::vector<std::shared_ptr<const ShaderSnapshot>>>;
 
 struct PreparedShaderState {
@@ -72,7 +73,13 @@ struct PreparedShaderState {
     bool rectangleRequested = false;
     bool deferred = false;
 };
+struct PreparedBranchSplit {
+    std::size_t codeOffset = 0;
+    std::vector<std::uint64_t> key;
+    std::shared_ptr<TableCallProgram> program;
+};
 struct PreparedShaders : PreparedShaderState {
+    std::vector<PreparedBranchSplit> branchSplits;
     std::mutex mutex;
     std::condition_variable settled;
     std::exception_ptr failure;
@@ -151,6 +158,8 @@ std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const Shad
 std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads);
 std::uint64_t TableCallContinuationsPreparedAtUse();
 ShaderRecompiler::PreparedShaderInvocation TableCallPartInvocation(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& part, bool* preparedAtUse);
+ShaderRecompiler::PreparedShaderInvocation TableCallPartAhead(const ShaderRecompiler::RecompileRequest& part);
+std::shared_ptr<TableCallProgram> RegisteredBranchSplit(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 void ReplayPreparedPrograms(const std::shared_ptr<VulkanDevice>& device, const std::shared_ptr<const ShaderSnapshot>& snapshot);
 
 }
