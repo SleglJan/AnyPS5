@@ -9,6 +9,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
@@ -45,11 +47,13 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 
-constexpr std::uint32_t Side = 256;
+constexpr std::uint32_t Side = 512;
+constexpr std::uint32_t ViewSide = 256;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t FormatBc3 = 173;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
-constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
+constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side;
 constexpr std::size_t Surfaces = 12;
 constexpr std::size_t BlockBytes = SurfaceBytes * Surfaces;
 constexpr std::size_t RegistrationGapBytes = 65536;
@@ -106,11 +110,11 @@ public:
             queue.pQueuePriorities = &priority;
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
-            if (resourceImages) {
-                VkPhysicalDeviceFeatures supported{};
-                function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
-                enabled.shaderStorageImageMultisample = supported.shaderStorageImageMultisample;
-            }
+            VkPhysicalDeviceFeatures supported{};
+            function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
+            Require(supported.textureCompressionBC == VK_TRUE, "the device samples no BC compressed textures");
+            enabled.textureCompressionBC = VK_TRUE;
+            if (resourceImages) enabled.shaderStorageImageMultisample = supported.shaderStorageImageMultisample;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkPhysicalDeviceRobustness2FeaturesEXT robustness{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
@@ -154,6 +158,7 @@ public:
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
             context.bufferDeviceAddress = true;
+            context.textureCompressionBC = true;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             if (hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) context.memoryProperties2 = function<PFN_vkGetPhysicalDeviceMemoryProperties2>("vkGetPhysicalDeviceMemoryProperties2");
@@ -203,12 +208,24 @@ private:
 class Block {
 public:
     explicit Block(const Context& context, std::size_t surfaceBytes = SurfaceBytes, std::size_t surfaces = Surfaces) : context(context), surfaceBytes(surfaceBytes), blockBytes(surfaceBytes * surfaces) {
+        const auto reserved = blockBytes + RegistrationGapBytes;
 #ifdef _WIN32
-        memory = VirtualAlloc(nullptr, blockBytes + RegistrationGapBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        memory = GuestArena::GuestArenaAllocate_nid_postfix(reserved, 65536);
+        if (memory != nullptr) GuestArena::GuestArenaCommit_nid_postfix(memory, reserved, PAGE_READWRITE, reserved);
 #else
-        memory = std::aligned_alloc(65536, blockBytes + RegistrationGapBytes);
+        constexpr std::uintptr_t alignment = 65536;
+        void* mapped = mmap(nullptr, reserved + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapped != MAP_FAILED) {
+            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
+            if (aligned != begin) munmap(mapped, aligned - begin);
+            if (aligned + reserved != begin + reserved + alignment) munmap(reinterpret_cast<void*>(aligned + reserved), begin + alignment - aligned);
+            memory = reinterpret_cast<void*>(aligned);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, reserved);
+        }
 #endif
         Require(memory != nullptr, "cannot allocate the texture block");
+        Require(AgcDriver::GuestMemory::Watched(Surface(0), blockBytes), "the texture block is not write-watched guest memory");
         std::memset(memory, 0x5a, blockBytes);
         GuestAllocations::Mutation().Add(memory, blockBytes, true, true, true);
     }
@@ -218,9 +235,11 @@ public:
         GuestAllocations::Mutation().Remove(memory);
         HostImportFor(context, Surface(0), blockBytes);
 #ifdef _WIN32
-        VirtualFree(memory, 0, MEM_RELEASE);
+        GuestArena::GuestArenaReset_nid_postfix(memory, blockBytes + RegistrationGapBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, blockBytes + RegistrationGapBytes);
 #else
-        std::free(memory);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, blockBytes + RegistrationGapBytes);
+        munmap(memory, blockBytes + RegistrationGapBytes);
 #endif
     }
 
@@ -233,10 +252,10 @@ private:
     void* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = FormatBc3) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
@@ -246,13 +265,13 @@ std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t sid
     };
 }
 
-std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side) {
-    const auto words = Descriptor(address, side);
+std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = FormatBc3) {
+    const auto words = Descriptor(address, side, format);
     return CachedSampledTexture(context, words);
 }
 
-GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side) {
-    const auto words = Descriptor(address, side);
+GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = FormatBc3) {
+    const auto words = Descriptor(address, side, format);
     return DecodeTextureResource(words);
 }
 
@@ -267,7 +286,7 @@ void viewTests(const Context& context) {
         return;
     }
     const auto before = TextureCacheUsage();
-    auto view = Sampled(context, block.Surface(0));
+    auto view = Sampled(context, block.Surface(0), ViewSide, Format32UInt);
     Require(view->ViewsStorageImage(), "a sampled texture in host-imported memory is not a view of its storage image");
     const std::weak_ptr<Texture> viewed = view;
     const auto* image = view->StorageSource();
@@ -275,14 +294,14 @@ void viewTests(const Context& context) {
     Require(after.sampledEntries == before.sampledEntries + 1u, "the view did not enter the sampled texture cache");
     Require(after.sampledBytes == before.sampledBytes, "a view of a cached storage image counted " + std::to_string(after.sampledBytes - before.sampledBytes) + " bytes against the sampled texture cache");
     Require(after.storageBytes > before.storageBytes, "the storage image of the view is not counted by the storage image cache");
-    Require(Sampled(context, block.Surface(0)) == view, "the second lookup of the surface did not hit its view");
+    Require(Sampled(context, block.Surface(0), ViewSide, Format32UInt) == view, "the second lookup of the surface did not hit its view");
     view.reset();
-    for (std::size_t surface = 1; surface < Surfaces; ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
+    for (std::size_t surface = 1; surface < Surfaces; ++surface) CachedStorageSurface(context, Resource(block.Surface(surface), ViewSide, Format32UInt));
     Require(!StorageImageCached(context, image), "the storage image cache never evicted the viewed image under a 1 MiB budget");
     const auto evicted = TextureCacheUsage();
     Require(viewed.expired(), "the sampled texture cache kept the view of an evicted storage image");
     Require(evicted.sampledEntries == after.sampledEntries - 1u && evicted.sampledBytes == before.sampledBytes, "dropping the view of the evicted storage image changed other sampled entries");
-    auto again = Sampled(context, block.Surface(0));
+    auto again = Sampled(context, block.Surface(0), ViewSide, Format32UInt);
     Require(again->ViewsStorageImage() && again->StorageSource() != nullptr && StorageImageCached(context, again->StorageSource()), "the surface's next lookup does not view its new cached storage image");
 }
 
@@ -320,7 +339,7 @@ void snapshotTests(const Context& context) {
     Require(oldest.expired(), "the least recently used snapshot was not evicted past the budget");
     Require(TextureCacheUsage().sampledBytes <= Budget, "the sampled texture cache holds more than its budget");
     ClearCachedTextures(context.device);
-    constexpr std::uint32_t TinySide = 16;
+    constexpr std::uint32_t TinySide = 32;
     const auto tiny = Sampled(context, block.Surface(0), TinySide);
     const auto guestBytes = DescribeSurface(Resource(block.Surface(0), TinySide)).guestBytes;
     if (tiny->AllocationBytes() >= guestBytes) {
@@ -356,8 +375,8 @@ void heldTests(const Context& context) {
 }
 
 void rescanTests(const Context& context) {
-    constexpr std::uint32_t SmallSide = 128;
-    constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
+    constexpr std::uint32_t SmallSide = 256;
+    constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide;
     Block block(context);
     const auto small = [&](std::size_t surface) { return Sampled(context, block.Surface(0) + surface * SmallBytes, SmallSide); };
     std::vector<std::shared_ptr<Texture>> all{small(0)};
@@ -379,7 +398,7 @@ void viewEvictionTests(const Context& context) {
     Block snapshots(context);
     Block imported(context);
     if (HostImportFor(context, imported.Surface(0), BlockBytes) == nullptr) return;
-    const std::weak_ptr<Texture> view = Sampled(context, imported.Surface(0));
+    const std::weak_ptr<Texture> view = Sampled(context, imported.Surface(0), ViewSide, Format32UInt);
     Require(!view.expired() && TextureCacheUsage().sampledBytes == 0, "the view of a cached storage image did not enter the sampled texture cache at 0 bytes");
     Sampled(context, snapshots.Surface(0));
     const auto snapshotBytes = TextureCacheUsage().sampledBytes;
@@ -584,8 +603,8 @@ void digestTests() {
 
 void snapshotMemoryTests(Context context) {
     context.memoryProperties2 = &ReportBudget;
-    constexpr std::uint32_t LargeSide = 1024;
-    constexpr std::size_t LargeSurfaceBytes = std::size_t{LargeSide} * LargeSide * 4u;
+    constexpr std::uint32_t LargeSide = 2048;
+    constexpr std::size_t LargeSurfaceBytes = std::size_t{LargeSide} * LargeSide;
     constexpr std::size_t Cached = 8;
     Block block(context, LargeSurfaceBytes, Cached + 1u);
     Require(DescribeSurface(Resource(block.Surface(0), LargeSide)).guestBytes == LargeSurfaceBytes, "the large test surface does not take the bytes the test plans for");
