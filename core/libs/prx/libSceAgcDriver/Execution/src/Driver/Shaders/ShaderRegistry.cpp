@@ -1112,8 +1112,9 @@ void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const Sh
         const bool recompiled = identity != record.identity;
         const auto handle = PrepareShaderWithDiagnostics(request);
         if (recompiled && replay != nullptr) {
-            replay->Recompiled(record, request, identity);
-            for (auto& job : replay->Prepared(handle, record.identity)) SubmitLibraryPrebuild([device, job = std::move(job)] { job(); });
+            if (replay->Recompiled(record, request, handle, identity)) {
+                for (auto& job : replay->Prepared(handle, record.identity)) SubmitLibraryPrebuild([device, job = std::move(job)] { job(); });
+            }
         }
         const PreparedShaders::Entry entry{static_cast<std::size_t>(record.codeOffset), handle};
         {

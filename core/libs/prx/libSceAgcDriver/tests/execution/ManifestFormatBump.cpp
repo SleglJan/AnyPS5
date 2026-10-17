@@ -221,9 +221,16 @@ void AgeCache(const std::filesystem::path& directory) {
     std::uint64_t source = 0;
     auto records = AgcDriver::PipelineManifest::Decode(bytes, source);
     Require(records.has_value() && records->prepared.size() == 3u && records->compute.size() == 1u && records->graphics.size() == 1u, "the recording run did not leave three programs and two pipelines in its manifest");
-    for (auto& entry : records->compute) entry.record.program = Older(entry.record.program);
+    for (auto& entry : records->compute) {
+        entry.record.program = Older(entry.record.program);
+        entry.record.bindings.emplace_back(99u, 1u);
+    }
     for (auto& entry : records->graphics) {
-        for (auto& stage : entry.record.stages) stage.program = Older(stage.program);
+        for (auto& stage : entry.record.stages) {
+            stage.program = Older(stage.program);
+            stage.pushBytes += 4u;
+            stage.bindings.push_back({1u, 0u, 0u, 99u, 1u, 0u});
+        }
     }
     for (auto& record : records->prepared) record.identity = Older(record.identity);
     auto refused = records->prepared.front();

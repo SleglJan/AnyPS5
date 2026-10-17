@@ -118,8 +118,11 @@ void File() {
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
         Require(manifest.RecordedByAnotherBuild() && manifest.Loaded() == 7u && manifest.Records(compute[0].program).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a manifest of another recompiler build was not loaded with its records");
-        manifest.Rekey(compute[0].program, rebuilt);
-        manifest.Rekey(graphics[0].stages[0].program, rebuiltStage);
+        const AgcDriver::ProgramInterface computeInterface{0u, {}, {{9u, 2u}}};
+        const AgcDriver::ProgramInterface stageInterface{32u, {{1u, 7u, 0u, 4u, 1u, 0u}}, {}};
+        const auto movedCompute = manifest.Rekey(compute[0].program, rebuilt, computeInterface);
+        const auto movedStage = manifest.Rekey(graphics[0].stages[0].program, rebuiltStage, stageInterface);
+        Require(movedCompute.compute == 2u && movedStage.graphics == 2u && movedCompute.droppedCompute + movedCompute.droppedGraphics + movedStage.droppedCompute + movedStage.droppedGraphics == 0u, "rekeying with a derived interface dropped records or moved the wrong number");
         manifest.Forget(prepared[0]);
         manifest.Forget(prepared[1]);
         auto first = prepared[0];
@@ -128,12 +131,17 @@ void File() {
         second.identity = rebuiltStage;
         Require(manifest.Record(first) && manifest.Record(second), "a program prepared at use under its new identity was refused");
         Require(manifest.Records(compute[0].program).empty() && manifest.Records(rebuilt).size() == 2u && manifest.Records(rebuilt).front().first.program == rebuilt, "rekeying moved no compute record to the program's new identity");
-        Require(std::ranges::all_of(manifest.GraphicsRecords(), [&](const auto& entry) { return entry.first.stages[0].program == rebuiltStage; }), "rekeying left a graphics stage on the program's old identity");
+        Require(std::ranges::all_of(manifest.GraphicsRecords(), [&](const auto& entry) { return entry.first.stages[0].program == rebuiltStage && entry.first.stages[0].pushBytes == 32u && entry.first.stages[0].bindings == stageInterface.bindings && entry.first.stages[1].bindings == graphics[0].stages[1].bindings; }), "rekeying left a graphics stage on the program's old identity or old interface, or changed another stage");
+        Require(std::ranges::all_of(manifest.Records(rebuilt), [&](const auto& entry) { return entry.first.bindings == computeInterface.computeBindings; }), "rekeying left a compute record on its old bindings");
         Require(manifest.PreparedPrograms({7u, 8u}) == std::vector<AgcDriver::PreparedProgramRecord>{first, second}, "a forgotten program prepared at use was kept, or its new record lost");
     }
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
         Require(!manifest.RecordedByAnotherBuild() && manifest.Records(rebuilt).size() == 2u && manifest.Records(compute[0].program).empty() && manifest.PreparedPrograms({7u, 8u}).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a rekeyed manifest did not save its new identities under the build that rekeyed it");
+        const auto droppedCompute = manifest.Rekey(compute[2].program, {1u, 1u}, std::nullopt);
+        const auto droppedGraphics = manifest.Rekey(graphics[0].stages[1].program, {2u, 2u}, std::nullopt);
+        Require(droppedCompute.droppedCompute == 1u && droppedCompute.compute == 0u && manifest.Records(compute[2].program).empty() && manifest.Records({1u, 1u}).empty(), "a compute record of a program whose interface cannot be derived was kept");
+        Require(droppedGraphics.droppedGraphics == 2u && manifest.GraphicsRecords().empty(), "a graphics record naming a program whose interface cannot be derived was kept");
     }
     std::error_code error;
     std::filesystem::remove_all(directory, error);

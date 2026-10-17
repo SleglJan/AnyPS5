@@ -68,6 +68,21 @@ struct PreparedProgramRecord {
     bool operator==(const PreparedProgramRecord&) const = default;
 };
 
+struct ProgramInterface {
+    std::uint32_t pushBytes = 0;
+    std::vector<GraphicsBindingShape> bindings;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> computeBindings;
+
+    bool operator==(const ProgramInterface&) const = default;
+};
+
+struct Rekeyed {
+    std::size_t compute = 0;
+    std::size_t graphics = 0;
+    std::size_t droppedCompute = 0;
+    std::size_t droppedGraphics = 0;
+};
+
 struct RecordUsage {
     std::uint32_t misses = 0;
     std::uint64_t progress = 0;
@@ -116,8 +131,9 @@ public:
     std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size(); }
     std::size_t Expired() const { return expired; }
     bool RecordedByAnotherBuild() const { return recordedSource != sourceVersion; }
-    void Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to);
+    Rekeyed Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to, const std::optional<ProgramInterface>& derived);
     void Forget(const PreparedProgramRecord& record);
+    void Forget(const GraphicsPipelineRecord& record);
     const ManifestRecords& LoadedRecords() const { return loaded; }
     ManifestRecords Current() const;
     void Save();

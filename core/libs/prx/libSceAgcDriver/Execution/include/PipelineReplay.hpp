@@ -37,6 +37,7 @@ public:
         std::uint64_t used = 0;
         std::uint64_t programsRecompiled = 0;
         std::uint64_t programsDropped = 0;
+        std::uint64_t dropped = 0;
     };
     enum class ProgramReplay { Replayed, Stale, Failed, Recompiled, Dropped };
 
@@ -45,7 +46,8 @@ public:
     std::shared_ptr<RecordUse> Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) override;
     std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle);
     std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const std::array<std::uint64_t, 2>& recordedIdentity);
-    void Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::array<std::uint64_t, 2>& identity);
+    bool Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const std::array<std::uint64_t, 2>& identity);
+    static std::optional<ProgramInterface> DerivedInterface(const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle);
     void Drop(const PreparedProgramRecord& recorded);
     void RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request);
     std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
@@ -59,6 +61,7 @@ private:
         std::shared_ptr<RecordUse> use;
         std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>> handles;
         std::size_t missing = 0;
+        bool dropped = false;
     };
 
     void create(const GraphicsPipelineRecord& record, const std::shared_ptr<RecordUse>& use, const std::vector<std::shared_ptr<const ShaderRecompiler::SourceHandle>>& handles);

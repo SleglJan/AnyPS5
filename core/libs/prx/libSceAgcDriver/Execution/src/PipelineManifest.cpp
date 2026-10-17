@@ -156,27 +156,58 @@ bool PipelineManifest::Record(PreparedProgramRecord record) {
     return true;
 }
 
-void PipelineManifest::Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to) {
-    if (from == to) return;
+Rekeyed PipelineManifest::Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to, const std::optional<ProgramInterface>& derived) {
+    Rekeyed result;
+    if (from == to) return result;
     std::lock_guard lock(mutex);
     if (const auto found = compute.find(from); found != compute.end()) {
         auto moved = std::move(found->second);
         compute.erase(found);
-        auto& target = compute[to];
-        for (auto& stored : moved) {
-            stored.record.program = to;
-            if (std::ranges::none_of(target, [&](const auto& existing) { return existing.record == stored.record; })) target.push_back(std::move(stored));
-            else --count;
-        }
         dirty = true;
+        if (!derived) {
+            result.droppedCompute = moved.size();
+            count -= moved.size();
+        } else {
+            auto& target = compute[to];
+            for (auto& stored : moved) {
+                stored.record.program = to;
+                stored.record.bindings = derived->computeBindings;
+                if (std::ranges::none_of(target, [&](const auto& existing) { return existing.record == stored.record; })) {
+                    target.push_back(std::move(stored));
+                    ++result.compute;
+                } else {
+                    --count;
+                }
+            }
+        }
+    }
+    const auto names = [&](const Stored<GraphicsPipelineRecord>& stored) { return std::ranges::any_of(stored.record.stages, [&](const GraphicsStageRecord& stage) { return stage.program == from; }); };
+    if (!derived) {
+        result.droppedGraphics = static_cast<std::size_t>(std::erase_if(graphics, names));
+        count -= result.droppedGraphics;
+        dirty = dirty || result.droppedGraphics != 0;
+        return result;
     }
     for (auto& stored : graphics) {
+        if (!names(stored)) continue;
         for (auto& stage : stored.record.stages) {
             if (stage.program != from) continue;
             stage.program = to;
-            dirty = true;
+            stage.pushBytes = derived->pushBytes;
+            stage.bindings = derived->bindings;
         }
+        ++result.graphics;
+        dirty = true;
     }
+    return result;
+}
+
+void PipelineManifest::Forget(const GraphicsPipelineRecord& record) {
+    std::lock_guard lock(mutex);
+    const auto removed = std::erase_if(graphics, [&](const Stored<GraphicsPipelineRecord>& stored) { return stored.record == record; });
+    if (removed == 0) return;
+    count -= removed;
+    dirty = true;
 }
 
 void PipelineManifest::Forget(const PreparedProgramRecord& record) {

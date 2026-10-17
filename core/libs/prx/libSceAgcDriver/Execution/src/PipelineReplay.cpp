@@ -29,6 +29,7 @@ struct ReplayTotals {
     std::atomic<std::uint64_t> programsFailed{0};
     std::atomic<std::uint64_t> programsRecompiled{0};
     std::atomic<std::uint64_t> programsDropped{0};
+    std::atomic<std::uint64_t> dropped{0};
 };
 
 ReplayTotals& ReplayCounters() {
@@ -101,10 +102,55 @@ std::vector<std::function<void()>> PipelineReplay::Prepared(const std::shared_pt
     return Prepared(handle, ShaderRecompiler::GetPreparedArtifact(*handle).identity);
 }
 
-void PipelineReplay::Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::array<std::uint64_t, 2>& identity) {
+std::optional<ProgramInterface> PipelineReplay::DerivedInterface(const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle) {
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
+    try {
+        if (handle == nullptr) return std::nullopt;
+        registration = ShaderRecompiler::RegistrationResult(request, *handle);
+        if (registration == nullptr) {
+            if (const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle)) registration = invocation->MaterializeAtRunTime();
+        }
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if (registration == nullptr) return std::nullopt;
+    ProgramInterface derived;
+    derived.pushBytes = static_cast<std::uint32_t>(registration->pushConstants.size());
+    for (const auto& binding : registration->bindings) {
+        derived.bindings.push_back({static_cast<std::uint32_t>(binding.kind), static_cast<std::uint32_t>(binding.role), binding.descriptorSet, binding.binding, binding.count, Written(binding)});
+        if (binding.kind == ShaderRecompiler::DescriptorKind::DeviceAddress || binding.kind == ShaderRecompiler::DescriptorKind::SamplerSlot) continue;
+        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::ImageTable) continue;
+        derived.computeBindings.emplace_back(binding.binding, binding.count);
+    }
+    return derived;
+}
+
+bool PipelineReplay::Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const std::array<std::uint64_t, 2>& identity) {
+    const auto derived = DerivedInterface(request, handle);
     manifest.Forget(recorded);
-    manifest.Rekey(recorded.identity, identity);
+    const auto rekeyed = manifest.Rekey(recorded.identity, identity, derived);
     manifest.Record(PreparedProgramRecord{recorded.program, recorded.codeOffset, identity, ShaderRecompiler::RequestSerializer{}.Serialize(request)});
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = waiting.find(recorded.identity); found != waiting.end()) {
+            for (const auto& [index, stage] : found->second) {
+                auto& entry = pending[index];
+                if (!derived) {
+                    entry.dropped = true;
+                    continue;
+                }
+                entry.record.stages[stage].program = identity;
+                entry.record.stages[stage].pushBytes = derived->pushBytes;
+                entry.record.stages[stage].bindings = derived->bindings;
+            }
+            if (!derived) waiting.erase(found);
+        }
+    }
+    if (!derived && rekeyed.droppedCompute + rekeyed.droppedGraphics != 0) {
+        ReplayCounters().dropped.fetch_add(rekeyed.droppedCompute + rekeyed.droppedGraphics, std::memory_order_relaxed);
+        std::fprintf(stderr, "[pipeline-manifest] the binding interface of a program prepared again from its request cannot be derived without its draw: %zu compute and %zu graphics pipeline records that named it are dropped\n", rekeyed.droppedCompute, rekeyed.droppedGraphics);
+    }
+    return derived.has_value();
 }
 
 void PipelineReplay::Drop(const PreparedProgramRecord& recorded) {
@@ -119,7 +165,7 @@ std::vector<std::function<void()>> PipelineReplay::Prepared(const std::shared_pt
     if (found == waiting.end()) return ready;
     for (const auto& [index, stage] : found->second) {
         auto& entry = pending[index];
-        if (entry.handles[stage] != nullptr) continue;
+        if (entry.dropped || entry.handles[stage] != nullptr) continue;
         entry.handles[stage] = handle;
         if (--entry.missing != 0u) continue;
         ready.push_back([this, record = entry.record, use = entry.use, handles = std::move(entry.handles)] { create(record, use, handles); });
@@ -140,6 +186,10 @@ void PipelineReplay::create(const GraphicsPipelineRecord& record, const std::sha
         for (std::size_t index = 0; index < record.stages.size(); ++index) {
             const auto& stage = record.stages[index];
             auto result = ShaderRecompiler::SpecializedStageResult(*handles[index], stage.constants, spirvTarget);
+            if (result->moduleConstants != stage.constants) {
+                manifest.Forget(record);
+                throw std::runtime_error("the recorded specialization constants are not the ones the program's module takes: the record is dropped");
+            }
             result->pushConstants.assign(stage.pushBytes, std::byte{0});
             for (const auto& shape : stage.bindings) {
                 auto& binding = result->bindings.emplace_back();
@@ -197,7 +247,7 @@ void PipelineReplay::CountProgramReplay(ProgramReplay outcome) {
 
 PipelineReplay::Counters PipelineReplay::Totals() {
     auto& totals = ReplayCounters();
-    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed), totals.programsRecompiled.load(std::memory_order_relaxed), totals.programsDropped.load(std::memory_order_relaxed)};
+    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed), totals.programsRecompiled.load(std::memory_order_relaxed), totals.programsDropped.load(std::memory_order_relaxed), totals.dropped.load(std::memory_order_relaxed)};
 }
 
 }
