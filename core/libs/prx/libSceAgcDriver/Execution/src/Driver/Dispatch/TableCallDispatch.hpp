@@ -54,11 +54,24 @@ private:
     std::vector<GuestMemory::UnchangedQuery> calleeReads;
     std::mutex mutex;
     std::shared_ptr<const TableCallPart> head;
-    std::vector<std::pair<std::pair<std::uint32_t, std::vector<std::uint32_t>>, std::shared_ptr<const TableCallPart>>> continuations;
+    struct ContinuationKey {
+        std::uint32_t site = 0;
+        std::uint32_t outcome = 0;
+        std::vector<std::uint32_t> callee;
+    };
+    std::vector<std::pair<ContinuationKey, std::shared_ptr<const TableCallPart>>> continuations;
     std::shared_ptr<const TableCallTargetSet> targets;
 };
 
 [[nodiscard]] std::shared_ptr<TableCallProgram> TableCallProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request);
+[[nodiscard]] std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords);
+
+struct BranchSplitCounts {
+    std::uint64_t programs = 0;
+    std::size_t largestProgramWords = 0;
+    std::size_t largestPartWords = 0;
+};
+[[nodiscard]] BranchSplitCounts BranchSplitCounters();
 
 struct TableCallDispatch {
     std::shared_ptr<VulkanDevice> device;

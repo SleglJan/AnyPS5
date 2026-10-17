@@ -99,6 +99,7 @@ Driver::DispatchProgram Driver::runTimeDispatch(const ShaderSnapshot& snapshot, 
     std::lock_guard cacheLock(dispatchCacheMutex);
     ++dataIndependentHits;
     ++runTimeCompiles;
+    if (!linked && entry->compiled->spirv.size() > ShaderRecompiler::GiantProgramWords) return {std::move(entry), nullptr};
     if (!linked) return {runTimeDispatches.try_emplace(programKey, std::move(entry)).first->second, nullptr};
     constexpr std::size_t LinkedVariants = 8;
     auto variant = std::make_shared<const LinkedDispatch>(LinkedDispatch{std::move(entry), {prepared.context.linkedWords.begin(), prepared.context.linkedWords.end()}, {userData.begin(), userData.end()}, std::move(linkReads)});
@@ -248,6 +249,19 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::shared_ptr<TableCallProgram> tableCalls;
         try {
             tableCalls = TableCallProgramFor(programKey, request);
+            if (tableCalls == nullptr) {
+                const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey, userData);
+                program = made.program;
+                linked = made.linked;
+                const auto words = program->compiled->spirv.size();
+                if (linked == nullptr && words > ShaderRecompiler::GiantProgramWords) {
+                    tableCalls = BranchSplitProgramFor(programKey, request, words);
+                    if (tableCalls == nullptr) {
+                        std::lock_guard cacheLock(dispatchCacheMutex);
+                        program = runTimeDispatches.try_emplace(programKey, program).first->second;
+                    }
+                }
+            }
         } catch (const std::exception& error) {
             rethrow(error);
         }
@@ -286,13 +300,6 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 rethrow(error);
             }
             return;
-        }
-        try {
-            const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey, userData);
-            program = made.program;
-            linked = made.linked;
-        } catch (const std::exception& error) {
-            rethrow(error);
         }
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);

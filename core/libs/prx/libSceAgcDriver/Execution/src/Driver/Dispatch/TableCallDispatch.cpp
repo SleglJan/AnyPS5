@@ -30,6 +30,24 @@ ProgramCache& Programs() {
     return cache;
 }
 
+struct SplitCounters {
+    std::mutex mutex;
+    BranchSplitCounts counts;
+};
+
+SplitCounters& Counters() {
+    static SplitCounters counters;
+    return counters;
+}
+
+void Remember(std::uint64_t programKey, const std::shared_ptr<TableCallProgram>& program) {
+    auto& cache = Programs();
+    std::lock_guard lock(cache.mutex);
+    auto& variants = cache.programs[programKey];
+    if (variants.size() == ProgramVariants) variants.erase(variants.begin());
+    variants.push_back(program);
+}
+
 std::vector<std::uint32_t> UserDataCalleeWords(const ShaderRecompiler::RecompileRequest& request) {
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.shader.code);
     const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
@@ -119,12 +137,13 @@ std::shared_ptr<const TableCallPart> TableCallProgram::Head(const std::shared_pt
 }
 
 std::shared_ptr<const TableCallPart> TableCallProgram::Continuation(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallTarget& target) {
+    const auto outcome = split.branchSites.empty() ? 0u : target.key[0];
     std::lock_guard lock(mutex);
     for (const auto& [key, part] : continuations) {
-        if (key.first == target.site && key.second == target.callee) return part;
+        if (key.site == target.site && key.outcome == outcome && key.callee == target.callee) return part;
     }
     auto part = prepare(device, snapshot, codeOffset, request, ShaderRecompiler::TableCallContinuation(split, target), ShaderRecompiler::ContinuationAbi::Role::Continuation, target.site);
-    continuations.push_back({{target.site, target.callee}, part});
+    continuations.push_back({{target.site, outcome, target.callee}, part});
     return part;
 }
 
@@ -142,11 +161,31 @@ std::shared_ptr<TableCallProgram> TableCallProgramFor(std::uint64_t programKey, 
     auto split = SplitTableCallProgram(request, &reads);
     if (!split) return nullptr;
     auto program = std::make_shared<TableCallProgram>(std::move(*split), UserDataCalleeWords(request), std::move(reads));
-    std::lock_guard lock(cache.mutex);
-    auto& variants = cache.programs[programKey];
-    if (variants.size() == ProgramVariants) variants.erase(variants.begin());
-    variants.push_back(program);
+    Remember(programKey, program);
     return program;
+}
+
+std::shared_ptr<TableCallProgram> BranchSplitProgramFor(std::uint64_t programKey, const ShaderRecompiler::RecompileRequest& request, std::size_t programWords) {
+    std::optional<ShaderRecompiler::TableCallSplit> split;
+    try {
+        split = ShaderRecompiler::SplitBranchProgram(request, programWords);
+    } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("AGC driver: ") + error.what());
+    }
+    if (!split) return nullptr;
+    auto program = std::make_shared<TableCallProgram>(std::move(*split), std::vector<std::uint32_t>{}, std::vector<GuestMemory::UnchangedQuery>{});
+    Remember(programKey, program);
+    auto& counters = Counters();
+    std::lock_guard lock(counters.mutex);
+    ++counters.counts.programs;
+    counters.counts.largestProgramWords = std::max(counters.counts.largestProgramWords, programWords);
+    return program;
+}
+
+BranchSplitCounts BranchSplitCounters() {
+    auto& counters = Counters();
+    std::lock_guard lock(counters.mutex);
+    return counters.counts;
 }
 
 void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch& dispatch) {
@@ -236,6 +275,15 @@ void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch&
     };
     results();
     if (dispatch.settle()) results();
+    if (!split.branchSites.empty()) {
+        std::size_t largest = heads.front()->spirv.size();
+        for (const auto& compiled : parts) {
+            if (compiled != nullptr) largest = std::max(largest, compiled->spirv.size());
+        }
+        auto& counters = Counters();
+        std::lock_guard lock(counters.mutex);
+        counters.counts.largestPartWords = std::max(counters.counts.largestPartWords, largest);
+    }
     for (const auto& compiled : heads) {
         if (device.PrepareComputePipeline(*compiled, dispatch.programAddress)) device.RecordComputePipeline(*compiled);
     }
