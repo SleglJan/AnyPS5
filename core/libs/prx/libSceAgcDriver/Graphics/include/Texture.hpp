@@ -92,6 +92,7 @@ struct TextureGatherCopy {
     VkDeviceSize sourceOffset = 0;
     VkDeviceSize targetOffset = 0;
     VkDeviceSize bytes = 0;
+    std::shared_ptr<void> owner;
 };
 
 class Texture {

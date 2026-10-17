@@ -1252,7 +1252,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
     mirror->base = range->address;
     mirror->bytes = range->bytes;
     mirror->range = range;
-    mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     {
         const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
         GuestMemory::Read(range->address, mirror->buffer->Bytes().first(static_cast<std::size_t>(mirror->bytes)));
@@ -2602,6 +2602,17 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::RegionRe
         if (region.direct != nullptr) result.emplace_back(region.begin, region.end);
     }
     return result;
+}
+
+std::optional<ImageMirrorPiece> ImageMirrorFor(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return std::nullopt;
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    const auto found = std::upper_bound(lease.begin(), lease.end(), address, [](std::uint64_t value, const auto& range) { return value < range->address; });
+    if (found == lease.begin()) return std::nullopt;
+    const auto& range = *std::prev(found);
+    if (!range->readable || range->writable || range->releasable || address + bytes > range->address + range->bytes) return std::nullopt;
+    const auto mirror = acquireMirror(context, range);
+    return ImageMirrorPiece{mirror->buffer, address - mirror->base, mirror->serial};
 }
 
 std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, std::size_t bytes) {

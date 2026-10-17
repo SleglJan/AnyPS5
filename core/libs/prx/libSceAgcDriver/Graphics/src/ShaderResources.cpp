@@ -138,6 +138,7 @@ struct CachedTexture {
     std::uint64_t accounted = 0;
     std::uint64_t present = 0;
     bool gathered = false;
+    std::uint64_t mirrorSerial = 0;
 };
 
 // Entries in use order (front = most recent) with a hash index by key: a lookup is O(1) and the
@@ -384,9 +385,14 @@ std::optional<std::vector<TextureGatherCopy>> gatherSurface(const Context& conte
         }
         if (!HostImportCovers(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin))) return std::nullopt;
         const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
-        if (import == nullptr) return std::nullopt;
-        copies.push_back({import->buffer, piece.begin - import->base, piece.begin - address, piece.end - piece.begin});
-        importReads.emplace_back(piece.begin, piece.end);
+        if (import != nullptr) {
+            copies.push_back({import->buffer, piece.begin - import->base, piece.begin - address, piece.end - piece.begin});
+            importReads.emplace_back(piece.begin, piece.end);
+            continue;
+        }
+        auto mirror = ImageMirrorFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
+        if (!mirror) return std::nullopt;
+        copies.push_back({mirror->buffer->Handle(), mirror->offset, piece.begin - address, piece.end - piece.begin, std::move(mirror->buffer)});
     }
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !importReads.empty()) recorder->NotePendingReads(importReads, Recorder::ReadKind::GpuCopy);
     return copies;
@@ -722,6 +728,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             counters.clears.fetch_add(1, std::memory_order_relaxed);
         } else if (auto gather = gatherSurface(context, address, bytes)) {
             made.gathered = true;
+            made.mirrorSerial = ImageMirrorSerial(context, address, bytes);
             made.texture = std::make_shared<Texture>(context, *context.detiler, resource, components, std::span<const TextureGatherCopy>(*gather), *keys, depthCompare, decodedCopy);
             counters.gathers.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -768,7 +775,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
                 return it->texture;
             }
-        } else if (source == nullptr && it->gathered && it->snapshotBytes == guestBytes && it->keys == *keys && GuestMemory::UnchangedSince(address, bytes, it->generation)) {
+        } else if (source == nullptr && it->gathered && it->snapshotBytes == guestBytes && it->keys == *keys && (GuestMemory::UnchangedSince(address, bytes, it->generation) || (it->mirrorSerial != 0 && ImageMirrorSerial(context, address, bytes) == it->mirrorSerial))) {
             it->generation = generation;
             touchTexture(cache, it);
             logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});

@@ -1,5 +1,8 @@
 #include "DrawSubmitFixture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <memory>
@@ -29,6 +32,17 @@ constexpr auto LabelLimit = std::chrono::seconds(10);
 
 Header VertexHeader;
 Header PixelHeader;
+
+constexpr std::size_t ImageIndexWords = 1024;
+
+constexpr std::array<std::uint32_t, ImageIndexWords> MakeImageIndices() {
+    std::array<std::uint32_t, ImageIndexWords> words{};
+    for (auto& word : words) word = 0xffffu;
+    for (std::uint32_t index = 0; index < Indices; ++index) words[IndexOffset / 4u + index] = Fresh + index;
+    return words;
+}
+
+alignas(4096) const std::array<std::uint32_t, ImageIndexWords> ImageIndices = MakeImageIndices();
 
 const Program& MarkVertex() {
     static const Program program = [] {
@@ -82,11 +96,14 @@ const Program& IndexWriter() {
 
 class Scene {
 public:
-    Scene(std::uint8_t* indexBase, std::uint64_t indexBytes) : pixels(1), marks(1), labels(1), indexBase(indexBase), indexBytes(indexBytes) {}
+    Scene(std::uint8_t* indexBase, std::uint64_t indexBytes, bool writable = true) : pixels(1), marks(1), labels(1), indexBase(indexBase), indexBytes(indexBytes), writable(writable) {}
 
     void Reset(std::uint32_t first) {
         for (std::uint32_t word = 0; word < Width * Height; ++word) pixels.Words()[word] = 0u;
         for (std::uint32_t word = 0; word < Marks; ++word) marks.Words()[word] = 0u;
+        for (std::uint32_t word = 0; word < 64u; ++word) labels.Words()[word] = 0u;
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        if (!writable) return;
         const std::uint32_t restart = 0xffffu;
         for (std::uint64_t byte = 0; byte < indexBytes; byte += 4u) std::memcpy(indexBase + byte, &restart, 4u);
         for (std::uint32_t index = 0; index < Indices; ++index) {
@@ -146,6 +163,7 @@ private:
     PrivatePages labels;
     std::uint8_t* indexBase;
     std::uint64_t indexBytes;
+    bool writable;
 };
 
 void Settle(const std::string& what) {
@@ -188,6 +206,29 @@ void WrittenByCpu(Scene& scene, const std::string& memory) {
     Expect(AgcDriver::Graphics::DrawInputCopies() == copies, what + ": the indices were copied on the CPU instead of read in place");
 }
 
+void InImageRange() {
+    const std::string what = "an indexed draw whose indices lie in a read-only range of the main image";
+    MEMORY_BASIC_INFORMATION info{};
+    Expect(VirtualQuery(ImageIndices.data(), &info, sizeof(info)) == sizeof(info) && info.Type == MEM_IMAGE && (info.Protect & 0xffu) == PAGE_READONLY, what + ": the indices are not read-only image pages");
+    GuestAllocations::Mutation().RegisterMainImage();
+    GuestAllocations::Mutation().Protect(ImageIndices.data(), sizeof(ImageIndices), true, false, true, [] {});
+    Scene scene(reinterpret_cast<std::uint8_t*>(const_cast<std::uint32_t*>(ImageIndices.data())), sizeof(ImageIndices), false);
+    scene.Reset(Fresh);
+    const auto copies = AgcDriver::Graphics::DrawInputCopies();
+    const auto mirrors = AgcDriver::Graphics::MirrorCounters();
+    Commands commands;
+    scene.Draw(commands);
+    commands.WriteData(scene.Label(), {1u});
+    commands.Submit(0);
+    Expect(scene.AwaitLabel(), what + ": the label never landed");
+    Settle(what);
+    scene.Check(Fresh, what);
+    Expect(AgcDriver::Graphics::DrawInputCopies() == copies, what + ": the indices were copied on the CPU instead of read from the range's device mirror");
+    const auto mirrored = AgcDriver::Graphics::MirrorCounters();
+    Expect(mirrored.rebuilds > mirrors.rebuilds && mirrored.deviceBytes == mirrored.bytes, what + ": the range was not mirrored in device memory");
+    GuestAllocations::Mutation().UnregisterImage(GetModuleHandleW(nullptr));
+}
+
 void Run() {
     Register(VertexHeader, MarkVertex(), VertexShaderType);
     Register(PixelHeader, FlatPixel(), PixelShaderType);
@@ -203,6 +244,7 @@ void Run() {
         WrittenByCpu(scene, "shared pages");
         WrittenInSubmission(scene, "shared pages");
     }
+    InImageRange();
 }
 
 }

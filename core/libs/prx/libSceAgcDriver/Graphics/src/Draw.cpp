@@ -872,30 +872,40 @@ DrawInputSource InPlaceDrawInput(const Context& context, std::uint64_t address, 
     recorder->OrderAfterValue(address, bytes);
     const MirrorSpan span(cpuReads ? nullptr : ResidencyDriver::Active(), address, address + bytes, ResidencyAccess::Read);
     const auto pieces = span.Pieces(address, address + bytes);
-    std::vector<const HostImport*> imports;
-    imports.reserve(pieces.size());
+    struct PieceSource {
+        VkBuffer buffer;
+        VkDeviceSize offset;
+        bool imported;
+        std::shared_ptr<Buffer> mirror;
+    };
+    std::vector<PieceSource> sources;
+    sources.reserve(pieces.size());
     for (const auto& piece : pieces) {
-        const HostImport* import = nullptr;
-        if (piece.buffer == VK_NULL_HANDLE) {
-            import = HostImportFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
-            if (import == nullptr) return {};
+        if (piece.buffer != VK_NULL_HANDLE) {
+            sources.push_back({piece.buffer, piece.offset, false, nullptr});
+            continue;
         }
-        imports.push_back(import);
+        if (const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin))) {
+            sources.push_back({import->buffer, piece.begin - import->base, true, nullptr});
+            continue;
+        }
+        auto mirror = ImageMirrorFor(context, piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
+        if (!mirror) return {};
+        sources.push_back({mirror->buffer->Handle(), mirror->offset, false, std::move(mirror->buffer)});
     }
-    if (pieces.size() == 1 && imports.front() != nullptr && (address - imports.front()->base) % alignment == 0) {
+    if (pieces.size() == 1 && sources.front().imported && sources.front().offset % alignment == 0) {
         recorder->NotePendingRead(address, bytes, Recorder::ReadKind::DrawInput);
-        return {imports.front()->buffer, address - imports.front()->base, nullptr};
+        return {sources.front().buffer, sources.front().offset, nullptr};
     }
     auto gathered = std::make_shared<DeviceBuffer>(context, (bytes + 3u) & ~std::size_t{3}, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     const auto commands = recorder->Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     for (std::size_t index = 0; index < pieces.size(); ++index) {
         const auto& piece = pieces[index];
-        const auto* import = imports[index];
-        const auto source = import != nullptr ? import->buffer : piece.buffer;
-        const auto offset = import != nullptr ? piece.begin - import->base : piece.offset;
-        CopyBuffer(context, commands, source, offset, gathered->Handle(), piece.begin - address, piece.end - piece.begin);
-        if (import != nullptr) recorder->NotePendingRead(piece.begin, static_cast<std::size_t>(piece.end - piece.begin), Recorder::ReadKind::DrawInput);
+        const auto& source = sources[index];
+        CopyBuffer(context, commands, source.buffer, source.offset, gathered->Handle(), piece.begin - address, piece.end - piece.begin);
+        if (source.imported) recorder->NotePendingRead(piece.begin, static_cast<std::size_t>(piece.end - piece.begin), Recorder::ReadKind::DrawInput);
+        if (source.mirror != nullptr) recorder->Keep(source.mirror);
     }
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     recorder->Keep(gathered, bytes);

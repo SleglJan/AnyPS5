@@ -114,6 +114,12 @@ HostImportsProof HostImportsIdentity(const Context& context);
 // covers the range. A read-only mirror's bytes and VkBuffer never change, so a descriptor set written
 // against it stays valid while the serial is unchanged.
 std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, std::size_t bytes);
+struct ImageMirrorPiece {
+    std::shared_ptr<Buffer> buffer;
+    VkDeviceSize offset = 0;
+    std::uint64_t serial = 0;
+};
+std::optional<ImageMirrorPiece> ImageMirrorFor(const Context& context, std::uint64_t address, std::size_t bytes);
 
 // Deferred lease release (see GuestBufferMemory.cpp). An address-based build leases every readable
 // registered allocation until its write-back, which runs when its batch completed; the guest's

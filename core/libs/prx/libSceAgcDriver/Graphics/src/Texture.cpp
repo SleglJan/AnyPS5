@@ -375,6 +375,9 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 commands = recorder->Commands();
                 if (staging != nullptr) recorder->Keep(staging, static_cast<std::size_t>(guestBytes));
                 recorder->Keep(tiled, static_cast<std::size_t>(guestBytes));
+                for (const auto& copy : gather) {
+                    if (copy.owner != nullptr) recorder->Keep(copy.owner);
+                }
                 recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(owned);
             } else {
