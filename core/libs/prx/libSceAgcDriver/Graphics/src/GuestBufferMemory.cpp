@@ -940,13 +940,16 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
             return nullptr;
         }
-        const auto protection = info.Protect & 0xffu;
+        std::uint32_t guestProtection = info.Protect;
+        std::uintptr_t guestEnd = ~std::uintptr_t{0};
+        if (info.Type == MEM_PRIVATE) GuestArena::GuestArenaProtection_nid_postfix(static_cast<std::uintptr_t>(cursor), &guestProtection, &guestEnd);
+        const auto protection = guestProtection & 0xffu;
         const bool pageWritable = (info.Type == MEM_PRIVATE || info.Type == MEM_IMAGE) && (protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE || protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_WRITECOPY);
         const bool pageReadOnly = info.Type != MEM_MAPPED && (protection == PAGE_READONLY || protection == PAGE_EXECUTE_READ);
         if (!pageReadOnly) readOnly = false;
         if (info.Type != MEM_MAPPED && !pageWritable && !pageReadOnly && refused.BaseAddress == nullptr) refused = info;
         if (!pageWritable) writable = false;
-        cursor = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
+        cursor = std::min<std::uint64_t>(reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize, guestEnd);
     }
     if (!writable && readOnly) {
         failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
