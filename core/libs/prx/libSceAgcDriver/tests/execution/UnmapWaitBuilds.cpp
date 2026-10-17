@@ -120,15 +120,19 @@ Removal Remove(HostRange& range) {
 void BuilderHoldsLease(const Graphics::Context& context) {
     HostRange range;
     std::atomic<bool> held{false};
-    std::atomic<Clock::rep> releasedAt{0};
+    std::atomic<Clock::rep> releasing{0};
+    std::atomic<Clock::rep> released{0};
     std::string buildFailure;
     std::thread builder([&] {
         try {
-            Graphics::GuestBufferMemory memory(context);
-            memory.AcquireRegistered();
-            held.store(true);
-            std::this_thread::sleep_for(Hold);
-            releasedAt.store(Clock::now().time_since_epoch().count());
+            {
+                Graphics::GuestBufferMemory memory(context);
+                memory.AcquireRegistered();
+                held.store(true);
+                std::this_thread::sleep_for(Hold);
+                releasing.store(Clock::now().time_since_epoch().count());
+            }
+            released.store(Clock::now().time_since_epoch().count());
         } catch (const std::exception& error) {
             buildFailure = error.what();
             held.store(true);
@@ -140,9 +144,10 @@ void BuilderHoldsLease(const Graphics::Context& context) {
     const std::string what = "a guest removal of a range a build outside the device lock leases for " + std::to_string(Hold.count()) + " ms";
     Expect(buildFailure.empty(), what + ": the build failed: " + buildFailure);
     Expect(removal.failure.empty(), what + ": the removal failed: " + removal.failure);
-    const Clock::time_point released{Clock::duration(releasedAt.load())};
-    Expect(removal.end >= released, what + ": the removal returned " + std::to_string(Milliseconds(released - removal.end)) + " ms before the build released its lease");
-    Expect(removal.end < released + WakeLimit, what + ": the removal returned " + std::to_string(Milliseconds(removal.end - released)) + " ms after the build released its lease, expected within " + std::to_string(WakeLimit.count()) + " ms");
+    const Clock::time_point releaseStart{Clock::duration(releasing.load())};
+    const Clock::time_point releaseEnd{Clock::duration(released.load())};
+    Expect(removal.end >= releaseStart, what + ": the removal returned " + std::to_string(Milliseconds(releaseStart - removal.end)) + " ms before the build began to release its lease");
+    Expect(removal.end < releaseEnd + WakeLimit, what + ": the removal returned " + std::to_string(Milliseconds(removal.end - releaseEnd)) + " ms after the build had released its lease, expected within " + std::to_string(WakeLimit.count()) + " ms");
     Expect(removal.cpu < CpuLimit, what + ": the removing thread used " + std::to_string(removal.cpu.count() / 1000) + " ms of CPU time over a wait of " + std::to_string(Milliseconds(removal.end - removal.start)) + " ms, expected under " + std::to_string(CpuLimit.count()) + " ms");
 }
 
