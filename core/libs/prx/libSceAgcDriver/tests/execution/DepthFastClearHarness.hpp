@@ -106,8 +106,7 @@ inline Shaders Compile(AgcDriver::VulkanDevice& device) {
     return shaders;
 }
 
-inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options) {
-    Pixels.fill(std::byte{0});
+inline void Record(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options) {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &compiled.vertex, 0},
         {ShaderStage::Fragment, &compiled.pixel, PixelPushOffset(compiled.vertexPush, device.Target())}
@@ -137,6 +136,11 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.blendConstants = {};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangles().size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
+}
+
+inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options) {
+    Pixels.fill(std::byte{0});
+    Record(device, compiled, surface, options);
     device.WaitIdle();
     std::uint32_t covered = 0;
     for (std::size_t pixel = 0; pixel < Pixels.size() / 4u; ++pixel) {

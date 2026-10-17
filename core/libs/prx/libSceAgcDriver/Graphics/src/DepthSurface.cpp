@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -1152,9 +1154,47 @@ std::mutex& htileReadsMutex() {
     return mutex;
 }
 
-std::map<std::uint64_t, std::uint64_t>& htileReads() {
-    static auto* reads = new std::map<std::uint64_t, std::uint64_t>();
+std::atomic<std::uint64_t> htileStoreBackReads{0};
+
+struct HtileRead {
+    std::uint64_t generation = 0;
+    std::uint64_t note = 0;
+};
+
+std::map<std::uint64_t, HtileRead>& htileReads() {
+    static auto* reads = new std::map<std::uint64_t, HtileRead>();
     return *reads;
+}
+
+struct HtileFill {
+    std::size_t bytes = 0;
+    std::uint32_t pattern = 0;
+    std::uint64_t note = 0;
+};
+
+std::map<std::uint64_t, HtileFill>& htileFills() {
+    static auto* fills = new std::map<std::uint64_t, HtileFill>();
+    return *fills;
+}
+
+std::optional<Recorder::PendingWrite> newestPendingWrite(const Recorder& recorder, std::uint64_t address, std::size_t bytes) {
+    std::optional<Recorder::PendingWrite> newest;
+    for (const auto& write : recorder.PendingWritesOver(address, bytes)) {
+        if (!newest || write.note > newest->note) newest = write;
+    }
+    return newest;
+}
+
+void noteHtileFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern, bool covers) {
+    std::uint64_t note = 0;
+    auto* recorder = Recorder::Active();
+    if (covers && recorder != nullptr) {
+        const auto newest = newestPendingWrite(*recorder, address, bytes);
+        if (newest && newest->begin <= address && newest->end >= address + bytes) note = newest->note;
+    }
+    std::lock_guard lock(htileReadsMutex());
+    std::erase_if(htileFills(), [&](const auto& entry) { return entry.first < address + bytes && address < entry.first + entry.second.bytes; });
+    if (note != 0) htileFills()[address] = {bytes, pattern, note};
 }
 
 void forgetHtileReads(std::uint64_t address, std::size_t bytes) {
@@ -1171,17 +1211,57 @@ bool RoutesToNativeDepthOwner(const DepthTarget& target) {
     return std::ranges::any_of(depthGuards(), [&](const auto& range) { return range.active->load(std::memory_order_acquire) && target.htileAddress < range.address + range.bytes && range.address < target.htileAddress + bytes; });
 }
 
+std::optional<VkImageAspectFlags> storeBackFilledHtile(const Context& context, Recorder& recorder, const DepthTarget& target, std::size_t bytes, std::uint32_t pattern, std::uint64_t note) {
+    const VkImageAspectFlags cleared = (VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u)) & HtileFillClears(pattern, target.htileStencil);
+    if (cleared != 0) {
+        const auto* import = HostImportFor(context, target.htileAddress, bytes);
+        if (import == nullptr) return std::nullopt;
+        StorageTexture::FlushPending(target.htileAddress, bytes, nullptr, "HTILE store-back");
+        PrepareImportWrite(target.htileAddress, bytes);
+        recorder.FlushStoresOverlapping(target.htileAddress, bytes);
+        recorder.FlushKeyStoresOverlapping(target.htileAddress, bytes);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, import->buffer, target.htileAddress - import->base, bytes, expandedHtileWord(pattern, target.htileStencil, cleared));
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        Recorder::CountBarriers(Recorder::CommandClass::Fill, 2);
+        recorder.NotePendingWrite(target.htileAddress, bytes);
+        GuestMemory::MarkWritten(target.htileAddress, bytes);
+        NoteImportWritten(target.htileAddress, bytes);
+        const auto written = newestPendingWrite(recorder, target.htileAddress, bytes);
+        note = written ? written->note : 0u;
+    }
+    const auto generation = GuestMemory::CollectWrites(target.htileAddress, bytes);
+    std::lock_guard lock(htileReadsMutex());
+    htileReads()[target.htileAddress] = {generation, note};
+    return cleared;
+}
+
 VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarget& target) {
     if (target.htileAddress == 0) return 0;
     const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(target.extent));
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(target.htileAddress), bytes, true)) return 0;
     const auto collected = GuestMemory::CollectWrites(target.htileAddress, bytes);
     auto* recorder = RecorderFor(context);
-    if (recorder == nullptr || !recorder->PendingWriteOverlaps(target.htileAddress, bytes)) {
-        std::lock_guard lock(htileReadsMutex());
-        const auto found = htileReads().find(target.htileAddress);
-        if (found != htileReads().end() && found->second != 0 && GuestMemory::UnchangedSince(target.htileAddress, bytes, found->second)) return 0;
+    {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        const bool pending = recorder != nullptr && recorder->PendingWriteOverlaps(target.htileAddress, bytes);
+        const auto newest = pending ? newestPendingWrite(*recorder, target.htileAddress, bytes) : std::nullopt;
+        std::optional<std::uint32_t> filled;
+        {
+            std::lock_guard lock(htileReadsMutex());
+            const auto found = htileReads().find(target.htileAddress);
+            if (found != htileReads().end() && found->second.generation != 0 && (!pending || (newest && found->second.note == newest->note)) && GuestMemory::UnchangedSince(target.htileAddress, bytes, found->second.generation)) return 0;
+            if (newest) {
+                const auto fill = std::ranges::find_if(htileFills(), [&](const auto& entry) { return entry.second.note == newest->note && HtileFillCovers(target.htileAddress, target.extent, entry.first, entry.second.bytes); });
+                if (fill != htileFills().end()) filled = fill->second.pattern;
+            }
+        }
+        if (filled) {
+            if (const auto cleared = storeBackFilledHtile(context, *recorder, target, bytes, *filled, newest->note)) return *cleared;
+        }
     }
+    htileStoreBackReads.fetch_add(1, std::memory_order_relaxed);
     std::vector<std::uint32_t> words(bytes / 4u);
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(words)), 4);
     const bool uniform = std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == words.front(); });
@@ -1194,9 +1274,13 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
         generation = GuestMemory::CollectWrites(target.htileAddress, bytes);
     }
     std::lock_guard lock(htileReadsMutex());
-    htileReads()[target.htileAddress] = generation;
+    htileReads()[target.htileAddress] = {generation, 0};
     return cleared;
 }
+}
+
+std::uint64_t HtileStoreBackReads() {
+    return htileStoreBackReads.load(std::memory_order_relaxed);
 }
 
 std::uint64_t DepthSurfacesSerial() {
@@ -1549,16 +1633,20 @@ bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t addre
 }
 
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     std::lock_guard lock(surfacesMutex());
     forgetHtileReads(address, bytes);
+    bool covers = false;
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
         if (target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes) surface->sampling.refusal = "native multisample depth metadata fill transition is not implemented";
         if (!HtileFillCovers(target.htileAddress, target.extent, address, bytes)) continue;
+        covers = true;
         const VkImageAspectFlags written = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         surface->pendingClear = (surface->pendingClear & ~written) | HtileFillClears(pattern, target.htileStencil);
     }
+    noteHtileFill(address, bytes, pattern, covers);
 }
 
 bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource) {
