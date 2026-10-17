@@ -4274,6 +4274,25 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
+std::size_t StorageTexture::StorePendingForSignal() {
+    std::vector<std::shared_ptr<StorageTexture>> registered;
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        for (auto* texture : pending.textures) {
+            if (auto alive = texture->weak_from_this().lock()) registered.push_back(std::move(alive));
+        }
+    }
+    std::size_t stored = 0;
+    for (const auto& texture : registered) {
+        const auto address = texture->descriptor.baseAddress;
+        const auto bytes = static_cast<std::size_t>(texture->guestBytes);
+        if (!HostImportCovers(texture->context, address, bytes)) continue;
+        if (FlushPending(address, bytes, nullptr, "completion signal", PublishScope::None)) ++stored;
+    }
+    return stored;
+}
+
 bool StorageTexture::AnyPending() {
     if (auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Manager().AnyStale()) return true;
     auto& pending = Pending();

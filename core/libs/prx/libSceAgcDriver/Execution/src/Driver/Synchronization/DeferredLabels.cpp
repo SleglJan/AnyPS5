@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "ThreadOwned.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -108,7 +109,8 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
             queuedLabelsNoted() = 0;
         }
     } clear{labels, queue};
-    Graphics::PublishBeforeCompletionSignal();
+    const bool completion = std::any_of(labels.begin(), labels.end(), [](const DeferredLabel& label) { return label.completion; });
+    Graphics::PublishBeforeCompletionSignal(completion ? Graphics::SignalKind::Completion : Graphics::SignalKind::BareWrite);
     bool first = true;
     for (const auto& label : labels) {
         const auto bytes = std::span<const std::byte>(label.bytes).first(label.size);

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "BdaTouchAbi.hpp"
 #include <algorithm>
 #include <map>
@@ -58,13 +59,14 @@ void ResidencyDriver::BeforeCompletionSignal() {
     manager.RetileUnguarded();
 }
 
-void PublishForCompletionSignal() {
+void PublishForCompletionSignal(SignalKind kind) {
+    if (kind == SignalKind::Completion) static_cast<void>(StorageTexture::StorePendingForSignal());
     if (auto* residency = ResidencyDriver::Active()) residency->BeforeCompletionSignal();
 }
 
-void PublishBeforeCompletionSignal() {
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->DeferSignalPublication()) return;
-    PublishForCompletionSignal();
+void PublishBeforeCompletionSignal(SignalKind kind) {
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->DeferSignalPublication(kind)) return;
+    PublishForCompletionSignal(kind);
 }
 
 void ResidencyDriver::BeforeDispatch() {

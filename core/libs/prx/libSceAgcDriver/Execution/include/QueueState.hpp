@@ -277,6 +277,7 @@ struct QueueState {
     std::uint32_t instanceCount = 1;
     std::vector<std::string> markers;
     Predication predication;
+    bool idleSinceWork = false;
 
     void ClearContext() {
         context = InitialContextRegisters();

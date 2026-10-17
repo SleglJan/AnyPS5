@@ -1806,12 +1806,13 @@ void Recorder::ensureOpen() {
     }
 }
 
-bool Recorder::DeferSignalPublication() {
+bool Recorder::DeferSignalPublication(SignalKind kind) {
     GuestMemory::AssertGpuLockHeld("Recorder::DeferSignalPublication");
     if (!LabelRunsPerBatch()) return false;
     auto& open = callerOpen();
     if (open == nullptr || !open->renderPass.open) return false;
     open->signalPublicationOwed = true;
+    if (kind == SignalKind::Completion) open->signalStoresOwed = true;
     return true;
 }
 
@@ -3668,7 +3669,7 @@ void Recorder::submitStream(std::uint32_t stream) {
         ~Submitting() { slot = previous; }
     } submitting{submittingStream, std::exchange(submittingStream, stream)};
     if (std::exchange(opens[stream]->signalPublicationOwed, false)) {
-        PublishForCompletionSignal();
+        PublishForCompletionSignal(std::exchange(opens[stream]->signalStoresOwed, false) ? SignalKind::Completion : SignalKind::BareWrite);
         if (opens[stream] == nullptr) return;
     }
     auto& open = opens[stream];

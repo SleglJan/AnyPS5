@@ -29,6 +29,8 @@ class Buffer;
 class BatchFaultRecord;
 class BatchFaults;
 
+enum class SignalKind { BareWrite, Completion };
+
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
 // Sync waits for every batch, then runs its completion actions (write-backs) in order. Objects handed
@@ -287,7 +289,7 @@ public:
     bool AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushStores();
     void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes)) FlushStores(); }
-    bool DeferSignalPublication();
+    bool DeferSignalPublication(SignalKind kind);
 
     // Pending-label table. A GPU label (RELEASE_MEM/WRITE_DATA recorded as a store into the batch)
     // is noted per 4-byte dword with the value it will store and a record-order stamp (the driver's
@@ -653,6 +655,7 @@ private:
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
         bool hostReadOwed = false;
         bool signalPublicationOwed = false;
+        bool signalStoresOwed = false;
         // Queued DCC key stores (see QueueKeyStore).
         struct KeyStore {
             VkBuffer buffer;

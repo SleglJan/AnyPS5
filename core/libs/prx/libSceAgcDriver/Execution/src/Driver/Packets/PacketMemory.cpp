@@ -23,6 +23,12 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     wroteOnGpu = false;
 
     bool orderedAlready = false;
+    if (opcode == 0x46 && packet.size() >= 2) {
+        const auto event = packet[1] & 0x3fu;
+        if (event == 0x07u || event == 0x0fu || event == 0x10u) queue.idleSinceWork = true;
+    } else if (opcode == 0x15 || opcode == 0x16 || Pm4::DrawOpcode(opcode)) {
+        queue.idleSinceWork = false;
+    }
 
     const auto interruptSelect = opcode == 0x49 ? (packet[2] >> 24u) & 7u : 0u;
     endOfPipeInterrupt = interruptSelect != 0 && interruptSelect != 3;
@@ -36,7 +42,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
             recordDeferredLabels(localDevice.get(), submission.queue);
-            Graphics::PublishBeforeCompletionSignal();
+            Graphics::PublishBeforeCompletionSignal(Graphics::SignalKind::Completion);
             const bool workOpen = Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
             int reason = localDevice != nullptr ? 0 : 1;
             if (label.has_value()) {
@@ -71,6 +77,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     if (!drainAll && !endOfPipeInterrupt && (opcode == 0x49 || opcode == 0x37)) {
         if (const auto label = Pm4::DecodeLabelWrite(packet)) {
             const auto bytes = label->Bytes();
+            const auto kind = opcode == 0x49 || queue.idleSinceWork ? Graphics::SignalKind::Completion : Graphics::SignalKind::BareWrite;
             if (DeferLabels() && bytes.size() <= DeferredLabel::Capacity && bytes.size() % 4 == 0 && label->address % 4 == 0) {
 
                 auto& deferred = deferredLabels();
@@ -78,6 +85,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 auto& entry = deferred.labels.emplace_back();
                 entry.address = label->address;
                 entry.size = bytes.size();
+                entry.completion = kind == Graphics::SignalKind::Completion;
                 std::memcpy(entry.bytes.data(), bytes.data(), bytes.size());
                 ++queuedLabels;
                 wroteOnGpu = true;
@@ -87,7 +95,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto localDevice = device.Load();
 
                 recordDeferredLabels(localDevice.get(), submission.queue);
-                Graphics::PublishBeforeCompletionSignal();
+                Graphics::PublishBeforeCompletionSignal(kind);
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 wroteOnGpu = reason == 0 || reason == 5;
