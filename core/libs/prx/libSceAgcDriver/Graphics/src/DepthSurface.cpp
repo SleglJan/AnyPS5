@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSampleEquations.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/HtileEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/DepthPublish00_spv.h"
@@ -154,6 +155,25 @@ std::pair<std::uint32_t, std::uint32_t> DepthBlockLog2(std::uint32_t elementByte
     const auto pixelBits = 16u - static_cast<std::uint32_t>(std::countr_zero(elementBytes)) - sampleBits;
     const auto widthBits = (pixelBits + ((sampleBits & 1u) == 0u ? 1u : 0u)) / 2u;
     return {widthBits, pixelBits - widthBits};
+}
+
+std::uint32_t EquationOffset(const std::array<std::uint32_t, 16>& bits, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+    const auto coordinates = (x & 0xfffu) | ((y & 0xfffu) << 12u) | ((z & 0xffu) << 24u);
+    std::uint32_t offset = 0;
+    for (std::uint32_t bit = 0; bit < bits.size(); ++bit) offset |= static_cast<std::uint32_t>(std::popcount(bits[bit] & coordinates) & 1) << bit;
+    return offset;
+}
+
+using ByteRuns = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+
+void MergeRuns(ByteRuns& runs) {
+    std::sort(runs.begin(), runs.end());
+    ByteRuns merged;
+    for (const auto& run : runs) {
+        if (!merged.empty() && run.first <= merged.back().second) merged.back().second = std::max(merged.back().second, run.second);
+        else merged.push_back(run);
+    }
+    runs.swap(merged);
 }
 
 constexpr bool SameAsTextureEquation(std::uint32_t elementBytes) {
@@ -593,18 +613,307 @@ public:
         if (state.set == VK_NULL_HANDLE) state.set = PublisherFor(context).Allocate(state.view, state.tiled->Handle(), state.tiled->Size());
     }
 
+    struct PlaneGeometry {
+        const std::array<std::uint32_t, 16>* equation = nullptr;
+        std::uint32_t elementBytes = 0;
+        std::uint32_t widthLog2 = 0;
+        std::uint32_t heightLog2 = 0;
+        std::uint32_t blocksPerRow = 0;
+        std::uint32_t sliceOffset = 0;
+        std::vector<std::uint32_t> inverse;
+    };
+
+    struct TileLinks {
+        std::uint32_t tilesX = 0;
+        std::uint32_t tilesY = 0;
+        std::vector<std::uint8_t> tiles;
+        std::size_t count = 0;
+        bool htileAsked = false;
+        std::array<ByteRuns, 2> planes;
+        std::array<std::vector<std::uint8_t>, 2> fullBlocks;
+        ByteRuns htile;
+        std::vector<std::uint8_t> fullHtileBlocks;
+        std::array<std::vector<std::uint64_t>, 2> planeSubpages;
+        std::vector<std::uint64_t> htileSubpages;
+
+        void Link(std::uint32_t x, std::uint32_t y) {
+            auto& tile = tiles[static_cast<std::size_t>(y) * tilesX + x];
+            if (tile == 0u) ++count;
+            tile = 1u;
+        }
+
+        bool Linked(std::uint32_t x, std::uint32_t y) const {
+            return tiles[static_cast<std::size_t>(y) * tilesX + x] != 0u;
+        }
+    };
+
+    const PlaneGeometry& planeGeometry(std::size_t plane) {
+        auto& entry = geometry[plane];
+        if (!entry.inverse.empty()) return entry;
+        entry.equation = planeEquation(plane);
+        Require(entry.equation != nullptr, "depth surface publication: the plane has no 64 KiB address equation");
+        entry.elementBytes = planeElementBytes(plane);
+        const auto [widthLog2, heightLog2] = DepthBlockLog2(entry.elementBytes, target.samples);
+        entry.widthLog2 = widthLog2;
+        entry.heightLog2 = heightLog2;
+        entry.blocksPerRow = (target.extent.width + (1u << widthLog2) - 1u) >> widthLog2;
+        entry.sliceOffset = target.samples == 1u ? EquationOffset(*entry.equation, 0u, 0u, target.firstSlice) : 0u;
+        std::vector<std::uint32_t> inverse(65536u / entry.elementBytes, ~0u);
+        for (std::uint32_t sample = 0; sample < target.samples; ++sample) {
+            for (std::uint32_t y = 0; y < (1u << heightLog2); ++y) {
+                for (std::uint32_t x = 0; x < (1u << widthLog2); ++x) {
+                    const auto offset = EquationOffset(*entry.equation, x, y, target.samples == 1u ? 0u : sample);
+                    auto& slot = inverse[offset / entry.elementBytes];
+                    Require(offset % entry.elementBytes == 0u && slot == ~0u, "depth surface publication: the plane's address equation maps two elements to one address");
+                    slot = x | (y << 12u) | (sample << 24u);
+                }
+            }
+        }
+        entry.inverse = std::move(inverse);
+        return entry;
+    }
+
+    std::uint64_t elementOffset(const PlaneGeometry& plane, std::uint32_t x, std::uint32_t y, std::uint32_t sample) const {
+        const auto block = static_cast<std::uint64_t>(y >> plane.heightLog2) * plane.blocksPerRow + (x >> plane.widthLog2);
+        return block * 65536u + ((EquationOffset(*plane.equation, x, y, target.samples == 1u ? target.firstSlice : sample) ^ target.pipeBankXor) & 65535u);
+    }
+
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> pixelAt(const PlaneGeometry& plane, std::uint64_t offset) const {
+        const auto block = offset >> 16u;
+        const auto x0 = static_cast<std::uint32_t>(block % plane.blocksPerRow) << plane.widthLog2;
+        const auto y0 = static_cast<std::uint32_t>(block / plane.blocksPerRow) << plane.heightLog2;
+        const auto local = (static_cast<std::uint32_t>(offset & 65535u) ^ target.pipeBankXor ^ EquationOffset(*plane.equation, x0, y0, 0u) ^ plane.sliceOffset) & 65535u;
+        const auto packed = plane.inverse[local / plane.elementBytes];
+        const auto x = x0 + (packed & 0xfffu);
+        const auto y = y0 + ((packed >> 12u) & 0xfffu);
+        if (x >= target.extent.width || y >= target.extent.height) return std::nullopt;
+        return std::pair{x, y};
+    }
+
+    const std::vector<std::uint32_t>& htileTable() {
+        if (!htileInverse.empty()) return htileInverse;
+        const auto* equation = FindHtileEquation(target.samples);
+        Require(equation != nullptr, "depth surface publication: no HTILE address equation for the sample count");
+        std::vector<std::uint32_t> inverse(HtileBlockBytes / 4u, ~0u);
+        for (std::uint32_t y = 0; y < HtileBlockHeight / 8u; ++y) {
+            for (std::uint32_t x = 0; x < HtileBlockWidth / 8u; ++x) {
+                const auto offset = HtileWordOffset(*equation, HtileBlockWidth, x * 8u, y * 8u, 0u);
+                auto& slot = inverse[offset / 4u];
+                Require(offset % 4u == 0u && slot == ~0u, "depth surface publication: the HTILE address equation maps two tiles to one word");
+                slot = x | (y << 12u);
+            }
+        }
+        htileInverse = std::move(inverse);
+        return htileInverse;
+    }
+
+    std::uint32_t htilePitch() const {
+        return (target.extent.width + HtileBlockWidth - 1u) / HtileBlockWidth;
+    }
+
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> tileAtHtile(std::uint64_t offset) const {
+        const auto block = offset / HtileBlockBytes;
+        const auto local = static_cast<std::uint32_t>((offset % HtileBlockBytes) ^ (target.pipeBankXor & 0x0f00u));
+        const auto packed = htileInverse[local / 4u];
+        const auto x = static_cast<std::uint32_t>(block % htilePitch()) * (HtileBlockWidth / 8u) + (packed & 0xfffu);
+        const auto y = static_cast<std::uint32_t>(block / htilePitch()) * (HtileBlockHeight / 8u) + ((packed >> 12u) & 0xfffu);
+        if (x * 8u >= target.extent.width || y * 8u >= target.extent.height) return std::nullopt;
+        return std::pair{x, y};
+    }
+
+    TileLinks linkTiles(std::span<const ResidencyRange> ranges) {
+        TileLinks links;
+        links.tilesX = (target.extent.width + 7u) / 8u;
+        links.tilesY = (target.extent.height + 7u) / 8u;
+        links.tiles.assign(static_cast<std::size_t>(links.tilesX) * links.tilesY, 0u);
+        const auto linkRect = [&](std::uint32_t x0, std::uint32_t y0, std::uint32_t width, std::uint32_t height) {
+            for (std::uint32_t y = y0 / 8u; y < std::min(links.tilesY, (y0 + height) / 8u); ++y) {
+                for (std::uint32_t x = x0 / 8u; x < std::min(links.tilesX, (x0 + width) / 8u); ++x) links.Link(x, y);
+            }
+        };
+        for (std::size_t plane = 0; plane < published.size(); ++plane) {
+            if (!published[plane].owned) continue;
+            const auto& shape = planeGeometry(plane);
+            const auto base = planeAddress(plane);
+            const auto end = base + planeBytes(plane);
+            for (const auto& range : ranges) {
+                const auto from = std::max(range.address, base);
+                const auto to = std::min(range.address + range.bytes, end);
+                if (from >= to) continue;
+                for (auto offset = (from - base) / shape.elementBytes * shape.elementBytes; offset < to - base;) {
+                    const auto block = offset >> 16u;
+                    const auto blockEnd = (block + 1u) << 16u;
+                    if ((offset & 65535u) == 0u && blockEnd <= to - base) {
+                        linkRect(static_cast<std::uint32_t>(block % shape.blocksPerRow) << shape.widthLog2, static_cast<std::uint32_t>(block / shape.blocksPerRow) << shape.heightLog2, 1u << shape.widthLog2, 1u << shape.heightLog2);
+                        offset = blockEnd;
+                        continue;
+                    }
+                    if (const auto pixel = pixelAt(shape, offset)) links.Link(pixel->first / 8u, pixel->second / 8u);
+                    offset += shape.elementBytes;
+                }
+            }
+        }
+        const auto htileBase = target.htileAddress;
+        const auto htileEnd = htileBase + htileBytes();
+        for (const auto& range : ranges) {
+            const auto from = std::max(range.address, htileBase);
+            const auto to = std::min(range.address + range.bytes, htileEnd);
+            if (from >= to) continue;
+            htileTable();
+            links.htileAsked = true;
+            links.htile.emplace_back(htileBase + ((from - htileBase) & ~std::uint64_t{3}), htileBase + ((to - htileBase + 3u) & ~std::uint64_t{3}));
+            for (auto offset = (from - htileBase) & ~std::uint64_t{3}; offset < to - htileBase;) {
+                const auto block = offset / HtileBlockBytes;
+                const auto blockEnd = (block + 1u) * HtileBlockBytes;
+                if (offset % HtileBlockBytes == 0u && blockEnd <= to - htileBase) {
+                    linkRect(static_cast<std::uint32_t>(block % htilePitch()) * HtileBlockWidth, static_cast<std::uint32_t>(block / htilePitch()) * HtileBlockHeight, HtileBlockWidth, HtileBlockHeight);
+                    offset = blockEnd;
+                    continue;
+                }
+                if (const auto tile = tileAtHtile(offset)) links.Link(tile->first, tile->second);
+                offset += 4u;
+            }
+        }
+        if (links.count == 0u) {
+            MergeRuns(links.htile);
+            return links;
+        }
+        for (std::size_t plane = 0; plane < published.size(); ++plane) {
+            if (!published[plane].owned) continue;
+            const auto& shape = planeGeometry(plane);
+            const auto base = planeAddress(plane);
+            const auto blockRows = (target.extent.height + (1u << shape.heightLog2) - 1u) >> shape.heightLog2;
+            auto& full = links.fullBlocks[plane];
+            full.assign(static_cast<std::size_t>(shape.blocksPerRow) * blockRows, 0u);
+            std::vector<std::uint64_t> elements;
+            for (std::uint32_t blockY = 0; blockY < blockRows; ++blockY) {
+                for (std::uint32_t blockX = 0; blockX < shape.blocksPerRow; ++blockX) {
+                    const auto firstX = (blockX << shape.widthLog2) / 8u;
+                    const auto firstY = (blockY << shape.heightLog2) / 8u;
+                    const auto lastX = std::min(links.tilesX, ((blockX + 1u) << shape.widthLog2) / 8u);
+                    const auto lastY = std::min(links.tilesY, ((blockY + 1u) << shape.heightLog2) / 8u);
+                    std::size_t inside = 0;
+                    std::size_t linked = 0;
+                    for (auto tileY = firstY; tileY < lastY; ++tileY) {
+                        for (auto tileX = firstX; tileX < lastX; ++tileX) {
+                            ++inside;
+                            linked += links.Linked(tileX, tileY) ? 1u : 0u;
+                        }
+                    }
+                    if (linked == 0u) continue;
+                    const auto block = static_cast<std::uint64_t>(blockY) * shape.blocksPerRow + blockX;
+                    if (linked == inside) {
+                        full[block] = 1u;
+                        links.planes[plane].emplace_back(base + block * 65536u, base + (block + 1u) * 65536u);
+                        continue;
+                    }
+                    for (auto tileY = firstY; tileY < lastY; ++tileY) {
+                        for (auto tileX = firstX; tileX < lastX; ++tileX) {
+                            if (!links.Linked(tileX, tileY)) continue;
+                            for (auto y = tileY * 8u; y < std::min(target.extent.height, tileY * 8u + 8u); ++y) {
+                                for (auto x = tileX * 8u; x < std::min(target.extent.width, tileX * 8u + 8u); ++x) {
+                                    for (std::uint32_t sample = 0; sample < target.samples; ++sample) elements.push_back(elementOffset(shape, x, y, sample));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::sort(elements.begin(), elements.end());
+            elements.erase(std::unique(elements.begin(), elements.end()), elements.end());
+            for (const auto offset : elements) links.planes[plane].emplace_back(base + offset, base + offset + shape.elementBytes);
+            MergeRuns(links.planes[plane]);
+            ByteRuns covered;
+            std::uint64_t checked = ~std::uint64_t{0};
+            for (const auto& [from, to] : links.planes[plane]) {
+                for (auto subpage = (from - base) / ResidencySubpageBytes; subpage * ResidencySubpageBytes < to - base; ++subpage) {
+                    if (subpage == checked) continue;
+                    checked = subpage;
+                    if (!planeSubpageCovered(links, plane, subpage * ResidencySubpageBytes)) continue;
+                    links.planeSubpages[plane].push_back(base + subpage * ResidencySubpageBytes);
+                    covered.emplace_back(base + subpage * ResidencySubpageBytes, base + (subpage + 1u) * ResidencySubpageBytes);
+                }
+            }
+            links.planes[plane].insert(links.planes[plane].end(), covered.begin(), covered.end());
+            MergeRuns(links.planes[plane]);
+        }
+        htileTable();
+        const auto htileRows = (target.extent.height + HtileBlockHeight - 1u) / HtileBlockHeight;
+        links.fullHtileBlocks.assign(static_cast<std::size_t>(htilePitch()) * htileRows, 0u);
+        for (std::uint32_t blockY = 0; blockY < htileRows; ++blockY) {
+            for (std::uint32_t blockX = 0; blockX < htilePitch(); ++blockX) {
+                const auto firstX = blockX * (HtileBlockWidth / 8u);
+                const auto firstY = blockY * (HtileBlockHeight / 8u);
+                const auto lastX = std::min(links.tilesX, firstX + HtileBlockWidth / 8u);
+                const auto lastY = std::min(links.tilesY, firstY + HtileBlockHeight / 8u);
+                std::size_t inside = 0;
+                std::size_t linked = 0;
+                for (auto tileY = firstY; tileY < lastY; ++tileY) {
+                    for (auto tileX = firstX; tileX < lastX; ++tileX) {
+                        ++inside;
+                        linked += links.Linked(tileX, tileY) ? 1u : 0u;
+                    }
+                }
+                if (linked == 0u) continue;
+                const auto block = static_cast<std::uint64_t>(blockY) * htilePitch() + blockX;
+                if (linked == inside) {
+                    links.fullHtileBlocks[block] = 1u;
+                    links.htile.emplace_back(htileBase + block * HtileBlockBytes, htileBase + (block + 1u) * HtileBlockBytes);
+                    continue;
+                }
+                for (auto tileY = firstY; tileY < lastY; ++tileY) {
+                    for (auto tileX = firstX; tileX < lastX; ++tileX) {
+                        if (!links.Linked(tileX, tileY)) continue;
+                        const auto offset = HtileWordOffset(*FindHtileEquation(target.samples), target.extent.width, tileX * 8u, tileY * 8u, target.pipeBankXor);
+                        links.htile.emplace_back(htileBase + offset, htileBase + offset + 4u);
+                    }
+                }
+            }
+        }
+        MergeRuns(links.htile);
+        ByteRuns covered;
+        std::uint64_t checked = ~std::uint64_t{0};
+        for (const auto& [from, to] : links.htile) {
+            for (auto subpage = (from - htileBase) / ResidencySubpageBytes; subpage * ResidencySubpageBytes < to - htileBase; ++subpage) {
+                if (subpage == checked) continue;
+                checked = subpage;
+                if (!htileSubpageCovered(links, subpage * ResidencySubpageBytes)) continue;
+                links.htileSubpages.push_back(htileBase + subpage * ResidencySubpageBytes);
+                covered.emplace_back(htileBase + subpage * ResidencySubpageBytes, htileBase + (subpage + 1u) * ResidencySubpageBytes);
+            }
+        }
+        links.htile.insert(links.htile.end(), covered.begin(), covered.end());
+        MergeRuns(links.htile);
+        return links;
+    }
+
+    bool planeSubpageCovered(const TileLinks& links, std::size_t plane, std::uint64_t offset) const {
+        const auto& shape = geometry[plane];
+        const auto block = offset >> 16u;
+        if (block < links.fullBlocks[plane].size() && links.fullBlocks[plane][block] != 0u) return true;
+        for (auto at = offset; at < offset + ResidencySubpageBytes; at += shape.elementBytes) {
+            const auto pixel = pixelAt(shape, at);
+            if (pixel && !links.Linked(pixel->first / 8u, pixel->second / 8u)) return false;
+        }
+        return true;
+    }
+
+    bool htileSubpageCovered(const TileLinks& links, std::uint64_t offset) const {
+        const auto block = offset / HtileBlockBytes;
+        if (block < links.fullHtileBlocks.size() && links.fullHtileBlocks[block] != 0u) return true;
+        for (auto at = offset; at < offset + ResidencySubpageBytes; at += 4u) {
+            const auto tile = tileAtHtile(at);
+            if (tile && !links.Linked(tile->first, tile->second)) return false;
+        }
+        return true;
+    }
+
     void Retile(std::span<const ResidencyRange> ranges) override {
         auto* residency = ResidencyDriver::Active();
         auto* recorder = RecorderFor(context);
         Require(residency != nullptr && recorder != nullptr, "depth surface write-back needs the residency driver and an active recorder");
-        const auto overlaps = [&](std::uint64_t begin, std::uint64_t bytes) {
-            return std::any_of(ranges.begin(), ranges.end(), [&](const ResidencyRange& range) { return range.address < begin + bytes && begin < range.address + range.bytes; });
-        };
-        bool whole = false;
-        if (htileOwned) {
-            whole = overlaps(target.htileAddress, htileBytes());
-            for (std::size_t plane = 0; plane < published.size(); ++plane) whole = whole || (published[plane].owned && overlaps(planeAddress(plane), planeBytes(plane)));
-        }
+        TileLinks links;
+        if (htileOwned) links = linkTiles(ranges);
         struct PlaneRanges {
             std::size_t plane;
             std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -615,19 +924,18 @@ public:
             const auto begin = planeAddress(plane);
             const auto end = begin + planeBytes(plane);
             PlaneRanges entry{plane, {}};
-            if (whole) entry.ranges.emplace_back(begin, end);
-            else {
-                for (const auto& range : ranges) {
-                    const auto from = std::max(range.address, begin);
-                    const auto to = std::min(range.address + range.bytes, end);
-                    if (from < to) entry.ranges.emplace_back(from, to);
-                }
+            for (const auto& range : ranges) {
+                const auto from = std::max(range.address, begin);
+                const auto to = std::min(range.address + range.bytes, end);
+                if (from < to) entry.ranges.emplace_back(from, to);
             }
+            entry.ranges.insert(entry.ranges.end(), links.planes[plane].begin(), links.planes[plane].end());
+            MergeRuns(entry.ranges);
             if (entry.ranges.empty()) continue;
             preparePlane(plane);
             work.push_back(std::move(entry));
         }
-        if (work.empty() && !whole) return;
+        if (work.empty() && !links.htileAsked) return;
         auto& publisher = PublisherFor(context);
         const auto collectedUnchanged = [](const GuestMemory::UnchangedQuery& range) {
             return GuestMemory::CollectWritesUncached(range.address, range.bytes) != 0u && GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
@@ -635,7 +943,7 @@ public:
         const bool overwritten = target.samples == 1u && OverwrittenInMemory();
         const bool sampledUnchanged = samplingActive && collectedUnchanged(sampling.initial[0]);
         const GuestMemory::UnchangedQuery htileRange{target.htileAddress, static_cast<std::size_t>(htileBytes()), htileGeneration};
-        const bool expandHtile = whole && (samplingActive ? clearGeneration == 0u && collectedUnchanged(sampling.initial[1]) : collectedUnchanged(htileRange));
+        const bool expandHtile = (links.count != 0u || links.htileAsked) && (samplingActive ? clearGeneration == 0u && collectedUnchanged(sampling.initial[1]) : collectedUnchanged(htileRange));
         const auto commands = recorder->Commands();
         const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
         const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
@@ -693,19 +1001,21 @@ public:
         }
         if (expandHtile) {
             const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
-            auto& [span, pieces] = spans.emplace_back(std::piecewise_construct, std::forward_as_tuple(residency, target.htileAddress, target.htileAddress + htileBytes(), ResidencyAccess::Write), std::forward_as_tuple());
-            pieces = span.Pieces(target.htileAddress, target.htileAddress + htileBytes());
-            for (const auto& piece : pieces) {
-                const auto length = piece.end - piece.begin;
-                if (piece.buffer != VK_NULL_HANDLE) {
-                    fill(commands, piece.buffer, piece.offset, length, ExpandedHtileWord());
-                    continue;
+            for (const auto& [from, to] : links.htile) {
+                auto& [span, pieces] = spans.emplace_back(std::piecewise_construct, std::forward_as_tuple(residency, from, to, ResidencyAccess::Write), std::forward_as_tuple());
+                pieces = span.Pieces(from, to);
+                for (const auto& piece : pieces) {
+                    const auto length = piece.end - piece.begin;
+                    if (piece.buffer != VK_NULL_HANDLE) {
+                        fill(commands, piece.buffer, piece.offset, length, ExpandedHtileWord());
+                        continue;
+                    }
+                    const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
+                    Require(import != nullptr, "depth surface write-back: the HTILE has no host import");
+                    fill(commands, import->buffer, piece.begin - import->base, length, ExpandedHtileWord());
                 }
-                const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
-                Require(import != nullptr, "depth surface write-back: the HTILE has no host import");
-                fill(commands, import->buffer, piece.begin - import->base, length, ExpandedHtileWord());
+                moved += to - from;
             }
-            moved += htileBytes();
         }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::Copy, 4);
@@ -722,9 +1032,11 @@ public:
             htileGeneration = GuestMemory::CollectWritesUncached(target.htileAddress, static_cast<std::size_t>(htileBytes()));
             if (samplingActive) sampling.initial[1].generation = htileGeneration;
         }
-        if (whole) {
-            for (const auto& entry : work) residency->Manager().ClearStale(planeAddress(entry.plane), planeBytes(entry.plane), this);
-            residency->Manager().ClearStale(target.htileAddress, htileBytes(), this);
+        for (const auto& subpages : links.planeSubpages) {
+            for (const auto subpage : subpages) residency->Manager().ClearStale(subpage, ResidencySubpageBytes, this);
+        }
+        if (expandHtile) {
+            for (const auto subpage : links.htileSubpages) residency->Manager().ClearStale(subpage, ResidencySubpageBytes, this);
         }
     }
 
@@ -956,6 +1268,8 @@ public:
     bool htileOwned = false;
     std::uint64_t htileGeneration = 0;
     std::shared_ptr<std::atomic<bool>> htilePublished = std::make_shared<std::atomic<bool>>(false);
+    std::array<PlaneGeometry, 2> geometry{};
+    std::vector<std::uint32_t> htileInverse;
 
 private:
     struct PlaneStorage {

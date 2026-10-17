@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSampleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/HtileEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -99,6 +100,7 @@ struct Planes {
     std::uint64_t htile = 0;
     bool htileStencil = false;
     std::uint32_t stencilSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
+    VkExtent2D extent{Width, Height};
 };
 
 void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Planes& planes, bool depthWrite, bool stencilWrite) {
@@ -109,7 +111,7 @@ void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const 
     }};
     Graphics::State state{};
     state.stages = {Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    if (planes.samples == 1u) {
+    if (planes.samples == 1u && planes.extent.width == Width && planes.extent.height == Height) {
         state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
         state.colors = {state.color};
         state.hasColorTarget = true;
@@ -119,7 +121,7 @@ void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const 
         state.hasColorTarget = false;
     }
     state.samples = planes.samples;
-    state.depth = Graphics::DepthTarget{planes.depth, planes.stencil, {Width, Height}, planes.format, 1.0f, 0, planes.htile, planes.htileStencil, planes.samples};
+    state.depth = Graphics::DepthTarget{planes.depth, planes.stencil, planes.extent, planes.format, 1.0f, 0, planes.htile, planes.htileStencil, planes.samples};
     state.depth->depthSwizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
     state.depth->stencilSwizzle = planes.stencilSwizzle;
     if (planes.htile != 0u) {
@@ -134,11 +136,11 @@ void DrawPlanes(AgcDriver::VulkanDevice& device, const Shaders& compiled, const 
         state.stencilFront = {VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, StencilValue};
         state.stencilBack = state.stencilFront;
     }
-    state.renderExtent = {Width, Height};
+    state.renderExtent = planes.extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(planes.extent.height), static_cast<float>(planes.extent.width), -static_cast<float>(planes.extent.height), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, planes.extent};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blendConstants = {};
@@ -171,13 +173,13 @@ const std::array<std::uint32_t, 16>& EquationFor(std::uint32_t swizzle, std::uin
     return equation->bits;
 }
 
-std::uint64_t GuestOffset(std::uint32_t x, std::uint32_t y, std::uint32_t sample, std::uint32_t elementBytes, std::uint32_t samples, std::uint32_t swizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX)) {
+std::uint64_t GuestOffset(std::uint32_t x, std::uint32_t y, std::uint32_t sample, std::uint32_t elementBytes, std::uint32_t samples, std::uint32_t swizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX), std::uint32_t width = Width) {
     const auto& bits = EquationFor(swizzle, elementBytes, samples);
     const auto sampleBits = static_cast<std::uint32_t>(std::countr_zero(samples));
     const auto pixelBits = 16u - static_cast<std::uint32_t>(std::countr_zero(elementBytes)) - sampleBits;
     const auto widthBits = (pixelBits + ((sampleBits & 1u) == 0u ? 1u : 0u)) / 2u;
     const auto heightBits = pixelBits - widthBits;
-    const auto blocksPerRow = (Width + (1u << widthBits) - 1u) >> widthBits;
+    const auto blocksPerRow = (width + (1u << widthBits) - 1u) >> widthBits;
     const auto block = (y >> heightBits) * blocksPerRow + (x >> widthBits);
     std::uint32_t offset = 0;
     for (std::uint32_t bit = 0; bit < 16u; ++bit) {
@@ -202,9 +204,9 @@ struct GuestPlane {
     std::byte* data;
     std::uint64_t address;
 
-    GuestPlane() : data(TestGuest::Allocate(PlaneBytes, PlaneBytes)), address(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data))) {
+    explicit GuestPlane(std::size_t bytes = PlaneBytes) : data(TestGuest::Allocate(bytes, PlaneBytes)), address(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data))) {
         auto* words = reinterpret_cast<volatile std::uint32_t*>(data);
-        for (std::size_t word = 0; word < PlaneBytes / 4u; ++word) words[word] = Untouched;
+        for (std::size_t word = 0; word < bytes / 4u; ++word) words[word] = Untouched;
     }
 };
 
@@ -373,6 +375,76 @@ void HtileWithStencil(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
     std::printf("%s reaches guest memory with its HTILE expanded\n", what.c_str());
 }
 
+void PartialHtilePublication(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
+    constexpr VkExtent2D Extent{512u, 256u};
+    constexpr std::uint32_t Before = 0x00000105u;
+    constexpr std::uint32_t Expanded = 0xfffc000fu;
+    constexpr std::uint32_t TilesX = Extent.width / 8u;
+    constexpr std::uint32_t TilesY = Extent.height / 8u;
+    constexpr auto Swizzle = static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX);
+    const auto depthBytes = static_cast<std::size_t>(Graphics::DepthSliceBytes(Extent, 4u));
+    const auto htileBytes = static_cast<std::size_t>(Graphics::HtileMetadataBytes(Extent));
+    GuestPlane depth(depthBytes);
+    GuestPlane htile;
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(htile.data);
+    for (std::size_t word = 0; word < htileBytes / 4u; ++word) words[word] = Before;
+    Planes planes{depth.address, 0, VK_FORMAT_D32_SFLOAT, 1u, htile.address};
+    planes.extent = Extent;
+    const std::string what = "a partial write-back of single-sample depth with HTILE";
+    constexpr std::uint64_t ReadPage = 1u;
+    std::set<std::uint32_t> published;
+    for (std::uint32_t y = 0; y < Extent.height; ++y) {
+        for (std::uint32_t x = 0; x < Extent.width; ++x) {
+            if (GuestOffset(x, y, 0u, 4u, 1u, Swizzle, Extent.width) / PlaneBytes == ReadPage) published.insert((y / 8u) * TilesX + x / 8u);
+        }
+    }
+    Require(!published.empty() && published.size() < TilesX * TilesY, what + ": the read page holds no tiles or all of them");
+    const auto expected = [&](std::uint32_t x) { return (x + 0.5) / (2.0 * Extent.width); };
+    DrawPlanes(device, sloped, planes, true, false);
+    Require(Owned(htile.address) && Stale(htile.address) != 0u && Stale(depth.address) != 0u, what + ": the draw left the HTILE or the plane without stale subpages");
+    std::vector<std::byte> part(Graphics::ResidencySubpageBytes);
+    AgcDriver::GuestMemory::Read(depth.address + ReadPage * PlaneBytes, std::span(part));
+    const auto* equation = Graphics::FindHtileEquation(1u);
+    std::size_t expandedWrong = 0;
+    std::size_t untouchedWrong = 0;
+    for (std::uint32_t tileY = 0; tileY < TilesY; ++tileY) {
+        for (std::uint32_t tileX = 0; tileX < TilesX; ++tileX) {
+            const auto word = words[Graphics::HtileWordOffset(*equation, Extent.width, tileX * 8u, tileY * 8u, 0u) / 4u];
+            if (published.contains(tileY * TilesX + tileX)) expandedWrong += word != Expanded ? 1u : 0u;
+            else untouchedWrong += word != Before ? 1u : 0u;
+        }
+    }
+    Require(expandedWrong == 0u, what + ": " + std::to_string(expandedWrong) + " of the read page's " + std::to_string(published.size()) + " tiles kept their old HTILE word");
+    Require(untouchedWrong == 0u, what + ": " + std::to_string(untouchedWrong) + " HTILE words of tiles outside the read page changed");
+    std::size_t planeWrong = 0;
+    for (std::uint32_t y = 0; y < Extent.height; ++y) {
+        for (std::uint32_t x = 0; x < Extent.width; ++x) {
+            const auto offset = GuestOffset(x, y, 0u, 4u, 1u, Swizzle, Extent.width);
+            float value = 0.0f;
+            std::uint32_t bits = 0;
+            std::memcpy(&value, depth.data + offset, sizeof(value));
+            std::memcpy(&bits, depth.data + offset, sizeof(bits));
+            const bool inside = published.contains((y / 8u) * TilesX + x / 8u);
+            if (inside ? std::abs(value - expected(x)) > 1.0e-5 : bits != Untouched) ++planeWrong;
+        }
+    }
+    Require(planeWrong == 0u, what + ": " + std::to_string(planeWrong) + " depth elements are not published exactly for the read page's tiles");
+    Require(Stale(htile.address) != 0u && Stale(depth.address) != 0u, what + ": the partial write-back published the whole surface");
+    CheckHtile(htile.address, htileBytes, Expanded, what + ", the whole HTILE read afterwards");
+    std::vector<std::byte> whole(depthBytes);
+    AgcDriver::GuestMemory::Read(depth.address, std::span(whole));
+    std::size_t wholeWrong = 0;
+    for (std::uint32_t y = 0; y < Extent.height; ++y) {
+        for (std::uint32_t x = 0; x < Extent.width; ++x) {
+            float value = 0.0f;
+            std::memcpy(&value, &whole[GuestOffset(x, y, 0u, 4u, 1u, Swizzle, Extent.width)], sizeof(value));
+            if (std::abs(value - expected(x)) > 1.0e-5) ++wholeWrong;
+        }
+    }
+    Require(wholeWrong == 0u, what + ": the whole plane read afterwards misses the drawn depth in " + std::to_string(wholeWrong) + " elements");
+    std::printf("%s publishes %zu of %u tiles and leaves the other HTILE words untouched\n", what.c_str(), published.size(), TilesX * TilesY);
+}
+
 void StencilSwizzle(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
     GuestPlane depth;
     GuestPlane stencil;
@@ -419,6 +491,7 @@ int main() {
         DepthAndStencilReachMemory(*device, sloped, 4u);
         NativeMultisampledDepth(*device, sloped);
         HtileWithStencil(*device, sloped);
+        PartialHtilePublication(*device, sloped);
         StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
         LibcRunShutdown_nid_postfix();
