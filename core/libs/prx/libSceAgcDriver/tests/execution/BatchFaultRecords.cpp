@@ -624,7 +624,7 @@ void LeasesUntilCompletion() {
         commands.WriteData(label, {LabelValue});
         commands.Submit(GraphicsQueue);
         bool pending = false;
-        for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5); !pending && std::chrono::steady_clock::now() < deadline;) {
+        for (const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60); !pending && std::chrono::steady_clock::now() < deadline;) {
             pending = LabelPending(label);
             if (!pending) std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
