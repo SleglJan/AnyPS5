@@ -78,6 +78,12 @@ struct ResidencyCopy {
     std::uint32_t bytes = 0;
 };
 
+class IResidencyOwner {
+public:
+    virtual ~IResidencyOwner() = default;
+    virtual void Retile(std::span<const ResidencyRange> ranges) = 0;
+};
+
 class IResidencyDevice {
 public:
     virtual ~IResidencyDevice() = default;
@@ -141,6 +147,11 @@ struct ResidencyCounts {
     std::uint64_t recordRefreshed = 0;
     std::uint64_t hotRefreshed = 0;
     std::uint64_t hotSweeps = 0;
+    std::uint64_t retiles = 0;
+    std::uint64_t retiledBytes = 0;
+    std::uint64_t eagerRetiles = 0;
+    std::uint32_t ownedPages = 0;
+    std::uint32_t stalePages = 0;
     std::uint64_t chunksAllocated = 0;
     std::uint64_t chunksReleased = 0;
     std::uint32_t chunks = 0;
@@ -178,6 +189,13 @@ public:
     void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
     void WriteBackAll();
+    void Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
+    void MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
+    void RetileOwned(std::uint64_t address, std::uint64_t bytes);
+    void RetileAllOwned();
+    void Disown(IResidencyOwner* owner);
+    IResidencyOwner* OwnerOf(std::uint64_t page) const;
+    ResidencyMask Stale(std::uint64_t page) const;
     bool DirtyIn(std::uint64_t address, std::uint64_t bytes) const;
     void Retire();
 
@@ -299,6 +317,14 @@ private:
     void clearDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void clearAllDirty(std::uint32_t id);
     void publishDirty(std::uint64_t page, ResidencyMask mask);
+    void publishPage(std::uint64_t page);
+    void retileStale(std::span<const std::uint64_t> stalePages);
+    std::vector<std::uint64_t> staleIn(std::uint64_t address, std::uint64_t bytes) const;
+
+    struct Owned {
+        IResidencyOwner* owner = nullptr;
+        ResidencyMask stale = 0;
+    };
     void appendDirty(std::uint32_t id, std::vector<ResidencyCopy>& copies) const;
     void appendClean(std::uint32_t id, std::uint32_t begin, std::uint32_t end, std::vector<ResidencyCopy>& copies) const;
     void copyIn(std::span<const Fill> fills);
@@ -338,6 +364,9 @@ private:
     std::deque<std::pair<std::uint64_t, std::uint64_t>> hotCooling;
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
+    std::unordered_map<std::uint64_t, Owned> owned;
+    std::unordered_set<std::uint64_t> staleOwned;
+    std::atomic<std::uint32_t> staleCount{0};
     std::uint64_t importsGeneration = 0;
     std::vector<ResidencyRange> pendingImports;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;

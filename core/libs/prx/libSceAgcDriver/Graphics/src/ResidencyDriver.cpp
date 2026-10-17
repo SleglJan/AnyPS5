@@ -54,6 +54,7 @@ void ResidencyDriver::Flip() {
 void ResidencyDriver::BeforeDispatch() {
     const std::lock_guard lock(GuestMemory::GpuMutex());
     manager.Apply();
+    manager.RetileAllOwned();
     harvestTouches();
     if (const auto now = flips.load(std::memory_order_acquire); now != flipsSeen || touchTable == nullptr) {
         flipsSeen = now;

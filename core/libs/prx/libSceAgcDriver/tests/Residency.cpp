@@ -1068,6 +1068,116 @@ void FullResidencyWhenTheGuestFits() {
     fixture.gpu.Drain();
 }
 
+class FakeOwner final : public IResidencyOwner {
+public:
+    FakeOwner(Fixture& fixture, std::uint64_t value) : fixture(fixture), value(value) {}
+
+    void Retile(std::span<const ResidencyRange> ranges) override {
+        for (const auto& range : ranges) {
+            retiled.push_back(range);
+            for (auto at = range.address; at < range.address + range.bytes;) {
+                const auto page = at >> ResidencyPageShift;
+                const auto end = std::min(range.address + range.bytes, (page + 1) << ResidencyPageShift);
+                const auto mask = SubpageMask(page, at, end - at);
+                if (fixture.manager->WriteSlot(page)) {
+                    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, page, mask, value, true);
+                    fixture.manager->NoteGpuWritten(at, end - at, true);
+                } else {
+                    fixture.gpu.RecordTitle(FakeGpu::Kind::Write, page, mask, value);
+                    fixture.manager->NoteImportWritten(at, end - at);
+                }
+                at = end;
+            }
+        }
+    }
+
+    Fixture& fixture;
+    std::uint64_t value;
+    std::vector<ResidencyRange> retiled;
+};
+
+void OwnedPagesRetiledBeforeReaders() {
+    scope = "owned pages retiled before readers";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 0);
+    FakeOwner owner(fixture, 901);
+    fixture.manager->Own(Address(BasePage + 0), ResidencyPageBytes, &owner);
+    Expect(fixture.manager->Slot(BasePage + 0).has_value() && fixture.manager->OwnerOf(BasePage + 0) == &owner, "an owned shared page is resident and owned");
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 0, 2), 2 * ResidencySubpageBytes, &owner);
+    Expect(fixture.manager->Stale(BasePage + 0) == 0x000c && owner.retiled.empty(), "the owner's writes into a resident shared page stay in the owner, stale");
+    Expect(fixture.manager->DirtyIn(Address(BasePage + 0, 3), 16), "a stale subpage answers dirty without the lock");
+    fixture.manager->RetileAllOwned();
+    Expect(owner.retiled.size() == 1 && owner.retiled[0].address == Address(BasePage + 0, 2) && owner.retiled[0].bytes == 2 * ResidencySubpageBytes, "the retile before a reader asks the owner for the two stale subpages");
+    Expect(fixture.manager->Stale(BasePage + 0) == 0 && fixture.manager->Dirty(BasePage + 0) == 0x000c, "after the retile the subpages are dirty in the mirror, not stale");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0004, 901);
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 0, 2) == 2, "the rendered bytes stay out of guest memory until a CPU read");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 0, 2) == 901 && fixture.Stored(BasePage + 0, 3) == 901 && fixture.Stored(BasePage + 0, 4) == 4, "a CPU read writes the rendered subpages back");
+}
+
+void CpuReadRetilesStalePages() {
+    scope = "a CPU read retiles stale owned pages";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 1);
+    FakeOwner owner(fixture, 902);
+    fixture.manager->Own(Address(BasePage + 1), ResidencyPageBytes, &owner);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 1, 7), ResidencySubpageBytes, &owner);
+    fixture.manager->FlushForCpuRead(Address(BasePage + 1, 7), 4);
+    fixture.gpu.Drain();
+    Expect(owner.retiled.size() == 1 && fixture.Stored(BasePage + 1, 7) == 902, "the CPU read of a stale subpage gets the owner's bytes");
+    Expect(fixture.manager->Stale(BasePage + 1) == 0 && fixture.manager->Dirty(BasePage + 1) == 0 && fixture.manager->Counts().stalePages == 0, "the page is neither stale nor dirty after the read");
+}
+
+void PrivateOwnedPagesWrittenAtOnce() {
+    scope = "owned private pages written back at once";
+    Fixture fixture(8, 1);
+    FakeOwner owner(fixture, 903);
+    fixture.manager->Own(Address(BasePage + 2), ResidencyPageBytes, &owner);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 2, 1), ResidencySubpageBytes, &owner);
+    Expect(owner.retiled.size() == 1 && fixture.manager->Stale(BasePage + 2) == 0 && fixture.manager->Counts().eagerRetiles == 1, "a private page holds no stale state: the owner retiles into guest memory at once");
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 2, 1) == 903 && fixture.manager->Dirty(BasePage + 2) == 0, "the bytes reached guest memory, and the private page is not dirty");
+}
+
+void StaleOwnedPagesKeptAndDisowned() {
+    scope = "stale owned pages are kept, and disowning retiles them";
+    Fixture fixture(8, 1);
+    FakeOwner owner(fixture, 904);
+    for (std::uint32_t page = 0; page < 4; ++page) fixture.Share(BasePage + page);
+    fixture.Use(0, BasePage + 0, 4);
+    fixture.gpu.Drain();
+    fixture.manager->Own(Address(BasePage + 0), ResidencyPageBytes, &owner);
+    fixture.manager->MarkStale(Address(BasePage + 0), ResidencySubpageBytes, &owner);
+    fixture.Use(0, BasePage + 1, 3);
+    fixture.gpu.Drain();
+    fixture.Use(0, BasePage + 4);
+    Expect(fixture.manager->Slot(BasePage + 0).has_value() && !fixture.manager->Slot(BasePage + 1), "admission past the budget evicts the least recently used page that is not stale");
+    fixture.gpu.Drain();
+    fixture.manager->Disown(&owner);
+    Expect(owner.retiled.size() == 1 && fixture.manager->OwnerOf(BasePage + 0) == nullptr && fixture.manager->Counts().ownedPages == 0, "disowning retiles the stale subpage and forgets the records");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 0), ResidencyPageBytes);
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 0, 0) == 904, "the disowned page's bytes reach guest memory");
+}
+
+void DemotionRetilesStalePages() {
+    scope = "a demotion retiles stale owned pages first";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 3);
+    FakeOwner owner(fixture, 905);
+    fixture.manager->Own(Address(BasePage + 3), ResidencyPageBytes, &owner);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 3, 9), ResidencySubpageBytes, &owner);
+    fixture.manager->DemoteWritable();
+    fixture.gpu.Drain();
+    Expect(!fixture.manager->Slot(BasePage + 3) && owner.retiled.size() == 1 && fixture.Stored(BasePage + 3, 9) == 905, "an unbounded writer's demotion retiled the stale subpage and wrote it back");
+}
+
 void AdmissionRule() {
     scope = "admission rule";
     Fixture fixture(8, 1);
@@ -1522,6 +1632,11 @@ int main() {
         TouchedPagesAdmitted();
         MeasuredBudget();
         FullResidencyWhenTheGuestFits();
+        OwnedPagesRetiledBeforeReaders();
+        CpuReadRetilesStalePages();
+        PrivateOwnedPagesWrittenAtOnce();
+        StaleOwnedPagesKeptAndDisowned();
+        DemotionRetilesStalePages();
         AdmissionRule();
         CanonicalAliases();
         EvictedAliasKeepsSharedGuard();
