@@ -48,10 +48,12 @@ namespace ShaderRecompiler {
         std::vector<std::uint32_t> continuationUserDataScalars;
     };
 
+    enum class CollidingVersions { Refuse, ReadAsOwn };
+
     class RequestSerializer {
     public:
         [[nodiscard]] std::string Serialize(const RecompileRequest& request) const;
-        [[nodiscard]] DeserializedRequest Deserialize(std::string_view text) const;
+        [[nodiscard]] DeserializedRequest Deserialize(std::string_view text, CollidingVersions colliding = CollidingVersions::Refuse) const;
     };
 
 }

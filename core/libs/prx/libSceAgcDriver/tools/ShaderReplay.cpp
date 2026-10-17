@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <span>
@@ -48,6 +49,7 @@ bool g_spirv = false;
 bool g_prepare = false;
 bool g_graph = false;
 bool g_maintenance8 = false;
+const char* g_migrateDir = nullptr;
 bool g_code = false;
 
 bool ReadRequestWords(void* context, std::uint64_t address, std::span<std::uint32_t> words) {
@@ -202,9 +204,51 @@ bool Replay(const char* path) {
 
 }
 
+std::vector<std::uint32_t> CompileWords(ShaderRecompiler::DeserializedRequest& request, std::string& failure) {
+    LinkRequestCallees(request);
+    request.request.useCache = false;
+    try {
+        const auto result = ShaderRecompiler::Recompile(request.request);
+        const auto words = result.spirv.Words();
+        return {words.begin(), words.end()};
+    } catch (const std::exception& error) {
+        failure = FirstLine(error.what());
+        return {};
+    }
+}
+
+bool Migrate(const char* path) {
+    const ShaderRecompiler::RequestSerializer serializer;
+    auto recorded = serializer.Deserialize(ReadText(path), ShaderRecompiler::CollidingVersions::ReadAsOwn);
+    const auto migrated = serializer.Serialize(recorded.request);
+    auto replay = serializer.Deserialize(migrated);
+    if (serializer.Serialize(replay.request) != migrated) {
+        std::printf("%s: not migrated, the rewritten request does not serialize back to itself\n", path);
+        return false;
+    }
+    std::string recordedFailure;
+    std::string replayFailure;
+    const auto before = CompileWords(recorded, recordedFailure);
+    const auto after = CompileWords(replay, replayFailure);
+    if (recordedFailure != replayFailure || before != after) {
+        std::printf("%s: not migrated, the rewritten request recompiles differently (%zu and %zu SPIR-V words%s%s)\n", path, before.size(), after.size(), recordedFailure.empty() ? "" : ", recorded: ", recordedFailure.c_str());
+        return false;
+    }
+    const auto target = std::filesystem::path(g_migrateDir) / std::filesystem::path(path).filename();
+    std::ofstream file(target, std::ios::binary);
+    file << migrated;
+    if (!file) {
+        std::printf("%s: not migrated, %s cannot be written\n", path, target.string().c_str());
+        return false;
+    }
+    if (recordedFailure.empty()) std::printf("%s: migrated, %zu SPIR-V words identical\n", path, before.size());
+    else std::printf("%s: migrated, both refuse identically: %s\n", path, recordedFailure.c_str());
+    return true;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--code] [--maintenance8] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--code] [--maintenance8] [--migrate <directory>] <shader.req>...\n  --migrate: rewrite requests this build recorded at versions 24 to 26 at the current version into <directory>, if each recompiles to the same SPIR-V\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
         return 2;
     }
     int failures = 0;
@@ -241,8 +285,12 @@ int main(int argc, char** argv) {
             g_spirv = true;
             continue;
         }
+        if (std::string(argv[i]) == "--migrate" && i + 1 < argc) {
+            g_migrateDir = argv[++i];
+            continue;
+        }
         try {
-            if (!Replay(argv[i])) ++failures;
+            if (!(g_migrateDir != nullptr ? Migrate(argv[i]) : Replay(argv[i]))) ++failures;
         } catch (const std::exception& error) {
             std::printf("%s: could not load request: %s\n", argv[i], FirstLine(error.what()).c_str());
             ++failures;

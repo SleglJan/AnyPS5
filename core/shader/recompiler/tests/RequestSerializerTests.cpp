@@ -316,6 +316,25 @@ int main() {
         }
     }
 
+    for (const std::uint8_t colliding : {24u, 25u, 26u}) {
+        auto bytes = layer23;
+        bytes[4] = colliding;
+        if (colliding >= 25u) bytes.insert(bytes.begin() + 259u, 0x5u);
+        bytes.insert(bytes.end(), 2u * sizeof(std::uint64_t), 0u);
+        bool refused = false;
+        try {
+            static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
+        } catch (const std::runtime_error& error) {
+            refused = std::string_view(error.what()) == "request version " + std::to_string(colliding) + " has two layouts; re-record it";
+        }
+        Require(refused);
+        const auto own = serializer.Deserialize(EncodeBase64(bytes), ShaderRecompiler::CollidingVersions::ReadAsOwn);
+        Require(own.request.context.pixel.has_value() && own.request.context.pixel->quadPixelMask == (colliding >= 25u ? 0x5u : 0x0fu));
+        Require(own.linkedLiterals.empty() && own.linkedWords.empty());
+        const auto migrated = serializer.Serialize(own.request);
+        Require(DecodeBase64(migrated)[4] == 33u && serializer.Serialize(serializer.Deserialize(migrated).request) == migrated);
+    }
+
     for (const auto& fixture : canonicalMain22) {
         const auto base = DecodeBase64(fixture.encoded);
         const auto source = serializer.Deserialize(fixture.encoded);

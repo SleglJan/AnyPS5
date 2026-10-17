@@ -841,12 +841,13 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     return base64Encode(buffer);
 }
 
-DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const {
+DeserializedRequest RequestSerializer::Deserialize(std::string_view text, CollidingVersions colliding) const {
     const std::string decoded = base64Decode(text);
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
     if (version < 1u || version > 33u) throw std::runtime_error("unsupported recompile request serialization version " + std::to_string(version));
+    if (version >= 24u && version <= 26u && colliding == CollidingVersions::Refuse) throw std::runtime_error("request version " + std::to_string(version) + " has two layouts; re-record it");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
