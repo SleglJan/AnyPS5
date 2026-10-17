@@ -202,7 +202,6 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
-    std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t heapSamplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
     std::vector<SpirvTableImageFunction> tableImageFunctions;

@@ -15,21 +15,13 @@ std::uint32_t PointFilteredSamplerWord(std::uint32_t word0, std::uint32_t filter
 struct PreparedDescriptorBinding {
     DescriptorBinding descriptor;
     std::vector<std::uint32_t> resources;
-    std::vector<bool> identityImageSwizzle;
     std::vector<std::uint32_t> samplerFilterElements;
     std::vector<bool> inactive;
     std::vector<std::vector<std::uint32_t>> tableSamplerElements;
 };
 
-struct PreparedImageMetadata {
-    std::uint32_t resource;
-    std::uint32_t offset;
-    RuntimeAbi::ResourceMetadata metadata;
-};
-
 struct DescriptorBindingPlan {
     std::vector<PreparedDescriptorBinding> bindings;
-    std::vector<PreparedImageMetadata> imageMetadata;
     std::vector<PipelineSpecializationConstant> specialization;
     std::vector<std::uint32_t> runtimeState;
     bool storageData = false;

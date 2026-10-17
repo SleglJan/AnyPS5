@@ -79,7 +79,7 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
 
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
     if (nullImageDescriptor(descriptor)) return true;
-    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && (image.table == NoTable || image.directRuntime) && image.read && !image.written && !image.atomic;
+    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.directRuntime && image.read && !image.written && !image.atomic;
 }
 
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
@@ -817,27 +817,10 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
         if (image.source >= plan.descriptorSources.size()) {
             throw std::runtime_error("image resource references an unknown descriptor source");
         }
-        if (image.table != NoTable) {
-            snapshot.images[i].dwordCount = 8u;
-            continue;
+        if (image.table == NoTable) {
+            throw std::runtime_error("an image outside the image tables is not implemented");
         }
-        if (cursor >= values.size()) {
-            throw std::runtime_error("materialization sources are missing image descriptors");
-        }
-        auto descriptor = values[cursor];
-        cursor++;
-        if (descriptor.dwordCount != 8u) {
-            throw std::runtime_error("image descriptor has an invalid width");
-        }
-        const auto activity = plan.descriptorSources.size() + i;
-        if (activity < activeSources.size() && activeSources[activity] == 0u) {
-            descriptor = DescriptorValue{};
-            descriptor.dwordCount = 8u;
-        }
-        if (!validImageDescriptor(descriptor, image.r128) && !nullImageDescriptor(image, descriptor)) {
-            throw std::runtime_error("runtime image descriptor is invalid");
-        }
-        snapshot.images[i] = descriptor;
+        snapshot.images[i].dwordCount = 8u;
     }
 
     snapshot.samplers.resize(plan.info.samplers.size());
@@ -954,31 +937,8 @@ std::uint32_t colorCompareState(const ImageResource& image, const DescriptorValu
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
 }
 
-std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
-    const auto& image = info.images[index];
-    const auto& descriptor = snapshot.images[index];
-    if (nativeCompare(image, descriptor)) return 0u;
-    std::vector<std::array<std::uint32_t, 4>> samplers;
-    for (const auto& pair : info.sampledPairs) {
-        if (pair.image != index) continue;
-        if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("comparison sampling of a color texture through a sampler table is not implemented");
-        if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("comparison sampling of a color texture has no sampler descriptor");
-        const auto& words = snapshot.samplers[pair.sampler].dwords;
-        samplers.push_back({words[0], words[1], words[2], words[3]});
-    }
-    return colorCompareState(image, descriptor, samplers);
-}
-
-void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
-    if (snapshot.flattenedSrt.size() != plan.srtReads.size()) throw std::runtime_error("runtime SRT size differs from the static interface");
-    for (std::uint32_t i = 0u; i < plan.info.images.size(); ++i) {
-        const auto& image = plan.info.images[i];
-        if (image.table != NoTable) continue;
-        static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(i), plan.info.runtimeImageModes.at(i)));
-    }
-}
-
 void materializeSrtGuards(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    if (snapshot.flattenedSrt.size() != plan.srtReads.size()) throw std::runtime_error("runtime SRT size differs from the static interface");
     const auto& guarded = plan.guardedSrtSlots;
     const auto flags = snapshot.flattenedSrt.size();
     snapshot.flattenedSrt.resize(flags + guarded.size(), 0u);
@@ -1513,8 +1473,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
-    const bool table = image.table != NoTable;
-    if (table && image.tableOperation == TableOperation::Unsupported) return {};
+    if (image.tableOperation == TableOperation::Unsupported) return {};
     std::vector<ImageResource> modes;
     const bool storage = image.resourceClass == ImageResourceClass::Storage;
     const auto append = [&](IrTextureNumericClass numeric, IrBufferFormat conversion, IrBufferFormat packed, bool depth, bool unorm16) {
@@ -1613,7 +1572,6 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, false);
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, true);
                 }
-                if (image.fmaskCompatible && !table) append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Fmask8_S2_F1, false, false);
             }
         }
     }
@@ -1624,7 +1582,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
         }
     }
-    if (image.depthCompare && (!table || image.deviceTable) && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
+    if (image.depthCompare && image.deviceTable && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
         auto mode = image;
         mode.numericClass = IrTextureNumericClass::Float;
         mode.depthCompare = false;
@@ -1652,7 +1610,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
-    if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && (!table || image.deviceTable)) {
+    if (image.constantSwizzleCompatible && !storage && !image.depthCompare && !image.packed && image.deviceTable) {
         for (const auto numeric : {IrTextureNumericClass::Float, IrTextureNumericClass::Uint, IrTextureNumericClass::Sint}) {
             auto mode = image;
             mode.numericClass = numeric;
@@ -1667,7 +1625,6 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(mode);
         }
     }
-    if (modes.empty() && !table) throw std::runtime_error("image instruction has no supported runtime modes");
     if (image.foldTexelOffsetsOnly && std::ranges::any_of(modes, [](const ImageResource& mode) { return UnnormalizedSampleMismatch(mode) == nullptr; })) {
         std::erase_if(modes, [](const ImageResource& mode) { return UnnormalizedSampleMismatch(mode) != nullptr; });
     }
@@ -1773,16 +1730,6 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     return reject(reason, message + words);
 }
 
-std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
-    const auto match = TryRuntimeImageMode(image, descriptor, modes);
-    if (!match.mode.has_value()) throw std::runtime_error(match.detail);
-    return *match.mode;
-}
-
-std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
-    return emulatedCompareState(info, snapshot, index);
-}
-
 std::uint32_t ResourceMaterializer::ColorCompareState(const ImageResource& image, const DescriptorValue& descriptor, std::span<const std::uint32_t, 4> sampler) {
     const std::array<std::array<std::uint32_t, 4>, 1> samplers{{{sampler[0], sampler[1], sampler[2], sampler[3]}}};
     return colorCompareState(image, descriptor, samplers);
@@ -1816,7 +1763,6 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         image.srgbDecodeFormats = resources.srgbDecodeFormats;
         image.numericClass = image.atomic ? IrTextureNumericClass::Uint : IrTextureNumericClass::Float;
         image.mipCount = image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
-        if (image.table == NoTable) continue;
         tables = true;
         const auto modes = RuntimeImageModes(image);
         if (modes.empty() || modes.size() > ImageTableAbi::MaxModes) image.tableOperation = TableOperation::Unsupported;
@@ -2104,10 +2050,9 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
             throw std::runtime_error("ResourceMaterializer::ExtractPlan image references an unknown descriptor source");
         }
         if (image.table == NoTable) {
-            addSource(image.source);
-        } else if (!image.deviceTable) {
-            plan.requiresSpecializationMemory = true;
+            throw std::runtime_error("ResourceMaterializer::ExtractPlan an image outside the image tables is not implemented");
         }
+        if (!image.deviceTable) plan.requiresSpecializationMemory = true;
     }
     for (const auto& sampler : plan.info.samplers) {
         if (sampler.table != NoTable) {
@@ -2148,7 +2093,6 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
         throw;
     }
     const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    materializeTables(plan, nextSnapshot);
     materializeSrtGuards(plan, nextSnapshot);
     if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
@@ -2164,9 +2108,6 @@ bool ResourceMaterializer::ReadsResourcesAtRunTime(const IrResourcePlan& plan) {
         }
         return true;
     };
-    for (const auto& image : plan.info.images) {
-        if (!image.deviceTable && (image.table != NoTable || !constant(image.source))) return false;
-    }
     for (const auto& sampler : plan.info.samplers) {
         if (!sampler.deviceTable && (sampler.table != NoTable || !constant(sampler.source))) return false;
     }
@@ -2189,11 +2130,8 @@ void ResourceMaterializer::RunTimeSnapshot(const IrResourcePlan& plan, const Srt
     };
     next.images.resize(plan.info.images.size());
     for (std::uint32_t i = 0; i < plan.info.images.size(); ++i) {
-        const auto& image = plan.info.images[i];
+        if (!plan.info.images[i].deviceTable) throw std::runtime_error("ResourceMaterializer::RunTimeSnapshot requires every image in the device image table");
         next.images[i].dwordCount = 8u;
-        if (image.deviceTable) continue;
-        evaluate(image.source, 8u, next.images[i]);
-        if (!validImageDescriptor(next.images[i], image.r128) && !nullImageDescriptor(image, next.images[i])) throw std::runtime_error("runtime image descriptor is invalid");
     }
     next.samplers.resize(plan.info.samplers.size());
     for (std::uint32_t i = 0; i < plan.info.samplers.size(); ++i) {
@@ -2205,7 +2143,6 @@ void ResourceMaterializer::RunTimeSnapshot(const IrResourcePlan& plan, const Srt
     SrtWalker walker;
     const std::vector<std::uint8_t> active;
     TableSnapshotter(plan, runtime, walker, active, next.tables).Run();
-    materializeTables(plan, next);
     materializeSrtGuards(plan, next);
     snapshot = std::move(next);
 }

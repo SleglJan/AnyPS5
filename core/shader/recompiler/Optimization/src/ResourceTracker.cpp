@@ -1827,12 +1827,13 @@ private:
         if (memory.kind != ResourceKind::Image || imageInfo.resourceClass == ImageResourceClass::None) {
             fail("image operation has invalid resource kind");
         }
+        if (!DeviceTables()) fail("images need a target with 64-bit integers and buffer device addresses");
         handle = inst.Argument(0)->Resolve();
         const TableColumnPlan* column = FindTableColumn(*handle);
         if (column != nullptr) {
             source = column->source;
         } else if (!RuntimeImageSource(inst, *handle, source)) {
-            GetHandle(inst.Argument(0), IrOpcode::GetImageResource, 8, handle, source);
+            fail("an image whose descriptor or sampler the shader does not compute is not implemented");
         }
         resource = AddImage(source, memory, op, flags.pc);
         NoteBlockImage(resource);

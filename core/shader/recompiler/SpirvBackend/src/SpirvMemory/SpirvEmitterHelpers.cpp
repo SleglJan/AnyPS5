@@ -485,28 +485,8 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::ImageTableMap:
             state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");
             break;
-        default: {
-            if (ImageBindingResourceClass(binding.kind) == ImageResourceClass::None) {
-                FailEmit("descriptor binding has an unmapped image resource class");
-            }
-            const auto modes = ResourceMaterializer::RuntimeImageModes(state.program.Info().images.at(binding.resources.front()));
-            const auto selected = std::ranges::find_if(modes, [&](const ImageResource& mode) { return DescriptorBindingForImage(mode) == binding.kind; });
-            if (selected == modes.end()) FailEmit("static image heap has no runtime mode");
-            const auto& image = *selected;
-            const bool storage = image.resourceClass == ImageResourceClass::Storage;
-            RequireTableIndexing(state);
-            if (storage) state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
-            const auto type = state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, image));
-            const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
-            state.module.AddName(variable, ("image_" + std::to_string(static_cast<std::uint32_t>(binding.kind))).c_str());
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::HeapDescriptorSet);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, storage ? RuntimeAbi::HeapStorageImageBinding : RuntimeAbi::HeapSampledImageBinding);
-            state.imageVariables.at(ImageBindingIndex(binding.kind)) = variable;
-            if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
-                state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
-            }
-            break;
-        }
+        default:
+            FailEmit("descriptor binding names a typed image heap, which the image tables replace");
         }
     }
     if (LdsInDeviceMemory(state)) {

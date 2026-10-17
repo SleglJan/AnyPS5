@@ -16,6 +16,8 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Translation/ShaderInputInfoBuilder.hpp"
 
+#include <spirv/unified1/spirv.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 #include <fstream>
@@ -209,14 +211,16 @@ int main(int argc, char** argv) {
         }
 
         SrtWalker srtWalker;
-        srtWalker.BuildPlan(program);
+        const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
+        const bool deviceTables = supports(spv::CapabilityInt64) && supports(spv::CapabilityPhysicalStorageBufferAddresses);
+        srtWalker.BuildPlan(program, deviceTables);
         std::cout << "SrtWalker::BuildPlan OK\n";
 
         deadCodeEliminator.Eliminate(program);
         std::cout << "DCE after SRT OK\n";
 
         ResourceTracker resourceTracker;
-        resourceTracker.Track(program);
+        resourceTracker.Track(program, deviceTables);
         std::cout << "ResourceTracker::Track OK\n";
 
         deadCodeEliminator.Eliminate(program);

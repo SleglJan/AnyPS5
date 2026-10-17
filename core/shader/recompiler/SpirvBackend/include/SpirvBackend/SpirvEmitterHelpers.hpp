@@ -58,7 +58,6 @@ std::uint32_t ConstantU32(SpirvEmitterState& state, std::uint32_t value);
 std::uint32_t EmitSubgroupLocalInvocationId(SpirvEmitterState& state);
 [[noreturn]] void ExitDescriptorBindingFailure(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, const char* reason);
 std::uint32_t ResourceForDescriptor(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource);
-std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t resultPtrType, std::uint32_t variableId, std::uint32_t arrayIndex, DescriptorBindingKind kind, std::uint32_t resource, const char* variableName);
 std::uint32_t ImageScalarType(SpirvEmitterState& state, IrTextureNumericClass numericClass);
 std::uint32_t ImageVectorType(SpirvEmitterState& state, IrTextureNumericClass numericClass, std::uint32_t components);
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image);

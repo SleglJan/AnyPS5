@@ -102,7 +102,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (info.images.size() > RuntimeAbi::ImageCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     next.samplerSlotCount = 2u * static_cast<std::uint32_t>(std::ranges::count_if(info.samplers, [](const SamplerResource& sampler) { return sampler.table == NoTable; }));
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
-    if (registrationModules) next.runtimeImageCount = static_cast<std::uint32_t>(info.images.size());
     if (registrationModules && program.Resources().stage == IrShaderStage::Pixel) next.runtimeStateDwords = RuntimeAbi::StateDwords;
     if (registrationModules && program.Resources().stage != IrShaderStage::Pixel) {
         std::uint32_t attributes = 0u;
@@ -114,31 +113,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
 
-    std::array<std::vector<std::uint32_t>, ImageBindingCount> imageGroups;
-    const auto place = [&](std::uint32_t i) {
-        const bool dynamic = info.images[i].mipMode == ImageMipMode::DynamicStorage;
-        const std::uint32_t count = dynamic ? RuntimeAbi::StorageMipSlots : 1u;
-        std::array<bool, ImageBindingCount> placed{};
-        for (const auto& mode : ResourceMaterializer::RuntimeImageModes(info.images[i])) {
-            const auto group = ImageBindingIndex(DescriptorBindingForImage(mode));
-            if (placed.at(group)) continue;
-            placed[group] = true;
-            imageGroups[group].insert(imageGroups[group].end(), count, i);
-        }
-    };
-    next.imageSlotBases.assign(info.images.size(), 0u);
-    for (std::uint32_t i = 0; i < info.images.size(); i++) {
-        if (info.images[i].table == NoTable) {
-            next.imageSlotBases[i] = next.imageSlotCount;
-            next.imageSlotCount += info.images[i].mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
-            place(i);
-        }
-    }
-    for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
-        if (!imageGroups[i].empty()) {
-            addBinding(next, static_cast<DescriptorBindingKind>(FirstImageBinding + i), std::move(imageGroups[i]));
-        }
-    }
+    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table == NoTable; })) fail("an image outside the image tables has no binding");
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     if (stencilReplay) {

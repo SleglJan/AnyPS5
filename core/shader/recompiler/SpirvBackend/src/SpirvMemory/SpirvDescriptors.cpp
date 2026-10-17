@@ -43,38 +43,6 @@ std::uint32_t ResourceForDescriptor(const SpirvEmitterState& state, DescriptorBi
     ExitDescriptorBindingFailure(state, kind, resource, "descriptor group was not allocated");
 }
 
-std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t resultPtrType, std::uint32_t variableId, std::uint32_t arrayIndex, DescriptorBindingKind kind, std::uint32_t resource, const char* variableName) {
-    if (variableId == 0) {
-        ExitDescriptorBindingFailure(state, kind, resource, variableName);
-    }
-    const IrBindingLayout& layout = state.program.Metadata().bindings;
-    const auto binding = std::find_if(layout.descriptors.begin(), layout.descriptors.end(), [&](const IrDescriptorBinding& descriptor) { return descriptor.kind == kind; });
-    if (binding == layout.descriptors.end()) ExitDescriptorBindingFailure(state, kind, resource, "descriptor group was not allocated");
-    const auto first = static_cast<std::uint32_t>(std::find(binding->resources.begin(), binding->resources.end(), resource) - binding->resources.begin());
-    if (first > arrayIndex || arrayIndex - first >= RuntimeAbi::StorageMipSlots) ExitDescriptorBindingFailure(state, kind, resource, "image element lies outside its resource's slots");
-    const auto slot = EmitShaderDataDwordLoad(state, layout.ImageSlotDword() + layout.imageSlotBases.at(resource) + arrayIndex - first);
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, resultPtrType, pointer, variableId, slot);
-    return pointer;
-}
-
-std::uint32_t RuntimeImageDword(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t member) {
-    const auto index = ConstantU32(state, resource);
-    const auto dword = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, state.program.Metadata().bindings.ImageMetadataDword() + member), Binary(state, spv::OpIMul, TypeU32(state), index, ConstantU32(state, sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t))));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), dword);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
-}
-
-std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) {
-    const auto word = RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 3u);
-    const auto first = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, 12u)), 0xfu);
-    const auto last = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), word, ConstantU32(state, 16u)), 0xfu);
-    return Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), last, first), ConstantU32(state, 1u));
-}
-
 void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
     if (!state.tableIndexNonUniform) return;
     state.module.EmitCapability(spv::CapabilityShaderNonUniform);
@@ -156,25 +124,14 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
     const auto kind = DescriptorBindingForImage(imageResource);
     const auto imageType = ImageType(state, imageResource);
     const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType);
-    if (imageResource.table != NoTable) {
-        const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
-        if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
-        DecorateTableNonUniform(state, pointer);
-        const auto image = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
-        DecorateTableNonUniform(state, image);
-        return image;
-    }
-    const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
-    const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
-    if (variable == 0) {
-        ExitDescriptorBindingFailure(state, kind, resource, "sampled image descriptor array was not emitted");
-    }
-    const auto pointer = DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "sampled image descriptor array was not emitted");
+    const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
+    if (imageResource.table == NoTable || found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
+    DecorateTableNonUniform(state, pointer);
     const auto image = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
+    DecorateTableNonUniform(state, image);
     return image;
 }
 
@@ -235,22 +192,16 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
         FailEmit("storage image descriptor requested for a non-storage image");
     }
     const auto kind = DescriptorBindingForImage(image);
-    if (image.table != NoTable) {
-        const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
-        if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "storage image table array was not emitted");
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image)), pointer, found->variable, tableElement != 0u ? tableElement : state.tableAccess.element);
-        if (state.tableIndexNonUniform) {
-            state.module.EmitCapability(spv::CapabilityShaderNonUniform);
-            state.module.EmitCapability(spv::CapabilityStorageImageArrayNonUniformIndexing);
-            state.module.AddAnnotation(spv::OpDecorate, pointer, spv::DecorationNonUniform);
-        }
-        return pointer;
+    const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
+    if (image.table == NoTable || found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "storage image table array was not emitted");
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image)), pointer, found->variable, tableElement != 0u ? tableElement : state.tableAccess.element);
+    if (state.tableIndexNonUniform) {
+        state.module.EmitCapability(spv::CapabilityShaderNonUniform);
+        state.module.EmitCapability(spv::CapabilityStorageImageArrayNonUniformIndexing);
+        state.module.AddAnnotation(spv::OpDecorate, pointer, spv::DecorationNonUniform);
     }
-    const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
-    const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, ImageType(state, image));
-    const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
-    return DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "storage image descriptor array was not emitted");
+    return pointer;
 }
 
 void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel, std::uint32_t sample) {
@@ -263,74 +214,25 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
     }
     const auto kind = DescriptorBindingForImage(image);
     const auto imageType = ImageType(state, image);
-    if (image.table != NoTable) {
-        if (image.mipMode == ImageMipMode::DynamicStorage) {
-            if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) FailEmit("multisampled storage image requires a sample and cannot have mip levels");
-            const auto u32 = TypeU32(state);
-            const auto field = [&](std::uint32_t shift) { return Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, state.tableAccess.dword3, ConstantU32(state, shift)), ConstantU32(state, 0xfu)); };
-            const auto base = field(12u);
-            const auto last = field(16u);
-            const auto inRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), last, base), Binary(state, spv::OpULessThanEqual, TypeBool(state), mipLod, Binary(state, spv::OpISub, u32, last, base)));
-            EmitIfCondition(state, inRange, [&] {
-                const auto element = Binary(state, spv::OpIAdd, u32, state.tableAccess.element, mipLod);
-                const auto descriptor = state.module.AllocateId();
-                state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, element));
-                state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
-            });
-            return;
-        }
-        const auto descriptor = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, 0u));
-        if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel, spv::ImageOperandsSampleMask, sample);
-        else state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
+    if (image.mipMode == ImageMipMode::DynamicStorage) {
+        if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) FailEmit("multisampled storage image requires a sample and cannot have mip levels");
+        const auto u32 = TypeU32(state);
+        const auto field = [&](std::uint32_t shift) { return Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, state.tableAccess.dword3, ConstantU32(state, shift)), ConstantU32(state, 0xfu)); };
+        const auto base = field(12u);
+        const auto last = field(16u);
+        const auto inRange = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), last, base), Binary(state, spv::OpULessThanEqual, TypeBool(state), mipLod, Binary(state, spv::OpISub, u32, last, base)));
+        EmitIfCondition(state, inRange, [&] {
+            const auto element = Binary(state, spv::OpIAdd, u32, state.tableAccess.element, mipLod);
+            const auto descriptor = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, element));
+            state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
+        });
         return;
     }
-    const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
-    const auto pointerType = state.module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, imageType);
-    const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
-    const auto loadAt = [&](std::uint32_t index) {
-        const auto pointer = DescriptorElementPointer(state, pointerType, variable, index, kind, resource, "storage image descriptor array was not emitted");
-        const auto descriptor = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, imageType, descriptor, pointer);
-        return descriptor;
-    };
-    if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) {
-        if (sample == 0u || image.mipMode == ImageMipMode::DynamicStorage) FailEmit("multisampled storage image requires a sample and cannot have mip levels");
-        state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex), coord, texel, spv::ImageOperandsSampleMask, sample);
-        return;
-    }
-    if (image.mipMode != ImageMipMode::DynamicStorage) {
-        state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex), coord, texel);
-        return;
-    }
-    if (image.mipCount == 0u) {
-        ExitDescriptorBindingFailure(state, kind, resource, "dynamic storage image has no mip descriptors");
-    }
-    const auto count = state.registrationModules ? RuntimeMipCount(state, resource) : state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MipCountBase + resource, image.mipCount);
-    const auto mergeLabel = state.module.AllocateId();
-    std::vector<std::uint32_t> labels(image.mipCount);
-    std::vector<std::uint32_t> words{spv::OpSwitch, mipLod, mergeLabel};
-    for (std::uint32_t mip = 0; mip < image.mipCount; mip++) {
-        labels[mip] = state.module.AllocateId();
-        words.push_back(mip);
-        words.push_back(labels[mip]);
-    }
-    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
-    state.module.AddFunction(std::span<const std::uint32_t>(words));
-    for (std::uint32_t mip = 0; mip < image.mipCount; mip++) {
-        EmitLabel(state, labels[mip]);
-        const auto active = Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, mip), count);
-        const auto writeLabel = state.module.AllocateId();
-        const auto nextLabel = state.module.AllocateId();
-        state.module.AddFunction(spv::OpSelectionMerge, nextLabel, spv::SelectionControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, active, writeLabel, nextLabel);
-        EmitLabel(state, writeLabel);
-        state.module.AddFunction(spv::OpImageWrite, loadAt(arrayIndex + mip), coord, texel);
-        state.module.AddFunction(spv::OpBranch, nextLabel);
-        EmitLabel(state, nextLabel);
-        state.module.AddFunction(spv::OpBranch, mergeLabel);
-    }
-    EmitLabel(state, mergeLabel);
+    const auto descriptor = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, imageType, descriptor, StorageImageDescriptorPointer(state, resource, 0u));
+    if (RdnaImageDimensionInfoFor(image.dimension).multisampled != 0u) state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel, spv::ImageOperandsSampleMask, sample);
+    else state.module.AddFunction(spv::OpImageWrite, descriptor, coord, texel);
 }
 
 const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimension) {

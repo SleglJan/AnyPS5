@@ -45,17 +45,9 @@ struct SampleSetup {
     std::uint32_t texelCoord = 0;
 };
 
-std::uint32_t RuntimeImageMode(SpirvEmitterState& state, std::uint32_t resource) {
-    const auto mode = Binary(state, spv::OpShiftRightLogical, TypeU32(state), RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, 1u));
-    return state.registrationModules ? Binary(state, spv::OpBitwiseAnd, TypeU32(state), mode, ConstantU32(state, RuntimeAbi::ImageModeMask)) : mode;
-}
-
 std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t component) {
-    const bool table = state.program.Info().images.at(resource).table != NoTable;
-    if (!table && !state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + resource * PipelineSpecialization::ImageWords + 1u + component, component + 4u);
-    if (table && !state.tableAccess.active) FailEmit("image table swizzle requested outside a table access");
-    const auto descriptor = table ? state.tableAccess.dword3 : RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, descriptor) / sizeof(std::uint32_t) + 3u);
-    return Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), descriptor, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
+    if (state.program.Info().images.at(resource).table == NoTable || !state.tableAccess.active) FailEmit("image table swizzle requested outside a table access");
+    return Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), state.tableAccess.dword3, ConstantU32(state, component * 3u)), ConstantU32(state, 7u));
 }
 
 std::uint32_t RuntimeSwizzledComponent(SpirvEmitterState& state, std::uint32_t selector, const std::array<std::uint32_t, 4>& components) {
@@ -1462,10 +1454,9 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto& image = access.image;
-    const bool tableCompare = state.tableAccess.active && state.tableAccess.compare != 0u;
-    const auto compare = tableCompare ? state.tableAccess.compare : state.registrationModules ? EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), RuntimeImageDword(state, mem.resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, RuntimeAbi::CompareStateShift)), RuntimeAbi::CompareStateMask) : 0u;
+    if (!state.tableAccess.active || state.tableAccess.compare == 0u) ctx.Fail(access.inst, "compares against a color texture outside the device image table");
+    const auto compare = state.tableAccess.compare;
     const auto parameter = [&](std::uint32_t word) {
-        if (!tableCompare && !state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::CompareBase + mem.resource * PipelineSpecialization::CompareWords + word, 0u);
         constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 6> fields{{{EmulatedCompare::FunctionShift, 7u}, {4u, 1u}, {EmulatedCompare::ClampXShift, 3u}, {EmulatedCompare::ClampYShift, 3u}, {EmulatedCompare::ReferenceShift, 3u}, {12u, 1u}}};
         return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), compare, ConstantU32(state, fields.at(word).first)), fields.at(word).second);
     };
@@ -2036,26 +2027,19 @@ void EmitModeCase(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryI
     }
 }
 
-std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, bool tables, std::uint32_t selector, std::uint32_t resultId) {
+std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const std::vector<ImageResource>& modes, std::uint32_t selector, std::uint32_t resultId) {
     auto& state = ctx.state;
-    const bool table = ImageResourceOf(state, memory).table != NoTable;
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
-    const bool exits = !state.continueTarget;
     const auto merge = state.module.AllocateId();
-    const auto invalid = tables || exits ? state.module.AllocateId() : merge;
-    const auto undefined = returnsValue && !tables && !exits ? state.module.AllocateId() : 0u;
+    const auto invalid = state.module.AllocateId();
     std::vector<std::uint32_t> labels(modes.size());
     std::vector<std::uint32_t> words{spv::OpSwitch, selector, invalid};
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
-        if (table && !TableModeEmitted(modes[index])) continue;
+        if (!TableModeEmitted(modes[index])) continue;
         labels[index] = state.module.AllocateId();
         words.insert(words.end(), {index, labels[index]});
     }
     std::vector<std::uint32_t> incoming;
-    if (undefined != 0u) {
-        state.module.AddFunction(spv::OpUndef, TypeId(state, inst.Type()), undefined);
-        incoming.insert(incoming.end(), {undefined, state.currentLabel});
-    }
     state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
     state.module.AddFunction(words);
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
@@ -2067,14 +2051,9 @@ std::uint32_t EmitModeSwitch(SpirvValueEmitContext& ctx, const IrValue& inst, co
         state.module.AddFunction(spv::OpBranch, merge);
     }
     state.runtimeImage = nullptr;
-    if (tables) {
-        EmitLabel(state, invalid);
-        if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
-        state.module.AddFunction(spv::OpBranch, merge);
-    } else if (exits) {
-        EmitLabel(state, invalid);
-        state.module.AddFunction(spv::OpUnreachable);
-    }
+    EmitLabel(state, invalid);
+    if (returnsValue) incoming.insert(incoming.end(), {ZeroResult(ctx, inst), invalid});
+    state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
     if (returnsValue) {
         std::vector<std::uint32_t> phi{spv::OpPhi, TypeId(state, inst.Type()), resultId};
@@ -2122,7 +2101,7 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
     if (state.laneCount == 1u && !state.module.InHelperFunction() && (atAccess || SingleTableImageUse(state, inst, memory)) && InlineModeSwitchesFit(state)) {
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
-        EmitModeSwitch(ctx, inst, memory, modes, true, selector, result);
+        EmitModeSwitch(ctx, inst, memory, modes, selector, result);
         if (returnsValue) ctx.Define(inst, result);
         return;
     }
@@ -2172,7 +2151,7 @@ void EmitTableImageCall(SpirvValueEmitContext& ctx, const IrValue& inst, const M
         state.tableAccess = {parameters[1], parameters[2], parameters[3], true, parameters[4], parameters[5]};
         SpirvValueEmitContext body(state);
         const auto result = returnsValue ? state.module.AllocateId() : 0u;
-        EmitModeSwitch(body, inst, memory, modes, true, parameters[0], result);
+        EmitModeSwitch(body, inst, memory, modes, parameters[0], result);
         if (returnsValue) state.module.AddFunction(spv::OpReturnValue, result);
         else state.module.AddFunction(spv::OpReturn);
         const auto words = state.module.TakeFunctionWords(start);
@@ -2313,7 +2292,7 @@ std::optional<DeviceImagePlan> PlanDeviceImage(const SpirvEmitterState& state, c
     plan.memory = &infos[index];
     plan.base = &ImageResourceOf(state, *plan.memory);
     if (!plan.base->deviceTable) return std::nullopt;
-    plan.modes = plan.base->table != NoTable ? state.program.Info().runtimeImageModes.at(plan.memory->resource) : ResourceMaterializer::RuntimeImageModes(*plan.base);
+    plan.modes = state.program.Info().runtimeImageModes.at(plan.memory->resource);
     if (plan.base->tableOperation == TableOperation::Unsupported || plan.modes.empty()) return std::nullopt;
     plan.handle = inst.Argument(0)->Resolve();
     if (plan.handle == nullptr || plan.handle->ArgumentCount() != Abi::DescriptorWords) return std::nullopt;
@@ -2735,61 +2714,22 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto& memory = ctx.Memory(inst);
     const auto& base = ImageResourceOf(state, memory);
+    if (base.table == NoTable) ctx.Fail(inst, "accesses an image outside the image tables");
     EmitImageStoreRecord(ctx, inst, memory, base);
     const auto imageInfo = ImageOpcodeInfoOf(inst.Opcode());
     const auto& samplers = state.program.Info().samplers;
     const bool tableSampler = imageInfo.needsSampler && memory.sampler < samplers.size() && samplers[memory.sampler].table != NoTable;
-    const bool tables = base.table != NoTable || tableSampler;
-    const auto modes = base.table != NoTable ? state.program.Info().runtimeImageModes.at(memory.resource) : ResourceMaterializer::RuntimeImageModes(base);
+    const auto& modes = state.program.Info().runtimeImageModes.at(memory.resource);
     if (base.deviceTable) {
         EmitDeviceTableImage(ctx, inst, memory, base, modes, tableSampler);
         return;
     }
-    std::uint32_t tableSelector = 0u;
-    std::uint32_t samplerGuard = 0u;
-    if (tables) {
-        const auto access = EmitTableAccess(ctx, inst, memory, base, tableSampler);
-        if (access.unsupported) {
-            state.tableAccess = {};
-            return;
-        }
-        if (base.table != NoTable) {
-            const auto mode = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), access.flags, ConstantU32(state, ImageTableAbi::ModeShift)), ConstantU32(state, ImageTableAbi::ModeMask));
-            EmitTableImageCall(ctx, inst, memory, modes, Select(state, TypeU32(state), access.valid, mode, ConstantU32(state, InvalidTableSelector)), tableSampler, false);
-            state.tableAccess = {};
-            return;
-        }
-        tableSelector = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u);
-        samplerGuard = access.valid;
+    const auto access = EmitTableAccess(ctx, inst, memory, base, tableSampler);
+    if (!access.unsupported) {
+        const auto mode = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), access.flags, ConstantU32(state, ImageTableAbi::ModeShift)), ConstantU32(state, ImageTableAbi::ModeMask));
+        EmitTableImageCall(ctx, inst, memory, modes, Select(state, TypeU32(state), access.valid, mode, ConstantU32(state, InvalidTableSelector)), tableSampler, false);
     }
-    if (modes.size() == 1u && !tables) {
-        EmitModeCase(ctx, inst, memory, modes.front());
-        state.runtimeImage = nullptr;
-        return;
-    }
-    const auto selector = tables ? tableSelector : !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u) : RuntimeImageMode(state, memory.resource);
-    const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
-    const auto guardedId = returnsValue ? ctx.Result(inst) : 0u;
-    ctx.definitions.erase(&inst);
-    const auto guardMerge = samplerGuard != 0u ? state.module.AllocateId() : 0u;
-    const auto guardSkip = samplerGuard != 0u ? state.module.AllocateId() : 0u;
-    if (samplerGuard != 0u) {
-        const auto guardBody = state.module.AllocateId();
-        state.module.AddFunction(spv::OpSelectionMerge, guardMerge, spv::SelectionControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, samplerGuard, guardBody, guardSkip);
-        EmitLabel(state, guardBody);
-    }
-    const auto resultId = returnsValue && samplerGuard != 0u ? state.module.AllocateId() : guardedId;
-    const auto merge = EmitModeSwitch(ctx, inst, memory, modes, tables, selector, resultId);
     state.tableAccess = {};
-    if (samplerGuard != 0u) {
-        state.module.AddFunction(spv::OpBranch, guardMerge);
-        EmitLabel(state, guardSkip);
-        state.module.AddFunction(spv::OpBranch, guardMerge);
-        EmitLabel(state, guardMerge);
-        if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ConstantU32CompositeZero(state, 4u), guardSkip);
-    }
-    if (returnsValue) ctx.definitions.emplace(&inst, guardedId);
 }
 
 void EmitGetImageResource(SpirvValueEmitContext& context) {
