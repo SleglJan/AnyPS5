@@ -133,11 +133,15 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
 
 void Driver::readRegisterLists(Submission& submission) {
     submission.registerLists.clear();
+    auto& costs = submissionCosts(submission.queue);
+    costs.commandWalks.fetch_add(1, std::memory_order_relaxed);
     for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto header = submission.commands[cursor];
         if ((header >> 30u) != 3u || !Pm4::IndirectRegisterOpcode((header >> 8u) & 0xffu)) continue;
         try {
-            submission.registerLists.emplace(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
+            const auto list = submission.registerLists.emplace(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
+            costs.registerLists.fetch_add(1, std::memory_order_relaxed);
+            costs.registerBytes.fetch_add(list.first->second.size() * sizeof(std::uint32_t), std::memory_order_relaxed);
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: " + Pm4::Name(header) + " at DWORD " + std::to_string(cursor) + ": " + error.what());
         }
@@ -145,6 +149,7 @@ void Driver::readRegisterLists(Submission& submission) {
 }
 
 void Driver::waitForFlipRoom(const Submission& submission) {
+    submissionCosts(submission.queue).commandWalks.fetch_add(1, std::memory_order_relaxed);
     for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
         if (submission.commands[cursor] != FlipPacketHeader) continue;
         std::shared_ptr<IVideoOutput> output;
@@ -171,12 +176,14 @@ void Driver::noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited) {
 
 void Driver::holdFlipBehindWorker(const Submission& submission) {
     if (submission.queue != 0 || onWorkerThread()) return;
+    submissionCosts(submission.queue).commandWalks.fetch_add(1, std::memory_order_relaxed);
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
         candidate = words[0] == FlipPacketHeader || EopRelease(words);
     }
     if (!candidate) return;
+    submissionCosts(submission.queue).commandWalks.fetch_add(1, std::memory_order_relaxed);
     std::unique_lock lock(mutex);
     bool flips = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !flips; cursor += Pm4::PacketWords(submission.commands[cursor])) {
@@ -304,8 +311,11 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue) {
     validate(submission, descriptor.addr);
     readRegisterLists(submission);
     if (APS5_ENABLE_TIMING_LOG) submission.validatedAt = std::chrono::steady_clock::now();
+    const auto checked = profile ? std::chrono::steady_clock::now() : start;
     waitForFlipRoom(submission);
+    const auto roomed = profile ? std::chrono::steady_clock::now() : start;
     holdFlipBehindWorker(submission);
+    const auto held = profile ? std::chrono::steady_clock::now() : start;
     AwaitRegistrationPreparation();
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
     static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
@@ -329,7 +339,11 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue) {
         if (ring) RecordSubmission(queue, submission.serial, submission.commands, descriptor.addr, false);
         if (profile) {
             ++costs.submissions;
-            costs.validateNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(validated - copied).count());
+            const auto nanoseconds = [](auto duration) { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count()); };
+            costs.validateNs += nanoseconds(checked - copied);
+            costs.flipRoomNs += nanoseconds(roomed - checked);
+            costs.flipHoldNs += nanoseconds(held - roomed);
+            costs.preparationNs += nanoseconds(validated - held);
             costs.copyNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>((copied - start) + (now - validated)).count());
         }
         if (APS5_ENABLE_TIMING_LOG) submission.enqueuedAt = std::chrono::steady_clock::now();

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include <cstdlib>
 #include <stdexcept>
@@ -51,6 +52,14 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
     const std::span<const std::uint32_t> commands = submission.commands;
     const auto queue = submission.queue;
     std::vector<std::size_t> guarded;
+    auto& costs = submissionCosts(queue);
+    costs.commandWalks.fetch_add(1, std::memory_order_relaxed);
+    std::uint64_t packets = 0;
+    struct Count {
+        std::atomic<std::uint64_t>& total;
+        const std::uint64_t& packets;
+        ~Count() { total.fetch_add(packets, std::memory_order_relaxed); }
+    } counted{costs.validatedPackets, packets};
     for (std::size_t cursor = 0; cursor < commands.size();) {
         std::erase_if(guarded, [cursor](std::size_t end) { return end <= cursor; });
         const auto header = commands[cursor];
@@ -67,6 +76,7 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
         }
         const auto count = Pm4::PacketWords(header);
         require(count <= commands.size() - cursor, "truncated PM4 packet");
+        ++packets;
         try {
             Pm4::Validate(commands.subspan(cursor, count), queue);
             if (header == FlipPacketHeader && !guarded.empty()) throw std::runtime_error("a flip inside a conditional execution range (conditional flip reservation) is not implemented");
