@@ -4228,6 +4228,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     if (!watched) block = std::aligned_alloc(65536, bytes);
 #endif
     Require(block != nullptr, "cannot allocate the image memo block");
+    GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     auto* first = static_cast<std::uint8_t*>(block);
     auto* second = first + 65536;
     std::memset(first, 0x11, surfaceBytes);
@@ -4261,6 +4262,7 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     kept.clear();
     ClearCachedTextures(context.device);
+    GuestAllocations::Mutation().Remove(block);
     if (watched) ReleaseWatched(block, bytes);
 #ifdef _WIN32
     else VirtualFree(block, 0, MEM_RELEASE);

@@ -434,14 +434,15 @@ bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& reso
 // GPU-direct (a snapshot of such a surface reads and compares its bytes on the CPU, waiting for
 // the recorded work that wrote them). APS5_NO_SAMPLED_FROM_STORAGE=1 keeps every sampled texture a
 // snapshot as before.
-bool SampledFromStorageEligible(const Context& context, std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes) {
+bool SampledFromStorageEligible(const Context& context, std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes, bool importOnDemand = false) {
     static const bool disabled = std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
     if (disabled || IsBlockCompressed(format) || !StorageFormatAvailable(context, format)) return false;
+    if (importOnDemand) return HostImportFor(context, address, static_cast<std::size_t>(guestBytes)) != nullptr;
     return HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
 }
 
-bool SampledFromStorageEligible(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes) {
-    return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes);
+bool SampledFromStorageEligible(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes, bool importOnDemand = false) {
+    return SampledFromStorageEligible(context, resource.format, resource.baseAddress, guestBytes, importOnDemand);
 }
 
 // Whether a sampled texture over a fast-cleared, storage-eligible surface views the cleared storage
@@ -646,7 +647,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
     // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
     // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
-    if ((!depthCompare || depthCopy) && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
+    if ((!depthCompare || depthCopy) && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes, true)) {
 
         keys = scanKeys();
         if (*keys == DccKeys::Uncompressed) {
