@@ -32,6 +32,8 @@ void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);
 void RecordBdaFaultReason(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, std::uint32_t reason);
 void RecordBdaFaultWords(SpirvEmitterState& state, std::uint32_t addressLow, std::uint32_t addressHigh, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);
+std::uint32_t BdaFaultStage(SpirvEmitterState& state);
+void RecordBdaDescriptorFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, std::uint32_t resource, std::uint32_t reserved);
 void ValidateBdaTarget(const IrProgram& program, const SpirvTargetOptions& target);
 // Whether a faulting BDA access may end its invocation. Programs with workgroup barriers must keep
 // every invocation running, so their faulting reads return zero instead.

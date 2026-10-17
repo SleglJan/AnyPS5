@@ -74,25 +74,9 @@ void recordInvalidBufferDescriptor(SpirvValueEmitContext& context, const IrValue
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
     EmitIfCondition(state, condition, [&] {
-        const auto u32 = TypeU32(state);
-        const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
-        const auto previous = state.module.AllocateId();
-        const auto scope = ConstantU32(state, spv::ScopeDevice);
-        const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
-        state.module.AddFunction(spv::OpAtomicCompareExchange, u32, previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
-        EmitIfCondition(state, Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u)), [&] {
-            const auto store = [&](std::uint32_t index, std::uint32_t value) {
-                state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
-            };
-            store(1, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultReason::InvalidBufferDescriptor)));
-            store(2, words[0]);
-            store(3, words[1]);
-            store(4, words[2]);
-            store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage) | memory.resource << BdaAbi::DescriptorFaultResourceShift));
-            store(6, BdaInstructionPc(state, instruction));
-            store(7, words[3]);
-            state.module.AddFunction(spv::OpAtomicStore, pointer, scope, ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
-        });
+        const auto u64 = TypeScalarU64(state);
+        const auto address = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, words[0]), Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, words[1]), BdaConstant(state, 32u)));
+        RecordBdaDescriptorFault(state, address, words[2], BdaInstructionPc(state, instruction), memory.resource, words[3]);
     });
 }
 

@@ -515,7 +515,7 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
         const auto reason = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, u32, reason, translated, 1u);
         EmitIfCondition(state, Binary(state, spv::OpINotEqual, TypeBool(state), reason, ConstantU32(state, 0u)), [&] {
-            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.bdaFaultFunction, reason, address, bytes, instruction);
+            state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.bdaFaultFunction, reason, address, bytes, instruction, BdaFaultStage(state), ConstantU32(state, 0u));
         });
     }
     state.module.AddFunction(spv::OpReturnValue, device);
