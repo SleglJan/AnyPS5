@@ -82,11 +82,23 @@ private:
 class CreationGate {
 public:
     static constexpr std::size_t CompilerBytesPerWord = 12288;
+    static constexpr std::size_t MemoryLimitBytes = std::size_t{16} << 30u;
+    using MemorySource = std::size_t (*)();
 
     explicit CreationGate(std::size_t words) : words(words) {
         auto& gate = State();
         std::unique_lock lock(gate.mutex);
-        const auto fits = [&] { return gate.inFlight == 0 || gate.inFlight + words <= budgetWords(gate); };
+        bool heldCounted = false;
+        const auto fits = [&] {
+            if (gate.inFlight == 0) return true;
+            if (gate.inFlight + words > budgetWords(gate)) return false;
+            if (memoryFits(gate, words)) return true;
+            if (!heldCounted) {
+                heldCounted = true;
+                ++gate.heldByMemory;
+            }
+            return false;
+        };
         if (CreationAhead::Active()) {
             const auto ticket = gate.issued++;
             gate.changed.wait(lock, [&] { return ticket == gate.admitted && gate.framesWaiting == 0 && fits(); });
@@ -96,6 +108,7 @@ public:
             gate.changed.wait(lock, fits);
             --gate.framesWaiting;
         }
+        if (gate.inFlight == 0 && !memoryFits(gate, words)) ++gate.overMemory;
         gate.inFlight += words;
         gate.peak = std::max(gate.peak, ++gate.creations);
         lock.unlock();
@@ -151,6 +164,31 @@ public:
         gate.changed.notify_all();
     }
 
+    static void SetMemorySource(MemorySource source, std::size_t limitBytes = MemoryLimitBytes) {
+        auto& gate = State();
+        {
+            std::lock_guard lock(gate.mutex);
+            gate.memory = source;
+            gate.memoryLimit = limitBytes;
+        }
+        gate.changed.notify_all();
+    }
+
+    static std::size_t RamSideBytes();
+    static void UseRamSide(MemorySource deviceLocal);
+
+    static std::size_t HeldByMemory() {
+        auto& gate = State();
+        std::lock_guard lock(gate.mutex);
+        return gate.heldByMemory;
+    }
+
+    static std::size_t OverMemory() {
+        auto& gate = State();
+        std::lock_guard lock(gate.mutex);
+        return gate.overMemory;
+    }
+
 private:
     struct Shared {
         std::mutex mutex;
@@ -162,10 +200,21 @@ private:
         std::size_t peak = 0;
         std::size_t budgetBytes = 0;
         std::size_t framesWaiting = 0;
+        MemorySource memory = nullptr;
+        std::size_t memoryLimit = MemoryLimitBytes;
+        std::size_t heldByMemory = 0;
+        std::size_t overMemory = 0;
     };
 
     static std::size_t budgetWords(const Shared& gate) {
         return std::max<std::size_t>(1, (gate.budgetBytes != 0 ? gate.budgetBytes : DefaultBudgetBytes()) / CompilerBytesPerWord);
+    }
+
+    static bool memoryFits(const Shared& gate, std::size_t words) {
+        if (gate.memory == nullptr) return true;
+        const auto used = gate.memory();
+        const auto needed = EstimateBytes(gate.inFlight + words);
+        return used <= gate.memoryLimit && needed <= gate.memoryLimit - used;
     }
 
     static Shared& State();

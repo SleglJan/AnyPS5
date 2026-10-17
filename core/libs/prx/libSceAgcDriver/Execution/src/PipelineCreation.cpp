@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -11,6 +13,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <unistd.h>
 #endif
@@ -32,6 +35,38 @@ struct CreationQueue {
 CreationQueue& Queue() {
     static auto* queue = new CreationQueue();
     return *queue;
+}
+
+struct RamSide {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point sampled{};
+    std::size_t guestMapped = 0;
+    CreationGate::MemorySource deviceLocal = nullptr;
+};
+
+RamSide& RamSideState() {
+    static auto* state = new RamSide();
+    return *state;
+}
+
+std::size_t GuestMappedBytes() {
+    std::size_t bytes = 0;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix()) return 0;
+    GuestArena::GuestArenaForEachMapping_nid_postfix([](void* context, std::uintptr_t, std::size_t size, GuestArena::MappingChange change, std::uint32_t) {
+        if (change == GuestArena::MappingChange::Mapped) *static_cast<std::size_t*>(context) += size;
+    }, &bytes);
+#endif
+    return bytes;
+}
+
+std::size_t PrivateBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))) return counters.PrivateUsage;
+#endif
+    return 0;
 }
 
 void* RunCreations(void* argument) {
@@ -69,7 +104,11 @@ std::size_t CreationThread::Words() {
 }
 
 CreationGate::Shared& CreationGate::State() {
-    static auto& shared = *new Shared;
+    static auto& shared = [] () -> Shared& {
+        auto* created = new Shared;
+        created->memory = &RamSideBytes;
+        return *created;
+    }();
     return shared;
 }
 
@@ -88,6 +127,28 @@ std::size_t CreationGate::DefaultBudgetBytes() {
         return static_cast<std::size_t>(physical != 0 ? physical / 16u : std::uint64_t{4} << 30u);
     }();
     return budget;
+}
+
+std::size_t CreationGate::RamSideBytes() {
+    auto& state = RamSideState();
+    std::lock_guard lock(state.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (state.sampled == std::chrono::steady_clock::time_point{} || now - state.sampled >= std::chrono::seconds(1)) {
+        state.guestMapped = GuestMappedBytes();
+        state.sampled = now;
+    }
+    const auto total = PrivateBytes() + state.guestMapped;
+    const auto deviceLocal = state.deviceLocal != nullptr ? state.deviceLocal() : 0u;
+    return total > deviceLocal ? total - deviceLocal : 0u;
+}
+
+void CreationGate::UseRamSide(MemorySource deviceLocal) {
+    {
+        auto& state = RamSideState();
+        std::lock_guard lock(state.mutex);
+        state.deviceLocal = deviceLocal;
+    }
+    SetMemorySource(&RamSideBytes, MemoryLimitBytes);
 }
 
 bool CreationThread::Current() {

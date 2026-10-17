@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -162,6 +163,121 @@ void FramesFirst() {
     Require(!aheadAdmittedEarly, "a creation ahead of frames did not count the words of a creation inside a frame");
 }
 
+std::atomic<std::size_t> UsedBytes{0};
+
+std::size_t Used() {
+    return UsedBytes.load();
+}
+
+template<typename TPredicate>
+bool Within(std::chrono::milliseconds limit, TPredicate&& predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (!predicate()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+void MemoryHeadroom() {
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(std::size_t{4} << 20u));
+    CreationGate::SetMemorySource(&Used, CreationGate::EstimateBytes(1000000));
+    UsedBytes = CreationGate::EstimateBytes(500000);
+    const auto heldBefore = CreationGate::HeldByMemory();
+    const auto overBefore = CreationGate::OverMemory();
+    std::mutex mutex;
+    std::vector<char> admitted;
+    const auto note = [&](char name) {
+        std::lock_guard lock(mutex);
+        admitted.push_back(name);
+    };
+    const auto seen = [&](char name) {
+        std::lock_guard lock(mutex);
+        return std::ranges::find(admitted, name) != admitted.end();
+    };
+    std::atomic<bool> releaseFirst{false};
+    std::thread first([&] {
+        const CreationAhead ahead;
+        const CreationGate gate(300000);
+        note('a');
+        while (!releaseFirst) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    Require(Within(std::chrono::seconds(1), [&] { return seen('a'); }), "a creation that fits the memory left was not admitted");
+    std::atomic<bool> releaseSecond{false};
+    std::thread second([&] {
+        const CreationAhead ahead;
+        const CreationGate gate(300000);
+        note('b');
+        while (!releaseSecond) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!seen('b'), "a creation ran beside another while their compiler memory together exceeded the memory left");
+    Require(CreationGate::HeldByMemory() == heldBefore + 1u, "a creation held by the memory left was not counted");
+    std::thread frame([&] {
+        const CreationGate gate(100000);
+        note('f');
+    });
+    Require(Within(std::chrono::seconds(1), [&] { return seen('f'); }), "a creation inside a frame that fits the memory left waited");
+    frame.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!seen('b'), "a held creation was admitted when a smaller one ended while the memory left was still spent");
+    UsedBytes = CreationGate::EstimateBytes(800000);
+    releaseFirst = true;
+    first.join();
+    Require(Within(std::chrono::seconds(1), [&] { return seen('b'); }), "a held creation did not run alone once nothing else was in flight");
+    Require(CreationGate::OverMemory() == overBefore + 1u, "a creation that ran alone over the memory left was not counted");
+    std::thread later([&] {
+        const CreationAhead ahead;
+        const CreationGate gate(50000);
+        note('c');
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::thread laterFrame([&] {
+        const CreationGate gate(100000);
+        note('g');
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(!seen('c') && !seen('g'), "creations were admitted beside one that had spent the memory left");
+    releaseSecond = true;
+    second.join();
+    later.join();
+    laterFrame.join();
+    Require(admitted == std::vector<char>{'a', 'f', 'b', 'g', 'c'}, "creations held by the memory left were admitted out of order");
+    Require(CreationGate::OverMemory() == overBefore + 1u, "a creation that fit the memory left was counted over it");
+    UsedBytes = CreationGate::EstimateBytes(100000);
+    std::atomic<std::size_t> together{0};
+    std::vector<std::thread> pair;
+    for (int index = 0; index < 2; ++index) {
+        pair.emplace_back([&] {
+            const CreationAhead ahead;
+            const CreationGate gate(300000);
+            const auto creations = CreationGate::Creations();
+            std::size_t seenTogether = together.load();
+            while (creations > seenTogether && !together.compare_exchange_weak(seenTogether, creations)) {}
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        });
+    }
+    for (auto& thread : pair) thread.join();
+    Require(together.load() == 2u, "creations that fit the memory left together did not run at the same time");
+    CreationGate::SetMemorySource(nullptr);
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(std::size_t{1} << 20u));
+    Require(CreationGate::InFlight() == 0u && CreationGate::Creations() == 0u, "the gate kept words of finished creations");
+}
+
+std::size_t AllBacked() {
+    return std::numeric_limits<std::size_t>::max();
+}
+
+void RamSide() {
+#ifdef _WIN32
+    Require(CreationGate::RamSideBytes() > 0u, "the RAM side of a running process read as zero");
+#endif
+    CreationGate::UseRamSide(&AllBacked);
+    Require(CreationGate::RamSideBytes() == 0u, "the RAM side did not subtract the device-local backing");
+    CreationGate::UseRamSide(nullptr);
+    CreationGate::SetMemorySource(nullptr);
+}
+
 void LargeOnOneThread() {
     using AgcDriver::CreationThread;
     const auto words = CreationThread::Words();
@@ -206,6 +322,8 @@ int main() {
         DerivedBudget();
         InOrder();
         FramesFirst();
+        MemoryHeadroom();
+        RamSide();
         LargeOnOneThread();
         std::puts("pipeline creation gate tests passed");
         return 0;
