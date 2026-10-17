@@ -18,7 +18,7 @@ endforeach()
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/TextureDetilerDescriptors.cpp Graphics/src/TextureCache.cpp)
+        target_sources(${agcTarget} PRIVATE Graphics/src/TextureDetilerDescriptors.cpp)
     endif()
 endforeach()
 

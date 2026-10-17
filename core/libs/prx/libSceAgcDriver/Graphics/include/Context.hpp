@@ -24,7 +24,6 @@ class TextureDetiler;
 class GpuColorTransfer;
 class BufferPool;
 class BdaArena;
-class TextureCache;
 class RenderCache;
 class DrawQueue;
 class GraphicsPipelineCache;
@@ -147,7 +146,6 @@ struct Context {
     TextureDetiler* detiler = nullptr;
     GpuColorTransfer* colorTransfer = nullptr;
     mutable std::shared_ptr<BufferPool> bufferPool;
-    TextureCache* textureCache = nullptr;
     const PipelineCache* pipelineCache = nullptr;
     bool depthClamp = false;
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.

@@ -36,7 +36,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -418,7 +417,6 @@ struct VulkanDevice::State {
     std::shared_ptr<Graphics::BufferPool> bufferPool;
     std::shared_ptr<Graphics::BdaArena> bdaArena;
     std::unique_ptr<Graphics::PlaceholderImages> placeholderImages;
-    std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
     std::unique_ptr<PipelineManifest> pipelineManifest;
     std::unique_ptr<PipelineReplay> pipelineReplay;
@@ -773,7 +771,6 @@ struct VulkanDevice::State {
             placeholderImages.reset();
             samplerCache.reset();
             descriptorHeap.reset();
-            textureCache.reset();
             detiler.reset();
             colorTransfer.reset();
             presentation.reset();
@@ -1861,7 +1858,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         std::fprintf(stderr, "[pipeline-manifest] %zu compute and %zu graphics pipelines and %zu programs prepared at use recorded by earlier runs, %zu records expired, in %s\n", state->pipelineManifest->LoadedRecords().compute.size(), state->pipelineManifest->LoadedRecords().graphics.size(), state->pipelineManifest->LoadedRecords().prepared.size(), state->pipelineManifest->Expired(), (directory / name).string().c_str());
     }
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
-    state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
     state->colorTransfer = std::make_unique<Graphics::GpuColorTransfer>(graphicsContext());
     state->descriptorCache = std::make_unique<Graphics::DescriptorCache>(graphicsContext());
     state->descriptorHeap = std::make_unique<Graphics::DescriptorHeap>(graphicsContext(), Graphics::DescriptorHeap::DeviceCapacities(graphicsContext()));
@@ -3518,7 +3514,6 @@ Graphics::Context VulkanDevice::buildContext() const {
         state->detiler.get(),
         state->colorTransfer.get(),
         state->bufferPool,
-        state->textureCache.get(),
         state->pipelineCache.get(),
         state->depthClamp,
         state->hostImportAlignment

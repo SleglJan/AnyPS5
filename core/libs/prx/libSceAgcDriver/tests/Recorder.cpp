@@ -16,7 +16,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
@@ -1525,8 +1524,6 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
     context.detiler = &detiler;
-    TextureCache textures(context);
-    context.textureCache = &textures;
     DescriptorUpdates updates(context);
     {
         DescriptorCache cache(context);
@@ -4209,8 +4206,6 @@ void imageMemoTests(const Device& device, Recorder& recorder) {
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
-    TextureCache textureCache(context);
-    context.textureCache = &textureCache;
     if (!device.NullDescriptors()) {
         std::cout << "nullDescriptor unavailable: image memo not tested\n";
         return;
@@ -4319,8 +4314,6 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     auto context = base;
     context.detiler = &detiler;
     context.nullDescriptors = true;
-    TextureCache cache(context);
-    context.textureCache = &cache;
     const auto clearTargets = [&] {
         recorder.Submit();
         device.WaitQueue();
