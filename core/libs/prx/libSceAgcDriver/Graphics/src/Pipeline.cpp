@@ -152,6 +152,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
                 break;
             case ShaderRecompiler::DescriptorRole::GuestSamplers:
             case ShaderRecompiler::DescriptorRole::FaultBuffer:
+            case ShaderRecompiler::DescriptorRole::FormatTable:
             case ShaderRecompiler::DescriptorRole::FlattenedSrt:
             case ShaderRecompiler::DescriptorRole::ShaderData:
                 break;

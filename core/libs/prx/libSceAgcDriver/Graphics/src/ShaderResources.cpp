@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "SpirvBackend/SpirvBufferFormat.hpp"
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -1089,6 +1090,19 @@ bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddres
     return !MetadataMoved(image, resource);
 }
 
+std::unique_ptr<Buffer> CreateRuntimeFormatTable(const Context& context) {
+    const auto words = ShaderRecompiler::RuntimeFormatTable();
+    Require(RuntimeFormatTableBytes <= context.limits.maxStorageBufferRange, "the format table exceeds the storage buffer range limit");
+    auto table = std::make_unique<Buffer>(context, RuntimeFormatTableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Buffer staging(context, RuntimeFormatTableBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(staging.Bytes().data(), words.data(), RuntimeFormatTableBytes);
+    CommandBatch batch(context);
+    CopyBuffer(context, batch.Handle(), staging.Handle(), 0, table->Handle(), 0, RuntimeFormatTableBytes);
+    RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    batch.SubmitAndWait();
+    return table;
+}
+
 namespace {
 
 const char* roleName(ShaderRecompiler::DescriptorRole role) {
@@ -1102,6 +1116,7 @@ const char* roleName(ShaderRecompiler::DescriptorRole role) {
         case ShaderRecompiler::DescriptorRole::ImageTable: return "ImageTable";
         case ShaderRecompiler::DescriptorRole::SamplerTable: return "SamplerTable";
         case ShaderRecompiler::DescriptorRole::ImageTableMap: return "ImageTableMap";
+        case ShaderRecompiler::DescriptorRole::FormatTable: return "FormatTable";
     }
     throw std::runtime_error("AGC graphics: unknown descriptor role");
 }
@@ -1518,6 +1533,17 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     table.map = binding.guestDescriptor;
                     allocations.push_back({0, size, false, std::make_unique<Buffer>(context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT), ShaderRecompiler::DescriptorRole::ImageTableMap});
                     table.mapAllocation = allocations.size() - 1u;
+                    bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
+                    continue;
+                }
+                if (binding.role == ShaderRecompiler::DescriptorRole::FormatTable) {
+                    Require(binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.count == 1 && binding.guestDescriptor.empty() && binding.readOnly, "format table binding is malformed");
+                    Require(context.formatTable != nullptr, "the format table was not created at device setup");
+                    stageStorageBuffers += 1;
+                    stageResources += 1;
+                    storageBuffers += 1;
+                    requireStageLimits();
+                    allocations.push_back({0, RuntimeFormatTableBytes, false, nullptr, ShaderRecompiler::DescriptorRole::FormatTable});
                     bindings.push_back({{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {allocations.size() - 1u}});
                     continue;
                 }

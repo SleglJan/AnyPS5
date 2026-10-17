@@ -446,6 +446,10 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::FaultBuffer:
             state.faultBufferVariable = Define(StorageBufferBlockType(state), "fault_buffer");
             break;
+        case DescriptorBindingKind::FormatTable:
+            state.formatTableVariable = Define(StorageBufferBlockType(state), "format_table");
+            state.module.AddAnnotation(spv::OpDecorate, state.formatTableVariable, spv::DecorationNonWritable);
+            break;
         case DescriptorBindingKind::ShaderData:
             state.shaderDataStorageVariable = Define(StorageBufferBlockType(state), "shader_data");
             break;

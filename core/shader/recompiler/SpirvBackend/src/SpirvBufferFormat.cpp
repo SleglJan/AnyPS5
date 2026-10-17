@@ -1,4 +1,6 @@
 #include "SpirvBackend/SpirvBufferFormat.hpp"
+#include "SpirvBackend/SpirvEmitterHelpers.hpp"
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -241,6 +243,42 @@ std::uint32_t GetFormatComponentByteOffset(const SpirvBufferFormatInfo& info, st
         throw std::runtime_error("GetFormatComponentByteOffset: component " + std::to_string(component) + " is out of range");
     }
     return info.packedBitfield ? 0u : info.componentBitOffset[component] / 8u;
+}
+
+namespace {
+
+std::uint32_t RuntimeFormatKind(SpirvFormatComponentType type) {
+    switch (type) {
+    case SpirvFormatComponentType::Uscaled: return 1u;
+    case SpirvFormatComponentType::Sscaled: return 2u;
+    case SpirvFormatComponentType::Unorm: return 3u;
+    case SpirvFormatComponentType::Snorm: return 4u;
+    case SpirvFormatComponentType::Float: return 5u;
+    default: return 0u;
+    }
+}
+
+}
+
+std::array<std::uint32_t, RuntimeAbi::FormatTableWords> RuntimeFormatTable() {
+    constexpr std::uint32_t count = static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float);
+    std::array<std::uint32_t, RuntimeAbi::FormatTableWords> table{};
+    for (std::uint32_t format = 0; format < RuntimeAbi::FormatTableEntries; ++format) {
+        auto* words = table.data() + format * RuntimeAbi::FormatTableEntryWords;
+        if (format < 1u || format > count) {
+            words[1] = 0x20202020u;
+            continue;
+        }
+        const auto info = GetFormatInfo(static_cast<IrBufferFormat>(format));
+        words[0] = 1u | info.componentCount << 1u | (info.packedBitfield ? 1u : 0u) << 4u | RuntimeFormatKind(info.type) << 5u | (IsSignedFormatComponent(info.type) ? 1u : 0u) << 8u;
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto source = std::min(component, info.componentCount - 1u);
+            words[1] |= info.componentBits[source] << (component * 8u);
+            words[2] |= (info.packedBitfield ? info.componentBitOffset[source] : 0u) << (component * 8u);
+            words[3] |= GetFormatComponentByteOffset(info, source) << (component * 8u);
+        }
+    }
+    return table;
 }
 
 }

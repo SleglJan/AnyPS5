@@ -73,6 +73,9 @@ DescriptorRole RoleFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::ImageTableMap) {
         return DescriptorRole::ImageTableMap;
     }
+    if (kind == DescriptorBindingKind::FormatTable) {
+        return DescriptorRole::FormatTable;
+    }
     fail("DescriptorBindingBuilder::Populate binding kind has no descriptor role");
 }
 
@@ -231,6 +234,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
+        physical.readOnly = physical.role == DescriptorRole::FormatTable;
         if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {
                 const auto resource = compact.resources[element];
@@ -359,6 +363,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         case DescriptorRole::Gds:
         case DescriptorRole::BdaPagetable:
         case DescriptorRole::FaultBuffer:
+        case DescriptorRole::FormatTable:
             break;
         }
 

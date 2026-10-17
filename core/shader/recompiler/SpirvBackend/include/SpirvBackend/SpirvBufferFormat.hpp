@@ -3,6 +3,8 @@
 
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "SpirvBackend/SpirvEmitterState.hpp"
+#include "RuntimeAbi.hpp"
+#include <array>
 #include <cstdint>
 
 namespace ShaderRecompiler {
@@ -24,6 +26,7 @@ struct SpirvFormattedSource {
 [[nodiscard]] SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, std::uint32_t selector);
 [[nodiscard]] std::uint32_t FormattedConstantBits(const SpirvBufferFormatInfo& info, SpirvFormattedSourceKind kind);
 [[nodiscard]] std::uint32_t GetFormatComponentByteOffset(const SpirvBufferFormatInfo& info, std::uint32_t component);
+[[nodiscard]] std::array<std::uint32_t, RuntimeAbi::FormatTableWords> RuntimeFormatTable();
 
 }
 

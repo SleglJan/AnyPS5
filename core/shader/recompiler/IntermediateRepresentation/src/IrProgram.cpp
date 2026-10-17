@@ -876,6 +876,31 @@ PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std
     return result;
 }
 
+bool ReadsRuntimeFormat(const IrProgram& program, const IrValue& instruction) {
+    switch (instruction.Opcode()) {
+    case IrOpcode::LoadBufferU8:
+    case IrOpcode::LoadBufferU16:
+    case IrOpcode::LoadBufferU32:
+    case IrOpcode::LoadBufferU32x2:
+    case IrOpcode::LoadBufferU32x3:
+    case IrOpcode::LoadBufferU32x4:
+        break;
+    default:
+        return false;
+    }
+    const auto& memory = program.Resources().memoryInfo.at(instruction.Flags<MemoryFlags>().index);
+    return memory.formatted && !memory.typed && !memory.d16 && memory.gpuDescriptor && !instruction.Argument(0)->Resolve()->Argument(3)->Resolve()->HasImmediate();
+}
+
+bool ReadsRuntimeFormatTable(const IrProgram& program) {
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* instruction : block->Instructions()) {
+            if (ReadsRuntimeFormat(program, *instruction)) return true;
+        }
+    }
+    return false;
+}
+
 std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind) {
     const std::uint32_t group = stage == IrShaderStage::Pixel ? 1u : stage == IrShaderStage::TessellationControl ? 2u : stage == IrShaderStage::TessellationEvaluation ? 3u : 0u;
     return RuntimeAbi::BindingNumber(static_cast<RuntimeAbi::Stage>(group), kind);

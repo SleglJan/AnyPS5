@@ -22,6 +22,7 @@ struct Decoration {
     std::optional<std::uint32_t> stride;
     std::optional<std::uint32_t> index;
     bool block = false;
+    bool nonWritable = false;
     bool patch = false;
     bool perPrimitive = false;
     bool perVertex = false;
@@ -399,6 +400,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     decoration.perVertex = true;
                 }
                 if (kind == spv::DecorationBlock) decoration.block = true;
+                if (kind == spv::DecorationNonWritable) decoration.nonWritable = true;
                 break;
             }
             case spv::OpMemberDecorate:
@@ -561,8 +563,9 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
             Require(descriptors.insert(key).second, "duplicate SPIR-V resource binding");
             Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
             Require(binding->kind == ShaderRecompiler::DescriptorKind::StorageBuffer, "SPIR-V descriptor type disagrees with recompiler binding metadata");
-            Require(!binding->readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
-            Require((shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (binding->role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding->role == ShaderRecompiler::DescriptorRole::FaultBuffer)) || binding->role == ShaderRecompiler::DescriptorRole::ShaderData || binding->role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding->role == ShaderRecompiler::DescriptorRole::ImageTableMap || binding->role == ShaderRecompiler::DescriptorRole::Gds, "SPIR-V descriptor role is unsupported");
+            Require(binding->readOnly == (binding->role == ShaderRecompiler::DescriptorRole::FormatTable), "only the format table is a read-only descriptor");
+            Require(binding->readOnly == decoration.nonWritable, "a descriptor's NonWritable decoration disagrees with its read-only metadata");
+            Require((shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (binding->role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding->role == ShaderRecompiler::DescriptorRole::FaultBuffer || binding->role == ShaderRecompiler::DescriptorRole::FormatTable)) || binding->role == ShaderRecompiler::DescriptorRole::ShaderData || binding->role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding->role == ShaderRecompiler::DescriptorRole::ImageTableMap || binding->role == ShaderRecompiler::DescriptorRole::Gds, "SPIR-V descriptor role is unsupported");
             Require(binding->count == 1, "non-array descriptor must have a binding count of one");
             const auto blockId = typeId;
             const auto& block = module.Type(blockId);

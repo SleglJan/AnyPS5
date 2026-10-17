@@ -422,6 +422,7 @@ struct VulkanDevice::State {
     std::unique_ptr<PipelineReplay> pipelineReplay;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
+    std::unique_ptr<Graphics::Buffer> formatTable;
     std::unique_ptr<Graphics::DescriptorHeap> descriptorHeap;
     std::unique_ptr<Graphics::DeviceImageTable> deviceImages;
     VkDescriptorSet computeHeapSet = VK_NULL_HANDLE;
@@ -768,6 +769,7 @@ struct VulkanDevice::State {
             workgroupMemory.reset();
             if (workgroupMemoryLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(deviceProc(device, "vkDestroyDescriptorSetLayout"))(device, workgroupMemoryLayout, nullptr);
             descriptorCache.reset();
+            formatTable.reset();
             placeholderImages.reset();
             samplerCache.reset();
             descriptorHeap.reset();
@@ -1864,6 +1866,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->computeHeapSet = state->descriptorHeap->Set(VK_SHADER_STAGE_COMPUTE_BIT);
     if (graphicsContext().bufferDeviceAddress) state->deviceImages = std::make_unique<Graphics::DeviceImageTable>(graphicsContext());
     state->samplerCache = std::make_unique<Graphics::SamplerCache>();
+    {
+        std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
+        if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
+        state->formatTable = Graphics::CreateRuntimeFormatTable(graphicsContext());
+    }
     state->CreateWorkgroupMemoryLayout();
     if (!state->shaderProfile->NullDescriptors()) {
         std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::defer_lock);
@@ -3526,6 +3533,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.samplerCache = state->samplerCache.get();
     context.descriptorHeap = state->descriptorHeap.get();
     context.deviceImages = state->deviceImages.get();
+    context.formatTable = state->formatTable.get();
     context.bdaArena = state->bdaArena;
     context.pipelineRecorder = state->pipelineReplay.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;

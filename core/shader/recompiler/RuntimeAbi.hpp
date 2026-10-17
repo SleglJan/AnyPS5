@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 16u;
+inline constexpr std::uint32_t Version = 17u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t HeapDescriptorSet = 2u;
@@ -33,7 +33,8 @@ enum class Binding : std::uint32_t {
     ShaderData = 62u,
     SamplerTable = 63u,
     ImageTableMap = 64u,
-    Count = 65u,
+    FormatTable = 65u,
+    Count = 66u,
     ImageTable = 256u
 };
 
@@ -53,6 +54,9 @@ inline constexpr std::uint32_t VertexSelectorsPerDword = 2u;
 inline constexpr std::uint32_t ImageModeMask = 0xffu;
 inline constexpr std::uint32_t CompareStateShift = 9u;
 inline constexpr std::uint32_t CompareStateMask = 0x1fffu;
+inline constexpr std::uint32_t FormatTableEntries = 128u;
+inline constexpr std::uint32_t FormatTableEntryWords = 4u;
+inline constexpr std::uint32_t FormatTableWords = FormatTableEntries * FormatTableEntryWords;
 
 struct ResourceMetadata {
     std::uint32_t binding;
@@ -105,7 +109,7 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));
-static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageTableBinding == 260u);
+static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageTableBinding == 264u);
 
 }
 

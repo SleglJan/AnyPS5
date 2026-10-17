@@ -255,6 +255,7 @@ function(add_shader_recompiler target runtimeTarget)
             Recompile
             RecompileCacheKey::ContextHash
             RecompileResult
+            RuntimeFormatTable
             PrepareShader
             GetPreparedCode
             GetPreparedLinkedLiterals

@@ -700,55 +700,17 @@ struct FormatParams {
     std::array<std::uint32_t, 4> byteOffsets{};
 };
 
-std::uint32_t formatKind(SpirvFormatComponentType type) {
-    switch (type) {
-    case SpirvFormatComponentType::Uscaled: return 1u;
-    case SpirvFormatComponentType::Sscaled: return 2u;
-    case SpirvFormatComponentType::Unorm: return 3u;
-    case SpirvFormatComponentType::Snorm: return 4u;
-    case SpirvFormatComponentType::Float: return 5u;
-    default: return 0u;
-    }
-}
-
-std::array<std::uint32_t, 4> formatWords(IrBufferFormat format) {
-    const auto info = GetFormatInfo(format);
-    std::array<std::uint32_t, 4> words{1u | info.componentCount << 1u | (info.packedBitfield ? 1u : 0u) << 4u | formatKind(info.type) << 5u | (IsSignedFormatComponent(info.type) ? 1u : 0u) << 8u, 0u, 0u, 0u};
-    for (std::uint32_t component = 0; component < 4u; ++component) {
-        const auto source = std::min(component, info.componentCount - 1u);
-        words[1] |= info.componentBits[source] << (component * 8u);
-        words[2] |= (info.packedBitfield ? info.componentBitOffset[source] : 0u) << (component * 8u);
-        words[3] |= GetFormatComponentByteOffset(info, source) << (component * 8u);
-    }
-    return words;
-}
-
-std::uint32_t formatTable(SpirvEmitterState& state) {
-    if (state.formatTableVariable != 0u) return state.formatTableVariable;
-    constexpr std::uint32_t count = static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float);
-    const auto entry = TypeU32Composite(state, 4u);
-    std::array<std::uint32_t, 128> entries{};
-    for (std::uint32_t format = 0; format < entries.size(); ++format) {
-        const auto words = format >= 1u && format <= count ? formatWords(static_cast<IrBufferFormat>(format)) : std::array<std::uint32_t, 4>{0u, 0x20202020u, 0u, 0u};
-        entries[format] = state.module.Constant(spv::OpConstantComposite, entry, ConstantU32(state, words[0]), ConstantU32(state, words[1]), ConstantU32(state, words[2]), ConstantU32(state, words[3]));
-    }
-    const auto table = state.module.Type(spv::OpTypeArray, entry, ConstantU32(state, static_cast<std::uint32_t>(entries.size())));
-    state.formatTableVariable = state.module.AllocateId();
-    state.module.EmitGlobalVariable({spv::OpVariable, TypePointer(state, spv::StorageClassPrivate, table), state.formatTableVariable, spv::StorageClassPrivate, state.module.Constant(spv::OpConstantComposite, table, std::span<const std::uint32_t>(entries))});
-    return state.formatTableVariable;
-}
-
-FormatParams formatParams(SpirvEmitterState& state, std::uint32_t format) {
+FormatParams formatParams(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t format) {
+    auto& state = context.state;
+    if (state.formatTableVariable == 0u) context.Fail(instruction, "reads a run-time buffer format without the format table binding");
     const auto u32 = TypeU32(state);
-    const auto entry = TypeU32Composite(state, 4u);
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, entry), pointer, formatTable(state), format);
-    const auto loaded = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, entry, loaded, pointer);
+    const auto base = Binary(state, spv::OpShiftLeftLogical, u32, format, ConstantU32(state, 2u));
     std::array<std::uint32_t, 4> words{};
     for (std::uint32_t word = 0; word < 4u; ++word) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.formatTableVariable, ConstantU32(state, 0u), word == 0u ? base : Binary(state, spv::OpIAdd, u32, base, ConstantU32(state, word)));
         words[word] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, words[word], loaded, word);
+        state.module.AddFunction(spv::OpLoad, u32, words[word], pointer);
     }
     FormatParams params;
     params.valid = nonzero(state, field(state, words[0], 0u, 1u));
@@ -845,7 +807,7 @@ std::uint32_t runtimeFormatLoad(SpirvValueEmitContext& context, const IrValue& i
     const auto boolean = TypeBool(state);
     const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
     const auto any = [&](std::uint32_t left, std::uint32_t right) { return Binary(state, spv::OpLogicalOr, boolean, left, right); };
-    const auto params = formatParams(state, format);
+    const auto params = formatParams(context, instruction, format);
     faultIf(context, instruction, Unary(state, spv::OpLogicalNot, boolean, params.valid), resource.base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
     const auto divisor = glsl(state, GLSLstd450UMax, params.count, constant(1u));
     std::array<std::uint32_t, 4> selectors{};

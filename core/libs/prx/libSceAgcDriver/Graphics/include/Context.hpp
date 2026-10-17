@@ -33,6 +33,7 @@ class SamplerCache;
 class DescriptorHeap;
 class DeviceImageTable;
 class ShaderResources;
+class Buffer;
 class PlaceholderImages;
 class IGraphicsPipelineRecorder;
 
@@ -163,6 +164,7 @@ struct Context {
     SamplerCache* samplerCache = nullptr;
     DescriptorHeap* descriptorHeap = nullptr;
     DeviceImageTable* deviceImages = nullptr;
+    const Buffer* formatTable = nullptr;
     IGraphicsPipelineRecorder* pipelineRecorder = nullptr;
     // Indirect draw features of the device: records with a non-zero first instance, several records
     // per call, and a GPU-side draw count (VK_KHR_draw_indirect_count).

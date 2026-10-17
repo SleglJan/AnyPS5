@@ -55,6 +55,8 @@ IrValue* ResolveInvariantPhi(const IrResourcePlan& program, IrValue* value);
 bool IsAddressResourceKind(ResourceKind kind);
 PositionExportComponent DecodePositionExportComponent(std::uint32_t control, std::uint32_t positionIndex, std::uint32_t component);
 std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind);
+bool ReadsRuntimeFormat(const IrProgram& program, const IrValue& instruction);
+bool ReadsRuntimeFormatTable(const IrProgram& program);
 ImageResourceClass ImageBindingResourceClass(DescriptorBindingKind kind);
 std::uint32_t ImageBindingIndex(DescriptorBindingKind kind);
 DescriptorBindingKind DescriptorBindingForImage(const ImageResource& image);

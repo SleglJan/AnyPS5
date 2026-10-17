@@ -140,6 +140,9 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (info.usesDma || info.usesFaultBuffer) {
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
+    if (ReadsRuntimeFormatTable(program)) {
+        addBinding(next, DescriptorBindingKind::FormatTable);
+    }
 
     if (!program.Resources().srtReads.empty()) {
         addBinding(next, DescriptorBindingKind::FlattenedSrt);

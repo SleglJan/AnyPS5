@@ -26,6 +26,9 @@ namespace AgcDriver::Graphics {
 
 class Recorder;
 
+inline constexpr std::size_t RuntimeFormatTableBytes = ShaderRecompiler::RuntimeAbi::FormatTableWords * sizeof(std::uint32_t);
+std::unique_ptr<Buffer> CreateRuntimeFormatTable(const Context& context);
+
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
