@@ -338,7 +338,9 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
             if (named == stage) shader = address;
         }
         char text[192];
-        std::snprintf(text, sizeof(text), "shader 0x%llx stage %u pc 0x%x: buffer descriptor uses an unsupported type (buffer %u V# %08x %08x %08x %08x)", static_cast<unsigned long long>(shader), stage, report.instruction, resource, static_cast<std::uint32_t>(report.address), static_cast<std::uint32_t>(report.address >> 32u), report.bytes, report.reserved);
+        const auto word1 = static_cast<std::uint32_t>(report.address >> 32u);
+        const bool reservedBits = (report.reserved >> 30u) == 0u && (word1 & 0x40000000u) != 0u;
+        std::snprintf(text, sizeof(text), "shader 0x%llx stage %u pc 0x%x: buffer descriptor %s (buffer %u V# %08x %08x %08x %08x)", static_cast<unsigned long long>(shader), stage, report.instruction, reservedBits ? "has reserved bits set" : "uses an unsupported type", resource, static_cast<std::uint32_t>(report.address), word1, report.bytes, report.reserved);
         throw std::runtime_error(text);
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ContinuationRounds) {
