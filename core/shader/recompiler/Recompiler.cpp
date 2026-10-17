@@ -40,6 +40,7 @@
 #include "Optimization/include/Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/include/Optimization/NanCheckEliminator.hpp"
 #include "Optimization/include/Optimization/OperandIdiomMerger.hpp"
+#include "Optimization/include/Optimization/FloatSelectRetyper.hpp"
 #include "Optimization/include/Optimization/ReadLaneEliminator.hpp"
 #include "Optimization/include/Optimization/RedundantValueEliminator.hpp"
 #include "Optimization/include/Optimization/RequestMemoryView.hpp"
@@ -348,6 +349,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
     constexpr OperandIdiomMerger operandIdiomMerger;
     if (operandIdiomMerger.Merge(program).Changed()) {
+        deadCodeEliminator.Eliminate(program);
+    }
+    constexpr FloatSelectRetyper floatSelectRetyper;
+    if (floatSelectRetyper.Retype(program).Changed()) {
         deadCodeEliminator.Eliminate(program);
     }
 
