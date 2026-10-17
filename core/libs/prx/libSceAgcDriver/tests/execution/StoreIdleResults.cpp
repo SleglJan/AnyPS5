@@ -2,8 +2,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
+#include "GuestTestMemory.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -70,6 +70,25 @@ std::vector<std::uint32_t> Commands(const std::uint32_t* texels) {
     return words;
 }
 
+struct alignas(8) ShaderHeader {
+    Shader shader{};
+    ShaderUserData userData{};
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
+
+void OpenDevice() {
+    static ShaderHeader header;
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(ShaderHeader);
+    header.shader.shader_size = static_cast<std::uint32_t>(sizeof(EndProgram));
+    header.shader.code = EndProgram.data();
+    header.shader.type = 1;
+    header.shader.user_data = &header.userData;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
 void Store(const std::uint32_t* texels) {
     auto words = Commands(texels);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -84,23 +103,15 @@ int main(int argc, char** argv) {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        std::vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
         const bool wake = argc == 2 && std::string_view(argv[1]) == "--idle-epoch-wake";
-        std::vector<std::uint32_t> nextStorage(wake ? (BlockBytes + 0x10000u) / 4u : 0u);
-        auto* nextTexels = wake ? reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(nextStorage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}) : nullptr;
+        auto* nextTexels = wake ? reinterpret_cast<std::uint32_t*>(TestGuest::Allocate(BlockBytes, 0x10000u)) : nullptr;
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
-        auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
+        OpenDevice();
+        auto* texels = reinterpret_cast<std::uint32_t*>(TestGuest::Allocate(BlockBytes, 0x10000u));
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, BlockBytes, true, true, true);
-            if (nextTexels != nullptr) {
-                std::fill(nextTexels, nextTexels + BlockBytes / 4u, Untouched);
-                mutation.Add(nextTexels, BlockBytes, true, true, true);
-            }
-        }
+        if (nextTexels != nullptr) std::fill(nextTexels, nextTexels + BlockBytes / 4u, Untouched);
         const auto bytes = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels))).guestBytes;
         const volatile std::uint32_t* cpu = texels;
         const auto stored = [&] {
@@ -132,11 +143,6 @@ int main(int argc, char** argv) {
         Require(stored(), "the queue-idle store did not bring the result to guest memory without a direct flush or further submission");
 
         AgcDriverShutdown_nid_postfix();
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-            if (nextTexels != nullptr) mutation.Remove(nextTexels);
-        }
         std::puts("store idle results tests passed");
         return 0;
     } catch (const std::exception& error) {
