@@ -231,7 +231,7 @@ void BudgetIsTheRemainder(Harness& harness, const Context& context) {
 
     later.reset();
     harness.Fill();
-    harness.ExpectWithin(base + FirstOther, "after freeing the later allocation");
+    harness.ExpectFilled(base + FirstOther, "after freeing the later allocation");
 
     {
         DeviceLocal overflow(context, Overflow);
@@ -242,7 +242,7 @@ void BudgetIsTheRemainder(Harness& harness, const Context& context) {
         Expect(harness.Mirrors() == 0 && harness.driver.Manager().Counts().chunks == 0, "other device-local memory above the guest size left " + MiB(harness.Mirrors()) + " of mirrors");
     }
     harness.Fill();
-    harness.ExpectWithin(base + FirstOther, "after freeing the memory above the guest size");
+    harness.ExpectFilled(base + FirstOther, "after freeing the memory above the guest size");
 }
 
 }

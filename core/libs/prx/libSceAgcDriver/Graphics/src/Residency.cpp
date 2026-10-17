@@ -1192,9 +1192,11 @@ void ResidencyManager::ApplyBudget() {
     applyQueued();
     measuredEpoch = 0;
     appliedOthers = device.OtherDeviceBytes();
+    const auto before = maxChunks;
     const auto shrunk = chunkLimit(false);
     maxChunks = shrunk < liveChunks ? shrunk : std::max(liveChunks, chunkLimit(true));
     limitEpoch = Epoch();
+    if (maxChunks > before) importsGeneration = 0;
     std::uint32_t ordinal = 0;
     for (auto& record : chunks) {
         if (!record.live) continue;
