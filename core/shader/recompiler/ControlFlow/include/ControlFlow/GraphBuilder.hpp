@@ -89,6 +89,7 @@ struct TableCallAnalysis {
     bool barrier = false;
     bool indexedRegisters = false;
     std::uint32_t rounds = 0;
+    std::vector<std::uint64_t> roundSites;
 };
 
 [[nodiscard]] SplitCode LinkTableCallHead(std::span<const std::uint32_t> linked, std::span<const TableCall> calls);

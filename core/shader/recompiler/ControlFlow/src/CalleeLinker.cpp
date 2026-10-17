@@ -124,6 +124,7 @@ std::optional<TableCallSplit> SplitTableCalls(const RecompileRequest& request, c
         throw std::runtime_error(tableCallError(request, split.calls.front(), error));
     }
     split.rounds = analysis.rounds;
+    split.roundSites = analysis.roundSites;
     split.ldsDwords = split.wavesPerGroup == 1u ? compute.ldsSizeDwords : 0u;
     std::set<std::uint32_t> scalars(analysis.scalarRegisters.begin(), analysis.scalarRegisters.end());
     const auto userData = static_cast<std::uint32_t>(request.context.userData.size());

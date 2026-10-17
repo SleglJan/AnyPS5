@@ -1406,7 +1406,7 @@ void appendBinStubs(std::vector<std::uint32_t>& code, const RdnaProgram& program
     }
 }
 
-std::vector<bool> reachableFrom(const RdnaProgram& program, const std::vector<std::uint32_t>& starts) {
+std::vector<bool> reachableFrom(const RdnaProgram& program, const std::vector<std::uint32_t>& starts, std::span<const std::uint32_t> stops = {}) {
     const auto size = static_cast<std::uint32_t>(program.instructions.size());
     std::vector<bool> seen(size, false);
     std::vector<std::uint32_t> stack;
@@ -1419,6 +1419,7 @@ std::vector<bool> reachableFrom(const RdnaProgram& program, const std::vector<st
     while (!stack.empty()) {
         const auto index = stack.back();
         stack.pop_back();
+        if (std::ranges::find(stops, index) != stops.end()) continue;
         const auto& instruction = program.instructions[index];
         if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) continue;
         if (IsDirectBranchOpcode(instruction.op)) {
@@ -1761,7 +1762,29 @@ TableCallAnalysis AnalyzeTableCalls(std::span<const std::uint32_t> linked, std::
         const auto index = callWordIndex(program, call);
         if (reachableFrom(program, std::vector<std::uint32_t>{index + 1u})[index]) ++cyclic;
     }
-    analysis.rounds = static_cast<std::uint32_t>(calls.size()) - cyclic + std::max(waveSize, 1u) * cyclic;
+    const auto bound = static_cast<std::uint32_t>(calls.size()) - cyclic + std::max(waveSize, 1u) * cyclic;
+    if (calls.size() > 64u) throw std::runtime_error("a table-call program with " + std::to_string(calls.size()) + " table call sites is not implemented: at most 64 are tracked per round");
+    std::vector<std::uint32_t> callIndices;
+    for (const auto& call : calls) callIndices.push_back(callWordIndex(program, call));
+    const auto sitesFrom = [&](std::uint32_t start) {
+        const auto seen = reachableFrom(program, std::vector<std::uint32_t>{start}, callIndices);
+        std::uint64_t sites = 0;
+        for (std::size_t site = 0; site < callIndices.size(); ++site) {
+            if (seen[callIndices[site]]) sites |= std::uint64_t{1} << site;
+        }
+        return sites;
+    };
+    std::vector<std::uint64_t> following;
+    for (const auto index : callIndices) following.push_back(sitesFrom(index + 1u));
+    for (auto live = sitesFrom(0u); live != 0u && analysis.roundSites.size() < bound;) {
+        analysis.roundSites.push_back(live);
+        std::uint64_t next = 0;
+        for (std::size_t site = 0; site < following.size(); ++site) {
+            if (((live >> site) & 1u) != 0u) next |= following[site];
+        }
+        live = next;
+    }
+    analysis.rounds = static_cast<std::uint32_t>(analysis.roundSites.size());
     return analysis;
 }
 

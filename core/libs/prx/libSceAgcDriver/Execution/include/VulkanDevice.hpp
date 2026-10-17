@@ -255,7 +255,7 @@ public:
         std::shared_ptr<PreparedDispatch> prepared;
         std::uint32_t bin = 0;
     };
-    void DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::uint32_t rounds, std::uint32_t slots, std::uint64_t programAddress);
+    void DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::span<const std::uint64_t> roundBins, std::uint32_t slots, std::uint64_t programAddress);
     void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders);
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);

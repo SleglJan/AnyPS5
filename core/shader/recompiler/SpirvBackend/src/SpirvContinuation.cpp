@@ -171,7 +171,11 @@ void EmitTableCallBin(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto next = EmitAddU32(state, round, ConstantU32(state, 1u));
     const auto rounds = block.Header(ContinuationAbi::RoundsWord);
     const auto known = Binary(state, spv::OpINotEqual, boolean, bin, ConstantU32(state, NoBin));
-    const auto inRange = Binary(state, spv::OpULessThanEqual, boolean, next, rounds);
+    const auto withinRounds = Binary(state, spv::OpULessThanEqual, boolean, next, rounds);
+    const auto bins = block.Header(ContinuationAbi::BinsWord);
+    const auto counter = EmitAddU32(state, block.Header(ContinuationAbi::CountersWord), EmitBinaryU32(state, spv::OpIMul, EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, Select(state, TypeU32(state), withinRounds, round, ConstantU32(state, 0u)), bins), Select(state, TypeU32(state), known, bin, ConstantU32(state, 0u))), ConstantU32(state, ContinuationAbi::CounterDwords)));
+    const auto dispatched = Binary(state, spv::OpINotEqual, boolean, block.Load(EmitAddU32(state, counter, ConstantU32(state, ContinuationAbi::CounterDispatchedWord))), ConstantU32(state, 0u));
+    const auto inRange = Binary(state, spv::OpLogicalAnd, boolean, withinRounds, dispatched);
     const auto leader = Binary(state, spv::OpIEqual, boolean, lane, ConstantU32(state, 0u));
     const auto both = [&](std::uint32_t first, std::uint32_t second) { return Binary(state, spv::OpLogicalAnd, boolean, first, second); };
     const auto none = [&](std::uint32_t value) { return Unary(state, spv::OpLogicalNot, boolean, value); };
@@ -190,8 +194,6 @@ void EmitTableCallBin(SpirvValueEmitContext& ctx, const IrValue& inst) {
         RecordBdaFaultWords(state, targetLow, targetHigh, rounds, programCounter, BdaAbi::FaultReason::Overflow);
     });
     EmitIfCondition(state, both(leader, both(known, inRange)), [&] {
-        const auto bins = block.Header(ContinuationAbi::BinsWord);
-        const auto counter = EmitAddU32(state, block.Header(ContinuationAbi::CountersWord), EmitBinaryU32(state, spv::OpIMul, EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, round, bins), bin), ConstantU32(state, ContinuationAbi::CounterDwords)));
         const auto index = state.module.AllocateId();
         state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), index, block.Pointer(counter), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u));
         const auto parity = EmitBinaryU32(state, spv::OpBitwiseAnd, next, ConstantU32(state, 1u));

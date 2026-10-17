@@ -85,6 +85,7 @@ inline constexpr std::uint32_t BinKeyMaskWord = 1u;
 inline constexpr std::uint32_t BinKeyWord = 2u;
 inline constexpr std::uint32_t BinTableDword = HeaderDwords;
 inline constexpr std::uint32_t CounterDwords = 4u;
+inline constexpr std::uint32_t CounterDispatchedWord = 3u;
 inline constexpr std::uint32_t CountersDword = BinTableDword + MaxBins * BinEntryDwords;
 
 inline constexpr std::uint32_t RecordHeaderDwords = 4u;

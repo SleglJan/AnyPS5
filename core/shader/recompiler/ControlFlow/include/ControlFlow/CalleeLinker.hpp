@@ -31,6 +31,7 @@ struct TableCallSplit {
     std::uint32_t rounds = 0;
     std::uint32_t wavesPerGroup = 1;
     std::vector<std::uint32_t> userDataScalars;
+    std::vector<std::uint64_t> roundSites;
 };
 
 struct TableCallTarget {

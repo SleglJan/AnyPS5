@@ -4622,7 +4622,7 @@ void VulkanDevice::InitializeContinuationBlock(const std::shared_ptr<Graphics::B
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 }
 
-void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::uint32_t rounds, std::uint32_t slots, std::uint64_t programAddress) {
+void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::span<const std::uint64_t> roundBins, std::uint32_t slots, std::uint64_t programAddress) {
     require(state->recorder != nullptr && block != nullptr, "continuation rounds need the device's recorder");
     state->recorder->BoundKeptBytes();
     auto& recorder = *state->recorder;
@@ -4703,6 +4703,7 @@ void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Bu
     const auto bindSets = context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets");
     const auto push = context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants");
     const auto dispatchIndirect = context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect");
+    const auto rounds = static_cast<std::uint32_t>(roundBins.size());
     const ShaderRecompiler::ContinuationAbi::Geometry geometry{bins, rounds, slots, 0u};
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -4710,6 +4711,7 @@ void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Bu
         update(commands, block->Handle(), ShaderRecompiler::ContinuationAbi::RoundWord * sizeof(std::uint32_t), sizeof(round), &round);
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         for (auto& part : built) {
+            if (((roundBins[round - 1u] >> part.bin) & 1u) == 0u) continue;
             bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->pipeline);
             part.resources->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->layout);
             context.descriptorHeap->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, part.objects->layout, state->computeHeapSet);

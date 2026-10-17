@@ -157,23 +157,38 @@ void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch&
     if (total == 0u) return;
     const auto set = program.Targets(request);
     const auto head = program.Head(dispatch.device, *dispatch.snapshot, dispatch.codeOffset, request);
-    std::vector<std::shared_ptr<const TableCallPart>> continuations;
-    for (const auto& target : set->targets) continuations.push_back(program.Continuation(dispatch.device, *dispatch.snapshot, dispatch.codeOffset, request, target));
-    const auto waveSize = request.context.waveSize;
     const auto bins = static_cast<std::uint32_t>(set->targets.size());
+    std::vector<std::uint64_t> roundBins;
+    for (const auto sites : split.roundSites) {
+        std::uint64_t mask = 0;
+        for (std::uint32_t bin = 0; bin < bins; ++bin) {
+            if (((sites >> set->targets[bin].site) & 1u) != 0u) mask |= std::uint64_t{1} << bin;
+        }
+        if (mask == 0u) break;
+        roundBins.push_back(mask);
+    }
+    const auto rounds = static_cast<std::uint32_t>(roundBins.size());
+    std::uint64_t liveBins = 0;
+    for (const auto mask : roundBins) liveBins |= mask;
+    const auto live = [&](std::uint32_t bin) { return ((liveBins >> bin) & 1u) != 0u; };
+    std::vector<std::shared_ptr<const TableCallPart>> continuations(bins);
+    for (std::uint32_t bin = 0; bin < bins; ++bin) {
+        if (live(bin)) continuations[bin] = program.Continuation(dispatch.device, *dispatch.snapshot, dispatch.codeOffset, request, set->targets[bin]);
+    }
+    const auto waveSize = request.context.waveSize;
     const auto recordDwords = ShaderRecompiler::ContinuationAbi::RecordDwords(static_cast<std::uint32_t>(split.scalarRegisters.size()), static_cast<std::uint32_t>(split.vectorRegisters.size()), waveSize, split.ldsDwords);
-    const std::uint64_t fixedBytes = (ShaderRecompiler::ContinuationAbi::CountersDword + static_cast<std::uint64_t>(split.rounds) * bins * ShaderRecompiler::ContinuationAbi::CounterDwords + 8u) * sizeof(std::uint32_t);
+    const std::uint64_t fixedBytes = (ShaderRecompiler::ContinuationAbi::CountersDword + static_cast<std::uint64_t>(rounds) * bins * ShaderRecompiler::ContinuationAbi::CounterDwords + 8u) * sizeof(std::uint32_t);
     const std::uint64_t groupBytes = static_cast<std::uint64_t>(split.wavesPerGroup) * (2u * bins + recordDwords) * sizeof(std::uint32_t);
     const std::uint64_t budget = device.ContinuationBlockBudget();
     require(fixedBytes + groupBytes <= budget, "the continuation records of one workgroup of a table-call program exceed the continuation block budget");
     const auto chunkGroups = std::min({total, (budget - fixedBytes) / groupBytes, MaxHeadGroups});
-    const ShaderRecompiler::ContinuationAbi::Geometry geometry{bins, split.rounds, static_cast<std::uint32_t>(chunkGroups * split.wavesPerGroup), recordDwords};
+    const ShaderRecompiler::ContinuationAbi::Geometry geometry{bins, rounds, static_cast<std::uint32_t>(chunkGroups * split.wavesPerGroup), recordDwords};
     const auto block = device.ContinuationBlock(static_cast<std::size_t>(ShaderRecompiler::ContinuationAbi::BlockDwords(geometry) * sizeof(std::uint32_t)));
     const auto blockAddress = block->DeviceAddress();
     std::vector<std::uint32_t> words(static_cast<std::size_t>(ShaderRecompiler::ContinuationAbi::ListsDword(geometry)), 0u);
     words[ShaderRecompiler::ContinuationAbi::VersionWord] = ShaderRecompiler::ContinuationAbi::Version;
     words[ShaderRecompiler::ContinuationAbi::BinsWord] = bins;
-    words[ShaderRecompiler::ContinuationAbi::RoundsWord] = split.rounds;
+    words[ShaderRecompiler::ContinuationAbi::RoundsWord] = rounds;
     words[ShaderRecompiler::ContinuationAbi::SlotsWord] = geometry.slots;
     words[ShaderRecompiler::ContinuationAbi::RecordDwordsWord] = recordDwords;
     words[ShaderRecompiler::ContinuationAbi::CountersWord] = ShaderRecompiler::ContinuationAbi::CountersDword;
@@ -186,11 +201,12 @@ void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch&
         words[entry + ShaderRecompiler::ContinuationAbi::BinKeyMaskWord] = split.head.sites.at(target.site).keyMask;
         std::copy(target.key.begin(), target.key.end(), words.begin() + entry + ShaderRecompiler::ContinuationAbi::BinKeyWord);
     }
-    for (std::uint32_t round = 1; round <= split.rounds; ++round) {
+    for (std::uint32_t round = 1; round <= rounds; ++round) {
         for (std::uint32_t bin = 0; bin < bins; ++bin) {
             const auto counter = static_cast<std::size_t>(ShaderRecompiler::ContinuationAbi::CounterDword(geometry, round, bin));
             words[counter + 1u] = 1u;
             words[counter + 2u] = 1u;
+            words[counter + ShaderRecompiler::ContinuationAbi::CounterDispatchedWord] = static_cast<std::uint32_t>((roundBins[round - 1u] >> bin) & 1u);
         }
     }
     std::vector<std::uint32_t> extended(dispatch.userData.begin(), dispatch.userData.end());
@@ -212,6 +228,7 @@ void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch&
         }
         extended[base + ShaderRecompiler::ContinuationAbi::FirstGroupWord] = 0u;
         for (std::uint32_t bin = 0; bin < bins; ++bin) {
+            if (!live(bin)) continue;
             extended[base + ShaderRecompiler::ContinuationAbi::BinWord] = bin;
             std::copy(set->targets[bin].key.begin(), set->targets[bin].key.end(), extended.begin() + static_cast<std::ptrdiff_t>(base + ShaderRecompiler::ContinuationAbi::KeyWord));
             parts[bin] = dispatch.result(*continuations[bin]->program, extended);
@@ -223,21 +240,25 @@ void RecordTableCallDispatch(TableCallProgram& program, const TableCallDispatch&
         if (device.PrepareComputePipeline(*compiled, dispatch.programAddress)) device.RecordComputePipeline(*compiled);
     }
     for (const auto& compiled : parts) {
-        if (device.PrepareComputePipeline(*compiled, dispatch.programAddress)) device.RecordComputePipeline(*compiled);
+        if (compiled != nullptr && device.PrepareComputePipeline(*compiled, dispatch.programAddress)) device.RecordComputePipeline(*compiled);
     }
     auto headPrepared = device.PrepareDispatch(*heads.front());
-    std::vector<std::shared_ptr<PreparedDispatch>> partPrepared;
-    for (const auto& compiled : parts) partPrepared.push_back(device.PrepareDispatch(*compiled));
+    std::vector<std::shared_ptr<PreparedDispatch>> partPrepared(bins);
+    for (std::uint32_t bin = 0; bin < bins; ++bin) {
+        if (parts[bin] != nullptr) partPrepared[bin] = device.PrepareDispatch(*parts[bin]);
+    }
     dispatch.locked([&] {
         for (std::size_t chunk = 0; chunk < chunks; ++chunk) {
             const auto first = chunk * chunkGroups;
             const auto count = std::min<std::uint64_t>(chunkGroups, total - first);
             device.InitializeContinuationBlock(block, words);
             device.Dispatch(*heads[chunk], static_cast<std::uint32_t>(count), 1u, 1u, dispatch.programAddress, chunk == 0u ? std::move(headPrepared) : nullptr);
-            if (bins == 0u) continue;
-            std::vector<VulkanDevice::ContinuationPart> rounds;
-            for (std::uint32_t bin = 0; bin < bins; ++bin) rounds.push_back({parts[bin].get(), chunk == 0u ? std::move(partPrepared[bin]) : nullptr, bin});
-            device.DispatchContinuationRounds(block, rounds, bins, split.rounds, geometry.slots, dispatch.programAddress);
+            if (rounds == 0u) continue;
+            std::vector<VulkanDevice::ContinuationPart> liveParts;
+            for (std::uint32_t bin = 0; bin < bins; ++bin) {
+                if (parts[bin] != nullptr) liveParts.push_back({parts[bin].get(), chunk == 0u ? std::move(partPrepared[bin]) : nullptr, bin});
+            }
+            device.DispatchContinuationRounds(block, liveParts, bins, roundBins, geometry.slots, dispatch.programAddress);
         }
     });
 }
