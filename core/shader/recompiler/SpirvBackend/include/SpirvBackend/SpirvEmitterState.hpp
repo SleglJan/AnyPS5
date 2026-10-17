@@ -105,6 +105,13 @@ struct SpirvScalarLoadGroups {
     std::unordered_map<const IrValue*, std::uint32_t> defined;
 };
 
+struct StorageImageMemoryFunctions {
+    std::uint32_t texel = 0;
+    std::uint32_t decode = 0;
+    std::uint32_t decodeType = 0;
+    std::uint32_t encode = 0;
+};
+
 struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
@@ -206,6 +213,7 @@ struct SpirvEmitterState {
     std::map<const IrValue*, std::vector<const IrValue*>> deviceImageAnchors;
     std::uint32_t writtenChunkNoteFunction = 0;
     std::uint32_t imageStoreRecordFunction = 0;
+    StorageImageMemoryFunctions storageImageMemory;
     std::uint32_t mainFunc = 0;
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t meshAllocation = 0;

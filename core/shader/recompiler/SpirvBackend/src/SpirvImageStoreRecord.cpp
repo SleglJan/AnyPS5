@@ -15,7 +15,6 @@
 #include <span>
 #include <spirv/unified1/GLSL.std.450.h>
 #include <stdexcept>
-#include <unordered_map>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -68,11 +67,6 @@ void ReturnUnless(SpirvEmitterState& state, std::uint32_t condition, const std::
 }
 
 namespace Memory = StorageImageMemory;
-
-std::unordered_map<const SpirvEmitterState*, StorageImageMemoryFunctions>& MemoryFunctionRegistry() {
-    thread_local std::unordered_map<const SpirvEmitterState*, StorageImageMemoryFunctions> registry;
-    return registry;
-}
 
 std::vector<std::uint32_t> FunctionParameters(SpirvEmitterState& state, std::uint32_t count) {
     std::vector<std::uint32_t> parameters(count);
@@ -431,7 +425,7 @@ std::uint32_t DefineEncodeFunction(SpirvEmitterState& state) {
 }
 
 void DefineStorageImageMemory(SpirvEmitterState& state) {
-    auto& functions = MemoryFunctionRegistry()[&state];
+    auto& functions = state.storageImageMemory;
     functions = {};
     const auto& info = state.program.Info();
     bool loads = false;
@@ -456,9 +450,7 @@ void DefineStorageImageMemory(SpirvEmitterState& state) {
 }
 
 const StorageImageMemoryFunctions* StorageImageMemoryFunctionsOf(const SpirvEmitterState& state) {
-    const auto& registry = MemoryFunctionRegistry();
-    const auto found = registry.find(&state);
-    return found == registry.end() ? nullptr : &found->second;
+    return &state.storageImageMemory;
 }
 
 bool ImageStoresRecorded(const IrProgram& program, std::span<const std::uint32_t> capabilities) {
