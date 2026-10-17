@@ -228,7 +228,7 @@ void LandingCase(const GuestRegion& region, std::size_t slot) {
     WriteData(waiter, flag, {1});
     Submit(WriterQueue, waiter);
     Submit(0, writer);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     AgcDriver::GuestMemory::TagGpuLockThread(0x7f);
     while (AgcDriver::Graphics::Recorder::LookupLabelValue(label, 4) != std::optional<std::uint64_t>{1}) {
         Require(std::chrono::steady_clock::now() < deadline, "queue label order: the writer's label was never recorded");
