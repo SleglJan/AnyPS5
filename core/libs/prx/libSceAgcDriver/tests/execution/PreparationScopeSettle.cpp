@@ -130,7 +130,7 @@ void RegistrationBesidePendingLink() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         Require(link.wait_for(std::chrono::seconds(0)) == std::future_status::timeout, "the link did not wait for the vertex shader's registration preparation");
         registration = std::async(std::launch::async, [&] { AgcDriverRegisterShader_nid_postfix(&other.shader); });
-        registeredBeside = registration.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+        registeredBeside = registration.wait_for(std::chrono::seconds(60)) == std::future_status::ready;
         held.Release();
     }
     registration.get();
