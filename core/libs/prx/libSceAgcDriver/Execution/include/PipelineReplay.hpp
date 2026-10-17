@@ -35,13 +35,18 @@ public:
         std::uint64_t programsStale = 0;
         std::uint64_t programsFailed = 0;
         std::uint64_t used = 0;
+        std::uint64_t programsRecompiled = 0;
+        std::uint64_t programsDropped = 0;
     };
-    enum class ProgramReplay { Replayed, Stale, Failed };
+    enum class ProgramReplay { Replayed, Stale, Failed, Recompiled, Dropped };
 
     PipelineReplay(PipelineManifest& manifest, std::function<Graphics::Context()> context, std::function<Target()> target);
 
     std::shared_ptr<RecordUse> Created(const Graphics::Context& context, const Graphics::State& state, const Graphics::VertexInputLayout& vertexInput, const Graphics::PipelineSetLayouts& resources, std::span<const Graphics::CompiledShader> shaders, VkImageLayout attachmentLayout) override;
     std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle);
+    std::vector<std::function<void()>> Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const std::array<std::uint64_t, 2>& recordedIdentity);
+    void Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::array<std::uint64_t, 2>& identity);
+    void Drop(const PreparedProgramRecord& recorded);
     void RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request);
     std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
     static void CountProgramReplay(ProgramReplay outcome);

@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineManifest.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -60,22 +62,26 @@ AgcDriver::ManifestRecords Records() {
 void Codec() {
     const auto records = Records();
     const auto bytes = AgcDriver::PipelineManifest::Encode(77u, records);
-    const auto decoded = AgcDriver::PipelineManifest::Decode(bytes, 77u);
+    std::uint64_t recordedSource = 0;
+    const auto decoded = AgcDriver::PipelineManifest::Decode(bytes, recordedSource);
     Require(decoded.has_value() && *decoded == records, "a manifest did not decode to the records it was encoded from");
-    Require(!AgcDriver::PipelineManifest::Decode(bytes, 78u).has_value(), "a manifest of another recompiler build was accepted");
-    for (std::size_t size = 0; size < bytes.size(); ++size) Require(!AgcDriver::PipelineManifest::Decode(std::span(bytes).first(size), 77u).has_value(), "a manifest cut to " + std::to_string(size) + " bytes was accepted");
+    Require(recordedSource == 77u, "the manifest did not report the recompiler build that recorded it");
+    std::uint64_t otherSource = 0;
+    const auto other = AgcDriver::PipelineManifest::Decode(AgcDriver::PipelineManifest::Encode(78u, records), otherSource);
+    Require(other.has_value() && *other == records && otherSource == 78u, "a manifest of another recompiler build was not read with its records and its build");
+    for (std::size_t size = 0; size < bytes.size(); ++size) Require(!AgcDriver::PipelineManifest::Decode(std::span(bytes).first(size), recordedSource).has_value(), "a manifest cut to " + std::to_string(size) + " bytes was accepted");
     auto longer = bytes;
     longer.push_back(std::byte{0});
-    Require(!AgcDriver::PipelineManifest::Decode(longer, 77u).has_value(), "a manifest with trailing bytes was accepted");
+    Require(!AgcDriver::PipelineManifest::Decode(longer, recordedSource).has_value(), "a manifest with trailing bytes was accepted");
     auto corrupt = bytes;
     corrupt[52] = std::byte{0xff};
     corrupt[53] = std::byte{0xff};
     corrupt[54] = std::byte{0xff};
     corrupt[55] = std::byte{0x7f};
-    Require(!AgcDriver::PipelineManifest::Decode(corrupt, 77u).has_value(), "a manifest whose constant count exceeds its bytes was accepted");
+    Require(!AgcDriver::PipelineManifest::Decode(corrupt, recordedSource).has_value(), "a manifest whose constant count exceeds its bytes was accepted");
     auto older = bytes;
     older[8] = std::byte{3};
-    Require(!AgcDriver::PipelineManifest::Decode(older, 77u).has_value(), "a manifest of an earlier format was accepted");
+    Require(!AgcDriver::PipelineManifest::Decode(older, recordedSource).has_value(), "a manifest of an earlier format was accepted");
 }
 
 std::filesystem::path Directory() {
@@ -107,9 +113,27 @@ void File() {
         Require(manifest.PreparedPrograms({7u, 8u}).size() == 2u && manifest.PreparedPrograms({9u, 9u}).empty(), "the programs prepared at use of a registered program are not the ones saved");
         for (const auto& entry : loaded.compute) Require(entry.usage.misses == 0u && entry.usage.progress != 0u, "a record made in a run was saved without that run's use");
     }
+    const std::array<std::uint64_t, 2> rebuilt{0x9999u, 0x9898u};
+    const std::array<std::uint64_t, 2> rebuiltStage{0x7777u, 0x7676u};
     {
         AgcDriver::PipelineManifest manifest(path, 78u);
-        Require(manifest.Loaded() == 0u && manifest.Records(compute[0].program).empty() && manifest.GraphicsRecords().empty(), "a manifest of another recompiler build was loaded");
+        Require(manifest.RecordedByAnotherBuild() && manifest.Loaded() == 7u && manifest.Records(compute[0].program).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a manifest of another recompiler build was not loaded with its records");
+        manifest.Rekey(compute[0].program, rebuilt);
+        manifest.Rekey(graphics[0].stages[0].program, rebuiltStage);
+        manifest.Forget(prepared[0]);
+        manifest.Forget(prepared[1]);
+        auto first = prepared[0];
+        first.identity = rebuilt;
+        auto second = prepared[1];
+        second.identity = rebuiltStage;
+        Require(manifest.Record(first) && manifest.Record(second), "a program prepared at use under its new identity was refused");
+        Require(manifest.Records(compute[0].program).empty() && manifest.Records(rebuilt).size() == 2u && manifest.Records(rebuilt).front().first.program == rebuilt, "rekeying moved no compute record to the program's new identity");
+        Require(std::ranges::all_of(manifest.GraphicsRecords(), [&](const auto& entry) { return entry.first.stages[0].program == rebuiltStage; }), "rekeying left a graphics stage on the program's old identity");
+        Require(manifest.PreparedPrograms({7u, 8u}) == std::vector<AgcDriver::PreparedProgramRecord>{first, second}, "a forgotten program prepared at use was kept, or its new record lost");
+    }
+    {
+        AgcDriver::PipelineManifest manifest(path, 78u);
+        Require(!manifest.RecordedByAnotherBuild() && manifest.Records(rebuilt).size() == 2u && manifest.Records(compute[0].program).empty() && manifest.PreparedPrograms({7u, 8u}).size() == 2u && manifest.GraphicsRecords().size() == 2u, "a rekeyed manifest did not save its new identities under the build that rekeyed it");
     }
     std::error_code error;
     std::filesystem::remove_all(directory, error);

@@ -27,6 +27,8 @@ struct ReplayTotals {
     std::atomic<std::uint64_t> programsReplayed{0};
     std::atomic<std::uint64_t> programsStale{0};
     std::atomic<std::uint64_t> programsFailed{0};
+    std::atomic<std::uint64_t> programsRecompiled{0};
+    std::atomic<std::uint64_t> programsDropped{0};
 };
 
 ReplayTotals& ReplayCounters() {
@@ -95,9 +97,23 @@ std::shared_ptr<RecordUse> PipelineReplay::Created(const Graphics::Context& cont
 }
 
 std::vector<std::function<void()>> PipelineReplay::Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle) {
+    if (handle == nullptr || handle->artifact == nullptr) return {};
+    return Prepared(handle, ShaderRecompiler::GetPreparedArtifact(*handle).identity);
+}
+
+void PipelineReplay::Recompiled(const PreparedProgramRecord& recorded, const ShaderRecompiler::RecompileRequest& request, const std::array<std::uint64_t, 2>& identity) {
+    manifest.Forget(recorded);
+    manifest.Rekey(recorded.identity, identity);
+    manifest.Record(PreparedProgramRecord{recorded.program, recorded.codeOffset, identity, ShaderRecompiler::RequestSerializer{}.Serialize(request)});
+}
+
+void PipelineReplay::Drop(const PreparedProgramRecord& recorded) {
+    manifest.Forget(recorded);
+}
+
+std::vector<std::function<void()>> PipelineReplay::Prepared(const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const std::array<std::uint64_t, 2>& identity) {
     std::vector<std::function<void()>> ready;
     if (handle == nullptr || handle->artifact == nullptr) return ready;
-    const auto& identity = ShaderRecompiler::GetPreparedArtifact(*handle).identity;
     std::lock_guard lock(mutex);
     const auto found = waiting.find(identity);
     if (found == waiting.end()) return ready;
@@ -170,12 +186,18 @@ std::vector<PreparedProgramRecord> PipelineReplay::PreparedPrograms(std::span<co
 
 void PipelineReplay::CountProgramReplay(ProgramReplay outcome) {
     auto& counters = ReplayCounters();
-    (outcome == ProgramReplay::Replayed ? counters.programsReplayed : outcome == ProgramReplay::Stale ? counters.programsStale : counters.programsFailed).fetch_add(1, std::memory_order_relaxed);
+    switch (outcome) {
+        case ProgramReplay::Replayed: counters.programsReplayed.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Stale: counters.programsStale.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Failed: counters.programsFailed.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Recompiled: counters.programsRecompiled.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Dropped: counters.programsDropped.fetch_add(1, std::memory_order_relaxed); break;
+    }
 }
 
 PipelineReplay::Counters PipelineReplay::Totals() {
     auto& totals = ReplayCounters();
-    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed)};
+    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed), totals.programsRecompiled.load(std::memory_order_relaxed), totals.programsDropped.load(std::memory_order_relaxed)};
 }
 
 }

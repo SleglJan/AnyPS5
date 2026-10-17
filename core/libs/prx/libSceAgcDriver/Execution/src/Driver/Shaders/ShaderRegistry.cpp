@@ -1092,14 +1092,29 @@ void OfferPreparedArtifacts(const std::shared_ptr<VulkanDevice>& device, std::sp
 }
 
 void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, const PreparedProgramRecord& record) {
+    auto* replay = device != nullptr ? device->Replay() : nullptr;
+    std::optional<ShaderRecompiler::DeserializedRequest> deserialized;
     try {
-        const auto deserialized = ShaderRecompiler::RequestSerializer{}.Deserialize(record.request);
-        const auto& request = deserialized.request;
-        if (record.codeOffset >= snapshot.code.size() || ShaderRecompiler::ArtifactIdentity(request) != record.identity) {
+        deserialized.emplace(ShaderRecompiler::RequestSerializer{}.Deserialize(record.request));
+    } catch (const std::exception& error) {
+        PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Dropped);
+        if (replay != nullptr) replay->Drop(record);
+        APS5_LOG_ERR("Shader 0x%llx: a program an earlier run prepared at use is dropped, its request cannot be read: %s", static_cast<unsigned long long>(snapshot.codeAddress), error.what());
+        return;
+    }
+    try {
+        const auto& request = deserialized->request;
+        if (record.codeOffset >= snapshot.code.size()) {
             PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Stale);
             return;
         }
+        const auto identity = ShaderRecompiler::ArtifactIdentity(request);
+        const bool recompiled = identity != record.identity;
         const auto handle = PrepareShaderWithDiagnostics(request);
+        if (recompiled && replay != nullptr) {
+            replay->Recompiled(record, request, identity);
+            for (auto& job : replay->Prepared(handle, record.identity)) SubmitLibraryPrebuild([device, job = std::move(job)] { job(); });
+        }
         const PreparedShaders::Entry entry{static_cast<std::size_t>(record.codeOffset), handle};
         {
             std::lock_guard lock(snapshot.prepared->mutex);
@@ -1108,7 +1123,7 @@ void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const Sh
         }
         if (request.shader.stage == ShaderRecompiler::ShaderStage::Compute) static_cast<void>(device->PrepareRecordedComputePipelines(request, *handle));
         OfferPreparedArtifacts(device, std::span(&entry, 1));
-        PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Replayed);
+        PipelineReplay::CountProgramReplay(recompiled ? PipelineReplay::ProgramReplay::Recompiled : PipelineReplay::ProgramReplay::Replayed);
     } catch (const std::exception& error) {
         PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Failed);
         APS5_LOG_ERR("Shader 0x%llx: a program an earlier run prepared at use could not be prepared at registration: %s", static_cast<unsigned long long>(snapshot.codeAddress), error.what());

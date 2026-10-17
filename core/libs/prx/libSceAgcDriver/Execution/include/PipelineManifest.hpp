@@ -115,12 +115,15 @@ public:
     std::size_t Size() const;
     std::size_t Loaded() const { return loaded.compute.size() + loaded.graphics.size() + loaded.prepared.size(); }
     std::size_t Expired() const { return expired; }
+    bool RecordedByAnotherBuild() const { return recordedSource != sourceVersion; }
+    void Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to);
+    void Forget(const PreparedProgramRecord& record);
     const ManifestRecords& LoadedRecords() const { return loaded; }
     ManifestRecords Current() const;
     void Save();
 
     static std::vector<std::byte> Encode(std::uint64_t sourceVersion, const ManifestRecords& records);
-    static std::optional<ManifestRecords> Decode(std::span<const std::byte> bytes, std::uint64_t sourceVersion);
+    static std::optional<ManifestRecords> Decode(std::span<const std::byte> bytes, std::uint64_t& recordedSource);
     static ManifestRecords Unexpired(ManifestRecords records, std::size_t* dropped = nullptr);
 
 private:
@@ -136,6 +139,7 @@ private:
 
     std::filesystem::path path;
     std::uint64_t sourceVersion;
+    std::uint64_t recordedSource = 0;
     ManifestRecords loaded;
     std::size_t expired = 0;
     std::shared_ptr<std::atomic<std::uint64_t>> uses;

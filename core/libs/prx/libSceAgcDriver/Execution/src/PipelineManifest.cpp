@@ -87,16 +87,18 @@ private:
 }
 
 PipelineManifest::PipelineManifest(std::filesystem::path path, std::uint64_t sourceVersion) : path(std::move(path)), sourceVersion(sourceVersion), uses(std::make_shared<std::atomic<std::uint64_t>>(0)) {
+    recordedSource = sourceVersion;
     if (this->path.empty()) return;
     std::vector<std::byte> file;
     if (ShaderRecompiler::ReadWholeFile(this->path, file)) {
-        if (auto decoded = Decode(file, sourceVersion)) {
+        if (auto decoded = Decode(file, recordedSource)) {
             loaded = Unexpired(std::move(*decoded), &expired);
             for (const auto& entry : loaded.compute) compute[entry.record.program].push_back({entry.record, entry.usage, std::make_shared<RecordUse>(uses)});
             for (const auto& entry : loaded.graphics) graphics.push_back({entry.record, entry.usage, std::make_shared<RecordUse>(uses)});
             prepared = loaded.prepared;
             count = Loaded();
-            dirty = expired != 0;
+            dirty = expired != 0 || recordedSource != sourceVersion;
+            if (recordedSource != sourceVersion) std::fprintf(stderr, "[pipeline-manifest] %s was recorded by another recompiler build: its programs are prepared again from their requests\n", this->path.string().c_str());
         } else {
             std::fprintf(stderr, "[pipeline-manifest] ignoring %s: it is not a manifest of this build\n", this->path.string().c_str());
         }
@@ -152,6 +154,37 @@ bool PipelineManifest::Record(PreparedProgramRecord record) {
     ++count;
     dirty = true;
     return true;
+}
+
+void PipelineManifest::Rekey(const std::array<std::uint64_t, 2>& from, const std::array<std::uint64_t, 2>& to) {
+    if (from == to) return;
+    std::lock_guard lock(mutex);
+    if (const auto found = compute.find(from); found != compute.end()) {
+        auto moved = std::move(found->second);
+        compute.erase(found);
+        auto& target = compute[to];
+        for (auto& stored : moved) {
+            stored.record.program = to;
+            if (std::ranges::none_of(target, [&](const auto& existing) { return existing.record == stored.record; })) target.push_back(std::move(stored));
+            else --count;
+        }
+        dirty = true;
+    }
+    for (auto& stored : graphics) {
+        for (auto& stage : stored.record.stages) {
+            if (stage.program != from) continue;
+            stage.program = to;
+            dirty = true;
+        }
+    }
+}
+
+void PipelineManifest::Forget(const PreparedProgramRecord& record) {
+    std::lock_guard lock(mutex);
+    const auto removed = std::erase_if(prepared, [&](const PreparedProgramRecord& existing) { return existing == record; });
+    if (removed == 0) return;
+    count -= removed;
+    dirty = true;
 }
 
 std::vector<PreparedProgramRecord> PipelineManifest::PreparedPrograms(const std::array<std::uint64_t, 2>& program) const {
@@ -295,13 +328,14 @@ std::vector<std::byte> PipelineManifest::Encode(std::uint64_t sourceVersion, con
     return out;
 }
 
-std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byte> bytes, std::uint64_t sourceVersion) {
+std::optional<ManifestRecords> PipelineManifest::Decode(std::span<const std::byte> bytes, std::uint64_t& recordedSource) {
     Reader reader(bytes);
     std::uint64_t magic = 0;
     std::uint32_t version = 0;
     std::uint64_t source = 0;
     if (!reader.Value(magic) || !reader.Value(version) || !reader.Value(source)) return std::nullopt;
-    if (magic != Magic || version != FormatVersion || source != sourceVersion) return std::nullopt;
+    if (magic != Magic || version != FormatVersion) return std::nullopt;
+    recordedSource = source;
     ManifestRecords records;
     const bool compute = reader.List(records.compute, 36u, [&](Recorded<ComputePipelineRecord>& entry) {
         auto& record = entry.record;
