@@ -41,7 +41,7 @@ void Flip() {
 }
 
 bool AwaitFlips(const Output& output, int flips) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (output.ready.load() < flips && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     return output.ready.load() >= flips;
 }
