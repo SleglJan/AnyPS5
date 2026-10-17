@@ -713,15 +713,25 @@ void DeclareBdaReadCache(SpirvEmitterState& state) {
 void InitializeBdaTable(SpirvEmitterState& state) {
     if (state.bdaTableVariables[0] == 0u) return;
     const auto u32 = TypeU32(state);
+    const auto uvec4 = TypeU32Vector(state, 4u);
     const auto length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
-    EmitIfCondition(state, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), length, ConstantU32(state, BdaAbi::HeaderWords)), [&] {
+    const auto header = EmitValueIfElse(state, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), length, ConstantU32(state, BdaAbi::HeaderWords)), uvec4, [&] {
         std::array<std::uint32_t, BdaAbi::HeaderWords> fields{};
         for (std::uint32_t word = 0; word < BdaAbi::HeaderWords; ++word) fields[word] = BdaLoadWord(state, ConstantU32(state, word));
-        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[0], Select(state, u32, BdaHeaderInvalid(state, length, fields), ConstantU32(state, 0u), ConstantU32(state, 1u)));
-        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[1], BdaPair(state, fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u]));
-        state.module.AddFunction(spv::OpStore, state.bdaTableVariables[2], fields[BdaAbi::GrantsWord]);
-    });
+        const auto valid = Select(state, u32, BdaHeaderInvalid(state, length, fields), ConstantU32(state, 0u), ConstantU32(state, 1u));
+        const auto packed = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, uvec4, packed, valid, fields[BdaAbi::PageTableWord], fields[BdaAbi::PageTableWord + 1u], fields[BdaAbi::GrantsWord]);
+        return packed;
+    }, [&] { return ConstantU32CompositeZero(state, 4u); });
+    const auto field = [&](std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, value, header, index);
+        return value;
+    };
+    state.module.AddFunction(spv::OpStore, state.bdaTableVariables[0], field(0u));
+    state.module.AddFunction(spv::OpStore, state.bdaTableVariables[1], BdaPair(state, field(1u), field(2u)));
+    state.module.AddFunction(spv::OpStore, state.bdaTableVariables[2], field(3u));
 }
 
 bool BdaReadCacheAvailable(const SpirvEmitterState& state) {
