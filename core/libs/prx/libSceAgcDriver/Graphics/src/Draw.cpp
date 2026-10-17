@@ -198,7 +198,9 @@ void recordDccKeyClear(const Context& context, const ColorTarget& color, const s
     auto decision = std::make_shared<Buffer>(context, 8 * sizeof(std::uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
     const auto commands = recorder->Commands();
     recorder->Keep(resident);
-    context.detiler->DispatchDccKeyClear(commands, import->buffer, descriptor.dccAddress - import->base, keyCount, decision->Handle(), resident->ElementView(), descriptor.width, descriptor.height, enabled, words);
+    const auto* element = resident->ElementView();
+    Require(element != nullptr, "a DCC key decision on the GPU needs the color target's element view");
+    context.detiler->DispatchDccKeyClear(commands, import->buffer, descriptor.dccAddress - import->base, keyCount, decision->Handle(), *element, descriptor.width, descriptor.height, enabled, words);
     recorder->Keep(std::move(decision));
     resident->NoteKeysClearedOnGpu();
 }
@@ -284,7 +286,7 @@ void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, 
     GuestMemory::Write(color.address, texels, surface.Alignment());
 }
 
-void recordCmaskClear(const Context& context, Recorder& recorder, const HostImport& import, const ColorTarget& color, const CmaskLayout& layout, const std::shared_ptr<StorageTexture>& resident, VkImageView view) {
+void recordCmaskClear(const Context& context, Recorder& recorder, const HostImport& import, const ColorTarget& color, const CmaskLayout& layout, const std::shared_ptr<StorageTexture>& resident, const PooledView& view) {
     const auto address = color.cmaskAddress;
     const auto bytes = layout.Bytes();
     StorageTexture::FlushPending(address, bytes, nullptr, "fast-clear materialization");
@@ -308,9 +310,9 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     auto* recorder = Recorder::Active();
     if (resident != nullptr && context.detiler != nullptr && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) {
         const auto* import = HostImportFor(context, color.cmaskAddress, bytes);
-        const auto view = import != nullptr ? resident->ElementView() : VK_NULL_HANDLE;
-        if (view != VK_NULL_HANDLE) {
-            recordCmaskClear(context, *recorder, *import, color, layout, resident, view);
+        const auto* view = import != nullptr ? resident->ElementView() : nullptr;
+        if (view != nullptr) {
+            recordCmaskClear(context, *recorder, *import, color, layout, resident, *view);
             return true;
         }
     }

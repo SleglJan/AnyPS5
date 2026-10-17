@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <array>
@@ -28,6 +29,7 @@ void TextureDetiler::BeginBatch() {
 }
 
 void TextureDetiler::resetRing(DescriptorRing& ring, const char* resetWhat) {
+    if (!ring.pools.empty()) PooledView::Settle();
     for (const auto pool : ring.pools) Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), resetWhat);
     std::fill(ring.values.begin(), ring.values.end(), std::array<std::uint64_t, MaxRecorderStreams>{});
     std::fill(ring.unrecorded.begin(), ring.unrecorded.end(), std::uint8_t{0});
@@ -40,7 +42,7 @@ void TextureDetiler::destroyRing(DescriptorRing& ring) noexcept {
     ring = {};
 }
 
-VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat) {
+VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat, bool updateAfterBind) {
     constexpr std::uint32_t setsPerPool = 64;
     const auto* recorder = Recorder::Active();
     if (ring.pools.empty() || ring.used == setsPerPool) {
@@ -57,6 +59,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
             ring.values[next] = {};
         } else {
             VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            info.flags = updateAfterBind ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT : 0;
             info.maxSets = setsPerPool;
             info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
             info.pPoolSizes = sizes.data();
@@ -93,13 +96,13 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
 
 VkDescriptorSet TextureDetiler::allocateDecodeImageSet() {
     constexpr std::array<VkDescriptorPoolSize, 1> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64 * 2}}};
-    return allocateFrom(decodeImageDescriptorSets, decodeImageDescriptorLayout, sizes, "vkCreateDescriptorPool texel decode", "vkAllocateDescriptorSets texel decode", "vkResetDescriptorPool texel decode");
+    return allocateFrom(decodeImageDescriptorSets, decodeImageDescriptorLayout, sizes, "vkCreateDescriptorPool texel decode", "vkAllocateDescriptorSets texel decode", "vkResetDescriptorPool texel decode", true);
 }
 
 VkDescriptorSet TextureDetiler::allocateSet(bool image) {
     if (image) {
         constexpr std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}};
-        return allocateFrom(imageDescriptorSets, imageDescriptorLayout, sizes, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler");
+        return allocateFrom(imageDescriptorSets, imageDescriptorLayout, sizes, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler", true);
     }
     constexpr std::array<VkDescriptorPoolSize, 1> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 2}}};
     return allocateFrom(descriptorSets, descriptorLayout, sizes, "vkCreateDescriptorPool texture detiler", "vkAllocateDescriptorSets texture detiler", "vkResetDescriptorPool texture detiler");

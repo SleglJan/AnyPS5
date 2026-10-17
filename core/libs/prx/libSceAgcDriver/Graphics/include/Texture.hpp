@@ -56,17 +56,15 @@ struct OwnedImage {
     VkDeviceMemory memory;
 };
 
-struct OwnedViews {
-    OwnedViews(const Context& context, std::shared_ptr<OwnedImage> image) : context(context), image(std::move(image)) {}
-    OwnedViews(const OwnedViews&) = delete;
-    OwnedViews& operator=(const OwnedViews&) = delete;
-    ~OwnedViews() {
-        for (const auto view : views) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
-    }
-    Context context;
-    std::shared_ptr<OwnedImage> image;
-    std::vector<VkImageView> views;
+enum class ViewKind : std::uint8_t { Sampled, Storage, DefaultStorage, Element, ElementLayer, DecodeSource, DecodedCopy, Attachment, Count };
+struct ViewCreationTotals {
+    static constexpr std::size_t Kinds = static_cast<std::size_t>(ViewKind::Count);
+    std::array<std::uint64_t, Kinds> onPool{};
+    std::array<std::uint64_t, Kinds> onCaller{};
+    std::array<std::uint64_t, Kinds> waits{};
 };
+ViewCreationTotals ViewCreationCounts();
+void CountCallerViewCreation(ViewKind kind);
 
 class PooledView {
 public:
@@ -74,17 +72,28 @@ public:
     ~PooledView();
     PooledView(const PooledView&) = delete;
     PooledView& operator=(const PooledView&) = delete;
-    void Start(const Context& context, const VkImageViewCreateInfo& info, const char* what);
+    void Start(const Context& context, const VkImageViewCreateInfo& info, const char* what, ViewKind kind = ViewKind::Sampled);
     bool Started() const { return state != nullptr; }
     VkImageView Get() const;
     std::uint32_t SampledSlot(VkImageLayout layout) const;
     std::uint32_t Slot(DescriptorHeap::Array array, VkImageLayout layout) const;
+    void WriteSlotWhenCreated(DescriptorHeap::Array array, std::uint32_t slot, VkImageLayout layout) const;
+    void WriteSetWhenCreated(VkDescriptorSet set, std::uint32_t binding, VkDescriptorType type, VkImageLayout layout) const;
     void Destroy() noexcept;
     static void Settle();
 
 private:
     struct State;
     std::shared_ptr<State> state;
+};
+
+struct OwnedViews {
+    OwnedViews(const Context& context, std::shared_ptr<OwnedImage> image) : context(context), image(std::move(image)) {}
+    OwnedViews(const OwnedViews&) = delete;
+    OwnedViews& operator=(const OwnedViews&) = delete;
+    Context context;
+    std::shared_ptr<OwnedImage> image;
+    std::vector<std::unique_ptr<PooledView>> views;
 };
 
 struct TextureGatherCopy {
@@ -231,14 +240,14 @@ public:
     };
     static ViewLayers LayersOf(const GuestTextureResource& viewed, bool flat);
     VkImageView StorageView(std::uint32_t mip, ViewLayers layers);
-    VkImageView ElementView();
-    VkImageView DecodeSourceView(std::uint32_t mip);
+    const PooledView* ElementView();
+    const PooledView& DecodeSourceView(std::uint32_t mip);
     VkImageView AtomicView(std::uint32_t mip, ViewLayers layers);
     VkImageView Atomic64View(std::uint32_t mip, ViewLayers layers);
     enum class StorageViewKind : std::uint8_t { Storage, Atomic, Atomic64 };
     std::uint32_t StorageSlot(std::uint32_t mip, ViewLayers layers, StorageViewKind kind);
-    std::uint32_t StorageSlot(VkImageView view);
     std::uint32_t StorageSlotRun(std::span<const VkImageView> views);
+    std::uint32_t StorageSlotRun(std::uint32_t firstMip, std::uint32_t lastMip, ViewLayers layers);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
     // buffer's format and mark the image dirty like a storage write.
     bool Attachable() const { return attachable; }
@@ -573,13 +582,11 @@ private:
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
     VkImageViewCreateInfo viewInfo(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
-    VkImageView createView(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
     VkFormat storageViewFormat(StorageViewKind kind) const;
-    bool defaultView(std::uint32_t mip, ViewLayers layers, VkFormat format) const;
-    PooledView& pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format);
+    PooledView& pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format, ViewKind kind = ViewKind::Storage);
     VkImageView layerView(std::uint32_t mip, ViewLayers layers, VkFormat format);
     bool singlePass();
-    VkImageView elementLayerView(std::uint32_t level, std::uint32_t layer);
+    const PooledView& elementLayerView(std::uint32_t level, std::uint32_t layer);
     void recordDirectUploadBarrier(VkCommandBuffer commands, bool discard);
     void recordDirectUploadDone(VkCommandBuffer commands);
     void release() noexcept;
@@ -638,19 +645,19 @@ private:
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize memoryBytes = 0;
-    VkImageView view = VK_NULL_HANDLE;
     std::mutex slotMutex;
-    std::map<VkImageView, std::uint32_t> storageSlots;
     std::map<std::pair<VkImageView, std::uint32_t>, std::uint32_t> storageRuns;
+    std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, bool>, std::uint32_t> pooledRuns;
     std::uint32_t defaultMip = 0;
     std::mutex viewMutex;
     std::map<std::tuple<std::uint32_t, std::uint32_t, std::uint32_t, bool, VkFormat>, std::unique_ptr<PooledView>> pooledViews;
-    VkImageView elementView = VK_NULL_HANDLE;
-    std::map<std::uint32_t, VkImageView> elementLayerViews;
-    std::map<std::uint32_t, VkImageView> decodeSourceViews;
+    std::unique_ptr<PooledView> elementView;
+    bool elementViewChecked = false;
+    std::map<std::uint32_t, std::unique_ptr<PooledView>> elementLayerViews;
+    std::map<std::uint32_t, std::unique_ptr<PooledView>> decodeSourceViews;
     std::int8_t singlePassState = -1;
     bool attachable = false;
-    std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
+    std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t>, std::unique_ptr<PooledView>> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;
     VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
     VkImageView proxyView = VK_NULL_HANDLE;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -30,6 +31,22 @@
 namespace AgcDriver::Graphics {
 
 namespace {
+
+VkResult CreateImageWritingLayout(const Context& context, std::span<const VkDescriptorSetLayoutBinding> bindings, VkDescriptorSetLayout* layout) {
+    std::vector<VkDescriptorBindingFlags> flags(bindings.size(), 0);
+    for (std::size_t index = 0; index < bindings.size(); ++index) {
+        if (bindings[index].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) flags[index] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    }
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
+    bindingFlags.pBindingFlags = flags.data();
+    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.pNext = &bindingFlags;
+    layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+    return context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, layout);
+}
 
 struct Push {
     std::uint32_t srcBase;
@@ -107,7 +124,7 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         moduleInfo.pCode = TEXTURE_DETILE_SPV;
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
+        Check(CreateImageWritingLayout(context, bindings, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
         pipelineLayoutInfo.pSetLayouts = &imageDescriptorLayout;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &imagePipelineLayout), "vkCreatePipelineLayout");
     } catch (...) {
@@ -443,8 +460,8 @@ void TextureDetiler::DispatchRestartStarts(VkCommandBuffer commands, VkBuffer in
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
 }
 
-void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent) {
-    Require(commands != VK_NULL_HANDLE && source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "a texel decode needs a command buffer and its source and destination views");
+void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, const PooledView& source, const PooledView& destination, VkExtent3D extent) {
+    Require(commands != VK_NULL_HANDLE && source.Started() && destination.Started(), "a texel decode needs a command buffer and its source and destination views");
     const auto dimension = viewType == VK_IMAGE_VIEW_TYPE_1D_ARRAY ? 0u : viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY ? 1u : viewType == VK_IMAGE_VIEW_TYPE_3D ? 2u : 3u;
     Require(dimension < 3u, "a texel decode between images takes 1D array, 2D array or 3D views");
     const auto variant = dimension * 2u + (DecodedCopyElementBytes(guestFormat) == 16u ? 1u : 0u);
@@ -456,10 +473,7 @@ void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t
             bindings[index].descriptorCount = 1;
             bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
-        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &decodeImageDescriptorLayout), "vkCreateDescriptorSetLayout texel decode");
+        Check(CreateImageWritingLayout(context, bindings, &decodeImageDescriptorLayout), "vkCreateDescriptorSetLayout texel decode");
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &decodeImageDescriptorLayout;
@@ -481,17 +495,8 @@ void TextureDetiler::DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t
         Check(CreateComputePipeline(context, createInfo, &target), "vkCreateComputePipelines texel decode");
     }
     const auto set = allocateDecodeImageSet();
-    const std::array<VkDescriptorImageInfo, 2> images{{{VK_NULL_HANDLE, source, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, destination, VK_IMAGE_LAYOUT_GENERAL}}};
-    std::array<VkWriteDescriptorSet, 2> writes{};
-    for (std::uint32_t index = 0; index < writes.size(); ++index) {
-        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[index].dstSet = set;
-        writes[index].dstBinding = index;
-        writes[index].descriptorCount = 1;
-        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[index].pImageInfo = &images[index];
-    }
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    source.WriteSetWhenCreated(set, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
+    destination.WriteSetWhenCreated(set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
     context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, decodeImagePipelineLayout, 0, 1, &set, 0, nullptr);
     context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (extent.width + 7u) / 8u, (extent.height + 7u) / 8u, extent.depth);
@@ -511,8 +516,8 @@ std::uint32_t TextureDetiler::CmaskErrors() {
     return codes;
 }
 
-void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write) {
-    Require(commands != VK_NULL_HANDLE && cmask != VK_NULL_HANDLE && view != VK_NULL_HANDLE, "a CMASK clear needs a command buffer, the CMASK buffer and the target view");
+void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, const PooledView& view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write) {
+    Require(commands != VK_NULL_HANDLE && cmask != VK_NULL_HANDLE && view.Started(), "a CMASK clear needs a command buffer, the CMASK buffer and the target view");
     Require(elementBytes == 1 || elementBytes == 2 || elementBytes == 4 || elementBytes == 8, "a CMASK clear of this element size is not modeled");
     Require(cmaskOffset % 4 == 0 && cmaskBytes % 4 == 0 && cmaskBytes != 0, "a CMASK clear needs a word-aligned CMASK");
     if (cmaskPipeline == VK_NULL_HANDLE) {
@@ -523,10 +528,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
             bindings[index].descriptorCount = 1;
             bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
-        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &cmaskDescriptorLayout), "vkCreateDescriptorSetLayout CMASK clear");
+        Check(CreateImageWritingLayout(context, bindings, &cmaskDescriptorLayout), "vkCreateDescriptorSetLayout CMASK clear");
         const VkPushConstantRange pushRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, 7 * sizeof(std::uint32_t)};
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
@@ -552,25 +554,24 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         std::memset(cmaskErrors->Bytes().data(), 0, 4);
     }
     constexpr std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 2}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}};
-    const auto set = allocateFrom(cmaskDescriptorSets, cmaskDescriptorLayout, sizes, "vkCreateDescriptorPool CMASK clear", "vkAllocateDescriptorSets CMASK clear", "vkResetDescriptorPool CMASK clear");
+    const auto set = allocateFrom(cmaskDescriptorSets, cmaskDescriptorLayout, sizes, "vkCreateDescriptorPool CMASK clear", "vkAllocateDescriptorSets CMASK clear", "vkResetDescriptorPool CMASK clear", true);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = cmaskOffset - cmaskOffset % alignment;
     const auto base = cmaskOffset - descriptorOffset;
     const VkDescriptorBufferInfo cmaskInfo{cmask, descriptorOffset, base + cmaskBytes};
     const VkDescriptorBufferInfo errorInfo{cmaskErrors->Handle(), 0, 4};
-    const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
-    std::array<VkWriteDescriptorSet, 3> writes{};
+    std::array<VkWriteDescriptorSet, 2> writes{};
     for (std::uint32_t index = 0; index < writes.size(); ++index) {
         writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[index].dstSet = set;
         writes[index].dstBinding = index;
         writes[index].descriptorCount = 1;
-        writes[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     }
     writes[0].pBufferInfo = &cmaskInfo;
     writes[1].pBufferInfo = &errorInfo;
-    writes[2].pImageInfo = &imageInfo;
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    view.WriteSetWhenCreated(set, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
     const auto barrier = [&](VkPipelineStageFlags source, VkPipelineStageFlags destination, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
         VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         memory.srcAccessMask = sourceAccess;
@@ -591,8 +592,8 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
     barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);
 }
 
-void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords) {
-    Require(commands != VK_NULL_HANDLE && keys != VK_NULL_HANDLE && decision != VK_NULL_HANDLE && view != VK_NULL_HANDLE, "a DCC key clear needs a command buffer, the key buffer, its decision buffer and the target view");
+void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, const PooledView& view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords) {
+    Require(commands != VK_NULL_HANDLE && keys != VK_NULL_HANDLE && decision != VK_NULL_HANDLE && view.Started(), "a DCC key clear needs a command buffer, the key buffer, its decision buffer and the target view");
     Require(keyCount != 0 && keyCount <= UINT32_MAX && width != 0 && height != 0, "a DCC key clear needs keys and a target extent");
     if (keyClearPipeline == VK_NULL_HANDLE) {
         std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
@@ -602,10 +603,7 @@ void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys
             bindings[index].descriptorCount = 1;
             bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         }
-        VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &keyClearDescriptorLayout), "vkCreateDescriptorSetLayout DCC key clear");
+        Check(CreateImageWritingLayout(context, bindings, &keyClearDescriptorLayout), "vkCreateDescriptorSetLayout DCC key clear");
         const VkPushConstantRange pushRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16 * sizeof(std::uint32_t)};
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayoutInfo.setLayoutCount = 1;
@@ -631,27 +629,27 @@ void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys
         std::memset(keyClearErrors->Bytes().data(), 0, 4);
     }
     constexpr std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64 * 3}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 64}}};
-    const auto set = allocateFrom(keyClearDescriptorSets, keyClearDescriptorLayout, sizes, "vkCreateDescriptorPool DCC key clear", "vkAllocateDescriptorSets DCC key clear", "vkResetDescriptorPool DCC key clear");
+    const auto set = allocateFrom(keyClearDescriptorSets, keyClearDescriptorLayout, sizes, "vkCreateDescriptorPool DCC key clear", "vkAllocateDescriptorSets DCC key clear", "vkResetDescriptorPool DCC key clear", true);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = keysOffset - keysOffset % alignment;
     const auto base = keysOffset - descriptorOffset;
     const VkDescriptorBufferInfo keysInfo{keys, descriptorOffset, (base + keyCount + 3u) & ~VkDeviceSize{3}};
     const VkDescriptorBufferInfo decisionInfo{decision, 0, 8 * sizeof(std::uint32_t)};
-    const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo errorInfo{keyClearErrors->Handle(), 0, 4};
-    std::array<VkWriteDescriptorSet, 4> writes{};
+    std::array<VkWriteDescriptorSet, 3> writes{};
+    constexpr std::array<std::uint32_t, 3> bufferBindings{0u, 1u, 3u};
     for (std::uint32_t index = 0; index < writes.size(); ++index) {
         writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[index].dstSet = set;
-        writes[index].dstBinding = index;
+        writes[index].dstBinding = bufferBindings[index];
         writes[index].descriptorCount = 1;
-        writes[index].descriptorType = index == 2 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     }
     writes[0].pBufferInfo = &keysInfo;
     writes[1].pBufferInfo = &decisionInfo;
-    writes[2].pImageInfo = &imageInfo;
-    writes[3].pBufferInfo = &errorInfo;
+    writes[2].pBufferInfo = &errorInfo;
     context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    view.WriteSetWhenCreated(set, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
     const auto barrier = [&](VkPipelineStageFlags source, VkPipelineStageFlags destination, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
         VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         memory.srcAccessMask = sourceAccess;
@@ -674,10 +672,10 @@ void TextureDetiler::DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys
     barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
 }
 
-void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile, std::uint32_t slice, const DetileWindow& window) {
+void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, const PooledView& view, const TileMipLayout& layout, bool retile, std::uint32_t slice, const DetileWindow& window) {
     Require(commands != VK_NULL_HANDLE, "texture detiling requires an active command buffer");
     Require(window.rangeBegin < window.rangeEnd && window.tiledBase <= window.rangeBegin, "texture detiling window is empty");
-    Require(tiled != VK_NULL_HANDLE && view != VK_NULL_HANDLE, "texture detiling requires a tiled buffer and an image view");
+    Require(tiled != VK_NULL_HANDLE && view.Started(), "texture detiling requires a tiled buffer and an image view");
     Require(ImageElementFormat(elementBytes) != VK_FORMAT_UNDEFINED, "unsupported element size for texture detiling through an image");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
@@ -691,21 +689,14 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     Require(range <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet(true);
     const VkDescriptorBufferInfo bufferInfo{tiled, descriptorOffset, range};
-    const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
-    std::array<VkWriteDescriptorSet, 2> writes{};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = set;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[0].pBufferInfo = &bufferInfo;
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = set;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[1].pImageInfo = &imageInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &bufferInfo;
+    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+    view.WriteSetWhenCreated(set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_IMAGE_LAYOUT_GENERAL);
     context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
     context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0, 1, &set, 0, nullptr);
     Push push{};

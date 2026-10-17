@@ -37,6 +37,8 @@ namespace AgcDriver::Graphics {
         std::uint32_t pipeBankXor = 0;
     };
 
+    class PooledView;
+
     class TextureDetiler {
     public:
         explicit TextureDetiler(const Context& context);
@@ -49,18 +51,18 @@ namespace AgcDriver::Graphics {
         // restricts the move to part of the mip (a partial upload or write-back, StorageTexture),
         // leaving the other elements of both buffers alone.
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
-        void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
+        void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, const PooledView& view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
-        void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
+        void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, const PooledView& view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
         std::uint32_t KeyClearErrors();
-        void DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords);
+        void DispatchDccKeyClear(VkCommandBuffer commands, VkBuffer keys, std::uint64_t keysOffset, std::size_t keyCount, VkBuffer decision, const PooledView& view, std::uint32_t width, std::uint32_t height, std::uint32_t enabled, const std::array<std::uint32_t, 10>& clearWords);
         void DispatchDecode(VkCommandBuffer commands, std::uint32_t guestFormat, VkBuffer source, VkBuffer destination, std::uint64_t texels);
         void DispatchSurfaceFill(VkCommandBuffer commands, VkBuffer surface, std::uint64_t bytes, std::uint32_t elementBytes, bool expandSingle, const std::array<std::uint32_t, 4>& pattern);
         void DispatchRestartStarts(VkCommandBuffer commands, VkBuffer indices, std::uint64_t indexOffset, std::uint32_t count, std::uint32_t indexBytes, VkBuffer starts, std::uint64_t startsOffset);
-        void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, VkImageView source, VkImageView destination, VkExtent3D extent);
+        void DispatchDecodeImage(VkCommandBuffer commands, std::uint32_t guestFormat, VkImageViewType viewType, const PooledView& source, const PooledView& destination, VkExtent3D extent);
 
     private:
         struct DescriptorRing {
@@ -70,7 +72,7 @@ namespace AgcDriver::Graphics {
             std::size_t current = 0;
             std::uint32_t used = 0;
         };
-        VkDescriptorSet allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat);
+        VkDescriptorSet allocateFrom(DescriptorRing& ring, VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, const char* createWhat, const char* allocateWhat, const char* resetWhat, bool updateAfterBind = false);
         void resetRing(DescriptorRing& ring, const char* resetWhat);
         void destroyRing(DescriptorRing& ring) noexcept;
         VkDescriptorSet allocateDecodeImageSet();

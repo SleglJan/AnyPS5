@@ -669,9 +669,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
             storageInfo.viewType = copyViewType;
             storageInfo.format = format == VK_FORMAT_R32G32B32A32_SFLOAT ? VK_FORMAT_R32G32B32A32_UINT : VK_FORMAT_R32_UINT;
             storageInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1u, 0u, copyLayers};
-            VkImageView storageView = VK_NULL_HANDLE;
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &storageInfo, nullptr, &storageView), "vkCreateImageView decoded copy storage");
-            copyViews->views.push_back(storageView);
+            auto storageView = std::make_unique<PooledView>();
+            storageView->Start(context, storageInfo, "vkCreateImageView decoded copy storage", ViewKind::DecodedCopy);
+            copyViews->views.push_back(std::move(storageView));
         }
         viewUsage = VK_IMAGE_USAGE_SAMPLED_BIT;
         VkImageViewUsageCreateInfo sampledUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
@@ -801,7 +801,7 @@ void Texture::recordDecodedCopy(VkCommandBuffer commands, std::vector<std::share
         const auto width = std::max(copyWidth >> level, 1u);
         const auto height = copyViewType == VK_IMAGE_VIEW_TYPE_1D_ARRAY ? 1u : std::max(copyHeight >> level, 1u);
         const auto depth = copyViewType == VK_IMAGE_VIEW_TYPE_3D ? std::max(copyDepth >> level, 1u) : copyLayers;
-        context.detiler->DispatchDecodeImage(commands, decodedGuestFormat, copyViewType, storageSource->DecodeSourceView(level), copyViews->views[level], {width, height, depth});
+        context.detiler->DispatchDecodeImage(commands, decodedGuestFormat, copyViewType, storageSource->DecodeSourceView(level), *copyViews->views[level], {width, height, depth});
     }
     VkImageMemoryBarrier toShaderRead = toGeneral;
     toShaderRead.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -1007,11 +1007,23 @@ struct ViewCreations {
     std::uint64_t issued = 0;
     std::string failure;
     std::uint32_t workers = 0;
+    std::vector<std::function<void()>> setWrites;
 };
 
 ViewCreations& ViewPool() {
     static ViewCreations* const pool = new ViewCreations;
     return *pool;
+}
+
+struct ViewCounters {
+    std::array<std::atomic<std::uint64_t>, ViewCreationTotals::Kinds> onPool{};
+    std::array<std::atomic<std::uint64_t>, ViewCreationTotals::Kinds> onCaller{};
+    std::array<std::atomic<std::uint64_t>, ViewCreationTotals::Kinds> waits{};
+};
+
+ViewCounters& Counters() {
+    static ViewCounters* const counters = new ViewCounters;
+    return *counters;
 }
 
 void viewWorker() {
@@ -1031,6 +1043,21 @@ void viewWorker() {
 
 }
 
+ViewCreationTotals ViewCreationCounts() {
+    auto& counters = Counters();
+    ViewCreationTotals totals;
+    for (std::size_t kind = 0; kind < ViewCreationTotals::Kinds; ++kind) {
+        totals.onPool[kind] = counters.onPool[kind].load(std::memory_order_relaxed);
+        totals.onCaller[kind] = counters.onCaller[kind].load(std::memory_order_relaxed);
+        totals.waits[kind] = counters.waits[kind].load(std::memory_order_relaxed);
+    }
+    return totals;
+}
+
+void CountCallerViewCreation(ViewKind kind) {
+    Counters().onCaller[static_cast<std::size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 struct PooledView::State {
     std::mutex mutex;
     std::condition_variable created;
@@ -1043,9 +1070,13 @@ struct PooledView::State {
     DescriptorHeap* heap = nullptr;
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkDestroyImageView destroy = nullptr;
+    decltype(Context::deviceProc) deviceProc = nullptr;
+    ViewKind kind = ViewKind::Sampled;
+    std::vector<std::function<void(VkImageView)>> writes;
+    std::vector<std::function<void()>> setWrites;
 };
 
-void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info, const char* what) {
+void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info, const char* what, ViewKind kind) {
     Require(state == nullptr, std::string(what) + ": a pooled view is started once");
     std::optional<VkImageViewMinLodCreateInfoEXT> minLod;
     std::optional<VkImageViewUsageCreateInfo> usage;
@@ -1058,6 +1089,8 @@ void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info
     target->heap = context.descriptorHeap;
     target->device = context.device;
     target->destroy = context.Function<PFN_vkDestroyImageView>("vkDestroyImageView");
+    target->deviceProc = context.deviceProc;
+    target->kind = kind;
     const auto create = context.Function<PFN_vkCreateImageView>("vkCreateImageView");
     auto& pool = ViewPool();
     {
@@ -1076,6 +1109,7 @@ void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info
             }
             VkImageView made = VK_NULL_HANDLE;
             const auto result = create(target->device, &request, nullptr, &made);
+            if (result == VK_SUCCESS) Counters().onPool[static_cast<std::size_t>(target->kind)].fetch_add(1, std::memory_order_relaxed);
             std::string failure;
             {
                 std::lock_guard lock(target->mutex);
@@ -1084,15 +1118,21 @@ void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info
                     failure = label + " failed on the view pool: VkResult " + std::to_string(static_cast<int>(result));
                 } else {
                     target->view = made;
-                    if (target->slot) {
-                        try {
-                            target->heap->WriteImage(target->slotArray, *target->slot, made, target->slotLayout);
-                        } catch (const std::exception& error) {
-                            failure = label + ": " + error.what();
-                        }
+                    try {
+                        if (target->slot) target->heap->WriteImage(target->slotArray, *target->slot, made, target->slotLayout);
+                        for (const auto& write : target->writes) write(made);
+                    } catch (const std::exception& error) {
+                        failure = label + ": " + error.what();
                     }
                 }
+                target->writes.clear();
                 target->failure = failure;
+                if (failure.empty() && !target->setWrites.empty()) {
+                    auto& views = ViewPool();
+                    std::lock_guard poolLock(views.mutex);
+                    for (auto& write : target->setWrites) views.setWrites.push_back(std::move(write));
+                }
+                target->setWrites.clear();
             }
             target->created.notify_all();
             if (failure.empty()) return;
@@ -1112,6 +1152,7 @@ void PooledView::Start(const Context& context, const VkImageViewCreateInfo& info
 VkImageView PooledView::Get() const {
     if (state == nullptr) return VK_NULL_HANDLE;
     std::unique_lock lock(state->mutex);
+    if (!state->finished) Counters().waits[static_cast<std::size_t>(state->kind)].fetch_add(1, std::memory_order_relaxed);
     state->created.wait(lock, [&] { return state->finished; });
     Require(state->failure.empty(), state->failure);
     return state->view;
@@ -1139,6 +1180,47 @@ std::uint32_t PooledView::Slot(DescriptorHeap::Array array, VkImageLayout layout
     return *state->slot;
 }
 
+void PooledView::WriteSlotWhenCreated(DescriptorHeap::Array array, std::uint32_t slot, VkImageLayout layout) const {
+    Require(state != nullptr && state->heap != nullptr, "an image slot needs a view and the descriptor heap");
+    std::lock_guard lock(state->mutex);
+    Require(state->failure.empty(), state->failure);
+    auto* heap = state->heap;
+    if (state->finished) {
+        heap->WriteImage(array, slot, state->view, layout);
+        return;
+    }
+    state->writes.emplace_back([heap, array, slot, layout](VkImageView view) { heap->WriteImage(array, slot, view, layout); });
+}
+
+void PooledView::WriteSetWhenCreated(VkDescriptorSet set, std::uint32_t binding, VkDescriptorType type, VkImageLayout layout) const {
+    Require(state != nullptr && set != VK_NULL_HANDLE, "a descriptor set write needs a view and the set");
+    std::lock_guard lock(state->mutex);
+    Require(state->failure.empty(), state->failure);
+    Require(state->deviceProc != nullptr, "missing Vulkan device function resolver");
+    const auto update = reinterpret_cast<PFN_vkUpdateDescriptorSets>(state->deviceProc(state->device, "vkUpdateDescriptorSets"));
+    Require(update != nullptr, "AGC graphics: missing Vulkan function: vkUpdateDescriptorSets");
+    const auto write = [update, device = state->device, set, binding, type, layout](VkImageView view) {
+        const VkDescriptorImageInfo image{VK_NULL_HANDLE, view, layout};
+        VkWriteDescriptorSet descriptor{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        descriptor.dstSet = set;
+        descriptor.dstBinding = binding;
+        descriptor.descriptorCount = 1;
+        descriptor.descriptorType = type;
+        descriptor.pImageInfo = &image;
+        update(device, 1, &descriptor, 0, nullptr);
+    };
+    if (state->finished) {
+        write(state->view);
+        return;
+    }
+    state->setWrites.emplace_back([write, target = std::weak_ptr<State>(state)] {
+        const auto created = target.lock();
+        if (created == nullptr) return;
+        std::lock_guard lock(created->mutex);
+        if (created->view != VK_NULL_HANDLE) write(created->view);
+    });
+}
+
 void PooledView::Destroy() noexcept {
     if (state == nullptr) return;
     {
@@ -1162,6 +1244,10 @@ void PooledView::Settle() {
     const auto issued = pool.issued;
     pool.settled.wait(lock, [&] { return pool.open.empty() || *pool.open.begin() > issued; });
     Require(pool.failure.empty(), pool.failure);
+    auto writes = std::move(pool.setWrites);
+    pool.setWrites.clear();
+    lock.unlock();
+    for (const auto& write : writes) write();
 }
 
 namespace {
@@ -1340,7 +1426,7 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
     uploadReason = "first";
     texture->upload();
     texture->defaultMip = mipLevel;
-    texture->view = texture->createView(mipLevel, LayersOf(texture->descriptor, false), texture->storageFormat);
+    static_cast<void>(texture->pooledView(mipLevel, LayersOf(texture->descriptor, false), texture->storageFormat, ViewKind::DefaultStorage));
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -1845,21 +1931,7 @@ VkImageViewCreateInfo StorageTexture::viewInfo(std::uint32_t mip, ViewLayers lay
     return info;
 }
 
-VkImageView StorageTexture::createView(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
-    auto info = viewInfo(mip, layers, format);
-    VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
-    usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
-    if (format != storageFormat) info.pNext = &usage;
-    VkImageView created = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &created), "vkCreateImageView storage");
-    return created;
-}
-
-bool StorageTexture::defaultView(std::uint32_t mip, ViewLayers layers, VkFormat format) const {
-    return mip == defaultMip && format == storageFormat && layers == LayersOf(descriptor, false);
-}
-
-PooledView& StorageTexture::pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format) {
+PooledView& StorageTexture::pooledView(std::uint32_t mip, ViewLayers layers, VkFormat format, ViewKind kind) {
     const auto key = std::tuple{mip, layers.first, layers.count, layers.flat, format};
     std::lock_guard lock(viewMutex);
     if (const auto found = pooledViews.find(key); found != pooledViews.end()) return *found->second;
@@ -1868,7 +1940,7 @@ PooledView& StorageTexture::pooledView(std::uint32_t mip, ViewLayers layers, VkF
     usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
     if (format != storageFormat) info.pNext = &usage;
     auto pooled = std::make_unique<PooledView>();
-    pooled->Start(context, info, "vkCreateImageView storage");
+    pooled->Start(context, info, "vkCreateImageView storage", kind);
     return *pooledViews.emplace(key, std::move(pooled)).first->second;
 }
 
@@ -1887,9 +1959,9 @@ bool StorageTexture::singlePass() {
     return singlePassState == 1;
 }
 
-VkImageView StorageTexture::elementLayerView(std::uint32_t level, std::uint32_t layer) {
+const PooledView& StorageTexture::elementLayerView(std::uint32_t level, std::uint32_t layer) {
     const auto key = (level << 16) | layer;
-    if (const auto found = elementLayerViews.find(key); found != elementLayerViews.end()) return found->second;
+    if (const auto found = elementLayerViews.find(key); found != elementLayerViews.end()) return *found->second;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -1899,10 +1971,9 @@ VkImageView StorageTexture::elementLayerView(std::uint32_t level, std::uint32_t 
     viewInfo.format = TextureDetiler::ImageElementFormat(BytesPerElement(descriptor.format));
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1u, geometry.CopyLayer(layer), 1u};
-    VkImageView created = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView storage element");
-    elementLayerViews.emplace(key, created);
-    return created;
+    auto created = std::make_unique<PooledView>();
+    created->Start(context, viewInfo, "vkCreateImageView storage element", ViewKind::ElementLayer);
+    return *elementLayerViews.emplace(key, std::move(created)).first->second;
 }
 
 VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, std::uint32_t depthSlice, std::uint32_t layers, std::uint32_t layer) {
@@ -1912,7 +1983,7 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     Require((depthSlice == 0 && layers == 1) || (volume && mip == 0 && layers != 0 && depthSlice + layers - 1u <= descriptor.depthOrLastArray), "attachment slice is outside the storage image");
     Require(layer == 0 || (!volume && descriptor.dimension == TextureDimension::k2DArray && descriptor.baseArray + layer <= descriptor.depthOrLastArray), "attachment layer is outside the storage image");
     const auto found = attachmentViews.find({format, mip, depthSlice, layers, layer});
-    if (found != attachmentViews.end()) return found->second;
+    if (found != attachmentViews.end()) return found->second->Get();
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -1922,10 +1993,9 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     viewInfo.format = format;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, volume ? depthSlice : descriptor.baseArray + layer, layers};
-    VkImageView created = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView attachment");
-    attachmentViews.emplace(std::tuple{format, mip, depthSlice, layers, layer}, created);
-    return created;
+    auto created = std::make_unique<PooledView>();
+    created->Start(context, viewInfo, "vkCreateImageView attachment", ViewKind::Attachment);
+    return attachmentViews.emplace(std::tuple{format, mip, depthSlice, layers, layer}, std::move(created)).first->second->Get();
 }
 
 VkImageView StorageTexture::AttachmentProxyView() {
@@ -1959,6 +2029,7 @@ VkImageView StorageTexture::AttachmentProxyView() {
         viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &proxyView), "vkCreateImageView attachment proxy");
+        CountCallerViewCreation(ViewKind::Attachment);
     } catch (...) {
         if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
         if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
@@ -2026,7 +2097,6 @@ VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::layerView(std::uint32_t mip, ViewLayers layers, VkFormat format) {
-    if (defaultView(mip, layers, format)) return view;
     return pooledView(mip, layers, format).Get();
 }
 
@@ -2052,19 +2122,25 @@ VkImageView StorageTexture::StorageView(std::uint32_t mip, ViewLayers layers) {
     return layerView(mip, layers, storageViewFormat(StorageViewKind::Storage));
 }
 
-VkImageView StorageTexture::ElementView() {
-    if (elementView != VK_NULL_HANDLE) return elementView;
-    if (descriptor.dimension != TextureDimension::k2D || geometry.imageLayers != 1) return VK_NULL_HANDLE;
+const PooledView* StorageTexture::ElementView() {
+    if (elementViewChecked) return elementView.get();
+    elementViewChecked = true;
+    if (descriptor.dimension != TextureDimension::k2D || geometry.imageLayers != 1) return nullptr;
     const auto bytes = BytesPerElement(descriptor.format);
     const auto format = bytes == 1 ? VK_FORMAT_R8_UINT : bytes == 2 ? VK_FORMAT_R16_UINT : bytes == 4 ? VK_FORMAT_R32_UINT : bytes == 8 ? VK_FORMAT_R32G32_UINT : VK_FORMAT_UNDEFINED;
-    if (format == VK_FORMAT_UNDEFINED || StorageFormatOrUndefined(context, format) != format) return VK_NULL_HANDLE;
-    elementView = createView(0, LayersOf(descriptor, false), format);
-    return elementView;
+    if (format == VK_FORMAT_UNDEFINED || StorageFormatOrUndefined(context, format) != format) return nullptr;
+    auto info = viewInfo(0, LayersOf(descriptor, false), format);
+    VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    if (format != storageFormat) info.pNext = &usage;
+    elementView = std::make_unique<PooledView>();
+    elementView->Start(context, info, "vkCreateImageView storage element", ViewKind::Element);
+    return elementView.get();
 }
 
-VkImageView StorageTexture::DecodeSourceView(std::uint32_t mip) {
+const PooledView& StorageTexture::DecodeSourceView(std::uint32_t mip) {
     Require(mip < descriptor.mipCount && BytesPerElement(descriptor.format) == 4u, "a texel decode reads one mip of a storage image of 32-bit texels");
-    if (const auto found = decodeSourceViews.find(mip); found != decodeSourceViews.end()) return found->second;
+    if (const auto found = decodeSourceViews.find(mip); found != decodeSourceViews.end()) return *found->second;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -2074,10 +2150,9 @@ VkImageView StorageTexture::DecodeSourceView(std::uint32_t mip) {
     viewInfo.format = VK_FORMAT_R32_UINT;
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1u, 0u, geometry.imageLayers};
-    VkImageView created = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created), "vkCreateImageView storage decode source");
-    decodeSourceViews.emplace(mip, created);
-    return created;
+    auto created = std::make_unique<PooledView>();
+    created->Start(context, viewInfo, "vkCreateImageView storage decode source", ViewKind::DecodeSource);
+    return *decodeSourceViews.emplace(mip, std::move(created)).first->second;
 }
 
 VkImageView StorageTexture::AtomicView(std::uint32_t mip, ViewLayers layers) {
@@ -2405,7 +2480,7 @@ DccKeys StorageTexture::ProvedKeys() const {
 bool StorageTexture::deferKeys() {
     if (keysDeferred) return true;
     if (descriptor.dccAddress == 0 || uploadedKeys != DccKeys::Uncompressed || IsDccClear(filledKeys) || !GpuKeyDecisionScope::Covers(descriptor.dccAddress, BytesPerElement(descriptor.format))) return false;
-    if (descriptor.mipCount != 1 || IsConvertedTextureFormat(descriptor.format) || BytesPerElement(descriptor.format) > 8 || ElementView() == VK_NULL_HANDLE) return false;
+    if (descriptor.mipCount != 1 || IsConvertedTextureFormat(descriptor.format) || BytesPerElement(descriptor.format) > 8 || ElementView() == nullptr) return false;
     if (HostImportFor(context, descriptor.dccAddress, std::max(DccKeyBytes(guestBytes), DccKeyCount(descriptor, guestBytes))) == nullptr || !KeyWritersPending(descriptor, guestBytes)) return false;
     keysDeferred = true;
     keyProof = {};
@@ -3239,7 +3314,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             const auto& source = sourceOf(window);
             auto detile = window.window;
             detile.pipeBankXor = descriptor.pipeBankXor;
-            const auto view = elementLayerView(window.level, window.layer);
+            const auto& view = elementLayerView(window.level, window.layer);
             if (source.mirror) {
                 detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile);
             } else {
@@ -5841,17 +5916,19 @@ StorageTexture::~StorageTexture() {
 }
 
 std::uint32_t StorageTexture::StorageSlot(std::uint32_t mip, ViewLayers layers, StorageViewKind kind) {
-    const auto format = storageViewFormat(kind);
-    if (defaultView(mip, layers, format)) return StorageSlot(view);
-    return pooledView(mip, layers, format).Slot(DescriptorHeap::Array::StorageImages, VK_IMAGE_LAYOUT_GENERAL);
+    return pooledView(mip, layers, storageViewFormat(kind)).Slot(DescriptorHeap::Array::StorageImages, VK_IMAGE_LAYOUT_GENERAL);
 }
 
-std::uint32_t StorageTexture::StorageSlot(VkImageView imageView) {
-    Require(imageView != VK_NULL_HANDLE && context.descriptorHeap != nullptr, "a storage image slot needs a view and the descriptor heap");
+std::uint32_t StorageTexture::StorageSlotRun(std::uint32_t firstMip, std::uint32_t lastMip, ViewLayers layers) {
+    Require(firstMip <= lastMip && context.descriptorHeap != nullptr, "a storage image slot run needs mips and the descriptor heap");
+    const auto key = std::tuple{firstMip, lastMip, layers.first, layers.count, layers.flat};
     std::lock_guard lock(slotMutex);
-    if (const auto found = storageSlots.find(imageView); found != storageSlots.end()) return found->second;
-    const auto slot = context.descriptorHeap->AllocateImage(DescriptorHeap::Array::StorageImages, imageView, VK_IMAGE_LAYOUT_GENERAL);
-    storageSlots.emplace(imageView, slot);
+    if (const auto found = pooledRuns.find(key); found != pooledRuns.end()) return found->second;
+    const auto format = storageViewFormat(StorageViewKind::Storage);
+    const std::vector<VkImageView> reserved(lastMip - firstMip + 1u, VK_NULL_HANDLE);
+    const auto slot = context.descriptorHeap->AllocateImageRun(DescriptorHeap::Array::StorageImages, reserved, VK_IMAGE_LAYOUT_GENERAL);
+    pooledRuns.emplace(key, slot);
+    for (auto level = firstMip; level <= lastMip; ++level) pooledView(std::min(level, descriptor.mipCount - 1u), layers, format).WriteSlotWhenCreated(DescriptorHeap::Array::StorageImages, slot + (level - firstMip), VK_IMAGE_LAYOUT_GENERAL);
     return slot;
 }
 
@@ -5866,26 +5943,23 @@ std::uint32_t StorageTexture::StorageSlotRun(std::span<const VkImageView> imageV
 }
 
 void StorageTexture::release() noexcept {
-    for (const auto& [imageView, slot] : storageSlots) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot);
-    storageSlots.clear();
     for (const auto& [key, slot] : storageRuns) {
         for (std::uint32_t index = 0; index < key.second; ++index) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + index);
     }
     storageRuns.clear();
     for (const auto& [key, pooled] : pooledViews) pooled->Destroy();
+    for (const auto& [key, slot] : pooledRuns) {
+        for (auto level = std::get<0>(key); level <= std::get<1>(key); ++level) context.descriptorHeap->ReleaseImage(DescriptorHeap::Array::StorageImages, slot + (level - std::get<0>(key)));
+    }
+    pooledRuns.clear();
     pooledViews.clear();
-    if (elementView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, elementView, nullptr);
-    elementView = VK_NULL_HANDLE;
-    for (const auto& [key, element] : elementLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, element, nullptr);
+    elementView.reset();
     elementLayerViews.clear();
-    for (const auto& [mip, decodeSource] : decodeSourceViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, decodeSource, nullptr);
     decodeSourceViews.clear();
-    for (const auto& [format, attachment] : attachmentViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, attachment, nullptr);
     attachmentViews.clear();
     if (proxyView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, proxyView, nullptr);
     if (proxyImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, proxyImage, nullptr);
     if (proxyMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, proxyMemory, nullptr);
-    if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
     if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
 }
@@ -5895,7 +5969,8 @@ std::uint64_t StorageTexture::GuestBytes() const {
 }
 
 VkImageView StorageTexture::View() const {
-    return view;
+    const auto found = pooledViews.find(std::tuple{defaultMip, LayersOf(descriptor, false).first, LayersOf(descriptor, false).count, false, storageFormat});
+    return found == pooledViews.end() ? VK_NULL_HANDLE : found->second->Get();
 }
 
 }

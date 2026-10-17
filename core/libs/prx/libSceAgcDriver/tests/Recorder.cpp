@@ -2917,14 +2917,11 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
     {
         Recorder recorder(context);
         recorder.Activate();
-        try {
+        {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
             lifetime = image;
             image.reset();
             retained = !lifetime.expired();
-        } catch (const std::exception& error) {
-            if (!probe.FailedView() || std::string_view(error.what()).find("vkCreateImageView storage") == std::string_view::npos) throw;
-            threw = true;
         }
         premature = probe.Destroyed();
         Require(probe.Clears() == 1 && recorder.Recording(), "storage creation did not record its initial clear");
@@ -2935,11 +2932,17 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
         copy.imageExtent = {resource.width, resource.height, 1};
         context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, probe.Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-        recorder.Sync();
+        try {
+            recorder.Sync();
+        } catch (const std::exception& error) {
+            if (!probe.FailedView() || std::string_view(error.what()).find("vkCreateImageView storage") == std::string_view::npos) throw;
+            threw = true;
+        }
     }
     previous.Activate();
-    Require(threw == failView && probe.FailedView() == failView, "storage view failure injection did not take the requested path");
-    Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "recorded storage clear did not reach every texel");
+    Require(threw == failView && probe.FailedView() == failView, "storage view failure injection did not fail the submission of the batch that recorded the image");
+    const auto expected = failView ? std::byte{0x55} : std::byte{0};
+    Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [&](std::byte value) { return value == expected; }), failView ? "a batch ran although a view it was submitted after failed on the view pool" : "recorded storage clear did not reach every texel");
     Require(lifetime.expired() && probe.Released(), "storage upload resources outlived recorder teardown");
     Require(!premature && retained, failView ? "failed storage creation released an image still referenced by its recorded clear" : "storage creation did not retain its image through the recorded clear");
     std::cout << "Storage upload lifetime" << (failView ? " after view failure" : " after caller release") << ": passed\n";

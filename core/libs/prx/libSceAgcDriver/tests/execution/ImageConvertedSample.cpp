@@ -811,15 +811,27 @@ void CheckSnapshotSurfaces(AgcDriver::VulkanDevice& device, std::uint32_t format
     CheckPointLevels(device, edges, SwizzleXYZ1, name + " after the CPU rewrote the texels");
 }
 
+void RequireViewsOffRecordingThread(const AgcDriver::Graphics::ViewCreationTotals& before, const AgcDriver::Graphics::ViewCreationTotals& after, const std::string& what) {
+    using AgcDriver::Graphics::ViewKind;
+    const auto index = [](ViewKind kind) { return static_cast<std::size_t>(kind); };
+    for (std::size_t kind = 0; kind < AgcDriver::Graphics::ViewCreationTotals::Kinds; ++kind) {
+        Require(after.onCaller[kind] == before.onCaller[kind], what + ": view kind " + std::to_string(kind) + " was created on the recording thread " + std::to_string(after.onCaller[kind] - before.onCaller[kind]) + " times");
+        Require(after.waits[kind] == before.waits[kind], what + ": the recording thread waited " + std::to_string(after.waits[kind] - before.waits[kind]) + " times for a view of kind " + std::to_string(kind));
+    }
+    for (const auto kind : {ViewKind::DefaultStorage, ViewKind::DecodeSource, ViewKind::DecodedCopy}) Require(after.onPool[index(kind)] > before.onPool[index(kind)], what + ": no view of kind " + std::to_string(index(kind)) + " was made on the view pool");
+}
+
 void CheckStorageSource(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint8_t* block) {
     const auto name = Name(format) + " storage image";
     const Surface surface(block, format, {Type2D, 16, 8, 1, 2});
     surface.Fill([&](std::uint32_t x, std::uint32_t y, std::uint32_t, std::uint32_t level) { return FiniteTexel(format, 0x4000000u | (level << 16u) | (y << 8u) | x); });
     AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uintptr_t>(block), static_cast<std::size_t>(surface.Bytes()));
     AgcDriver::Graphics::Texture::TakeDecodedCopyCounts();
+    const auto viewsBefore = AgcDriver::Graphics::ViewCreationCounts();
     StoreTexels(device, surface, 0x5000000u);
     CheckStoredSample(device, surface, 0x5000000u, name + ", first store");
     RequireCounts(1, 1, name + ", first sample of the pending results");
+    RequireViewsOffRecordingThread(viewsBefore, AgcDriver::Graphics::ViewCreationCounts(), name + ", first store and sample");
     StoreTexels(device, surface, 0x6000000u);
     CheckStoredSample(device, surface, 0x6000000u, name + ", second store");
     RequireCounts(0, 1, name + ", sample after a second store");
