@@ -191,7 +191,7 @@ void EmitTableCallBin(SpirvValueEmitContext& ctx, const IrValue& inst) {
         RecordBdaFaultWords(state, targetLow, targetHigh, ConstantU32(state, 0u), programCounter, BdaAbi::FaultReason::UnlinkedCall);
     });
     EmitIfCondition(state, both(leader, both(known, none(inRange))), [&] {
-        RecordBdaFaultWords(state, targetLow, targetHigh, rounds, programCounter, BdaAbi::FaultReason::Overflow);
+        RecordBdaFaultWords(state, targetLow, targetHigh, rounds, programCounter, BdaAbi::FaultReason::ContinuationRounds);
     });
     EmitIfCondition(state, both(leader, both(known, inRange)), [&] {
         const auto index = state.module.AllocateId();
