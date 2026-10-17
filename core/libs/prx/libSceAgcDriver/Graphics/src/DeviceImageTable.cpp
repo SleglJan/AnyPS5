@@ -334,7 +334,7 @@ DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImag
             return rejected(Reason::DriverRejected, error.what());
         }
     }
-    if (Multisampled(mode)) return rejected(Reason::Multisampled, "an image table entry is multisampled");
+    if (Multisampled(mode) && mode.dimension == ShaderRecompiler::RdnaImageDimension::Dim2DMsaaArray) return rejected(Reason::Multisampled, "an image table entry is a multisampled array");
     const auto reduction = "a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented";
     const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
     std::array<std::uint32_t, Abi::SamplerWords> samplerWords{};

@@ -83,7 +83,8 @@ void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
 }
 
 bool TableModeEmitted(const ImageResource& mode) {
-    return RdnaImageDimensionInfoFor(mode.dimension).multisampled == 0u && mode.packedFormat != IrBufferFormat::Fmask8_S2_F1;
+    const auto& info = RdnaImageDimensionInfoFor(mode.dimension);
+    return (info.multisampled == 0u || (mode.deviceTable && info.arrayed == 0u)) && mode.packedFormat != IrBufferFormat::Fmask8_S2_F1;
 }
 
 bool TablePointSampled(const ImageResource& image) {
