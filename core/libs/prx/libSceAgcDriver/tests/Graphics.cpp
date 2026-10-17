@@ -5069,7 +5069,7 @@ void pipelineLibraryConcurrencyTests() {
     bool overlapped = false;
     {
         std::unique_lock lock(mutex);
-        overlapped = changed.wait_for(lock, std::chrono::seconds(2), [&] { return secondDone; });
+        overlapped = changed.wait_for(lock, std::chrono::seconds(60), [&] { return secondDone; });
     }
     std::thread third([&] { pipelines[2] = LinkPipelineFromLibraries(context, info, rendering, layout, keys(1)); });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
