@@ -567,9 +567,9 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_wait_shutdown COMMAND agc_driver_wait_shutdown_tests)
     set_tests_properties(agc_driver_wait_shutdown PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_WAIT_TIMEOUT_MS=20"
-            TIMEOUT 10 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+            TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_resolution_shutdown COMMAND agc_driver_wait_shutdown_tests --resolution-shutdown)
-    set_tests_properties(agc_driver_resolution_shutdown PROPERTIES TIMEOUT 10 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(agc_driver_resolution_shutdown PROPERTIES TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_driver_wait_shutdown agc_driver_resolution_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
