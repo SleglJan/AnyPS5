@@ -316,6 +316,72 @@ int main() {
         }
     }
 
+    for (const auto& fixture : canonicalMain22) {
+        const auto base = DecodeBase64(fixture.encoded);
+        const auto source = serializer.Deserialize(fixture.encoded);
+        auto modern = source.request;
+        if (fixture.tessellation) {
+            modern.graphics->tessellation->primitiveGroupSize = 37u;
+            modern.graphics->tessellation->breakAtInstance = true;
+        }
+        for (const std::uint32_t version : {27u, 28u, 29u, 30u, 31u}) {
+            auto expected = modern;
+            auto upstream = base;
+            upstream[4] = static_cast<std::uint8_t>(version);
+            if (fixture.pixel) {
+                auto& pixel = *expected.context.pixel;
+                pixel.layerExported = true;
+                pixel.ditheredAlphaToCoverage = true;
+                pixel.frontFaceAllBits = true;
+                std::vector<std::uint8_t> fields{1u, 1u, 1u};
+                if (version >= 28u) {
+                    pixel.quadPixelMask = 0x5u;
+                    fields.push_back(0x5u);
+                }
+                if (version >= 29u) {
+                    pixel.quadSampleMask = {0x1u, 0x2u, 0x4u, 0x8u};
+                    for (const std::uint8_t mask : {0x1u, 0x2u, 0x4u, 0x8u}) fields.insert(fields.end(), {mask, 0u, 0u, 0u});
+                }
+                if (version >= 30u) {
+                    pixel.reversedBlend = 0x3u;
+                    fields.insert(fields.end(), {0x3u, 0u, 0u, 0u});
+                }
+                upstream.insert(upstream.begin() + 258u, fields.begin(), fields.end());
+            }
+            if (fixture.tessellation) upstream.insert(upstream.end() - 35u, {37u, 0u, 0u, 0u, 1u});
+            upstream.insert(upstream.end(), sizeof(std::uint64_t), 0u);
+            const auto replay = serializer.Deserialize(EncodeBase64(upstream));
+            Require(replay.request.context.pixel.has_value() == fixture.pixel && replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() == fixture.tessellation);
+            if (fixture.pixel) {
+                const auto& pixel = *replay.request.context.pixel;
+                Require(pixel.layerExported && pixel.ditheredAlphaToCoverage && pixel.frontFaceAllBits);
+                Require(pixel.quadPixelMask == expected.context.pixel->quadPixelMask && pixel.quadSampleMask == expected.context.pixel->quadSampleMask && pixel.reversedBlend == expected.context.pixel->reversedBlend);
+            }
+            Require(!fixture.tessellation || (replay.request.graphics->tessellation->patchesPerGroup == 63u && replay.request.graphics->tessellation->primitiveGroupSize == 37u && replay.request.graphics->tessellation->breakAtInstance));
+            Require(replay.linkedLiterals.empty() && replay.linkedWords.empty());
+            Require(serializer.Serialize(replay.request) == serializer.Serialize(expected));
+            auto truncated = upstream;
+            truncated.pop_back();
+            bool rejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(truncated)));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+            }
+            Require(rejected);
+            auto fallbacks = upstream;
+            fallbacks[fallbacks.size() - sizeof(std::uint64_t)] = 1u;
+            fallbacks.insert(fallbacks.end(), {0x40u, 0u, 0u, 0u});
+            bool fallbacksRejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(fallbacks)));
+            } catch (const std::runtime_error& error) {
+                fallbacksRejected = std::string_view(error.what()) == "unsupported recompile request: upstream request version " + std::to_string(version) + " carries linked call fallbacks";
+            }
+            Require(fallbacksRejected);
+        }
+    }
+
     ShaderRecompiler::RecompileRequest request{};
     for (const bool preserve : {false, true}) {
         request.target.float16DenormPreserve = preserve;
@@ -324,14 +390,14 @@ int main() {
         Require(replay.request.target.float16DenormPreserve == preserve);
         auto bytes = DecodeBase64(encoded);
         Require(bytes.size() >= 8u && bytes[4] == 33u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
-        for (const std::uint8_t refusedVersion : {27u, 28u, 29u, 30u, 31u, 34u}) {
+        for (const std::uint8_t refusedVersion : {0u, 34u, 35u}) {
             auto refused = bytes;
             refused[4] = refusedVersion;
             bool versionRejected = false;
             try {
                 static_cast<void>(serializer.Deserialize(EncodeBase64(refused)));
             } catch (const std::runtime_error& error) {
-                versionRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+                versionRejected = std::string_view(error.what()) == "unsupported recompile request serialization version " + std::to_string(refusedVersion);
             }
             Require(versionRejected);
         }

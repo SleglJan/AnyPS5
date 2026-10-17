@@ -1,5 +1,6 @@
 #include "ControlFlow/RequestSerializer.hpp"
 #include <stdexcept>
+#include <string>
 
 namespace ShaderRecompiler {
 
@@ -345,6 +346,10 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     writer.WriteU32(info.reversedBlend);
 }
 
+bool UpstreamLayout(std::uint32_t version) {
+    return version >= 27u && version <= 31u;
+}
+
 ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     ShaderPixelStageInfo info{};
     info.interpolatorCount = reader.ReadU32();
@@ -394,16 +399,27 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 17u) info.stencilRefExportEnable = reader.ReadBool();
     if (version >= 19u) info.rasterPrimitive = readRasterPrimitive(reader);
     if (version >= 23u) info.layerExported = reader.ReadBool();
-    if (version >= 25u) info.quadPixelMask = reader.ReadU8();
-    if (version >= 32u) {
-        info.ditheredAlphaToCoverage = reader.ReadBool();
-        info.frontFaceAllBits = reader.ReadBool();
+    const auto readQuadSampleMask = [&] {
         for (std::uint16_t& mask : info.quadSampleMask) {
             const auto value = reader.ReadU32();
             if (value > 0xffffu) throw std::runtime_error("invalid recompile request quad sample mask");
             mask = static_cast<std::uint16_t>(value);
         }
-        info.reversedBlend = reader.ReadU32();
+    };
+    if (UpstreamLayout(version)) {
+        info.ditheredAlphaToCoverage = reader.ReadBool();
+        info.frontFaceAllBits = reader.ReadBool();
+        if (version >= 28u) info.quadPixelMask = reader.ReadU8();
+        if (version >= 29u) readQuadSampleMask();
+        if (version >= 30u) info.reversedBlend = reader.ReadU32();
+    } else {
+        if (version >= 25u) info.quadPixelMask = reader.ReadU8();
+        if (version >= 32u) {
+            info.ditheredAlphaToCoverage = reader.ReadBool();
+            info.frontFaceAllBits = reader.ReadBool();
+            readQuadSampleMask();
+            info.reversedBlend = reader.ReadU32();
+        }
     }
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
@@ -532,7 +548,7 @@ MeshConfiguration readMeshConfiguration(Reader& reader, std::uint32_t version) {
     configuration.ldsSizeDwords = reader.ReadU32();
     configuration.provokingVertex = reader.ReadU32();
     configuration.esgsItemSize = version >= 4u ? reader.ReadU32() : 4u;
-    if (version >= 32u) configuration.outputPrimitiveSize = reader.ReadU32();
+    if (version >= 32u || (UpstreamLayout(version) && version >= 31u)) configuration.outputPrimitiveSize = reader.ReadU32();
     return configuration;
 }
 
@@ -555,7 +571,7 @@ TessellationConfiguration readTessellationConfiguration(Reader& reader, std::uin
     configuration.partitioning = reader.ReadU32();
     configuration.outputTopology = reader.ReadU32();
     if (version >= 22u) configuration.patchesPerGroup = reader.ReadU32();
-    if (version >= 32u) {
+    if (version >= 32u || UpstreamLayout(version)) {
         configuration.primitiveGroupSize = reader.ReadU32();
         configuration.breakAtInstance = reader.ReadBool();
     }
@@ -830,7 +846,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 33u || (version > 26u && version < 32u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 33u) throw std::runtime_error("unsupported recompile request serialization version " + std::to_string(version));
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -862,13 +878,15 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
             result.request.target.float16DenormPreserve = float16DenormPreserve != 0u;
         }
     }
-    if (version >= 24u) {
+    if (UpstreamLayout(version)) {
+        if (!reader.ReadU32Vector().empty()) throw std::runtime_error("unsupported recompile request: upstream request version " + std::to_string(version) + " carries linked call fallbacks");
+    } else if (version >= 24u) {
         result.linkedLiterals = reader.ReadU32Vector();
         result.request.shader.linkedLiterals = result.linkedLiterals;
         result.linkedWords = reader.ReadU32Vector();
         result.request.context.linkedWords = result.linkedWords;
     }
-    if (version >= 26u && result.request.context.compute.has_value()) result.request.context.compute->threadsFromMemory = reader.ReadBool();
+    if (version >= 26u && !UpstreamLayout(version) && result.request.context.compute.has_value()) result.request.context.compute->threadsFromMemory = reader.ReadBool();
     if (version >= 33u && reader.ReadBool()) {
         ContinuationAbi::Shape continuation;
         continuation.role = static_cast<ContinuationAbi::Role>(reader.ReadU32());
