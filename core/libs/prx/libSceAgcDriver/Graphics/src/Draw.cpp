@@ -1949,7 +1949,9 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     }
     if (state.depth) targetViews.push_back(DepthSurfaceView(context, *state.depth));
     const auto noteDepthWritten = [&] {
-        if (state.depth && state.depthTest && state.depthWrite) NoteDepthWritten(context, *state.depth);
+        const bool depthWritten = state.depthTest && state.depthWrite;
+        const bool stencilWritten = state.stencilTest && (state.stencilFront.writeMask != 0u || state.stencilBack.writeMask != 0u);
+        if (state.depth && (depthWritten || stencilWritten)) NoteDepthWritten(context, *state.depth, depthWritten, stencilWritten);
     };
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();

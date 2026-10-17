@@ -168,6 +168,26 @@ foreach(agcTexelDecodeDimension 1 2 3)
     endforeach()
 endforeach()
 
+set(agcDepthPublishShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/DepthPublish.comp)
+set(agcDepthPublishShaderHeaders)
+foreach(agcDepthPublishStencil 0 1)
+    foreach(agcDepthPublishMultisampled 0 1)
+        set(agcDepthPublishVariant ${agcDepthPublishStencil}${agcDepthPublishMultisampled})
+        set(agcDepthPublishVariantSpv ${agcTextureDetileGeneratedDir}/DepthPublish${agcDepthPublishVariant}.spv)
+        set(agcDepthPublishVariantHeader ${agcTextureDetileGeneratedDir}/DepthPublish${agcDepthPublishVariant}_spv.h)
+        add_custom_command(
+                OUTPUT "${agcDepthPublishVariantHeader}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+                COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DSTENCIL=${agcDepthPublishStencil} -DMULTISAMPLED=${agcDepthPublishMultisampled} -o "${agcDepthPublishVariantSpv}" "${agcDepthPublishShaderSource}"
+                COMMAND ${CMAKE_COMMAND} -DINPUT=${agcDepthPublishVariantSpv} -DOUTPUT=${agcDepthPublishVariantHeader}
+                -DSYMBOL=DEPTH_PUBLISH_${agcDepthPublishVariant}_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+                DEPENDS "${agcDepthPublishShaderSource}" glslang-standalone
+                VERBATIM
+        )
+        list(APPEND agcDepthPublishShaderHeaders ${agcDepthPublishVariantHeader})
+    endforeach()
+endforeach()
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -314,6 +334,7 @@ set(agcDriverSources
         ${agcSurfaceFillShaderHeader}
         ${agcRestartStartsShaderHeader}
         ${agcTexelDecodeImageShaderHeaders}
+        ${agcDepthPublishShaderHeaders}
         ${agcMeshArgumentsShaderHeader}
         ${agcDispatchThreadsShaderHeader}
         ${agcTextureDetileImageShaderHeader}

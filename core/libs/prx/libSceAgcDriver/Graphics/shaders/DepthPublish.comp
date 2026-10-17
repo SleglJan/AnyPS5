@@ -1,0 +1,115 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#if STENCIL
+#if MULTISAMPLED
+layout(set = 0, binding = 0) uniform usampler2DMS planeSamples;
+#else
+layout(set = 0, binding = 0) uniform usampler2D planeSamples;
+#endif
+#else
+#if MULTISAMPLED
+layout(set = 0, binding = 0) uniform sampler2DMS planeSamples;
+#else
+layout(set = 0, binding = 0) uniform sampler2D planeSamples;
+#endif
+#endif
+
+layout(set = 0, binding = 1, std430) buffer Tiled { uint data[]; } tiled;
+
+layout(push_constant) uniform Push {
+    uvec4 equation[4];
+    uint width;
+    uint height;
+    uint elementBytes;
+    uint blocksPerRow;
+    uint blockWidthLog2;
+    uint blockHeightLog2;
+    uint pipeBankXor;
+    uint slice;
+} params;
+
+uint equationBit(uint mask, uint x, uint y, uint z) {
+    uint selected = (x & (mask & 0xfffu)) ^ ((y << 12) & (mask & 0xfff000u)) ^ ((z << 24) & (mask & 0xff000000u));
+    return bitCount(selected) & 1u;
+}
+
+uint blockOffset(uint x, uint y, uint z) {
+    uint offset = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        offset |= equationBit(params.equation[bit >> 2][bit & 3u], x, y, z) << bit;
+    }
+    return offset ^ params.pipeBankXor;
+}
+
+uint shiftRight64(uint high, uint low, uint shift) {
+    if (shift >= 64u) return 0u;
+    if (shift >= 32u) return high >> (shift - 32u);
+    if (shift == 0u) return low;
+    return (low >> shift) | (high << (32u - shift));
+}
+
+uint unorm16(float value) {
+    if (!(value > 0.0)) return 0u;
+    if (value >= 1.0) return 65535u;
+    uint bits = floatBitsToUint(value);
+    uint exponent = (bits >> 23) & 0xffu;
+    uint mantissa = bits & 0x7fffffu;
+    if (exponent == 0u) {
+        exponent = 1u;
+    } else {
+        mantissa |= 0x800000u;
+    }
+    uint high;
+    uint low;
+    umulExtended(mantissa, 65535u, high, low);
+    uint shift = 150u - exponent;
+    if (shift > 41u) return 0u;
+    uint quotient = shiftRight64(high, low, shift);
+    uint remainderHigh = shift >= 32u ? (high & ((1u << (shift - 32u)) - 1u)) : 0u;
+    uint remainderLow = shift >= 32u ? low : (low & ((1u << shift) - 1u));
+    uint halfHigh = shift - 1u >= 32u ? (1u << (shift - 33u)) : 0u;
+    uint halfLow = shift - 1u >= 32u ? 0u : (1u << (shift - 1u));
+    bool above = remainderHigh > halfHigh || (remainderHigh == halfHigh && remainderLow > halfLow);
+    bool tie = remainderHigh == halfHigh && remainderLow == halfLow;
+    if (above || (tie && (quotient & 1u) != 0u)) quotient += 1u;
+    return min(quotient, 65535u);
+}
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    uint s = gl_GlobalInvocationID.z;
+    if (x >= params.width || y >= params.height) return;
+#if MULTISAMPLED
+    ivec2 position = ivec2(int(x), int(y));
+    int sampleIndex = int(s);
+#endif
+#if STENCIL
+#if MULTISAMPLED
+    uint value = texelFetch(planeSamples, position, sampleIndex).r & 0xffu;
+#else
+    uint value = texelFetch(planeSamples, ivec2(int(x), int(y)), 0).r & 0xffu;
+#endif
+#else
+#if MULTISAMPLED
+    float depth = texelFetch(planeSamples, position, sampleIndex).r;
+#else
+    float depth = texelFetch(planeSamples, ivec2(int(x), int(y)), 0).r;
+#endif
+    uint value = params.elementBytes == 4u ? floatBitsToUint(depth) : unorm16(depth);
+#endif
+    uint block = (y >> params.blockHeightLog2) * params.blocksPerRow + (x >> params.blockWidthLog2);
+    uint z = params.slice + s;
+    uint offset = block * 65536u + blockOffset(x, y, z);
+    uint word = offset >> 2;
+    if (params.elementBytes == 4u) {
+        tiled.data[word] = value;
+        return;
+    }
+    uint mask = params.elementBytes == 2u ? 0xffffu : 0xffu;
+    uint shift = (offset & 3u) * 8u;
+    atomicAnd(tiled.data[word], ~(mask << shift));
+    atomicOr(tiled.data[word], (value & mask) << shift);
+}
