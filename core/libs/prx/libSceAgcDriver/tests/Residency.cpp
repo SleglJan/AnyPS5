@@ -1281,6 +1281,26 @@ void ClearStaleSparesOtherSubpages() {
     fixture.gpu.Drain();
 }
 
+void UnguardedStalePagesRetiledForSignals() {
+    scope = "a completion signal retiles the stale pages no access guard covers";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 5);
+    FakeOwner shared(fixture, 909);
+    FakeOwner privateOwner(fixture, 910);
+    fixture.manager->Own(Address(BasePage + 5), ResidencyPageBytes, &shared);
+    fixture.manager->Own(Address(BasePage + 6), ResidencyPageBytes, &privateOwner);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 5, 2), ResidencySubpageBytes, &shared);
+    fixture.manager->MarkStale(Address(BasePage + 6, 3), ResidencySubpageBytes, &privateOwner);
+    Expect(fixture.manager->RetileUnguarded(), "the signal retiles the unguarded stale page");
+    Expect(shared.retiled.empty() && privateOwner.retiled.size() == 1 && fixture.manager->Stale(BasePage + 5) == 0x0004 && fixture.manager->Stale(BasePage + 6) == 0, "the guarded shared page stays stale, the private page is retiled");
+    Expect(!fixture.manager->RetileUnguarded(), "a second signal finds nothing unguarded");
+    fixture.gpu.Drain();
+    Expect(fixture.Stored(BasePage + 6, 3) == 910, "the private page's bytes reached guest memory");
+    fixture.manager->FlushForCpuRead(Address(BasePage + 5), ResidencyPageBytes);
+    fixture.gpu.Drain();
+}
+
 void StaleOwnedPagesKeptAndDisowned() {
     scope = "stale owned pages are kept, and disowning retiles them";
     Fixture fixture(8, 1);
@@ -1776,6 +1796,7 @@ int main() {
         PrivateOwnedPagesHeldForReaders();
         OwnedPagesExemptAndForgotten();
         ClearStaleSparesOtherSubpages();
+        UnguardedStalePagesRetiledForSignals();
         StaleOwnedPagesKeptAndDisowned();
         DemotionRetilesStalePages();
         AdmissionRule();

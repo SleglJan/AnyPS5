@@ -85,6 +85,7 @@ public:
     const ResidencyMirrors& Mirrors() const { return mirrors; }
     void OrderingPoint();
     void BeforeDispatch();
+    void BeforeCompletionSignal();
     void Flip();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
@@ -160,6 +161,9 @@ private:
     std::atomic<std::uint64_t> appliedAtOrderingPoints{0};
     std::uint64_t vanishedCopies = 0;
 };
+
+void PublishForCompletionSignal();
+void PublishBeforeCompletionSignal();
 
 }
 

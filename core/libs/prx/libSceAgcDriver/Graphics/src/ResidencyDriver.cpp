@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "BdaTouchAbi.hpp"
 #include <algorithm>
 #include <map>
@@ -49,6 +50,21 @@ void ResidencyDriver::OrderingPoint() {
 
 void ResidencyDriver::Flip() {
     flips.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void ResidencyDriver::BeforeCompletionSignal() {
+    std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    manager.RetileUnguarded();
+}
+
+void PublishForCompletionSignal() {
+    if (auto* residency = ResidencyDriver::Active()) residency->BeforeCompletionSignal();
+}
+
+void PublishBeforeCompletionSignal() {
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->DeferSignalPublication()) return;
+    PublishForCompletionSignal();
 }
 
 void ResidencyDriver::BeforeDispatch() {

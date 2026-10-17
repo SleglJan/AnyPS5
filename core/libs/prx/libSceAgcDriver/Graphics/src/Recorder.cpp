@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
@@ -1803,6 +1804,15 @@ void Recorder::ensureOpen() {
         // bottom-of-pipe stamp, so it marks when this batch's execution began.
         if (BatchStampsEnabled()) open->batchTiming = beginTiming(BatchTimingKey);
     }
+}
+
+bool Recorder::DeferSignalPublication() {
+    GuestMemory::AssertGpuLockHeld("Recorder::DeferSignalPublication");
+    if (!LabelRunsPerBatch()) return false;
+    auto& open = callerOpen();
+    if (open == nullptr || !open->renderPass.open) return false;
+    open->signalPublicationOwed = true;
+    return true;
 }
 
 void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address) {
@@ -3657,6 +3667,10 @@ void Recorder::submitStream(std::uint32_t stream) {
         std::uint32_t previous;
         ~Submitting() { slot = previous; }
     } submitting{submittingStream, std::exchange(submittingStream, stream)};
+    if (std::exchange(opens[stream]->signalPublicationOwed, false)) {
+        PublishForCompletionSignal();
+        if (opens[stream] == nullptr) return;
+    }
     auto& open = opens[stream];
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass();

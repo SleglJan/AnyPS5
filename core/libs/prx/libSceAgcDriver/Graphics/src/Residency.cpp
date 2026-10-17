@@ -237,6 +237,7 @@ bool ResidencyManager::retileStale(std::span<const std::uint64_t> stalePages, st
             if (std::find(except.begin(), except.end(), owner) != except.end()) continue;
             std::uint32_t bits = entry->second.stale;
             entry->second.stale = 0;
+            entry->second.guarded = 0;
             if (staleOwned.erase(page) != 0) --staleCount;
             publishStale(page, 0);
             auto at = std::find_if(work.begin(), work.end(), [&](const Work& item) { return item.owner.get() == owner; });
@@ -313,6 +314,7 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
             addEager(begin, end);
             continue;
         }
+        ResidencyMask guarded = 0;
         if (id && pages[*id].shared && !aliasKeys.contains(page)) {
             auto& record = pages[*id];
             const auto adding = static_cast<ResidencyMask>(mask & ~record.accessMask);
@@ -325,11 +327,13 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
                     ++counts.accessUnguardable;
                 }
             }
+            guarded = static_cast<ResidencyMask>(mask & record.accessMask);
         }
         const std::unique_lock lock(ownedMutex);
         auto& entry = owned[page];
         if (entry.stale == 0 && staleOwned.insert(page).second) ++staleCount;
         entry.stale = static_cast<ResidencyMask>(entry.stale | mask);
+        entry.guarded = static_cast<ResidencyMask>((entry.guarded & ~mask) | guarded);
         publishStale(page, entry.stale);
     }
     if (eager.empty()) return;
@@ -342,6 +346,21 @@ bool ResidencyManager::RetileOwned(std::uint64_t address, std::uint64_t bytes, s
     applyQueued();
     if (staleCount.load(std::memory_order_acquire) == 0) return false;
     return retileStale(staleIn(address, bytes), except);
+}
+
+bool ResidencyManager::RetileUnguarded() {
+    applyQueued();
+    std::vector<std::uint64_t> unguarded;
+    {
+        const std::shared_lock lock(ownedMutex);
+        for (const auto page : staleOwned) {
+            const auto entry = owned.find(page);
+            if (entry != owned.end() && (entry->second.stale & ~entry->second.guarded) != 0) unguarded.push_back(page);
+        }
+    }
+    if (unguarded.empty()) return false;
+    std::sort(unguarded.begin(), unguarded.end());
+    return retileStale(unguarded);
 }
 
 bool ResidencyManager::RetileAllOwned(std::span<const IResidencyOwner* const> except) {

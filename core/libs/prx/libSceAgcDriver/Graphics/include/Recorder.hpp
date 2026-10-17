@@ -287,6 +287,7 @@ public:
     bool AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushStores();
     void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes)) FlushStores(); }
+    bool DeferSignalPublication();
 
     // Pending-label table. A GPU label (RELEASE_MEM/WRITE_DATA recorded as a store into the batch)
     // is noted per 4-byte dword with the value it will store and a record-order stamp (the driver's
@@ -651,6 +652,7 @@ private:
         PassHazards passHazards;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
         bool hostReadOwed = false;
+        bool signalPublicationOwed = false;
         // Queued DCC key stores (see QueueKeyStore).
         struct KeyStore {
             VkBuffer buffer;

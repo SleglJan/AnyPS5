@@ -36,6 +36,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             const auto localDevice = device.Load();
             recordDeferredLabels(localDevice.get(), submission.queue);
+            Graphics::PublishBeforeCompletionSignal();
             const bool workOpen = Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
             int reason = localDevice != nullptr ? 0 : 1;
             if (label.has_value()) {
@@ -86,6 +87,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 const auto localDevice = device.Load();
 
                 recordDeferredLabels(localDevice.get(), submission.queue);
+                Graphics::PublishBeforeCompletionSignal();
                 const auto stamp = ++eventSerial;
                 const auto reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label->address, bytes, stamp, submission.queue) : 4;
                 wroteOnGpu = reason == 0 || reason == 5;

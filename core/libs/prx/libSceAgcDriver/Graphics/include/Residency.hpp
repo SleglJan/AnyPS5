@@ -195,6 +195,7 @@ public:
     void MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
     bool RetileOwned(std::uint64_t address, std::uint64_t bytes, std::span<const IResidencyOwner* const> except = {});
     bool RetileAllOwned(std::span<const IResidencyOwner* const> except = {});
+    bool RetileUnguarded();
     void Disown(IResidencyOwner* owner);
     void Forget(IResidencyOwner* owner);
     void ClearStale(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner);
@@ -356,6 +357,7 @@ private:
     struct Owned {
         IResidencyOwner* owner = nullptr;
         ResidencyMask stale = 0;
+        ResidencyMask guarded = 0;
     };
     void appendDirty(std::uint32_t id, std::vector<ResidencyCopy>& copies) const;
     void appendClean(std::uint32_t id, std::uint32_t begin, std::uint32_t end, std::vector<ResidencyCopy>& copies) const;

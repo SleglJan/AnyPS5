@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "ThreadOwned.hpp"
 #include <cstdlib>
 
@@ -107,6 +108,7 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
             queuedLabelsNoted() = 0;
         }
     } clear{labels, queue};
+    Graphics::PublishBeforeCompletionSignal();
     bool first = true;
     for (const auto& label : labels) {
         const auto bytes = std::span<const std::byte>(label.bytes).first(label.size);
