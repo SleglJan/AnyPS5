@@ -67,6 +67,8 @@ struct Shape {
     std::size_t functionArrays = 0;
     std::uint32_t arrayLength = 0;
     std::size_t accessChains = 0;
+    std::size_t slots = 0;
+    std::size_t switchedAccesses = 0;
     std::size_t selects = 0;
     std::vector<WindowAccess> windowAccesses;
 };
@@ -112,6 +114,13 @@ Shape Scan(std::span<const std::uint32_t> words) {
     std::vector<std::pair<std::uint32_t, std::uint32_t>> functionPointers;
     std::vector<std::uint32_t> windowVariables;
     std::unordered_map<std::uint32_t, std::optional<std::uint32_t>> windowElements;
+    std::unordered_map<std::uint32_t, std::uint32_t> slots;
+    bool afterWindow = false;
+    std::uint32_t pendingMerge = 0;
+    std::vector<std::uint32_t> armLabels;
+    std::uint32_t armsMerge = 0;
+    bool inArm = false;
+    bool armRecorded = false;
     const auto constantValue = [&](std::uint32_t id) -> std::optional<std::uint32_t> {
         for (const auto& [constant, value] : constants) {
             if (constant == id) return value;
@@ -125,13 +134,21 @@ Shape Scan(std::span<const std::uint32_t> words) {
         if (op == spv::OpConstant && count == 4) constants.emplace_back(words[cursor + 2], words[cursor + 3]);
         if (op == spv::OpTypeArray) arrays.emplace_back(words[cursor + 1], words[cursor + 3]);
         if (op == spv::OpTypePointer && words[cursor + 2] == spv::StorageClassFunction) functionPointers.emplace_back(words[cursor + 1], words[cursor + 3]);
+        if (op == spv::OpVariable && words[cursor + 3] == spv::StorageClassFunction && afterWindow && count == 5) {
+            slots.emplace(words[cursor + 2], static_cast<std::uint32_t>(slots.size()));
+            cursor += count;
+            continue;
+        }
+        if (op != spv::OpVariable) afterWindow = false;
         if (op == spv::OpVariable && words[cursor + 3] == spv::StorageClassFunction) {
+            afterWindow = false;
             for (const auto& [pointer, pointee] : functionPointers) {
                 if (pointer != words[cursor + 1]) continue;
                 for (const auto& [array, length] : arrays) {
                     if (array != pointee) continue;
                     ++shape.functionArrays;
                     windowVariables.push_back(words[cursor + 2]);
+                    afterWindow = true;
                     for (const auto& [constant, value] : constants) {
                         if (constant == length) shape.arrayLength = value;
                     }
@@ -147,9 +164,39 @@ Shape Scan(std::span<const std::uint32_t> words) {
         }
         if (op == spv::OpStore && windowElements.contains(words[cursor + 1])) shape.windowAccesses.push_back({true, windowElements[words[cursor + 1]], constantValue(words[cursor + 2])});
         if (op == spv::OpLoad && windowElements.contains(words[cursor + 3])) shape.windowAccesses.push_back({false, windowElements[words[cursor + 3]], std::nullopt});
+        if (op == spv::OpSelectionMerge) pendingMerge = words[cursor + 1];
+        if (op == spv::OpSwitch && armsMerge == 0u) {
+            armLabels.clear();
+            for (std::size_t operand = 4; operand < count; operand += 2u) armLabels.push_back(words[cursor + operand]);
+            armsMerge = pendingMerge;
+            armRecorded = false;
+        }
+        if (op == spv::OpLabel) {
+            if (words[cursor + 1] == armsMerge) {
+                armsMerge = 0u;
+                inArm = false;
+            } else if (armsMerge != 0u && std::ranges::find(armLabels, words[cursor + 1]) != armLabels.end()) {
+                inArm = true;
+            }
+        }
+        const auto slotAccess = [&](std::uint32_t variable, bool store, std::optional<std::uint32_t> value) {
+            const auto found = slots.find(variable);
+            if (found == slots.end()) return;
+            if (!inArm) {
+                shape.windowAccesses.push_back({store, found->second, value});
+                return;
+            }
+            if (armRecorded) return;
+            armRecorded = true;
+            ++shape.switchedAccesses;
+            shape.windowAccesses.push_back({store, std::nullopt, value});
+        };
+        if (op == spv::OpStore) slotAccess(words[cursor + 1], true, constantValue(words[cursor + 2]));
+        if (op == spv::OpLoad) slotAccess(words[cursor + 3], false, std::nullopt);
         if (op == spv::OpSelect) ++shape.selects;
         cursor += count;
     }
+    shape.slots = slots.size();
     return shape;
 }
 
@@ -325,14 +372,15 @@ int main(int argc, char** argv) {
         const std::array<std::uint32_t, 12> code{MoveM0GroupX, MoveV4One, MoveV5Two, MoveV6Four, MovrelsV1V4,
             0xe0700000u, 0x80000100u, MovreldV4V0, MoveV1V5, 0xe0700004u, 0x80000100u, EndProgram};
         const auto shape = Scan(RecompileProgram(code));
-        if (shape.functionArrays != 1 || shape.arrayLength != 3 || shape.accessChains < 2) std::fprintf(stderr, "  window shape: arrays %zu length %u access chains %zu selects %zu\n", shape.functionArrays, shape.arrayLength, shape.accessChains, shape.selects);
-        return shape.functionArrays == 1 && shape.arrayLength == 3 && shape.accessChains >= 2;
+        const bool indexed = shape.accessChains >= 2 || (shape.slots == 3 && shape.switchedAccesses >= 2);
+        if (shape.functionArrays != 1 || shape.arrayLength != 3 || !indexed) std::fprintf(stderr, "  window shape: arrays %zu length %u access chains %zu slots %zu switched accesses %zu selects %zu\n", shape.functionArrays, shape.arrayLength, shape.accessChains, shape.slots, shape.switchedAccesses, shape.selects);
+        return shape.functionArrays == 1 && shape.arrayLength == 3 && indexed;
     });
 
     passed &= run("a program without relative addressing keeps its registers in SSA values", [] {
         const std::array<std::uint32_t, 7> code{MoveV4One, MoveV5Two, MoveV6Four, MoveV1V5, 0xe0700000u, 0x80000100u, EndProgram};
         const auto shape = Scan(RecompileProgram(code));
-        return shape.functionArrays == 0 && shape.accessChains == 0;
+        return shape.functionArrays == 0 && shape.accessChains == 0 && shape.slots == 0;
     });
 
     passed &= run("a sampler dword spilled into a relatively read register keeps its definition through v_readlane", [] {
