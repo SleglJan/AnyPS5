@@ -22,6 +22,7 @@ void InitializeBdaTable(SpirvEmitterState& state);
 bool BdaReadCacheAvailable(const SpirvEmitterState& state);
 void DeclareBdaVectorCache(SpirvEmitterState& state);
 bool BdaVectorCacheAvailable(const SpirvEmitterState& state);
+void LocalizeBdaCaches(SpirvEmitterState& state);
 struct BdaCacheProbe {
     std::uint32_t hit;
     std::uint32_t device;

@@ -2686,6 +2686,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_spirv_localized_private_variables_tests EXCLUDE_FROM_ALL tests/SpirvLocalizedPrivateVariables.cpp)
+target_link_libraries(agc_spirv_localized_private_variables_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_spirv_localized_private_variables_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_spirv_localized_private_variables_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_spirv_localized_private_variables_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_spirv_localized_private_variables COMMAND agc_spirv_localized_private_variables_tests)
+    if(WIN32)
+        set_tests_properties(agc_spirv_localized_private_variables PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 target_include_directories(agc_driver_device_table_null_type_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 add_test_executable(agc_scalar_buffer_ranges_tests EXCLUDE_FROM_ALL tests/ScalarBufferRanges.cpp)

@@ -309,6 +309,98 @@ void SpirvModule::EndHelperFunction() {
     inHelperFunction = false;
 }
 
+void SpirvModule::LocalizePrivateVariables(std::span<const std::uint32_t> variables) {
+    if (inHelperFunction) throw std::runtime_error("SpirvModule::LocalizePrivateVariables called inside a helper function");
+    struct Local {
+        std::uint32_t pointer = 0;
+        std::uint32_t initializer = 0;
+    };
+    std::map<std::uint32_t, Local> locals;
+    for (const auto variable : variables) {
+        if (variable != 0u) locals.emplace(variable, Local{});
+    }
+    if (locals.empty()) return;
+    const auto each = [](const std::vector<std::uint32_t>& section, auto&& visit) {
+        for (std::size_t offset = 0; offset < section.size(); offset += section[offset] >> spv::WordCountShift) {
+            if ((section[offset] >> spv::WordCountShift) == 0u) throw std::runtime_error("SpirvModule::LocalizePrivateVariables found an empty instruction");
+            visit(offset, std::span<const std::uint32_t>(section.data() + offset, section[offset] >> spv::WordCountShift));
+        }
+    };
+    std::map<std::uint32_t, std::uint32_t> pointees;
+    for (const auto* section : {&declarations, &typeDeclarations}) {
+        each(*section, [&](std::size_t, std::span<const std::uint32_t> words) {
+            if ((words[0] & spv::OpCodeMask) == spv::OpTypePointer && words.size() == 4u && words[2] == spv::StorageClassPrivate) pointees.emplace(words[1], words[3]);
+        });
+    }
+    std::vector<std::uint32_t> kept;
+    kept.reserve(globalVariables.size());
+    each(globalVariables, [&](std::size_t, std::span<const std::uint32_t> words) {
+        const auto found = (words[0] & spv::OpCodeMask) == spv::OpVariable && words.size() >= 4u ? locals.find(words[2]) : locals.end();
+        if (found == locals.end()) {
+            kept.insert(kept.end(), words.begin(), words.end());
+            return;
+        }
+        if (words[3] != spv::StorageClassPrivate || !pointees.contains(words[1])) throw std::runtime_error("SpirvModule::LocalizePrivateVariables was given a variable that is not a Private scalar");
+        found->second.pointer = Type(spv::OpTypePointer, static_cast<std::uint32_t>(spv::StorageClassFunction), pointees.at(words[1]));
+        found->second.initializer = words.size() > 4u ? words[4] : 0u;
+    });
+    for (const auto& [variable, local] : locals) {
+        if (local.pointer == 0u) throw std::runtime_error("SpirvModule::LocalizePrivateVariables was given a variable it does not declare");
+    }
+    globalVariables = std::move(kept);
+    for (auto* section : {&functionInstructions, &helperFunctionInstructions}) {
+        std::map<std::uint32_t, std::map<std::uint32_t, std::uint32_t>> copies;
+        std::uint32_t function = 0;
+        each(*section, [&](std::size_t, std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            if (opcode == spv::OpFunction) function = words[2];
+            const auto pointer = opcode == spv::OpLoad && words.size() >= 4u ? words[3] : opcode == spv::OpStore && words.size() >= 3u ? words[1] : 0u;
+            if (pointer != 0u && locals.contains(pointer)) copies[function].emplace(pointer, 0u);
+        });
+        for (auto& [owner, renames] : copies) {
+            for (auto& [variable, copy] : renames) copy = AllocateId();
+        }
+        std::vector<std::uint32_t> rewritten;
+        rewritten.reserve(section->size());
+        const std::map<std::uint32_t, std::uint32_t>* renames = nullptr;
+        bool entry = false;
+        each(*section, [&](std::size_t, std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            const auto start = rewritten.size();
+            rewritten.insert(rewritten.end(), words.begin(), words.end());
+            if (opcode == spv::OpFunction) {
+                const auto found = copies.find(words[2]);
+                renames = found == copies.end() ? nullptr : &found->second;
+                entry = true;
+                return;
+            }
+            if (renames == nullptr) return;
+            if (opcode == spv::OpLabel && entry) {
+                entry = false;
+                for (const auto& [variable, copy] : *renames) {
+                    const auto& local = locals.at(variable);
+                    if (local.initializer != 0u) appendInstruction(rewritten, spv::OpVariable, local.pointer, copy, spv::StorageClassFunction, local.initializer);
+                    else appendInstruction(rewritten, spv::OpVariable, local.pointer, copy, spv::StorageClassFunction);
+                }
+                return;
+            }
+            const auto operand = opcode == spv::OpLoad && words.size() >= 4u ? 3u : opcode == spv::OpStore && words.size() >= 3u ? 1u : 0u;
+            if (operand == 0u) return;
+            if (const auto found = renames->find(words[operand]); found != renames->end()) rewritten[start + operand] = found->second;
+        });
+        *section = std::move(rewritten);
+    }
+    for (auto* section : {&debug, &annotations}) {
+        std::vector<std::uint32_t> kept;
+        each(*section, [&](std::size_t, std::span<const std::uint32_t> words) {
+            const auto opcode = words[0] & spv::OpCodeMask;
+            const bool targets = (opcode == spv::OpName || opcode == spv::OpDecorate) && words.size() >= 2u && locals.contains(words[1]);
+            if (!targets) kept.insert(kept.end(), words.begin(), words.end());
+        });
+        *section = std::move(kept);
+    }
+}
+
 void SpirvModule::ReturnSharedResultsThroughPointers() {
     if (inHelperFunction) throw std::runtime_error("SpirvModule::ReturnSharedResultsThroughPointers called inside a helper function");
     if (unpatchedPhiIncomings != 0) throw std::runtime_error("SpirvModule::ReturnSharedResultsThroughPointers called with unpatched OpPhi incoming pairs");

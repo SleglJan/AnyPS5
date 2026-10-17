@@ -743,6 +743,12 @@ bool BdaVectorCacheAvailable(const SpirvEmitterState& state) {
     return state.bdaVectorCache[0] != 0u;
 }
 
+void LocalizeBdaCaches(SpirvEmitterState& state) {
+    std::vector<std::uint32_t> variables(state.bdaReadCache.begin(), state.bdaReadCache.end());
+    variables.insert(variables.end(), state.bdaVectorCache.begin(), state.bdaVectorCache.end());
+    state.module.LocalizePrivateVariables(variables);
+}
+
 BdaCacheProbe ProbeBdaSegment(SpirvEmitterState& state, const BdaSegmentValues& segment, std::uint32_t address, std::uint32_t bytes) {
     const auto u64 = TypeScalarU64(state);
     const auto boolean = TypeBool(state);

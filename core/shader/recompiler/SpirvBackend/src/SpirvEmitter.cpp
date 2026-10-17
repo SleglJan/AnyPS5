@@ -325,6 +325,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     EmitProgram(state);
     DefineFormatCodecs(state);
     state.module.ReturnSharedResultsThroughPointers();
+    LocalizeBdaCaches(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     return state.module.Finalize();
 }
