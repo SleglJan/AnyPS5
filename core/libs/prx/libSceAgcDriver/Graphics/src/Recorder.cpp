@@ -539,6 +539,7 @@ bool ProcTable() {
 // set and cleared under this mutex, so a lookup never touches a table being destroyed. Nothing
 // under this mutex takes the GPU mutex (no lock-order cycle).
 std::mutex labelTableMutex;
+std::atomic<std::uint64_t> labelTableLookups{0};
 Recorder* labelTableOwner = nullptr;
 // The ranges of the calling worker's queued labels (NoteQueuedLabel, cleared by
 // ForgetQueuedLabels): the flush hook, on the same thread, has them recorded before an access that
@@ -1462,9 +1463,9 @@ void Recorder::OrderAfterLabel(std::uint64_t address, std::size_t bytes) {
     Epoch after{};
     {
         std::lock_guard tableLock(labelTableMutex);
-        for (auto dword = address & ~std::uint64_t{3}; dword < address + bytes; dword += 4) {
-            const auto found = labels.find(dword);
-            if (found == labels.end()) continue;
+        labelTableLookups.fetch_add(1, std::memory_order_relaxed);
+        for (auto found = labels.lower_bound(address & ~std::uint64_t{3}); found != labels.end() && found->first < address + bytes; ++found) {
+            if ((found->first & 3u) != 0u) continue;
             for (const auto& writer : found->second) {
                 if (writer.stream != stream) after[writer.stream] = std::max(after[writer.stream], writer.batch);
             }
@@ -1477,6 +1478,10 @@ void Recorder::OrderAfterLabel(std::uint64_t address, std::size_t bytes) {
     for (std::uint32_t other = 0; other < streams.size(); ++other) {
         if (other != stream) dependOn(other, after[other]);
     }
+}
+
+std::uint64_t Recorder::LabelTableLookups() {
+    return labelTableLookups.load(std::memory_order_relaxed);
 }
 
 Recorder::Token Recorder::CallerToken() {
@@ -1534,9 +1539,10 @@ void Recorder::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
     std::array<bool, MaxRecorderStreams> labelled{};
     {
         std::lock_guard tableLock(labelTableMutex);
-        for (auto dword = address & ~std::uint64_t{3}; dword < end; dword += 4) {
-            const auto found = labels.find(dword);
-            if (found == labels.end()) continue;
+        labelTableLookups.fetch_add(1, std::memory_order_relaxed);
+        for (auto found = labels.lower_bound(address & ~std::uint64_t{3}); found != labels.end() && found->first < end; ++found) {
+            if ((found->first & 3u) != 0u) continue;
+            const auto dword = found->first;
             for (const auto& writer : found->second) {
                 if (writer.stream == stream) continue;
                 labelled[writer.stream] = true;

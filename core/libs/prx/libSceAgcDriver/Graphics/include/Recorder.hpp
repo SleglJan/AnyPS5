@@ -196,6 +196,7 @@ public:
     void DeclareSection(std::span<const SectionObject> objects);
     void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
+    static std::uint64_t LabelTableLookups();
     void OrderAfterQueue(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
