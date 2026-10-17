@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Residency.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <array>
@@ -209,10 +210,10 @@ VkFormat SrgbTwinFormat(const Context& context, VkFormat format);
 // either at once (WriteBack) or deferred: MarkDirty keeps them on the GPU until something reads that
 // memory (FlushPending, through the GuestMemory flush hook), the image is refreshed after a CPU write,
 // or it leaves the cache. Dispatches reusing the image meanwhile skip the round trip entirely.
-class StorageTexture : public std::enable_shared_from_this<StorageTexture> {
+class StorageTexture : public std::enable_shared_from_this<StorageTexture>, public IResidencyOwner {
 public:
     static std::shared_ptr<StorageTexture> Create(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
-    ~StorageTexture();
+    ~StorageTexture() override;
     StorageTexture(const StorageTexture&) = delete;
     StorageTexture& operator=(const StorageTexture&) = delete;
 
@@ -245,6 +246,12 @@ public:
     void RecordAttachmentProxyLoad(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
     void RecordAttachmentProxyStore(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
     void WriteBack();
+    void OwnAsTarget();
+    bool OwnedByResidency() const { return residencyOwned; }
+    void Retile(std::span<const ResidencyRange> ranges) override;
+    std::shared_ptr<IResidencyOwner> Hold() override;
+    void StoreRange(std::uint64_t address, std::uint64_t bytes);
+    static std::uint64_t RegistryStores();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
     void MarkStoresRecorded(std::uint64_t record);
@@ -513,6 +520,10 @@ private:
     // registration; APS5_EAGER_WRITEBACK=1 stores at once instead).
     void markLayersPending(std::uint32_t first, std::uint32_t count);
     void markUnitsPending(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs);
+    void markOwnedStale(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs);
+    void staleUnits(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs);
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pendingUnitRuns(const std::vector<bool>& units) const;
+    void retileSelf();
     std::optional<std::vector<std::pair<std::uint32_t, std::uint32_t>>> regionUnits(std::uint32_t level, std::uint32_t firstLayer, std::uint32_t layers, VkRect2D area) const;
     // Registers or unregisters the image as its pending layers say (after a write-back).
     void reconcilePending();
@@ -652,6 +663,10 @@ private:
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
+    bool residencyOwned = false;
+    bool deferStale = false;
+    std::atomic<bool> ownedPending{false};
+    std::uint64_t ownedSerial = 0;
     std::uint64_t version = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;

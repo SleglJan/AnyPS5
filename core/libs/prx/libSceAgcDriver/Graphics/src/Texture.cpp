@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
@@ -108,6 +109,7 @@ std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> decodedCopyTextures{0}, decodedCopyRefreshes{0};
 std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
+std::atomic<std::uint64_t> registryStores{0};
 
 struct StorageTraffic {
     std::mutex mutex;
@@ -1667,6 +1669,50 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
 // so the comparison with guest memory must not flush them.
 thread_local const StorageTexture* refreshing = nullptr;
 
+std::vector<std::shared_ptr<StorageTexture>> ownedImages(std::uint64_t address, std::uint64_t bytes) {
+    std::vector<std::shared_ptr<StorageTexture>> images;
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr || bytes == 0) return images;
+    for (auto& held : residency->Manager().HoldOwners(address, bytes)) {
+        if (auto image = std::dynamic_pointer_cast<StorageTexture>(held)) images.push_back(std::move(image));
+    }
+    return images;
+}
+
+std::vector<std::shared_ptr<StorageTexture>> staleOwnedImages() {
+    std::vector<std::shared_ptr<StorageTexture>> images;
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr || !residency->Manager().AnyStale()) return images;
+    for (auto& held : residency->Manager().HoldStaleOwners()) {
+        if (auto image = std::dynamic_pointer_cast<StorageTexture>(held)) images.push_back(std::move(image));
+    }
+    return images;
+}
+
+bool unboundedRange(std::uint64_t address, std::size_t bytes) {
+    return (address == 0 && bytes == std::numeric_limits<std::size_t>::max()) || bytes > std::numeric_limits<std::uint64_t>::max() - address;
+}
+
+bool staleOwnedIn(std::uint64_t address, std::size_t bytes) {
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr || bytes == 0) return false;
+    return unboundedRange(address, bytes) ? residency->Manager().AnyStale() : residency->Manager().StaleIn(address, bytes);
+}
+
+bool retileOwnedRange(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason) {
+    if (!staleOwnedIn(address, bytes)) return false;
+    auto& manager = ResidencyDriver::Active()->Manager();
+    const std::array<const IResidencyOwner*, 2> exempt{except, refreshing};
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    const auto previous = std::exchange(flushReason, reason);
+    struct Restore {
+        const char* previous;
+        ~Restore() { flushReason = previous; }
+    } restore{previous};
+    return unboundedRange(address, bytes) ? manager.RetileAllOwned(exempt) : manager.RetileOwned(address, bytes, exempt);
+}
+
 void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
 }
@@ -2076,6 +2122,10 @@ bool StorageTexture::Refresh() {
         return true;
     }
     refreshProof = {};
+    if (residencyOwned) {
+        GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        if (!GuestMemory::UnchangedSince(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generation)) retileSelf();
+    }
     struct Exempt {
         const StorageTexture* previous;
         ~Exempt() { refreshing = previous; }
@@ -2378,6 +2428,7 @@ std::uint64_t StorageTexture::SinglePassMoves() {
 }
 
 bool StorageTexture::otherPendingOverlaps() const {
+    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Manager().StaleOfOthers(descriptor.baseAddress, guestBytes, this)) return true;
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); };
@@ -3698,6 +3749,10 @@ void StorageTexture::markUnitsPending(std::span<const std::pair<std::uint32_t, s
         WriteBack();
         return;
     }
+    if (residencyOwned) {
+        markOwnedStale(runs);
+        return;
+    }
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     // The active recorder installs a hook that also waits for recorded work; without one (tests),
@@ -3720,7 +3775,149 @@ void StorageTexture::markUnitsPending(std::span<const std::pair<std::uint32_t, s
     BumpPendingSerial();
 }
 
+void StorageTexture::markOwnedStale(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs) {
+    ++version;
+    const bool wasLent = std::exchange(lent, false);
+    if (!ownedPending.exchange(true, std::memory_order_acq_rel) || wasLent) BumpPendingSerial();
+    if (deferStale) return;
+    staleUnits(runs);
+}
+
+void StorageTexture::staleUnits(std::span<const std::pair<std::uint32_t, std::uint32_t>> runs) {
+    auto* residency = ResidencyDriver::Active();
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    if (residency == nullptr) {
+        writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        return;
+    }
+    if (descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed) {
+        residency->Manager().MarkStale(descriptor.baseAddress, guestBytes, this);
+        return;
+    }
+    for (const auto& [first, end] : runs) {
+        if (first >= end) continue;
+        const auto begin = layerBegin(first);
+        const auto last = layerBegin(end - 1) + layerBytes(end - 1);
+        residency->Manager().MarkStale(begin, last - begin, this);
+    }
+}
+
+std::vector<std::pair<std::uint32_t, std::uint32_t>> StorageTexture::pendingUnitRuns(const std::vector<bool>& units) const {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
+    for (std::uint32_t unit = 0; unit < trackedLayers && unit < units.size(); ++unit) {
+        if (!units[unit]) continue;
+        if (!runs.empty() && runs.back().second == unit) ++runs.back().second;
+        else runs.emplace_back(unit, unit + 1);
+    }
+    return runs;
+}
+
+void StorageTexture::OwnAsTarget() {
+    auto* residency = ResidencyDriver::Active();
+    if (residency == nullptr) return;
+    std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    auto& manager = residency->Manager();
+    if (residencyOwned && ownedSerial == manager.OwnershipSerial()) return;
+    if (!residencyOwned) {
+        {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            if (dirty) {
+                dirty = false;
+                pending.textures.remove(this);
+            }
+            residencyOwned = true;
+        }
+        ownedPending.store(anyLayerPending(), std::memory_order_release);
+        BumpPendingSerial();
+    }
+    if (!borrowedFrom.expired() && borrowedUnits.size() == trackedLayers) {
+        const auto borrowed = pendingUnitRuns(borrowedUnits);
+        if (!borrowed.empty()) {
+            deferStale = true;
+            struct Restore {
+                bool& flag;
+                ~Restore() { flag = false; }
+            } restore{deferStale};
+            markUnitsPending(borrowed);
+        }
+    }
+    manager.Own(descriptor.baseAddress, guestBytes, this);
+    ownedSerial = manager.OwnershipSerial();
+    if (anyLayerPending()) staleUnits(pendingUnitRuns(layerPending));
+}
+
+void StorageTexture::Retile(std::span<const ResidencyRange> ranges) {
+    std::vector<bool> layers(trackedLayers, false);
+    bool any = false;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        if (!layerPending[unit]) continue;
+        const auto begin = layerBegin(unit);
+        const auto end = begin + layerBytes(unit);
+        for (const auto& range : ranges) {
+            if (range.address < end && begin < range.address + range.bytes) {
+                layers[unit] = true;
+                any = true;
+                break;
+            }
+        }
+    }
+    if (!any) {
+        reconcilePending();
+        return;
+    }
+    if (descriptor.dccAddress != 0 && uploadedKeys != DccKeys::Uncompressed) layers = layerPending;
+    const auto previous = std::exchange(flushReason, flushReason != nullptr ? flushReason : "residency retile");
+    struct Restore {
+        const char* previous;
+        ~Restore() { flushReason = previous; }
+    } restore{previous};
+    writeBackLayers(layers);
+}
+
+std::shared_ptr<IResidencyOwner> StorageTexture::Hold() {
+    return weak_from_this().lock();
+}
+
+void StorageTexture::StoreRange(std::uint64_t address, std::uint64_t bytes) {
+    std::vector<bool> layers(trackedLayers, false);
+    bool any = false;
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        const auto begin = layerBegin(unit);
+        if (address < begin + layerBytes(unit) && begin < address + bytes) {
+            layers[unit] = true;
+            layerPending[unit] = true;
+            any = true;
+        }
+    }
+    if (!any) return;
+    ++version;
+    writeBackLayers(layers);
+}
+
+std::uint64_t StorageTexture::RegistryStores() {
+    return registryStores.load(std::memory_order_relaxed);
+}
+
+void StorageTexture::retileSelf() {
+    auto* residency = ResidencyDriver::Active();
+    if (!residencyOwned || residency == nullptr || !residency->Manager().StaleIn(descriptor.baseAddress, guestBytes)) return;
+    const auto previous = std::exchange(flushReason, "storage refresh");
+    struct Restore {
+        const char* previous;
+        ~Restore() { flushReason = previous; }
+    } restore{previous};
+    residency->Manager().RetileOwned(descriptor.baseAddress, guestBytes);
+}
+
 void StorageTexture::reconcilePending() {
+    if (residencyOwned) {
+        const bool owned = anyLayerPending();
+        if (ownedPending.exchange(owned, std::memory_order_acq_rel) != owned) BumpPendingSerial();
+        return;
+    }
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const bool any = anyLayerPending();
@@ -3736,6 +3933,20 @@ void StorageTexture::Flush() {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
         released = true;
+    }
+    if (residencyOwned) {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        const auto previous = std::exchange(flushReason, "cache eviction");
+        struct Restore {
+            const char* previous;
+            ~Restore() { flushReason = previous; }
+        } restore{previous};
+        if (auto* residency = ResidencyDriver::Active()) residency->Manager().Disown(this);
+        residencyOwned = false;
+        ownedPending.store(false, std::memory_order_release);
+        BumpPendingSerial();
+        if (anyLayerPending()) writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+        return;
     }
     {
         auto& pending = Pending();
@@ -3768,6 +3979,7 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published) {
     if (published != nullptr) *published = false;
+    const bool retiled = retileOwnedRange(address, bytes, except, reason);
     // The images stay alive across the scan: their last owner may be a batch's kept list, which
     // another thread releases outside the GPU mutex once the batch completed.
     std::vector<std::shared_ptr<StorageTexture>> flush;
@@ -3799,8 +4011,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (flush.empty()) {
         const bool written = scope != PublishScope::None && writeBackMirrors(address, bytes);
         if (published != nullptr) *published = written;
-        return false;
+        return retiled;
     }
+    registryStores.fetch_add(flush.size(), std::memory_order_relaxed);
     struct Unregister {
         const std::vector<std::shared_ptr<StorageTexture>>& flush;
         ~Unregister() {
@@ -3847,6 +4060,9 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
         };
         for (auto* texture : pending.textures) take(texture);
         for (auto* texture : pending.flushing) take(texture);
+    }
+    for (auto& texture : ownedImages(address, bytes)) {
+        if (texture->ownedPending.load(std::memory_order_acquire)) overlapping.push_back(std::move(texture));
     }
     if (overlapping.empty()) return;
     std::lock_guard gpu(GuestMemory::GpuMutex());
@@ -4042,6 +4258,9 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
             if (auto alive = texture->weak_from_this().lock()) small.push_back(std::move(alive));
         }
     }
+    for (auto& texture : staleOwnedImages()) {
+        if (texture->guestBytes <= SmallStoreBytes) small.push_back(std::move(texture));
+    }
     std::size_t stored = 0;
     for (const auto& texture : small) {
         const auto address = texture->descriptor.baseAddress;
@@ -4053,6 +4272,7 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
 }
 
 bool StorageTexture::AnyPending() {
+    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Manager().AnyStale()) return true;
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     return pending.textures.begin() != pending.textures.end();
@@ -4072,7 +4292,7 @@ bool StorageTexture::StoreAtLabelRequested(const char* value) {
 
 std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t address, std::uint64_t bytes) {
     auto& pending = Pending();
-    std::lock_guard lock(pending.mutex);
+    std::unique_lock lock(pending.mutex);
     StorageTexture* containing = nullptr;
     for (auto* texture : pending.textures) {
         if (texture->descriptor.baseAddress != address || texture->guestBytes < bytes) continue;
@@ -4081,30 +4301,41 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
         // shorter) is served by the chain's image; CanCopyFrom then checks the geometry.
         if (containing == nullptr) containing = texture;
     }
-    return containing != nullptr ? containing->weak_from_this().lock() : nullptr;
+    if (containing != nullptr) return containing->weak_from_this().lock();
+    lock.unlock();
+    for (auto& texture : ownedImages(address, 1)) {
+        if (texture->ownedPending.load(std::memory_order_acquire) && texture->descriptor.baseAddress == address && texture->guestBytes >= bytes) return texture;
+    }
+    return nullptr;
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t address, std::uint64_t bytes) {
     if (auto whole = FindPending(address, bytes)) return whole;
+    const auto owned = ownedImages(address, 1);
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     StorageTexture* found = nullptr;
-    for (auto* texture : pending.textures) {
+    const auto consider = [&](StorageTexture* texture) {
         const auto base = texture->descriptor.baseAddress;
         const auto layers = texture->geometry.imageLayers;
-        if (texture->geometry.thick || layers <= 1 || bytes == 0 || address <= base || texture->guestBytes % layers != 0 || texture->guestBytes / layers != bytes) continue;
-        if ((address - base) % bytes != 0 || (address - base) / bytes >= layers) continue;
+        if (texture->geometry.thick || layers <= 1 || bytes == 0 || address <= base || texture->guestBytes % layers != 0 || texture->guestBytes / layers != bytes) return;
+        if ((address - base) % bytes != 0 || (address - base) / bytes >= layers) return;
         if (found != nullptr) {
             char message[256];
             std::snprintf(message, sizeof(message), "AGC graphics: 0x%llx+0x%llx is a slice of the pending array images 0x%llx and 0x%llx: which one holds its results is not modeled", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(found->descriptor.baseAddress), static_cast<unsigned long long>(base));
             throw std::runtime_error(message);
         }
         found = texture;
+    };
+    for (auto* texture : pending.textures) consider(texture);
+    for (const auto& texture : owned) {
+        if (texture->ownedPending.load(std::memory_order_acquire)) consider(texture.get());
     }
     return found != nullptr ? found->weak_from_this().lock() : nullptr;
 }
 
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
+    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Manager().StaleOfOthers(address, bytes, except)) return true;
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return false;
@@ -4119,6 +4350,9 @@ bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const Stor
 
 bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (ranges.empty()) return false;
+    for (const auto& [begin, end] : ranges) {
+        if (end > begin && staleOwnedIn(begin, static_cast<std::size_t>(end - begin))) return true;
+    }
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     const auto overlapsAny = [&](const StorageTexture* texture) {
@@ -4312,11 +4546,24 @@ void StorageTexture::BumpPendingSerial() {
 }
 
 bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
+    std::vector<std::shared_ptr<StorageTexture>> owners(queries.size());
+    std::vector<bool> ownedOverlaps(queries.size(), false);
+    if (auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Manager().AnyStale()) {
+        for (std::size_t index = 0; index < queries.size(); ++index) {
+            const auto& query = queries[index];
+            if (query.end <= query.begin) continue;
+            ownedOverlaps[index] = residency->Manager().StaleOfOthers(query.begin, query.end - query.begin, query.except);
+            for (auto& texture : ownedImages(query.begin, 1)) {
+                if (texture->ownedPending.load(std::memory_order_acquire) && texture->descriptor.baseAddress == query.begin && texture->guestBytes >= query.end - query.begin) owners[index] = std::move(texture);
+            }
+        }
+    }
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     bool identities = true;
     for (auto& query : queries) {
-        query.overlaps = false;
+        const auto index = static_cast<std::size_t>(&query - queries.data());
+        query.overlaps = ownedOverlaps[index];
         query.found = nullptr;
         if (query.end <= query.begin) continue;
         const auto bytes = static_cast<std::size_t>(query.end - query.begin);
@@ -4329,15 +4576,43 @@ bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
         for (const auto* texture : pending.flushing) {
             if (texture != query.except && texture->overlaps(query.begin, bytes)) query.overlaps = true;
         }
+        if (query.found == nullptr && owners[index] != nullptr) query.found = owners[index].get();
         if (query.pending != nullptr && query.found != query.pending) identities = false;
     }
     return identities;
 }
 
 std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::size_t bytes) {
+    std::size_t ownedDiscarded = 0;
+    for (auto& texture : ownedImages(address, bytes)) {
+        if (texture.get() == refreshing || !texture->ownedPending.load(std::memory_order_acquire)) continue;
+        std::unique_lock<GuestMemory::GpuMutexType> gpu(GuestMemory::GpuMutex(), std::defer_lock);
+        if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+        const auto begin = texture->descriptor.baseAddress;
+        bool dropped = false;
+        if (begin >= address && begin + texture->guestBytes <= address + bytes) {
+            dropped = texture->anyLayerPending();
+            texture->layerPending.assign(texture->trackedLayers, false);
+            texture->layerOriginal.assign(texture->trackedLayers, false);
+            texture->cancelStoredSaves();
+        } else if (texture->blockUnits) {
+            for (std::uint32_t unit = 0; unit < texture->trackedLayers; ++unit) {
+                const auto unitBegin = texture->layerBegin(unit);
+                if (!texture->layerPending[unit] || unitBegin < address || unitBegin + texture->layerBytes(unit) > address + bytes) continue;
+                texture->layerPending[unit] = false;
+                texture->layerOriginal[unit] = false;
+                texture->cancelStoredSave(unit);
+                unitsDropped.fetch_add(1, std::memory_order_relaxed);
+                dropped = true;
+            }
+        }
+        if (!dropped) continue;
+        ++ownedDiscarded;
+        texture->reconcilePending();
+    }
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
-    std::size_t discarded = 0;
+    std::size_t discarded = ownedDiscarded;
     const auto end = address + bytes;
     const auto* exempt = refreshing;
     for (auto it = pending.textures.begin(); it != pending.textures.end();) {
@@ -4863,6 +5138,7 @@ std::vector<StorageTexture::Adjacent> StorageTexture::adjacentPendingUnchanged(s
     std::vector<Adjacent> adjacent;
     if (!AdjacentGenerationEnabled() || guestBytes == 0) return adjacent;
     constexpr std::uint64_t block = 65536;
+    const auto owned = ownedImages(firstBlock * block, (lastBlock - firstBlock + 1) * block);
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
@@ -4880,6 +5156,9 @@ std::vector<StorageTexture::Adjacent> StorageTexture::adjacentPendingUnchanged(s
         };
         for (auto* texture : pending.textures) consider(texture);
         for (auto* texture : pending.flushing) consider(texture);
+        for (const auto& texture : owned) {
+            if (texture->ownedPending.load(std::memory_order_acquire)) consider(texture.get());
+        }
     }
     // Only a layer whose memory has not changed since its generation can be advanced: the collect
     // stamps the CPU's writes so far, and a later one lands at a newer generation either way.
@@ -4938,6 +5217,10 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
             if (texture == this || texture->descriptor.baseAddress != descriptor.baseAddress || texture->guestBytes != guestBytes || !texture->blockUnits) continue;
             if (auto alive = texture->weak_from_this().lock()) candidates.push_back(std::move(alive));
         }
+    }
+    for (auto& texture : ownedImages(descriptor.baseAddress, guestBytes)) {
+        if (texture.get() == this || !texture->ownedPending.load(std::memory_order_acquire) || texture->descriptor.baseAddress != descriptor.baseAddress || texture->guestBytes != guestBytes || !texture->blockUnits) continue;
+        candidates.push_back(std::move(texture));
     }
     for (const auto& candidate : candidates) {
         const auto& mine = descriptor;
@@ -5526,6 +5809,11 @@ StorageTexture::~StorageTexture() {
             static std::atomic<int> reports{0};
             if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] storage image 0x%llx destroyed with GPU results pending\n", static_cast<unsigned long long>(descriptor.baseAddress));
         }
+    }
+    if (residencyOwned) {
+        if (auto* residency = ResidencyDriver::Active()) residency->Manager().Forget(this);
+        static std::atomic<int> ownedReports{0};
+        if (ownedPending.load(std::memory_order_acquire) && ownedReports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] render target 0x%llx destroyed with GPU results pending\n", static_cast<unsigned long long>(descriptor.baseAddress));
     }
     release();
 }

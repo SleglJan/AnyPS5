@@ -1883,6 +1883,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         }
         if (binding.resident != nullptr) {
             timer.phase(PhaseReadTarget);
+            binding.resident->OwnAsTarget();
             binding.proxied = AttachmentProxyFormat(context, color.format) != VK_FORMAT_UNDEFINED;
             targetViews.push_back(binding.proxied ? binding.resident->AttachmentProxyView() : binding.resident->AttachmentView(color.format, color.mip, color.depthSlice, color.layers, color.arraySlice));
             continue;
@@ -2394,7 +2395,9 @@ namespace {
 std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, const ColorTarget& color) {
     if (color.tileMode == ColorTileMode::Linear || context.detiler == nullptr) return nullptr;
     const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
-    return resident != nullptr && resident->GuestBytes() == color.bytes ? resident : nullptr;
+    if (resident == nullptr || resident->GuestBytes() != color.bytes) return nullptr;
+    resident->OwnAsTarget();
+    return resident;
 }
 
 }
@@ -2406,6 +2409,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         Require(destination.tileMode != ColorTileMode::Linear && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
+        resident->OwnAsTarget();
         ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));
         return;
     }
