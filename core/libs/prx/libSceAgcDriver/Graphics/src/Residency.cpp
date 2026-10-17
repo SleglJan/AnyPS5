@@ -1090,7 +1090,6 @@ void ResidencyManager::admitReservedTouches() {
 
 void ResidencyManager::admitEager() {
     constexpr std::uint64_t PagesPerCall = 512;
-    if (!fullResidency()) return;
     std::uint64_t generation = importsGeneration;
     auto imports = device.WholeImports(generation);
     if (generation != importsGeneration) {
@@ -1104,6 +1103,10 @@ void ResidencyManager::admitEager() {
         const auto last = (range.address + range.bytes - 1) >> ResidencyPageShift;
         auto& entry = pendingImports.back();
         const auto next = admitPages(first, last, &quota, false, true);
+        if (next <= last && quota != 0) {
+            pendingImports.clear();
+            break;
+        }
         if (next <= last) {
             entry.address = next << ResidencyPageShift;
             entry.bytes = (last + 1 - next) << ResidencyPageShift;

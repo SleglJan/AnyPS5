@@ -308,10 +308,14 @@ void EvictionUnderBudget(Harness& harness) {
     Settle();
     const auto cleared = Counts();
     Expect(cleared.resident == 0 && cleared.chunks == 0, "eviction: a zero budget left " + std::to_string(cleared.resident) + " pages resident in " + std::to_string(cleared.chunks) + " chunks");
+    Locked([&] { Residency().Manager().SetBudget(std::uint64_t{chunkSlots} * PageBytes); });
+    SharedPages filler(chunkSlots);
+    AdmitEagerly();
+    const auto filled = Counts();
+    Expect(filled.resident == chunkSlots, "eviction: eager admission filled " + std::to_string(filled.resident) + " of the " + std::to_string(chunkSlots) + " slots of a one-chunk budget");
     SharedPages pages(chunkSlots + ReadPages);
     Model model(pages, 4);
     model.Fill();
-    Locked([&] { Residency().Manager().SetBudget(std::uint64_t{chunkSlots} * PageBytes); });
     Use(pages, 0, ReadPages);
     FillMirror(pages.Address(1, 2), EvictedMarker);
     Settle();

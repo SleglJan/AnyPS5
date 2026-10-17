@@ -1159,13 +1159,46 @@ void FullResidencyWhenTheGuestFits() {
     fixture.gpu.importsGeneration = 2;
     fixture.gpu.guestBytes = 32 * ResidencyPageBytes;
     fixture.manager->Prepare();
-    Expect(!fixture.manager->FullResidency() && !fixture.manager->AnyResident(Address(BasePage), 4 * ResidencyPageBytes), "a budget below the guest size admits no shared view eagerly");
+    Expect(!fixture.manager->FullResidency(), "a budget below the guest size is not full residency");
+    for (std::uint32_t page = 0; page < 4; ++page) Expect(fixture.manager->Slot(BasePage + page).has_value(), "shared " + Name(BasePage + page) + " admitted eagerly under a budget that holds it");
     fixture.gpu.guestBytes = 16 * ResidencyPageBytes;
     fixture.manager->Prepare();
     Expect(fixture.manager->FullResidency(), "a budget of the guest size is full residency");
-    for (std::uint32_t page = 0; page < 4; ++page) Expect(fixture.manager->Slot(BasePage + page).has_value(), "shared " + Name(BasePage + page) + " admitted eagerly");
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 2, 0x0001, std::uint64_t{2} << 8);
     fixture.gpu.Drain();
+}
+
+void EagerAdmissionFillsTheBudget() {
+    scope = "eager admission fills the budget, discovery evicts below it";
+    Fixture fixture(16, 1);
+    for (std::uint32_t page = 0; page < 12; ++page) fixture.Share(BasePage + page);
+    fixture.gpu.wholeImports = {ResidencyRange{Address(BasePage), 12 * ResidencyPageBytes}};
+    fixture.gpu.importsGeneration = 2;
+    fixture.gpu.guestBytes = 64 * ResidencyPageBytes;
+    fixture.manager->Prepare();
+    fixture.manager->Prepare();
+    auto counts = fixture.manager->Counts();
+    Expect(!fixture.manager->FullResidency(), "a budget of one chunk for a 64-page guest is not full residency");
+    Expect(counts.chunks == 1 && counts.resident == ChunkSlots && counts.free == 0, "eager admission fills the one-chunk budget with " + std::to_string(ChunkSlots) + " shared pages, not " + std::to_string(counts.resident) + " in " + std::to_string(counts.chunks) + " chunks");
+    for (std::uint32_t page = 0; page < ChunkSlots; ++page) Expect(fixture.manager->Slot(BasePage + page).has_value(), "shared " + Name(BasePage + page) + " admitted eagerly in commit order");
+    fixture.Use(0, BasePage + 1);
+    fixture.Use(0, BasePage + 2);
+    fixture.Use(0, BasePage + 3);
+    fixture.gpu.Drain();
+    fixture.Use(0, BasePage + 8);
+    fixture.gpu.Drain();
+    fixture.manager->Retire();
+    fixture.Use(0, BasePage + 8);
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    counts = fixture.manager->Counts();
+    Expect(!fixture.manager->Slot(BasePage + 0), "discovery evicts the least recently used eager page (" + Name(BasePage + 0) + ")");
+    Expect(fixture.manager->Slot(BasePage + 8).has_value(), "the discovered " + Name(BasePage + 8) + " is admitted under the budget");
+    for (std::uint32_t page = 1; page < ChunkSlots; ++page) Expect(fixture.manager->Slot(BasePage + page).has_value(), "recently used " + Name(BasePage + page) + " kept");
+    Expect(counts.chunks == 1 && counts.resident == ChunkSlots, "the mirrors stay within the one-chunk budget");
+    for (std::uint32_t page = ChunkSlots; page < 12; ++page) {
+        if (page != 8) Expect(!fixture.manager->Slot(BasePage + page), "eager admission ended at the budget: " + Name(BasePage + page) + " not admitted into the freed slot");
+    }
 }
 
 class FakeOwner final : public IResidencyOwner {
@@ -1810,6 +1843,7 @@ int main() {
         TouchedPagesTakeEvictedSlotsWhenTheyRetire();
         MeasuredBudget();
         FullResidencyWhenTheGuestFits();
+        EagerAdmissionFillsTheBudget();
         OwnedPagesRetiledBeforeReaders();
         CpuReadRetilesStalePages();
         PrivateOwnedPagesHeldForReaders();

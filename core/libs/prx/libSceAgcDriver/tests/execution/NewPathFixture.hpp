@@ -264,6 +264,21 @@ inline void Settle() {
     });
 }
 
+inline void AdmitEagerly() {
+    std::uint32_t resident = ~0u;
+    for (int round = 0; round < 64; ++round) {
+        Settle();
+        std::uint32_t now = 0;
+        Locked([&] {
+            Residency().Manager().Prepare();
+            now = Residency().Manager().Counts().resident;
+        });
+        if (now == resident) return;
+        resident = now;
+    }
+    Require(false, "new path: eager admission did not settle within 64 rounds");
+}
+
 inline std::uint64_t PageOf(std::uint64_t address) {
     return address >> 16u;
 }

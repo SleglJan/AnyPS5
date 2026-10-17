@@ -108,12 +108,14 @@ void TouchedPagesAdmittedForTheNextFrame(MirrorReader&) {
     {
         std::uint64_t chunkBytes = 0;
         Locked([&] { chunkBytes = std::uint64_t{Residency().Manager().ChunkSlots()} * PageBytes; });
+        Locked([&] { Residency().Manager().SetBudget(chunkBytes); });
+        SharedPages filler(static_cast<std::uint32_t>(chunkBytes / PageBytes));
+        AdmitEagerly();
         SharedPages pages(static_cast<std::uint32_t>(GuestChunks * chunkBytes / PageBytes));
         Fill(pages.Words(), AllocationPages, Tag);
         AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), std::uint64_t{AllocationPages} * PageBytes);
         bool full = true;
         Locked([&] {
-            Residency().Manager().SetBudget(chunkBytes);
             full = Residency().Manager().FullResidency();
         });
         Expect(!full, what + ": a budget of one mirror chunk is full residency, so read discovery is not what admits");
@@ -142,6 +144,8 @@ void TouchedPagesAdmittedForTheNextFrame(MirrorReader&) {
         RecordLoadedRead(again, third, pages.Address());
         again.Submit(0);
         ExpectLoaded(third, what + ": the read in frame N+2");
+        Settle();
+        Locked([] { Residency().Manager().Prepare(); });
         const auto end = Residency().Counts();
         const auto endCounts = Counts();
         Expect(end.touchHarvests > start.touchHarvests && end.touchedPages >= start.touchedPages + ReadPages, what + ": " + std::to_string(end.touchHarvests - start.touchHarvests) + " touch tables read back with " + std::to_string(end.touchedPages - start.touchedPages) + " touched pages, expected the " + std::to_string(ReadPages) + " pages frame N read");

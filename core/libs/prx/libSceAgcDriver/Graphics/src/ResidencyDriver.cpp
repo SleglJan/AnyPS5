@@ -87,8 +87,11 @@ std::uint64_t ResidencyDriver::Budget() {
     const auto used = reported.heapUsage[deviceHeap];
     const auto others = used > mirrorBytes ? used - mirrorBytes : 0;
     auto limit = guest.GuestBytes();
-    if (reported.heapBudget[deviceHeap] != 0) limit = std::min<std::uint64_t>(limit, reported.heapBudget[deviceHeap]);
-    budgetBytes = limit > others ? limit - others : 0;
+    if (reported.heapBudget[deviceHeap] != 0) {
+        const auto room = reported.heapBudget[deviceHeap] > others ? reported.heapBudget[deviceHeap] - others : 0;
+        limit = std::min<std::uint64_t>(limit, room);
+    }
+    budgetBytes = limit;
     return budgetBytes;
 }
 

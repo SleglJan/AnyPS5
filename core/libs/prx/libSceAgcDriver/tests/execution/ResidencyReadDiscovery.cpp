@@ -53,15 +53,17 @@ void ReadInOneFrameAdmittedForTheNext(MirrorReader& reader) {
     {
         std::uint64_t chunkBytes = 0;
         Locked([&] { chunkBytes = std::uint64_t{Residency().Manager().ChunkSlots()} * PageBytes; });
+        const auto budget = BudgetChunks * chunkBytes;
+        Locked([&] { Residency().Manager().SetBudget(budget); });
+        SharedPages filler(static_cast<std::uint32_t>(budget / PageBytes));
+        AdmitEagerly();
         SharedPages pages(static_cast<std::uint32_t>(GuestChunks * chunkBytes / PageBytes));
         Fill(pages.Words(), AllocationPages, 9);
         AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), std::uint64_t{AllocationPages} * PageBytes);
-        const auto budget = BudgetChunks * chunkBytes;
         std::uint64_t guestBytes = 0;
         bool full = true;
         Locked([&] {
             auto& residency = Residency();
-            residency.Manager().SetBudget(budget);
             guestBytes = residency.GuestBytes();
             full = residency.Manager().FullResidency();
         });
