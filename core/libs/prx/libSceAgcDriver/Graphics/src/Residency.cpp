@@ -818,12 +818,13 @@ std::optional<std::uint32_t> ResidencyManager::victim(std::uint64_t protectFirst
     return std::nullopt;
 }
 
-std::optional<MirrorSlot> ResidencyManager::acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks) {
+std::optional<MirrorSlot> ResidencyManager::acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks, bool* evicted) {
     retireReached();
     if (const auto slot = takeFree()) return slot;
     if (allocateChunk()) return takeFree();
     const auto id = victim(protectFirst, protectLast);
     if (!id) return std::nullopt;
+    if (evicted != nullptr) *evicted = true;
     ++counts.evicted;
     leave(*id, writeBacks);
     retireReached();
@@ -1065,7 +1066,26 @@ void ResidencyManager::Apply() {
     applyQueued();
     retireReached();
     settleAccessGuards();
+    admitReservedTouches();
     admitEager();
+}
+
+void ResidencyManager::admitReservedTouches() {
+    std::vector<std::uint64_t> waiting;
+    for (std::size_t first = 0; first < reservedTouches.size();) {
+        auto last = first;
+        while (last + 1 < reservedTouches.size() && reservedTouches[last + 1] == reservedTouches[last] + 1) ++last;
+        std::uint64_t quota = last - first + 1;
+        const auto before = counts.admitted;
+        const auto next = admitPages(reservedTouches[first], reservedTouches[last], &quota, false);
+        counts.touchAdmitted += counts.admitted - before;
+        for (auto index = first; index <= last; ++index) {
+            if (reservedTouches[index] >= next) waiting.push_back(reservedTouches[index]);
+            else if (const auto id = find(reservedTouches[index])) pages[*id].touchFrame = touchFrame;
+        }
+        first = last + 1;
+    }
+    reservedTouches = std::move(waiting);
 }
 
 void ResidencyManager::admitEager() {
@@ -1196,6 +1216,7 @@ void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, Residency
 void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
     applyQueued();
     ++touchFrame;
+    reservedTouches.clear();
     std::vector<std::uint64_t> sorted(touched.begin(), touched.end());
     std::sort(sorted.begin(), sorted.end());
     sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
@@ -1220,7 +1241,7 @@ void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
             continue;
         }
         const auto before = counts.admitted;
-        const auto next = admitPages(missing[first], missing[last], &quota);
+        const auto next = admitPages(missing[first], missing[last], &quota, true, false, &reservedTouches);
         const auto admitted = counts.admitted - before;
         counts.touchAdmitted += admitted;
         if (next <= missing[last]) counts.touchDeferred += missing[last] - next + 1;
@@ -1235,7 +1256,7 @@ void ResidencyManager::admit(std::uint64_t first, std::uint64_t last) {
     admitPages(first, last, nullptr);
 }
 
-std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict, bool sharedOnly) {
+std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict, bool sharedOnly, std::vector<std::uint64_t>* reserved) {
     WriteBacks writeBacks;
     std::vector<Fill> fills;
     bool exhausted = false;
@@ -1255,14 +1276,20 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
             continue;
         }
         std::optional<MirrorSlot> slot;
+        bool evicted = false;
         if (!exhausted) {
             if (evict) {
-                slot = acquireSlot(first, last, writeBacks);
+                slot = acquireSlot(first, last, writeBacks, &evicted);
             } else {
                 retireReached();
                 slot = takeFree();
                 if (!slot && allocateChunk()) slot = takeFree();
             }
+        }
+        if (!slot && evicted && reserved != nullptr) {
+            reserved->push_back(page);
+            if (quota != nullptr) --*quota;
+            continue;
         }
         if (!slot) {
             ++counts.deferred;

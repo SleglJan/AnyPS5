@@ -1108,6 +1108,24 @@ void TouchedPagesAdmitted() {
     fixture.gpu.Drain();
 }
 
+void TouchedPagesTakeEvictedSlotsWhenTheyRetire() {
+    scope = "touched pages take the slots they evicted once the slots retire";
+    Fixture fixture(8, 1);
+    fixture.Use(0, BasePage + 0, 4);
+    fixture.gpu.Drain();
+    fixture.Use(0, BasePage + 3);
+    const std::array<std::uint64_t, 2> touched{BasePage + 4, BasePage + 5};
+    fixture.manager->AdmitTouched(touched);
+    Expect(!fixture.manager->Slot(BasePage + 0) && !fixture.manager->Slot(BasePage + 1), "the two least recently used pages left for the touched pages");
+    Expect(fixture.manager->Slot(BasePage + 3).has_value(), "the page in use stays");
+    fixture.gpu.Drain();
+    fixture.manager->Apply();
+    Expect(fixture.manager->Slot(BasePage + 4) && fixture.manager->Slot(BasePage + 5), "both touched pages admitted into the slots they evicted once those retired");
+    Expect(fixture.manager->Counts().touchAdmitted == 2 && fixture.manager->Counts().touchDeferred == 0, "two pages admitted from the touch records, none deferred, not " + std::to_string(fixture.manager->Counts().touchAdmitted) + " and " + std::to_string(fixture.manager->Counts().touchDeferred));
+    Expect(fixture.manager->Counts().resident == ChunkSlots, "the mirrors stay within the budget");
+    fixture.gpu.Drain();
+}
+
 void MeasuredBudget() {
     scope = "measured budget";
     Fixture fixture(16, 8);
@@ -1789,6 +1807,7 @@ int main() {
         GrantDemotesPrivatePage();
         GrantThroughAliasDemotesMirror();
         TouchedPagesAdmitted();
+        TouchedPagesTakeEvictedSlotsWhenTheyRetire();
         MeasuredBudget();
         FullResidencyWhenTheGuestFits();
         OwnedPagesRetiledBeforeReaders();

@@ -318,15 +318,16 @@ private:
     bool fullResidency();
     std::optional<std::uint32_t> victim(std::uint64_t protectFirst, std::uint64_t protectLast);
     void admit(std::uint64_t first, std::uint64_t last);
-    std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false);
+    std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false, std::vector<std::uint64_t>* reserved = nullptr);
     void writeBackDirty(std::span<const std::uint32_t> ids);
     void settleAccessGuards();
     void admitEager();
+    void admitReservedTouches();
     void rearm(std::uint32_t id);
     void coolHot(std::uint64_t first, std::span<const std::uint8_t> written);
     void markHot(std::uint64_t page, std::uint64_t at);
     void unmarkHot(std::uint64_t page);
-    std::optional<MirrorSlot> acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks);
+    std::optional<MirrorSlot> acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks, bool* evicted = nullptr);
     void leave(std::uint32_t id, WriteBacks& writeBacks);
     void forget(std::uint32_t id);
     void recordWriteBacks(WriteBacks& writeBacks);
@@ -405,6 +406,7 @@ private:
     std::atomic<std::uint64_t> ownershipSerial{0};
     std::uint64_t importsGeneration = 0;
     std::vector<ResidencyRange> pendingImports;
+    std::vector<std::uint64_t> reservedTouches;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> aliasKeys;
     std::atomic<std::uint64_t> epoch{1};
