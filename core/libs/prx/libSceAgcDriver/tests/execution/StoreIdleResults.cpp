@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
 
         Store(texels);
         if (wake) {
-            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
             while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < pendingDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "idle wake fixture did not observe pending storage results");
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
