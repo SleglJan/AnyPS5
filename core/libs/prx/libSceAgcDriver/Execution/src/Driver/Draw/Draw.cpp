@@ -85,7 +85,7 @@ std::shared_ptr<const DrawDecode> Driver::drawDecode(const QueueState& queue, co
 std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t key) {
     {
         std::lock_guard cacheLock(drawCacheMutex);
-        if (const auto found = drawStages.find(key); found != drawStages.end()) return found->second;
+        if (const auto found = drawStages.find(key); found != drawStages.end() && SameCode(found->second.snapshot.get(), program.snapshot.get()) && SameCode(found->second.continuation.get(), program.tailContinuation.get())) return found->second.program;
     }
     bool preparedAtUse = false;
     const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request, &preparedAtUse);
@@ -100,7 +100,10 @@ std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const Dra
     auto entry = std::make_shared<const RunTimeProgram>(RunTimeProgram{invocation.Plan(), std::move(compiled)});
     std::lock_guard cacheLock(drawCacheMutex);
     ++drawStageCompiles;
-    return drawStages.try_emplace(key, std::move(entry)).first->second;
+    auto& stage = drawStages[key];
+    if (stage.program != nullptr && SameCode(stage.snapshot.get(), program.snapshot.get()) && SameCode(stage.continuation.get(), program.tailContinuation.get())) return stage.program;
+    stage = {std::move(entry), program.snapshot, program.tailContinuation};
+    return stage.program;
 }
 
 std::uint64_t Driver::DrawStageCompiles() {
@@ -233,13 +236,9 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             key *= 0x100000001b3ull;
         };
         mix(program.binary.codeAddress);
-        mix(reinterpret_cast<std::uintptr_t>(program.snapshot.get()));
+        mix(CodeIdentity(*program.snapshot));
         mix(program.codeOffset);
-        mix(reinterpret_cast<std::uintptr_t>(program.tailContinuation.get()));
-        if (program.tailContinuation != nullptr) {
-            mix(program.tailContinuation->codeAddress);
-            for (const auto word : program.tailContinuation->code) mix(word);
-        }
+        mix(program.tailContinuation != nullptr ? CodeIdentity(*program.tailContinuation) : 0u);
         mix(request.layout.descriptorSet);
         mix(request.layout.firstBinding);
         mix(request.layout.pushConstantOffsetBytes);

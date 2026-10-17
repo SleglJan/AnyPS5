@@ -157,6 +157,27 @@ std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shad
     return ReadRawShader(address);
 }
 
+std::uint64_t CodeIdentity(const ShaderSnapshot& snapshot) {
+    if (const auto known = snapshot.codeIdentity->load(std::memory_order_acquire); known != 0) return known;
+    std::uint64_t identity = 0x9e3779b97f4a7c15ull ^ snapshot.codeAddress;
+    const auto mix = [&](std::uint64_t value) {
+        identity = (identity ^ value) * 0x9e3779b97f4a7c15ull;
+        identity ^= identity >> 29u;
+    };
+    mix(snapshot.code.size());
+    for (const auto word : snapshot.code) mix(word);
+    mix(snapshot.header.size());
+    for (const auto byte : snapshot.header) mix(std::to_integer<std::uint64_t>(byte));
+    if (identity == 0) identity = 1;
+    snapshot.codeIdentity->store(identity, std::memory_order_release);
+    return identity;
+}
+
+bool SameCode(const ShaderSnapshot* left, const ShaderSnapshot* right) {
+    if (left == right) return true;
+    return left != nullptr && right != nullptr && left->codeAddress == right->codeAddress && left->code == right->code && left->header == right->header;
+}
+
 namespace {
 std::atomic<bool> rawGraphicsDrawn{false};
 std::mutex rawGraphicsMutex;

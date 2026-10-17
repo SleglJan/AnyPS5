@@ -125,6 +125,23 @@ void ControlStateDraws(std::vector<std::uint32_t> prefix) {
     CheckBranchColors(activeExec, emptyExec, "EXEC");
 }
 
+void RewrittenInPlace(std::vector<std::uint32_t> prefix) {
+    alignas(256) const std::array<std::uint32_t, 7> sccContinuation{0xbf840001u, 0x7e0c02f2u, 0xf800020fu, 0x06060606u, 0xf80008cfu, 0x04030201u, 0xbf810000u};
+    prefix.insert(prefix.end() - 1, 0x7e0c0280u);
+    auto skipped = prefix;
+    skipped.back() = 0xbf070c0cu;
+    const std::array<std::vector<std::uint32_t>, 2> prefixes{prefix, skipped};
+    const std::array<Image, 2> images{Check(prefixes[0], sccContinuation, 0, sccContinuation.size(), true), Check(prefixes[1], sccContinuation, 0, sccContinuation.size(), true)};
+    Require(images[0] != images[1], "the two linked programs drew the same pixels");
+    for (unsigned round = 0; round < 32u; ++round) {
+        const auto& code = prefixes[round % 2u];
+        Prolog.fill(0xbf9f0000u);
+        std::copy(code.begin(), code.end(), Prolog.begin());
+        Prolog[code.size()] = 0xbe802008u;
+        Require(Draw(Prolog.data(), sccContinuation.data(), 0, true) == images[round % 2u], "a linked program rewritten in place drew its previous code (round " + std::to_string(round) + ")");
+    }
+}
+
 void VertexTailDraws() {
     std::vector<std::uint32_t> prefix{
         0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -145,6 +162,7 @@ void VertexTailDraws() {
     const auto culled = Check(prefix, clipContinuation, 0x00400100u, clipContinuation.size());
     Require(culled == original, "a mixed-sign cull distance discarded the triangle");
     ControlStateDraws(prefix);
+    RewrittenInPlace(prefix);
 }
 
 }

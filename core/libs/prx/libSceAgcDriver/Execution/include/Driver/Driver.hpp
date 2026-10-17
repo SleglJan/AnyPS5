@@ -219,7 +219,12 @@ private:
 
     std::mutex drawCacheMutex;
     std::unordered_map<std::uint64_t, std::shared_ptr<const DrawDecode>> drawDecodes;
-    std::unordered_map<std::uint64_t, std::shared_ptr<const RunTimeProgram>> drawStages;
+    struct DrawStage {
+        std::shared_ptr<const RunTimeProgram> program;
+        std::shared_ptr<const ShaderSnapshot> snapshot;
+        std::shared_ptr<const ShaderSnapshot> continuation;
+    };
+    std::unordered_map<std::uint64_t, DrawStage> drawStages;
     std::uint64_t drawStageCompiles = 0;
 
     std::mutex driverPhasesMutex;
