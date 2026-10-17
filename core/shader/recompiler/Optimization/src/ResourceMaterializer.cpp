@@ -34,7 +34,7 @@ namespace ShaderRecompiler {
 
 namespace {
 
-using ImageTableAbi::PoisonReason;
+using ImageTableAbi::RejectionReason;
 
 std::atomic<std::uint64_t> specializationNanoseconds{0};
 
@@ -146,29 +146,29 @@ std::uint32_t storageMipCount(const ImageResource& base, const DescriptorValue& 
 
 struct ImageDecode {
     DecodedImage decoded;
-    std::optional<PoisonReason> reason;
+    std::optional<RejectionReason> reason;
     std::string detail;
 };
 
-ImageDecode rejectImage(PoisonReason reason, std::string detail) {
+ImageDecode rejectImage(RejectionReason reason, std::string detail) {
     ImageDecode result;
     result.reason = reason;
     result.detail = std::move(detail);
     return result;
 }
 
-PoisonReason invalidImageReason(const DescriptorValue& descriptor) {
+RejectionReason invalidImageReason(const DescriptorValue& descriptor) {
     const auto type = rawImageType(descriptor);
     if (type < ImageType::Color1D) {
-        return PoisonReason::NotImage;
+        return RejectionReason::NotImage;
     }
     if (rawImageFormat(descriptor) == IrBufferFormat::Invalid) {
-        return PoisonReason::InvalidFormat;
+        return RejectionReason::InvalidFormat;
     }
     if (type == ImageType::Color2DMsaa || type == ImageType::Color2DMsaaArray) {
-        return PoisonReason::Multisampled;
+        return RejectionReason::Multisampled;
     }
-    return PoisonReason::Dimension;
+    return RejectionReason::Dimension;
 }
 
 ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const ImageResource& base, std::uint32_t srgbDecodeFormats) {
@@ -176,7 +176,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     auto& decoded = result.decoded;
     decoded.mipCount = storageMipCount(base, descriptor);
     if (decoded.mipCount == 0u) {
-        return rejectImage(PoisonReason::InvalidFormat, "storage image descriptor has an invalid mip range");
+        return rejectImage(RejectionReason::InvalidFormat, "storage image descriptor has an invalid mip range");
     }
     if (nullImageDescriptor(base, descriptor)) {
         decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : IrTextureNumericClass::Float;
@@ -194,22 +194,22 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
-        return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
+        return rejectImage(RejectionReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
     if (base.atomic && !base.atomic64 && format != IrBufferFormat::Format32UInt && format != IrBufferFormat::Format32SInt && format != IrBufferFormat::Format32Float) {
-        return rejectImage(PoisonReason::InvalidFormat, "atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
+        return rejectImage(RejectionReason::InvalidFormat, "atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
     const bool cpuTable = table && !base.deviceTable;
     decoded.fmask = IsFmaskTextureFormat(format);
-    if (decoded.fmask && !base.fmaskCompatible) return rejectImage(PoisonReason::Fmask, "FMASK requires a direct 32-bit image load");
+    if (decoded.fmask && !base.fmaskCompatible) return rejectImage(RejectionReason::Fmask, "FMASK requires a direct 32-bit image load");
     if (decoded.fmask && (storage || base.depthCompare || table)) {
-        return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
+        return rejectImage(RejectionReason::Fmask, "FMASK requires a direct sampled image load");
     }
     if (base.packed) {
         if (cpuTable || (!storage && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle)) {
-            return rejectImage(PoisonReason::InvalidFormat, "packed image access requires a direct image, with identity swizzle when sampled");
+            return rejectImage(RejectionReason::InvalidFormat, "packed image access requires a direct image, with identity swizzle when sampled");
         }
         decoded.packedFormat = format;
     }
@@ -222,7 +222,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         const bool measured = base.packed ? packedEight || (base.byElements == 2u && packedSixteen)
                                           : base.byElements == 4u ? base.byComponents == 1u && eightBit : base.byElements == 2u && (base.byComponents == 1u ? eightBit || sixteenBit : base.byComponents == 2u && eightBitPair);
         if (!measured || descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle || rawImageType(descriptor) != ImageType::Color2D || cpuTable) {
-            return rejectImage(PoisonReason::InvalidFormat, base.packed ? "MIMG PCK2/PCK4 requires a direct, identity-swizzled 2D UNORM, UINT or SINT image whose elements fill one dword: R8, R16 or RG8 for PCK2, R8 for PCK4"
+            return rejectImage(RejectionReason::InvalidFormat, base.packed ? "MIMG PCK2/PCK4 requires a direct, identity-swizzled 2D UNORM, UINT or SINT image whose elements fill one dword: R8, R16 or RG8 for PCK2, R8 for PCK4"
                                                                      : "MIMG BY2/BY4 requires a direct, identity-swizzled 2D image whose elements fill one dword: R8, R16 or RG8 for BY2, R8 for BY4");
         }
     }
@@ -230,15 +230,15 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     decoded.conversionFormat = !decodedCopy && RemapTextureFormat(format) != format ? format : IrBufferFormat::Invalid;
     if (format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11Float) {
         const bool floating = format == IrBufferFormat::Format10_11_11Float;
-        if (base.depthCompare) return rejectImage(PoisonReason::Conversion, floating ? "compares against a converted float image, which is not implemented" : "compares against a converted unorm image, which is not implemented");
-        if (!base.depthBitsCompatible) return rejectImage(PoisonReason::Conversion, floating ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
+        if (base.depthCompare) return rejectImage(RejectionReason::Conversion, floating ? "compares against a converted float image, which is not implemented" : "compares against a converted unorm image, which is not implemented");
+        if (!base.depthBitsCompatible) return rejectImage(RejectionReason::Conversion, floating ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
         for (std::uint32_t component = 0; component < 4u; ++component) {
-            if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
+            if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(RejectionReason::Conversion, "selects a channel the converted image format does not have");
         }
     }
     decoded.srgbDecode = !storage && !base.depthCompare && (srgbDecodeFormats & SrgbDecodeBit(format)) != 0u;
     if (decoded.srgbDecode && !base.srgbDecodeCompatible) {
-        return rejectImage(PoisonReason::SrgbUnsupported, "samples or gathers an sRGB image the device cannot sample, which is not implemented");
+        return rejectImage(RejectionReason::SrgbUnsupported, "samples or gathers an sRGB image the device cannot sample, which is not implemented");
     }
     if (storage || decoded.conversionFormat != IrBufferFormat::Invalid) {
         decoded.shaderSwizzle = descriptorImageSwizzle(descriptor);
@@ -249,14 +249,14 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : decodedCopy ? IrTextureNumericClass::Float : SampledTextureNumericClass(format);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
-        if (!base.depthBitsCompatible) return rejectImage(PoisonReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
+        if (!base.depthBitsCompatible) return rejectImage(RejectionReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
         decoded.depthUnorm16 = DepthBitsTextureWidth(descriptor.dwords[1], descriptor.dwords[3]) == 16u;
         decoded.numericClass = IrTextureNumericClass::Float;
         decoded.shaderSwizzle = descriptorImageSwizzle(descriptor);
     }
     if (storage) {
         if ((!rawSintStorage && decoded.numericClass == IrTextureNumericClass::Sint) || decoded.numericClass == IrTextureNumericClass::Unsupported) {
-            return rejectImage(PoisonReason::NumericClass, "storage image descriptor uses an unsupported format");
+            return rejectImage(RejectionReason::NumericClass, "storage image descriptor uses an unsupported format");
         }
         if (rawSintStorage) {
             decoded.numericClass = IrTextureNumericClass::Uint;
@@ -265,7 +265,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             decoded.conversionFormat = format;
         }
     } else if (decoded.numericClass == IrTextureNumericClass::Unsupported || (base.depthCompare && decoded.numericClass != IrTextureNumericClass::Float)) {
-        return rejectImage(PoisonReason::NumericClass, "sampled image descriptor uses an unsupported format");
+        return rejectImage(RejectionReason::NumericClass, "sampled image descriptor uses an unsupported format");
     }
     return result;
 }
@@ -936,7 +936,7 @@ bool ResourceMaterializer::BindsDecodedCopy(const ImageResource& mode, const Des
 
 RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
     RuntimeImageModeMatch result;
-    const auto reject = [&](PoisonReason reason, std::string detail) {
+    const auto reject = [&](RejectionReason reason, std::string detail) {
         result.reason = reason;
         result.detail = std::move(detail);
         return result;
@@ -952,19 +952,19 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     const auto& decoded = inspected.decoded;
     const auto format = rawImageFormat(descriptor);
     const bool emulated = image.depthCompare && format != IrBufferFormat::Format32Float && format != IrBufferFormat::Format16UNorm && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3]);
-    if (!emulated && (image.emulatedCompare & EmulatedCompare::NativeOffsetUnsupported) != 0u) return reject(PoisonReason::UnsupportedOperation, "native comparison with a nonconstant texel offset requires VK_KHR_maintenance8 and shaderImageGatherExtended");
+    if (!emulated && (image.emulatedCompare & EmulatedCompare::NativeOffsetUnsupported) != 0u) return reject(RejectionReason::UnsupportedOperation, "native comparison with a nonconstant texel offset requires VK_KHR_maintenance8 and shaderImageGatherExtended");
     if (image.packed && decoded.packedFormat != IrBufferFormat::Invalid) {
         const auto packedFormat = GetFormatInfo(decoded.packedFormat);
-        if (packedFormat.packedBitfield) return reject(PoisonReason::InvalidFormat, "runtime packed image accesses a bitfield format");
+        if (packedFormat.packedBitfield) return reject(RejectionReason::InvalidFormat, "runtime packed image accesses a bitfield format");
         const bool storage = image.resourceClass == ImageResourceClass::Storage;
-        if (storage && packedFormat.byteSize == 12u) return reject(PoisonReason::InvalidFormat, "runtime packed image uses a format the hardware does not write");
+        if (storage && packedFormat.byteSize == 12u) return reject(RejectionReason::InvalidFormat, "runtime packed image uses a format the hardware does not write");
         for (std::uint32_t component = 0u; component < packedFormat.componentCount; ++component) {
             const auto bits = packedFormat.componentBits[component];
             const bool exact = storage ? packedFormat.type == SpirvFormatComponentType::Uint || (bits == 32u && (packedFormat.type == SpirvFormatComponentType::Sint || packedFormat.type == SpirvFormatComponentType::Float)) : packedFormat.type == SpirvFormatComponentType::Uint || packedFormat.type == SpirvFormatComponentType::Sint || (packedFormat.type == SpirvFormatComponentType::Unorm && bits <= 16u) || (packedFormat.type == SpirvFormatComponentType::Float && bits == 32u);
-            if (!exact) return reject(PoisonReason::InvalidFormat, storage ? "runtime packed image bits are not reproducible through the view" : "runtime packed image bits are not recoverable from the view");
+            if (!exact) return reject(RejectionReason::InvalidFormat, storage ? "runtime packed image bits are not reproducible through the view" : "runtime packed image bits are not recoverable from the view");
         }
     }
-    if (decoded.mipCount > (image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u)) return reject(PoisonReason::InvalidFormat, "runtime storage image mip capacity exceeded");
+    if (decoded.mipCount > (image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u)) return reject(RejectionReason::InvalidFormat, "runtime storage image mip capacity exceeded");
     if ((descriptorImageSwizzle(descriptor) & 06666u) == 0u && !decoded.fmask && !decoded.depthBits && decoded.conversionFormat == IrBufferFormat::Invalid && !decoded.srgbDecode) {
         for (std::uint32_t index = 0u; index < modes.size(); ++index) {
             if (modes[index].constantSwizzle && modes[index].numericClass == decoded.numericClass) {
@@ -992,8 +992,8 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
             return result;
         }
     }
-    if (image.dimension == RdnaImageDimension::Dim1D && decoded.dimension != RdnaImageDimension::Dim1D) return reject(PoisonReason::Dimension, "image address has too few coordinate components");
-    if (image.foldTexelOffsetsOnly) return reject(PoisonReason::UnsupportedOperation, "image sample has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended; without them it takes only images an unnormalized S# can sample");
+    if (image.dimension == RdnaImageDimension::Dim1D && decoded.dimension != RdnaImageDimension::Dim1D) return reject(RejectionReason::Dimension, "image address has too few coordinate components");
+    if (image.foldTexelOffsetsOnly) return reject(RejectionReason::UnsupportedOperation, "image sample has a texel offset that is not a constant, which image sampling takes only with VK_KHR_maintenance8 and shaderImageGatherExtended; without them it takes only images an unnormalized S# can sample");
     const auto describe = [](IrTextureNumericClass numeric, RdnaImageDimension dimension, IrBufferFormat conversion, IrBufferFormat packed, bool cube, bool depthBits, bool depthUnorm16, bool srgb) {
         return "{class " + std::to_string(static_cast<int>(numeric)) + ", dim " + std::to_string(static_cast<int>(dimension)) + ", conversion " + std::to_string(static_cast<int>(conversion)) + ", packed " + std::to_string(static_cast<int>(packed)) + ", cube " + std::to_string(cube) + ", depthBits " + std::to_string(depthBits) + ", unorm16 " + std::to_string(depthUnorm16) + ", srgb " + std::to_string(srgb) + "}";
     };
@@ -1001,15 +1001,15 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     for (const auto& mode : modes) message += " " + describe(mode.numericClass, mode.dimension, mode.conversionFormat, mode.packedFormat, mode.cube, mode.depthBits, mode.depthUnorm16, mode.srgbDecode);
     char words[96];
     std::snprintf(words, sizeof(words), "; T# %08x %08x %08x %08x %08x %08x %08x %08x", descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
-    const auto reason = emulated ? PoisonReason::ColorCompare
-        : decoded.fmask ? PoisonReason::Fmask
-        : decoded.depthBits ? PoisonReason::DepthBits16
-        : decoded.srgbDecode ? PoisonReason::SrgbUnsupported
-        : decoded.conversionFormat != IrBufferFormat::Invalid ? PoisonReason::Conversion
-        : decoded.dimension == RdnaImageDimension::Dim2DMsaa || decoded.dimension == RdnaImageDimension::Dim2DMsaaArray ? PoisonReason::Multisampled
-        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return mode.dimension == decoded.dimension && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
-        : PoisonReason::NumericClass;
-    if (reason == PoisonReason::SrgbUnsupported) return reject(reason, "samples or gathers an sRGB image the device cannot sample, which is not implemented: " + message + words);
+    const auto reason = emulated ? RejectionReason::ColorCompare
+        : decoded.fmask ? RejectionReason::Fmask
+        : decoded.depthBits ? RejectionReason::DepthBits16
+        : decoded.srgbDecode ? RejectionReason::SrgbUnsupported
+        : decoded.conversionFormat != IrBufferFormat::Invalid ? RejectionReason::Conversion
+        : decoded.dimension == RdnaImageDimension::Dim2DMsaa || decoded.dimension == RdnaImageDimension::Dim2DMsaaArray ? RejectionReason::Multisampled
+        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return mode.dimension == decoded.dimension && mode.cube == decoded.cube; }) ? RejectionReason::Dimension
+        : RejectionReason::NumericClass;
+    if (reason == RejectionReason::SrgbUnsupported) return reject(reason, "samples or gathers an sRGB image the device cannot sample, which is not implemented: " + message + words);
     return reject(reason, message + words);
 }
 

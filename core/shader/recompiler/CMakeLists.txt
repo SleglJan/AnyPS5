@@ -243,7 +243,7 @@ function(add_shader_recompiler target runtimeTarget)
             DepthBitsTextureWidth
             DeviceImageProbeResult
             HashBytes
-            ImageTableAbi::PoisonReasonName
+            ImageTableAbi::RejectionReasonName
             PixelInput
             PixelInputBit
             RayTracingStrict

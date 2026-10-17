@@ -2343,7 +2343,7 @@ void EmitDeviceTableImage(SpirvValueEmitContext& ctx, const IrValue& inst, const
     const auto pc = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
     if (base.tableOperation == TableOperation::Unsupported || modes.empty()) {
         EmitIfCondition(state, exec, [&] {
-            RecordBdaFaultWords(state, zero, zero, ConstantU32(state, static_cast<std::uint32_t>(ImageTableAbi::PoisonReason::UnsupportedOperation)), pc, BdaAbi::FaultReason::ImageTable);
+            RecordBdaFaultWords(state, zero, zero, ConstantU32(state, static_cast<std::uint32_t>(ImageTableAbi::RejectionReason::UnsupportedOperation)), pc, BdaAbi::FaultReason::ImageTable);
         });
         if (inst.Type() != IrType::Void) ctx.Define(inst, ZeroResult(ctx, inst));
         return;

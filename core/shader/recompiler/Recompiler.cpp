@@ -1277,7 +1277,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                 }
                 continue;
             }
-            if (!refusal.has_value() || (match.reason == ImageTableAbi::PoisonReason::SrgbUnsupported && refusal->reason != ImageTableAbi::PoisonReason::SrgbUnsupported)) refusal = std::move(match);
+            if (!refusal.has_value() || (match.reason == ImageTableAbi::RejectionReason::SrgbUnsupported && refusal->reason != ImageTableAbi::RejectionReason::SrgbUnsupported)) refusal = std::move(match);
         }
         if (refusal.has_value()) throw std::runtime_error(refusal->detail);
     }

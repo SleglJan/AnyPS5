@@ -15,7 +15,7 @@ inline constexpr std::uint32_t HeaderWords = 3;
 
 inline constexpr std::uint32_t MaxModes = 256;
 
-enum class PoisonReason : std::uint32_t {
+enum class RejectionReason : std::uint32_t {
     NotImage,
     InvalidFormat,
     Dimension,
@@ -33,23 +33,23 @@ enum class PoisonReason : std::uint32_t {
     Count
 };
 
-constexpr std::string_view PoisonReasonName(PoisonReason reason) {
+constexpr std::string_view RejectionReasonName(RejectionReason reason) {
     switch (reason) {
-        case PoisonReason::NotImage: return "not an image";
-        case PoisonReason::InvalidFormat: return "invalid format";
-        case PoisonReason::Dimension: return "dimension";
-        case PoisonReason::Multisampled: return "multisampled";
-        case PoisonReason::Fmask: return "FMASK";
-        case PoisonReason::ColorCompare: return "color texture under comparison";
-        case PoisonReason::DepthBits16: return "depth bits with 16-bit results";
-        case PoisonReason::Conversion: return "format conversion";
-        case PoisonReason::SrgbUnsupported: return "sRGB decode";
-        case PoisonReason::NumericClass: return "numeric class";
-        case PoisonReason::Reduction: return "min or max reduction";
-        case PoisonReason::Unnormalized: return "unnormalized coordinates";
-        case PoisonReason::DriverRejected: return "rejected by the driver";
-        case PoisonReason::UnsupportedOperation: return "unsupported operation";
-        case PoisonReason::Count: break;
+        case RejectionReason::NotImage: return "not an image";
+        case RejectionReason::InvalidFormat: return "invalid format";
+        case RejectionReason::Dimension: return "dimension";
+        case RejectionReason::Multisampled: return "multisampled";
+        case RejectionReason::Fmask: return "FMASK";
+        case RejectionReason::ColorCompare: return "color texture under comparison";
+        case RejectionReason::DepthBits16: return "depth bits with 16-bit results";
+        case RejectionReason::Conversion: return "format conversion";
+        case RejectionReason::SrgbUnsupported: return "sRGB decode";
+        case RejectionReason::NumericClass: return "numeric class";
+        case RejectionReason::Reduction: return "min or max reduction";
+        case RejectionReason::Unnormalized: return "unnormalized coordinates";
+        case RejectionReason::DriverRejected: return "rejected by the driver";
+        case RejectionReason::UnsupportedOperation: return "unsupported operation";
+        case RejectionReason::Count: break;
     }
     return "unknown";
 }

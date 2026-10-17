@@ -283,7 +283,7 @@ void DeviceImageTable::refreshPerUse(const Context& build, Recorder& recorder, c
                 continue;
             }
             if (!entry.parked) {
-                const auto fault = reject(key, 0u, static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected), "a depth surface or a copy remade per use is read through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented", false);
+                const auto fault = reject(key, 0u, static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::RejectionReason::DriverRejected), "a depth surface or a copy remade per use is read through the device image table by a dispatch whose CPU pre-pass did not name it, which is not implemented", false);
                 Require(keys.Insert(key, DeviceImageValue{0u, 0u, fault + 1u, 0u}) == DeviceImageKeys::Insertion::Updated, "a parked device image entry was not in the table");
                 entry.parked = true;
             }
@@ -359,7 +359,7 @@ std::string forcedDegammaWords(const ShaderRecompiler::DeviceImageInterface& int
 }
 
 DeviceImageValue DeviceImageTable::lookup(const Context& build, const DeviceImageKeys::Key& key, std::uint32_t pc, Entry& entry, bool perUse, bool report) {
-    using Reason = ShaderRecompiler::ImageTableAbi::PoisonReason;
+    using Reason = ShaderRecompiler::ImageTableAbi::RejectionReason;
     const auto id = static_cast<std::uint64_t>(key[Abi::InterfaceWord]) | (static_cast<std::uint64_t>(key[Abi::InterfaceWord + 1u]) << 32u);
     const auto interface = ShaderRecompiler::ResourceMaterializer::FindDeviceImageInterface(id);
     Require(interface != nullptr, "a device image table miss names an image interface no compiled program registered (" + HexWords(std::span<const std::uint32_t>(key).subspan(Abi::InterfaceWord, 2u)) + ")");
@@ -479,7 +479,7 @@ std::uint32_t DeviceImageTable::reject(const DeviceImageKeys::Key& key, std::uin
     rejections.push_back(std::move(rejection));
     if (!report) return found->second;
     ++totals.rejected;
-    const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(reason));
+    const auto name = ShaderRecompiler::ImageTableAbi::RejectionReasonName(static_cast<ShaderRecompiler::ImageTableAbi::RejectionReason>(reason));
     std::fprintf(stderr, "[device-images] the descriptor (words %s) first sampled at pc 0x%x is rejected: %.*s: %s\n", HexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)).c_str(), pc, static_cast<int>(name.size()), name.data(), message.c_str());
     return found->second;
 }
@@ -633,7 +633,7 @@ void DeviceImageTable::drain(const std::shared_ptr<Buffer>& drained) {
 
 std::string DeviceImageTable::rejectionText(const DeviceImageKeys::Key& key, std::uint32_t fault) const {
     const auto& rejection = rejections.at(fault - 1u);
-    const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(rejection.reason));
+    const auto name = ShaderRecompiler::ImageTableAbi::RejectionReasonName(static_cast<ShaderRecompiler::ImageTableAbi::RejectionReason>(rejection.reason));
     return "the descriptor (words " + HexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)) + ") sampled at pc 0x" + HexWords(std::span<const std::uint32_t>(&rejection.pc, 1u)) + " is rejected: " + std::string(name) + ": " + rejection.message;
 }
 

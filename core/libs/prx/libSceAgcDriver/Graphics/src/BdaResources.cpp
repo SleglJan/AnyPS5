@@ -309,13 +309,13 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
             if (rejection.has_value()) {
                 message << " (words";
                 for (const auto word : rejection->words) message << ' ' << std::hex << std::setw(8) << std::setfill('0') << word;
-                message << std::dec << "): " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(rejection->reason)) << ": " << rejection->message;
+                message << std::dec << "): " << ShaderRecompiler::ImageTableAbi::RejectionReasonName(static_cast<ShaderRecompiler::ImageTableAbi::RejectionReason>(rejection->reason)) << ": " << rejection->message;
             } else {
                 message << ": rejection " << (report.bytes & ~ShaderRecompiler::DeviceImageTableAbi::FaultFlag);
             }
             throw std::runtime_error(message.str());
         }
-        message << std::dec << ": " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(report.bytes));
+        message << std::dec << ": " << ShaderRecompiler::ImageTableAbi::RejectionReasonName(static_cast<ShaderRecompiler::ImageTableAbi::RejectionReason>(report.bytes));
         throw std::runtime_error(message.str());
     }
     std::ostringstream message;

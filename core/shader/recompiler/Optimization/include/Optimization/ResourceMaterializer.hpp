@@ -17,7 +17,7 @@ namespace ShaderRecompiler {
 
 struct RuntimeImageModeMatch {
     std::optional<std::uint32_t> mode;
-    ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::InvalidFormat;
+    ImageTableAbi::RejectionReason reason = ImageTableAbi::RejectionReason::InvalidFormat;
     std::string detail;
 };
 
