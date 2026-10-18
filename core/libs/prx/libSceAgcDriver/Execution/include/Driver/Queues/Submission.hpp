@@ -50,6 +50,7 @@ struct QueueWorker {
     std::deque<Submission> pending;
 
     std::atomic<std::uint64_t> queued{0};
+    std::atomic<bool> parked{false};
     std::unordered_map<std::uint64_t, std::uint32_t> unfinishedWrites;
     std::thread thread;
 };

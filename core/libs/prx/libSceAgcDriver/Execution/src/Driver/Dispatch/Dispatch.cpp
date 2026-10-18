@@ -67,12 +67,38 @@ std::uint64_t Driver::RunTimeDispatchCompiles() {
     return runTimeCompiles;
 }
 
+std::uint64_t Driver::DeferredDispatches() const {
+    return deferredDispatches.load(std::memory_order_acquire);
+}
+
+Driver::PrePassDeferral& Driver::prePassDeferral() {
+    struct PrePassDeferralTag {};
+    return HostThreadLocal<PrePassDeferral, PrePassDeferralTag>();
+}
+
 bool Driver::readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value) {
     struct PendingWritesTag {};
     auto& pending = HostThreadLocal<PendingWrites, PendingWritesTag>();
     prePassReads().push_back(at);
     const bool waitForWrites = waits != nullptr && *static_cast<const bool*>(waits);
-    if (pending.Overlap(at, sizeof(std::uint32_t))) return waitForWrites && GuestMemory::ReadAfterPendingWrites(at, value);
+    if (pending.Overlap(at, sizeof(std::uint32_t))) {
+        if (!waitForWrites) return false;
+        auto& deferral = prePassDeferral();
+        if (!deferral.allowed) return GuestMemory::ReadAfterPendingWrites(at, value);
+        if (deferral.deferred) return false;
+        auto* recorder = Graphics::Recorder::Active();
+        auto resume = std::make_shared<std::atomic<bool>>(false);
+        const auto wake = recorder == nullptr ? Graphics::Recorder::WriterWake::None : recorder->AfterPendingWrites(at, sizeof(std::uint32_t), [resume] {
+            resume->store(true, std::memory_order_release);
+            Get().changed.notify_all();
+        });
+        if (wake != Graphics::Recorder::WriterWake::None) {
+            deferral.deferred = true;
+            deferral.retry = wake == Graphics::Recorder::WriterWake::Retry;
+            deferral.resume = std::move(resume);
+            return false;
+        }
+    }
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(at), sizeof(std::uint32_t))) return false;
     std::memcpy(value, reinterpret_cast<const void*>(at), sizeof(std::uint32_t));
     return true;
@@ -153,12 +179,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
     {
         if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
+            prePassDeferral().allowed = false;
             const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
             const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
             Graphics::NoteHtileDepthClear(htile, static_cast<std::size_t>(threads * 16u), nativeBytes);
         }
         if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
-            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) Graphics::NoteMemoryValueFill(*fill);
+            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) {
+                prePassDeferral().allowed = false;
+                Graphics::NoteMemoryValueFill(*fill);
+            }
         }
         if (!partialLastGroup && fillBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice)) {
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
@@ -215,11 +245,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     std::shared_ptr<const RunTimeProgram> program;
     bool linked = false;
     std::vector<std::shared_ptr<const LinkedProgram>> linkedCandidates;
+    bool hitCounted = false;
     {
         std::lock_guard cacheLock(runTimeProgramsMutex);
         if (const auto found = runTimeDispatches.find(programKey); found != runTimeDispatches.end()) {
             program = found->second;
             ++dataIndependentHits;
+            hitCounted = true;
         } else if (const auto links = linkedPrograms.find(programKey); links != linkedPrograms.end()) {
             linkedCandidates = links->second;
         }
@@ -243,6 +275,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             if (tableCalls == nullptr) tableCalls = RegisteredBranchSplitFor(programKey, snapshot, codeOffset, request);
             if (tableCalls == nullptr) {
                 const auto made = runTimeDispatch(snapshot, codeOffset, request, localDevice, programKey);
+                hitCounted = true;
                 program = made.program;
                 linked = made.linked;
                 const auto words = program->compiled->spirv.size();
@@ -300,6 +333,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 body();
             };
             prePassReads().clear();
+            prePassDeferral().allowed = false;
             try {
                 RecordTableCallDispatch(*tableCalls, call);
             } catch (const std::exception& error) {
@@ -310,12 +344,20 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
     }
+    const auto deferred = [&] {
+        if (!hitCounted) return;
+        std::lock_guard cacheLock(runTimeProgramsMutex);
+        --dataIndependentHits;
+    };
     prePassReads().clear();
     auto compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
+    if (prePassDeferral().deferred) return deferred();
     if (recordQueuedLabelsAfterPrePass(submission.queue)) {
         prePassReads().clear();
         compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
+        if (prePassDeferral().deferred) return deferred();
     }
+    prePassDeferral().allowed = false;
     phaseTiming.Phase(PhaseLookup);
     const auto& compiled = *compiledResult;
     const auto groups = DispatchGroups(packet, indirectArguments, queue.shader);

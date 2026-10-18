@@ -84,10 +84,14 @@ void Driver::run(std::uint32_t id) noexcept {
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& costs = submissionCosts(id);
+    std::size_t parkedAt = NotParked;
+    bool flipHeld = false;
+    PrePassDeferral parked;
+    QueueWorker* self = nullptr;
     try {
         if (PerformanceTrace::Configured()) PerformanceTrace::BindThread(role);
         for (;;) {
-            submission = Submission{};
+            if (parkedAt == NotParked) submission = Submission{};
             struct Running {
                 std::atomic<std::uint32_t>& count;
                 std::atomic<std::uint64_t>& idleEpoch;
@@ -113,13 +117,14 @@ void Driver::run(std::uint32_t id) noexcept {
                 std::unique_lock lock(mutex);
                 timing.Mark("mutex_wait");
                 auto& worker = workers.at(id);
+                self = &worker;
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
                 if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
-                const auto ready = [&] { return failure || stopping || !pending.empty(); };
+                const auto ready = [&] { return failure || stopping || (parkedAt != NotParked ? parked.resume->load(std::memory_order_acquire) : !pending.empty()); };
                 const auto allQueuesIdle = [&] {
                     return runningWorkers.load(std::memory_order_acquire) == 0
-                        && std::all_of(workers.begin(), workers.end(), [](const auto& item) { return item.second.pending.empty(); });
+                        && std::all_of(workers.begin(), workers.end(), [](const auto& item) { return item.second.pending.empty() && !item.second.parked.load(std::memory_order_acquire); });
                 };
                 const auto idleResultsPending = [&] {
                     return id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
@@ -175,35 +180,49 @@ void Driver::run(std::uint32_t id) noexcept {
                 }
                 timing.Mark("idle_and_completion_poll");
                 rethrowFailure();
-                if (stopping || shutdownToken.stop_requested() || pending.empty()) {
+                if (stopping || shutdownToken.stop_requested() || (parkedAt == NotParked && pending.empty())) {
                     break;
                 }
-                submission = std::move(pending.front());
-                pending.pop_front();
-                if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
-                if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
-                if (submission.waitFree) {
-                    {
-                        struct OrderHold {
-                            std::atomic<std::uint32_t>& holders;
-                            explicit OrderHold(std::atomic<std::uint32_t>& holders) : holders(holders) { holders.fetch_add(1, std::memory_order_acq_rel); }
-                            ~OrderHold() { holders.fetch_sub(1, std::memory_order_acq_rel); }
-                            OrderHold(const OrderHold&) = delete;
-                            OrderHold& operator=(const OrderHold&) = delete;
-                        } hold{orderHolders};
-                        const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
-                        StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                if (parkedAt != NotParked) {
+                    running.Start();
+                } else {
+                    submission = std::move(pending.front());
+                    pending.pop_front();
+                    if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
+                    if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
+                    if (submission.waitFree) {
+                        {
+                            struct OrderHold {
+                                std::atomic<std::uint32_t>& holders;
+                                explicit OrderHold(std::atomic<std::uint32_t>& holders) : holders(holders) { holders.fetch_add(1, std::memory_order_acq_rel); }
+                                ~OrderHold() { holders.fetch_sub(1, std::memory_order_acq_rel); }
+                                OrderHold(const OrderHold&) = delete;
+                                OrderHold& operator=(const OrderHold&) = delete;
+                            } hold{orderHolders};
+                            const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
+                            StallWatch stall(id);
+                            while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                        }
+                        rethrowFailure();
                     }
-                    rethrowFailure();
+                    if (APS5_ENABLE_TIMING_LOG) submission.orderedAt = std::chrono::steady_clock::now();
+                    timing.Mark("dequeue_order");
+                    worker.queued.fetch_sub(1, std::memory_order_acq_rel);
+                    running.Start();
+                    if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
+                    flipHeld = submission.holdsFlip;
                 }
-                if (APS5_ENABLE_TIMING_LOG) submission.orderedAt = std::chrono::steady_clock::now();
-                timing.Mark("dequeue_order");
-                worker.queued.fetch_sub(1, std::memory_order_acq_rel);
-                running.Start();
-                if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
-            execute(submission);
+            const auto from = parkedAt == NotParked ? 0 : parkedAt;
+            parkedAt = execute(submission, from, &flipHeld, &parked);
+            self->parked.store(parkedAt != NotParked, std::memory_order_release);
+            if (parkedAt != NotParked) {
+                if (parked.retry) {
+                    PollSleep();
+                    parked.resume->store(true, std::memory_order_release);
+                }
+                continue;
+            }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             PerformanceContext completionContext(id == 0 ? frameTiming() : FrameTiming::Async());

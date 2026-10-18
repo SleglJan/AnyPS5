@@ -1,5 +1,7 @@
 #include "WrittenImageFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "SceShaders.hpp"
 
 namespace {
 
@@ -50,6 +52,7 @@ TestGuest::Array<std::uint32_t, Links * LinkWords> Tables;
 TestGuest::Array<std::uint32_t, Width * Height * 4> Storage;
 TestGuest::Array<std::uint32_t, Stores.size() * RegionWords> Stored;
 TestGuest::Array<std::uint32_t, Stores.size() * LinkWords> BufferTables;
+TestGuest::Array<std::uint32_t, 64> CatchAllTarget;
 
 std::uint64_t AddressOf(const void* pointer) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
@@ -424,13 +427,148 @@ void StoredThenSampled() {
     ExpectStorage(SecondStorageSeed, "storage image: guest memory after the writer and the reader");
 }
 
+const Program& CatchAllWriterProgram() {
+    static const Program program = [] {
+        using namespace Ops;
+        constexpr std::uint32_t BufferLoadDwordX2 = 0x0du;
+        Program built;
+        built << Vop1(VMovB32, 1, InlineInteger(0))
+              << Mubuf(BufferLoadDwordX2, 2, 1, 0)
+              << Vop1(VMovB32, 4, Literal) << 0x5b000005u
+              << WaitAll
+              << Global(GlobalStoreDword, 0, 2, 4, NullSgpr)
+              << EndProgram;
+        return built;
+    }();
+    return program;
+}
+
+const Program& AddressWriterProgram() {
+    static const Program program = [] {
+        using namespace Ops;
+        constexpr std::uint32_t BufferStoreDwordX2 = 0x1du;
+        Program built;
+        built << Vop1(VMovB32, 1, InlineInteger(0))
+              << Vop1(VMovB32, 2, 4)
+              << Vop1(VMovB32, 3, 5)
+              << Mubuf(BufferStoreDwordX2, 2, 1, 0)
+              << EndProgram;
+        return built;
+    }();
+    return program;
+}
+
+void RegisterChainProgram() {
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    };
+    alignas(8) static Header header{};
+    const auto& program = ChainProgram();
+    const auto address = program.Address();
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = static_cast<std::uint32_t>(program.size * sizeof(std::uint32_t));
+    header.shader.code = const_cast<std::uint32_t*>(program.words.data());
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.specials = &header.specials;
+    header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Lanes}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, (8u << 1u) | (1u << 7u)}}};
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+const Program& CatchAllValueWriterProgram() {
+    static const Program program = [] {
+        using namespace Ops;
+        constexpr std::uint32_t BufferLoadDwordX2 = 0x0du;
+        Program built;
+        built << Vop1(VMovB32, 1, InlineInteger(0))
+              << Mubuf(BufferLoadDwordX2, 2, 1, 0)
+              << Vop1(VMovB32, 4, 4)
+              << WaitAll
+              << Global(GlobalStoreDword, 0, 2, 4, NullSgpr)
+              << EndProgram;
+        return built;
+    }();
+    return program;
+}
+
+void PrePassUnderCatchAllDeferred() {
+    constexpr std::uint32_t chain = 1;
+    constexpr std::uint32_t slot = StoredSlot + 2u;
+    RegisterChainProgram();
+    FillImage(chain);
+    LinkChain(chain, ChainDescriptor(chain));
+    auto* root = Link(Roots, chain);
+    const auto tableLow = root[0];
+    CatchAllTarget.fill(0u);
+    const auto target = AddressOf(root);
+    const auto resource = Buffer(CatchAllTarget.data(), 8u);
+    const std::array<std::uint32_t, 5> writerData{resource[0], resource[1], resource[2], resource[3], tableLow};
+    const std::array<std::uint32_t, 6> addressData{resource[0], resource[1], resource[2], resource[3], Low(target), High(target)};
+    Commands warm;
+    warm.Dispatch(AddressWriterProgram(), addressData, 1);
+    warm.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
+    warm.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+    warm.Submit(0);
+    NewPath::WaitIdle();
+    root[0] = 0u;
+    const auto waitsBefore = AgcDriver::GuestMemory::PendingReadWaitCounts().reads;
+    const auto deferredBefore = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches();
+    Commands commands;
+    commands.Dispatch(AddressWriterProgram(), addressData, 1);
+    commands.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
+    commands.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+    commands.Submit(0);
+    NewPath::WaitIdle();
+    const auto waits = AgcDriver::GuestMemory::PendingReadWaitCounts().reads - waitsBefore;
+    const auto deferred = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches() - deferredBefore;
+    Expect(waits == 0u, "pre-pass under a catch-all writer: the recording thread waited for the writer " + std::to_string(waits) + " times");
+    Expect(deferred != 0u, "pre-pass under a catch-all writer: the reader was not deferred");
+    AgcDriver::GuestMemory::FlushGpuWrites(target, 4u);
+    Expect(root[0] == tableLow, "pre-pass under a catch-all writer: the writer did not store the table address: " + Hex(root[0]));
+    ExpectChain(slot, [](std::uint32_t x, std::uint32_t y, std::uint32_t component, std::uint32_t word) { return Matches(chain, x, y, component, word); }, "pre-pass under a catch-all writer: the deferred reader samples through the written table address");
+}
+
+void PrePassAfterCatchAll() {
+    constexpr std::uint32_t chain = 0;
+    constexpr std::uint32_t slot = StoredSlot + 1u;
+    RegisterChainProgram();
+    FillImage(chain);
+    LinkChain(chain, ChainDescriptor(chain));
+    CatchAllTarget.fill(0u);
+    const auto target = AddressOf(CatchAllTarget.data() + 8);
+    const auto resource = Buffer(CatchAllTarget.data(), 8u);
+    const std::array<std::uint32_t, 4> writerData{resource[0], resource[1], resource[2], resource[3]};
+    const std::array<std::uint32_t, 6> addressData{resource[0], resource[1], resource[2], resource[3], Low(target), High(target)};
+    Commands warm;
+    warm.Dispatch(AddressWriterProgram(), addressData, 1);
+    warm.Dispatch(CatchAllWriterProgram(), writerData, Lanes);
+    warm.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+    warm.Submit(0);
+    NewPath::WaitIdle();
+    CatchAllTarget[8] = 0u;
+    Commands commands;
+    commands.Dispatch(AddressWriterProgram(), addressData, 1);
+    commands.Dispatch(CatchAllWriterProgram(), writerData, Lanes);
+    commands.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+    commands.Submit(0);
+    NewPath::WaitIdle();
+    Expect(CatchAllTarget[8] == 0x5b000005u, "pre-pass after a catch-all writer: the unbounded store did not land: " + Hex(CatchAllTarget[8]));
+    ExpectChain(slot, [](std::uint32_t x, std::uint32_t y, std::uint32_t component, std::uint32_t word) { return Matches(chain, x, y, component, word); }, "pre-pass after a catch-all writer: the reader samples its chain");
+}
+
 void Run() {
-    const std::array<std::pair<const char*, void (*)()>, 5> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 7> cases{{
         {"chain per dispatch", ChainPerDispatch},
         {"rewritten table", RewrittenTable},
         {"V# from user data", UserDataBuffers},
         {"V# from a table in guest memory", TableBuffers},
         {"storage image", StoredThenSampled},
+        {"pre-pass after a catch-all writer", PrePassAfterCatchAll},
+        {"pre-pass under a catch-all writer is deferred", PrePassUnderCatchAllDeferred},
     }};
     for (const auto& [name, run] : cases) {
         try {

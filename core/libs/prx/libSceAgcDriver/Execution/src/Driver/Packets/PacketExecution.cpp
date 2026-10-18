@@ -29,8 +29,8 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
     }
 }
 
-void Driver::execute(const Submission& submission) {
-    auto* submissionTiming = includeTimingSubmission(submission, true);
+std::size_t Driver::execute(const Submission& submission, std::size_t from, bool* flipHeld, PrePassDeferral* parked) {
+    auto* submissionTiming = from == 0 ? includeTimingSubmission(submission, true) : nullptr;
     struct FlipHold {
         Driver& driver;
         bool held;
@@ -40,7 +40,7 @@ void Driver::execute(const Submission& submission) {
             driver.releaseFlipHold();
         }
         ~FlipHold() { Release(); }
-    } flipHold{*this, submission.holdsFlip};
+    } flipHold{*this, flipHeld != nullptr ? *flipHeld : submission.holdsFlip};
     if (submission.suspend) {
         PerformanceContext timingContext(submissionTiming);
         PerformanceTimer timing("Driver.Suspend");
@@ -66,7 +66,7 @@ void Driver::execute(const Submission& submission) {
             ++costs.suspendsSkipped;
         }
         resetGraphics = true;
-        return;
+        return NotParked;
     }
     QueueState* state = nullptr;
     {
@@ -78,7 +78,7 @@ void Driver::execute(const Submission& submission) {
         state = &queues[submission.queue];
     }
     auto& queue = *state;
-    if (submission.waitFree) {
+    if (submission.waitFree && from == 0) {
         if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->SeparateQueues() && !localDevice->OrderAfterQueueOnOwnStream(0)) {
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -89,7 +89,7 @@ void Driver::execute(const Submission& submission) {
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f execute serial=%llu queue=0x%x dwords=%zu\n", TraceMs(), static_cast<unsigned long long>(submission.serial), submission.queue, submission.commands.size());
 
     static const long dumpQueue = [] { const char* text = std::getenv("APS5_DUMP_QUEUE"); return text ? std::strtol(text, nullptr, 16) : -1L; }();
-    if (static_cast<long>(submission.queue) == dumpQueue) {
+    if (static_cast<long>(submission.queue) == dumpQueue && from == 0) {
 
         static int dumped = 0;
         if (dumped++ < 40) {
@@ -113,10 +113,11 @@ void Driver::execute(const Submission& submission) {
 
     thread_local PacketProfile* packetProfileSlot = nullptr;
     auto& packetProfile = ShaderRecompiler::ThreadOwned(packetProfileSlot);
-    ++packetProfile.submissions;
-
-    bumpEpoch(&EpochBumps::submissions);
-    for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+    if (from == 0) {
+        ++packetProfile.submissions;
+        bumpEpoch(&EpochBumps::submissions);
+    }
+    for (std::size_t cursor = from; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
         const auto header = submission.commands[cursor];
@@ -249,8 +250,34 @@ void Driver::execute(const Submission& submission) {
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
             landPendingWaits(submission.queue);
-            if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
-            else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
+            if (opcode == 0x15 && parked != nullptr) {
+                auto& deferral = prePassDeferral();
+                struct Offered {
+                    PrePassDeferral& deferral;
+                    ~Offered() { deferral.allowed = false; }
+                } offered{deferral};
+                deferral = PrePassDeferral{};
+                deferral.allowed = true;
+                timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
+                if (deferral.deferred) {
+                    {
+                        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
+                        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                        const auto localDevice = device.Load();
+                        recordDeferredLabels(localDevice.get(), submission.queue);
+                        if (localDevice != nullptr) localDevice->SubmitCallerRecorded(submission.queue == 0);
+                    }
+                    deferredDispatches.fetch_add(1, std::memory_order_acq_rel);
+                    *parked = deferral;
+                    if (flipHeld != nullptr) *flipHeld = flipHold.held;
+                    flipHold.held = false;
+                    return cursor;
+                }
+            } else if (opcode == 0x15) {
+                timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
+            } else {
+                timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
+            }
             Pm4::NoteDispatchRegisters(packet, queue);
             Graphics::Recorder::CountRecordedWork();
             finishDispatchPacket(opcode == 0x16);
@@ -338,7 +365,7 @@ void Driver::execute(const Submission& submission) {
         auto& costs = submissionCosts(submission.queue);
         if (!submitAtEnd && submission.rewindTail == nullptr && submission.queue == 0 && workerQueued() != nullptr && workerQueued()->load(std::memory_order_acquire) != 0) {
             ++costs.endSkipped;
-            return;
+            return NotParked;
         }
         ++costs.endSubmits;
         const auto ownDevice = device.Load();
@@ -353,6 +380,7 @@ void Driver::execute(const Submission& submission) {
     }
     endTiming.Finish();
     if (submission.rewindTail != nullptr) executeRewindTail(submission);
+    return NotParked;
 }
 
 }

@@ -3373,6 +3373,37 @@ bool Recorder::PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) co
     return false;
 }
 
+Recorder::WriterWake Recorder::AfterPendingWrites(std::uint64_t address, std::size_t bytes, std::function<void()> action) {
+    const std::lock_guard recordingGuard(recording);
+    if (bytes == 0) return WriterWake::None;
+    const auto end = address + bytes;
+    for (const auto* batch : finishing) {
+        if (overlaps(*batch, address, end)) return WriterWake::Retry;
+    }
+    std::vector<Batch*> writers;
+    const auto caller = streamOfCaller();
+    for (std::size_t stream = 0; stream < streams.size(); ++stream) {
+        if (opens[stream] == nullptr || !overlaps(*opens[stream], address, end)) continue;
+        if (stream != caller) return WriterWake::Retry;
+        writers.push_back(opens[stream].get());
+    }
+    for (const auto& batch : inFlight) {
+        if (overlaps(*batch, address, end)) writers.push_back(batch.get());
+    }
+    if (writers.empty()) return WriterWake::None;
+    auto remaining = std::make_shared<std::atomic<std::size_t>>(writers.size());
+    auto wake = std::make_shared<std::function<void()>>(std::move(action));
+    for (auto* batch : writers) {
+        batch->completions.push_back([remaining, wake] {
+            if (remaining->fetch_sub(1, std::memory_order_acq_rel) == 1) (*wake)();
+        });
+        ++batch->completionLabelCount;
+        completionLabels.fetch_add(1, std::memory_order_acq_rel);
+        if (batch == opens[batch->stream].get()) startLabelDeadline(batch->stream);
+    }
+    return WriterWake::Attached;
+}
+
 bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
     const std::lock_guard recordingGuard(recording);
     return bytes != 0 && openOverlapping(address, address + bytes) != nullptr;

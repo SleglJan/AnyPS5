@@ -76,6 +76,7 @@ public:
     static std::uint64_t TransferCopies();
     std::uint64_t DataIndependentDispatchHits();
     std::uint64_t RunTimeDispatchCompiles();
+    std::uint64_t DeferredDispatches() const;
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 
 private:
@@ -149,6 +150,14 @@ private:
         bool linked = false;
     };
     static bool readPrePassWord(void* waits, std::uint64_t at, std::uint32_t* value);
+    struct PrePassDeferral {
+        bool allowed = false;
+        bool deferred = false;
+        bool retry = false;
+        std::shared_ptr<std::atomic<bool>> resume;
+    };
+    static PrePassDeferral& prePassDeferral();
+    static constexpr std::size_t NotParked = static_cast<std::size_t>(-1);
     std::shared_ptr<const RunTimeProgram> runTimeDrawStage(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t key);
     DispatchProgram runTimeDispatch(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t programKey);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> runTimeResult(const RunTimeProgram& program, std::span<const std::uint32_t> userData, std::uint64_t shaderBase);
@@ -189,7 +198,7 @@ private:
     static void timed(double WorkerProfile::*bucket, TWork&& work);
     FrameTiming* frameTiming();
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
-    void execute(const Submission& submission);
+    std::size_t execute(const Submission& submission, std::size_t from = 0, bool* flipHeld = nullptr, PrePassDeferral* parked = nullptr);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
     void reapCompletionLabels();
@@ -269,6 +278,7 @@ private:
     std::uint64_t queue0Executing = 0;
     std::atomic<std::uint32_t> orderHolders{0};
     std::atomic<std::uint32_t> runningWorkers{0};
+    std::atomic<std::uint64_t> deferredDispatches{0};
     std::atomic<std::uint64_t> idleEpoch{0};
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
