@@ -52,6 +52,7 @@ public:
     static std::uint64_t GpuMapImportThreads();
     ~Driver();
     void Shutdown();
+    void AdoptDeviceForTest(std::shared_ptr<VulkanDevice> adopted);
     void WaitIdle();
     void CheckFailure();
     void ReportFailure(std::exception_ptr error);

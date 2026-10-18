@@ -61,6 +61,12 @@ void Driver::Shutdown() {
     rethrowFailure();
 }
 
+void Driver::AdoptDeviceForTest(std::shared_ptr<VulkanDevice> adopted) {
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    require(adopted != nullptr && device == nullptr, "the driver adopts a device only before it opens its own");
+    device = std::move(adopted);
+}
+
 void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
     std::lock_guard shutdownLock(shutdownMutex);
