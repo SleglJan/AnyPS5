@@ -47,9 +47,18 @@ void ResidencyGuest::ChangedPages(std::uint64_t firstPage, std::span<const std::
     }
 }
 
-bool ResidencyGuest::Guard(std::uint64_t page) {
+static_assert(static_cast<std::size_t>(GuestArena::GuardRefusals) == ResidencyRefusals);
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::UnsettledImport) == static_cast<std::uint8_t>(ResidencyRefusal::UnsettledImport));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::PrivateHostWrite) == static_cast<std::uint8_t>(ResidencyRefusal::PrivateHostWrite));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::PrivatePinned) == static_cast<std::uint8_t>(ResidencyRefusal::PrivatePinned));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::ResidentView) == static_cast<std::uint8_t>(ResidencyRefusal::ResidentView));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::SharedPinned) == static_cast<std::uint8_t>(ResidencyRefusal::SharedPinned));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::AliasHostWrite) == static_cast<std::uint8_t>(ResidencyRefusal::AliasHostWrite));
+static_assert(static_cast<std::uint8_t>(GuestArena::GuardRefusal::Unavailable) == static_cast<std::uint8_t>(ResidencyRefusal::Unavailable));
+
+ResidencyRefusal ResidencyGuest::Guard(std::uint64_t page) {
     static_cast<void>(GuestMemory::SettleWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes)));
-    return GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes));
+    return static_cast<ResidencyRefusal>(GuestMemory::GuardWrites(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes)));
 }
 
 void ResidencyGuest::SettleWrites(std::uint64_t page) {
@@ -68,7 +77,7 @@ void ResidencyGuest::SettleImport(std::uint64_t page, std::uint64_t stamp) {
     GuestMemory::SettleHostImports(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes), stamp);
 }
 
-bool ResidencyGuest::GuardAccess(std::uint64_t page, ResidencyMask mask) {
+ResidencyRefusal ResidencyGuest::GuardAccess(std::uint64_t page, ResidencyMask mask) {
     const auto base = page << ResidencyPageShift;
     std::vector<std::pair<std::uint64_t, std::size_t>> guarded;
     for (unsigned first = 0; first < ResidencySubpages;) {
@@ -80,14 +89,14 @@ bool ResidencyGuest::GuardAccess(std::uint64_t page, ResidencyMask mask) {
         while (last + 1 < ResidencySubpages && (mask & (1u << (last + 1))) != 0) ++last;
         const auto address = base + std::uint64_t{first} * ResidencySubpageBytes;
         const auto bytes = static_cast<std::size_t>(std::uint64_t{last - first + 1} * ResidencySubpageBytes);
-        if (!GuestMemory::GuardAccess(address, bytes)) {
+        if (const auto refusal = GuestMemory::GuardAccess(address, bytes); refusal != GuestArena::GuardRefusal::None) {
             for (const auto& [done, size] : guarded) GuestMemory::UnguardAccess(done, size);
-            return false;
+            return static_cast<ResidencyRefusal>(refusal);
         }
         guarded.emplace_back(address, bytes);
         first = last + 1;
     }
-    return true;
+    return ResidencyRefusal::None;
 }
 
 void ResidencyGuest::UnguardAccess(std::uint64_t page) {
@@ -168,7 +177,11 @@ void accessFault(std::uint64_t page) {
     if (auto* driver = ResidencyDriver::Active()) driver->AccessFault(page);
 }
 
-const GuestMemory::ResidencyHooks residencyHooks{&anyResident, &cpuWritten, &dropRange, &writeBack, &accessFault};
+void refusalCleared(std::uint64_t address, std::size_t bytes, std::uint32_t cleared) {
+    if (auto* driver = ResidencyDriver::Active()) driver->Manager().QueueRefusalCleared(address, bytes, cleared);
+}
+
+const GuestMemory::ResidencyHooks residencyHooks{&anyResident, &cpuWritten, &dropRange, &writeBack, &accessFault, &refusalCleared};
 
 }
 

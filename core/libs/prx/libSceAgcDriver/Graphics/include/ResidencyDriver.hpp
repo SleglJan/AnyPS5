@@ -33,9 +33,9 @@ public:
     virtual std::vector<ResidencyRange> Aliases(std::uint64_t address, std::uint64_t bytes) = 0;
     virtual std::uint64_t Generation() = 0;
     virtual void ChangedPages(std::uint64_t firstPage, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed) = 0;
-    virtual bool Guard(std::uint64_t page) = 0;
+    virtual ResidencyRefusal Guard(std::uint64_t page) = 0;
     virtual void Unguard(std::span<const std::uint64_t> pages) = 0;
-    virtual bool GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
+    virtual ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
     virtual void UnguardAccess(std::uint64_t page) = 0;
     virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) = 0;
     virtual void SettleWrites(std::uint64_t page) {
@@ -136,9 +136,9 @@ public:
     void ReleaseChunk(std::uint32_t chunk) override;
     ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) override;
     ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) override;
-    bool Guard(std::uint64_t page) override;
+    ResidencyRefusal Guard(std::uint64_t page) override;
     void Unguard(std::span<const std::uint64_t> pages) override;
-    bool GuardAccess(std::uint64_t page, ResidencyMask mask) override;
+    ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask mask) override;
     void UnguardAccess(std::uint64_t page) override;
     void SettleWrites(std::uint64_t page) override;
     std::uint64_t ImportStamp() override;

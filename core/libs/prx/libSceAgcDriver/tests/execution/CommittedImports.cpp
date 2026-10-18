@@ -162,7 +162,7 @@ void CheckGuardOverImport(AgcDriver::VulkanDevice& device) {
         const auto base = reinterpret_cast<std::uint64_t>(memory);
         for (std::uint32_t round = 0; round < 64; ++round) {
             guardReports.clear();
-            Require(ImportOf(device.Device(), pageOf(memory)) && AgcDriver::GuestMemory::GuardWrites(base, Page), std::string("an imported ") + kind + " page could not be guarded");
+            Require(ImportOf(device.Device(), pageOf(memory)) && AgcDriver::GuestMemory::GuardWrites(base, Page) == GuestArena::GuardRefusal::None, std::string("an imported ") + kind + " page could not be guarded");
             Require(fill(device, memory, Page, 0x0e0e0e0eu + round) && holds(memory, Page, 0x0e0e0e0eu + round), std::string("a GPU fill through the import of a guarded ") + kind + " page did not land");
             Require(guardReports.empty() && AgcDriver::GuestMemory::WriteGuarded(pageOf(memory)), std::string("a GPU write tripped the CPU write guard of a ") + kind + " page");
             memory[8 + round] = 1;
@@ -172,7 +172,7 @@ void CheckGuardOverImport(AgcDriver::VulkanDevice& device) {
     auto* privateMemory = commit(Page);
     const auto privateBase = reinterpret_cast<std::uint64_t>(privateMemory);
     Require(ImportOf(device.Device(), pageOf(privateMemory)).has_value(), "a private commit was not imported");
-    Require(!AgcDriver::GuestMemory::GuardWrites(privateBase, Page) && !AgcDriver::GuestMemory::GuardAccess(privateBase, Page), "an imported private page was guarded before its import settled: the GPU would lose the device on its read-only pages");
+    Require(AgcDriver::GuestMemory::GuardWrites(privateBase, Page) == GuestArena::GuardRefusal::UnsettledImport && AgcDriver::GuestMemory::GuardAccess(privateBase, Page) == GuestArena::GuardRefusal::UnsettledImport, "an imported private page was guarded before its import settled: the GPU would lose the device on its read-only pages");
     Require(!AgcDriver::GuestMemory::WriteGuarded(pageOf(privateMemory)) && !AgcDriver::GuestMemory::AccessGuarded(pageOf(privateMemory)), "a refused guard armed the private page");
     const auto stamp = AgcDriver::GuestMemory::HostImportStamp();
     Require(fill(device, privateMemory, Page, 0x0f0f0f0fu) && holds(privateMemory, Page, 0x0f0f0f0fu), "a GPU fill through a fresh private import did not land");

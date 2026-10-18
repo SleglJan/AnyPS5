@@ -18,9 +18,9 @@ public:
     std::vector<ResidencyRange> Aliases(std::uint64_t address, std::uint64_t bytes) override;
     std::uint64_t Generation() override;
     void ChangedPages(std::uint64_t firstPage, std::span<const std::uint64_t> generations, std::span<std::uint8_t> changed) override;
-    bool Guard(std::uint64_t page) override;
+    ResidencyRefusal Guard(std::uint64_t page) override;
     void Unguard(std::span<const std::uint64_t> pages) override;
-    bool GuardAccess(std::uint64_t page, ResidencyMask mask) override;
+    ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask mask) override;
     void UnguardAccess(std::uint64_t page) override;
     void SettleWrites(std::uint64_t page) override;
     std::uint64_t ImportStamp() override;

@@ -187,11 +187,11 @@ public:
         }
     }
 
-    bool Guard(std::uint64_t page) override {
+    ResidencyRefusal Guard(std::uint64_t page) override {
         const auto index = static_cast<std::uint32_t>(page - region.First());
-        if (!Protect(index, true)) return false;
+        if (!Protect(index, true)) return ResidencyRefusal::Unavailable;
         faultLog.guarded[index] = true;
-        return true;
+        return ResidencyRefusal::None;
     }
 
     void Unguard(std::span<const std::uint64_t> pages) override {
@@ -201,7 +201,7 @@ public:
         }
     }
 
-    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+    ResidencyRefusal GuardAccess(std::uint64_t, ResidencyMask) override { return ResidencyRefusal::None; }
 
     void UnguardAccess(std::uint64_t) override {}
 

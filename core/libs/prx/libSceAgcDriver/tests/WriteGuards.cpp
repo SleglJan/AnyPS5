@@ -65,7 +65,29 @@ void flushHook(std::uint64_t, std::size_t) {
     order.push_back("flush");
 }
 
-const ResidencyHooks hooks{&anyResident, &cpuWritten, &dropRange, &writeBack};
+struct RefusalClear {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    std::uint32_t cleared = 0;
+};
+std::vector<RefusalClear> refusalClears;
+
+void refusalCleared(std::uint64_t address, std::size_t bytes, std::uint32_t cleared) {
+    std::lock_guard lock(reportMutex);
+    refusalClears.push_back({address, bytes, cleared});
+}
+
+bool clearedFor(std::uint64_t address, GuestArena::GuardRefusal refusal) {
+    std::lock_guard lock(reportMutex);
+    return std::any_of(refusalClears.begin(), refusalClears.end(), [&](const RefusalClear& clear) { return clear.address <= address && address < clear.address + clear.bytes && (clear.cleared & GuestArena::RefusalBit(refusal)) != 0; });
+}
+
+void clearRefusalClears() {
+    std::lock_guard lock(reportMutex);
+    refusalClears.clear();
+}
+
+const ResidencyHooks hooks{&anyResident, &cpuWritten, &dropRange, &writeBack, nullptr, &refusalCleared};
 const ResidencyHooks lockCheckingHooks{&anyResident, &cpuWrittenTakingTheTracker, &dropRange, &writeBack};
 
 std::size_t reported(std::uint64_t page) {
@@ -105,7 +127,7 @@ std::uint8_t* mapShared(std::size_t bytes, HANDLE section = nullptr) {
 void CheckPrivateGuards() {
     auto* fresh = commitPrivate(Page, Granule);
     clearReports();
-    Require(GuardWrites(reinterpret_cast<std::uint64_t>(fresh), Page), "an unimported private page could not be guarded");
+    Require(GuardWrites(reinterpret_cast<std::uint64_t>(fresh), Page) == GuestArena::GuardRefusal::None, "an unimported private page could not be guarded");
     Require(WriteGuarded(pageOf(fresh)) && protectionAt(fresh) == PAGE_READONLY && protectionAt(fresh + 3 * Granule) == PAGE_READONLY, "the guard did not make the whole private page read-only");
     fresh[100] = 1;
     Require(reported(pageOf(fresh)) == 1 && fresh[100] == 1, "the first store to a guarded private page was not reported");
@@ -116,22 +138,30 @@ void CheckPrivateGuards() {
     NoteHostImport(base, Page);
     const auto stamp = HostImportStamp();
     Require(!HostImportSettled(base, Page), "a fresh host import was reported settled");
-    Require(!GuardWrites(base, Page), "a private page was guarded before its host import settled: the GPU would lose the device on its read-only pages");
-    Require(!GuardAccess(base, Granule), "a private page was access guarded before its host import settled");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::UnsettledImport, "a private page was guarded before its host import settled, or refused for another reason: the GPU would lose the device on its read-only pages");
+    Require(GuardAccess(base, Granule) == GuestArena::GuardRefusal::UnsettledImport, "a private page was access guarded before its host import settled, or refused for another reason");
     Require(!WriteGuarded(pageOf(memory)) && !AccessGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READWRITE, "a refused guard changed the page");
     SettleHostImports(base, Page, stamp - 1);
-    Require(!GuardWrites(base, Page), "a settle mark older than the import settled it");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::UnsettledImport, "a settle mark older than the import settled it");
+    clearRefusalClears();
     SettleHostImports(base, Page, stamp);
     Require(HostImportSettled(base, Page), "the settle mark did not settle the import");
+    Require(clearedFor(base, GuestArena::GuardRefusal::UnsettledImport), "settling the import did not report that an unsettled-import refusal can clear");
     clearReports();
-    Require(GuardWrites(base, Page), "a settled private page could not be guarded");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "a settled private page could not be guarded");
     Require(WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READONLY, "the guard did not make the settled private page read-only");
     memory[200] = 2;
     Require(reported(pageOf(memory)) == 1 && memory[200] == 2, "the first store to a guarded settled page was not reported");
     Require(!WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READWRITE, "the fault did not restore the settled page's protection");
     NoteHostImport(base, Page);
-    Require(!GuardWrites(base, Page), "a new host import of a settled page did not need its own settle");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::UnsettledImport, "a new host import of a settled page did not need its own settle");
     SettleHostImports(base, Page, HostImportStamp());
+    GuestArena::GuestArenaPinWritable_nid_postfix(memory, Page);
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::PrivatePinned, "a pinned private page was guarded, or refused for another reason");
+    clearRefusalClears();
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(memory, Page);
+    Require(clearedFor(base, GuestArena::GuardRefusal::PrivatePinned) && !clearedFor(base, GuestArena::GuardRefusal::UnsettledImport), "the pin release did not report that exactly a pin refusal can clear");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "the unpinned private page could not be guarded");
     std::cout << "private pages guarded only after their import settled: ok\n";
 }
 
@@ -139,7 +169,7 @@ void CheckSharedGuard() {
     auto* memory = mapShared(2 * Page);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     clearReports();
-    Require(GuardWrites(base, Page), "a mapped shared page could not be guarded");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "a mapped shared page could not be guarded");
     Require(WriteGuarded(pageOf(memory)) && protectionAt(memory) == PAGE_READONLY && protectionAt(memory + 3 * Granule) == PAGE_READONLY, "the guard did not make the whole page read-only");
     Require(protectionAt(memory + Page) == PAGE_READWRITE, "the guard reached the next page");
     const auto before = CollectWritesUncached(base, 2 * Page);
@@ -153,7 +183,7 @@ void CheckSharedGuard() {
     Require(reported(pageOf(memory + Page)) == 0, "a store to an unguarded page was reported");
     CollectWritesUncached(base, 2 * Page);
     Require(!UnchangedSince(base, Page, before), "the write tracking missed the store a guard let through");
-    Require(GuardWrites(base, Page), "the page could not be guarded again");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "the page could not be guarded again");
     memory[300] = 4;
     Require(reported(pageOf(memory)) == 2 && memory[300] == 4 && memory[100] == 1, "the re-armed guard did not report the next store");
     std::cout << "shared write guard: ok\n";
@@ -163,7 +193,7 @@ void CheckGuestProtectionPreserved() {
     auto* memory = mapShared(Page);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     clearReports();
-    Require(GuardWrites(base, Page), "the page could not be guarded");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "the page could not be guarded");
     GuestArena::GuestArenaSetProtection_nid_postfix(base + Granule, Granule, PAGE_READONLY);
     DWORD previous = 0;
     Require(VirtualProtect(memory + Granule, Granule, PAGE_READONLY, &previous) != 0, "the guest's protection could not be applied");
@@ -195,7 +225,7 @@ void CheckSharedGuardAliases() {
     Require(!privateBacking.shared && !privateBacking.aliased && privateBacking.offset == reinterpret_cast<std::uint64_t>(privateMemory), "private memory has a shared backing identity");
     Require(Aliases(reinterpret_cast<std::uint64_t>(privateMemory), Page).empty(), "private memory reported an alias");
     clearReports();
-    Require(GuardWrites(firstBase, Page), "the shared page could not be guarded");
+    Require(GuardWrites(firstBase, Page) == GuestArena::GuardRefusal::None, "the shared page could not be guarded");
     second[300] = 7;
     Require(reported(pageOf(first)) == 1 && reported(pageOf(second)) == 1, "a store through the alias did not report both views of the guarded backing");
     Require(first[300] == 7, "the aliased store did not land");
@@ -208,15 +238,17 @@ void CheckHostWriteOpensGuard() {
     auto* memory = mapShared(Page);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     clearReports();
-    Require(GuardWrites(base, Page), "the page could not be guarded");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "the page could not be guarded");
     {
         const GuestArena::HostWrite open(memory, 4096);
         Require(open.Open() && reported(pageOf(memory)) == 1, "a host write did not open the guard as a write");
         Require(protectionAt(memory) == PAGE_READWRITE, "a host write left the guarded page read-only");
-        Require(!GuardWrites(base, Page), "a page was guarded while a host write was open");
+        Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::AliasHostWrite, "a page was guarded while a host write was open, or refused for another reason");
         std::memset(memory, 9, 4096);
+        clearRefusalClears();
     }
-    Require(GuardWrites(base, Page), "the page could not be guarded after the host write");
+    Require(clearedFor(base, GuestArena::GuardRefusal::AliasHostWrite), "the end of the host write did not report that a host-write refusal can clear");
+    Require(GuardWrites(base, Page) == GuestArena::GuardRefusal::None, "the page could not be guarded after the host write");
     std::cout << "host write over a guard: ok\n";
 }
 

@@ -370,12 +370,13 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
             auto& record = pages[*id];
             const auto adding = static_cast<ResidencyMask>(mask & ~record.accessMask);
             if (adding != 0) {
-                if (device.GuardAccess(page, adding)) {
+                if (const auto refusal = device.GuardAccess(page, adding); refusal == ResidencyRefusal::None) {
                     record.accessMask = static_cast<ResidencyMask>(record.accessMask | adding);
                     record.accessGuarded = true;
                     accessGuards.insert(page);
                 } else {
                     ++counts.accessUnguardable;
+                    noteRefused(page, refusal);
                 }
             }
             guarded = static_cast<ResidencyMask>(mask & record.accessMask);
@@ -1066,7 +1067,7 @@ void ResidencyManager::applyDrops() {
     {
         const std::lock_guard lock(queueMutex);
         queue.swap(dropQueue);
-        queued.store(!cpuQueue.empty() || !gpuQueue.empty(), std::memory_order_release);
+        queued.store(!cpuQueue.empty() || !gpuQueue.empty() || !refusalQueue.empty(), std::memory_order_release);
     }
     for (const auto& range : queue) {
         for (const auto id : residentIn(range.address, range.bytes)) {
@@ -1109,6 +1110,7 @@ void ResidencyManager::applyDrops() {
         }
         eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
+        refused.erase(refused.lower_bound(span.first), refused.upper_bound(span.last));
         for (auto it = accessGuards.begin(); it != accessGuards.end();) {
             if (*it < span.first || *it > span.last) {
                 ++it;
@@ -1148,11 +1150,14 @@ void ResidencyManager::applyQueued() {
     unboundedApplied = std::max(unboundedApplied, applied);
     liftUnboundedGuards();
     std::vector<std::uint64_t> written;
+    std::vector<std::tuple<std::uint64_t, std::uint64_t, std::uint32_t>> clears;
     {
         const std::lock_guard lock(queueMutex);
         written.swap(cpuQueue);
+        clears.swap(refusalQueue);
         queued.store(!dropQueue.empty() || !gpuQueue.empty(), std::memory_order_release);
     }
+    if (!clears.empty()) applyRefusalClears(clears);
     if (!written.empty()) applyFaults(std::move(written));
 }
 
@@ -1186,8 +1191,9 @@ bool ResidencyManager::guardDirty(std::uint32_t id, std::uint32_t begin, std::ui
     auto& page = pages[id];
     const auto adding = static_cast<ResidencyMask>(RunMask(begin, end) & ~page.accessMask);
     if (adding == 0) return true;
-    if (!device.GuardAccess(page.index, adding)) {
+    if (const auto refusal = device.GuardAccess(page.index, adding); refusal != ResidencyRefusal::None) {
         ++counts.accessUnguardable;
+        noteRefused(page.index, refusal);
         return false;
     }
     page.accessMask = static_cast<ResidencyMask>(page.accessMask | adding);
@@ -1212,7 +1218,8 @@ void ResidencyManager::liftUnboundedGuards() {
         page.accessMask = 0;
         page.accessGuarded = false;
         exposeToWriters(*id);
-        if (page.dirty != 0 && device.GuardAccess(index, page.dirty)) {
+        const auto refusal = page.dirty != 0 ? device.GuardAccess(index, page.dirty) : ResidencyRefusal::None;
+        if (page.dirty != 0 && refusal == ResidencyRefusal::None) {
             page.accessMask = page.dirty;
             page.accessGuarded = true;
             return true;
@@ -1220,6 +1227,7 @@ void ResidencyManager::liftUnboundedGuards() {
         accessGuards.erase(index);
         if (page.dirty != 0) {
             ++counts.accessUnguardable;
+            noteRefused(index, refusal);
             unguardable.push_back(*id);
         }
         rearm(*id);
@@ -1285,15 +1293,18 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
         page.faultFrame = now;
         if (static_cast<std::uint32_t>(std::popcount(page.faultHistory & window)) >= hotFaults && !hotResident.contains(index)) {
             ++counts.hot;
-            markHotForImport(index, now);
+            leaveForImport(index, now);
             page.guarded = false;
         } else if (hotResident.contains(index)) {
             markHot(index, now);
             page.guarded = false;
-        } else if (page.guarded && !device.Guard(index)) {
-            ++counts.unguardable;
-            page.guarded = false;
-            markHotForImport(index, now);
+        } else if (page.guarded) {
+            if (const auto refusal = device.Guard(index); refusal != ResidencyRefusal::None) {
+                ++counts.unguardable;
+                page.guarded = false;
+                noteRefused(index, refusal);
+                leaveForImport(index, now);
+            }
         }
         const auto writes = device.PageWrites(index, page.generation);
         if (writes.other) {
@@ -1571,7 +1582,7 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
     auto page = first;
     for (; page <= last; ++page) {
         if (quota != nullptr && *quota == 0) break;
-        if (find(page) || hot.contains(page)) continue;
+        if (find(page) || hot.contains(page) || refused.contains(page)) continue;
         const auto import = device.Import(page);
         if (!import.whole) {
             ++counts.inadmissible;
@@ -1607,14 +1618,20 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
         }
         recordWriteBacks(writeBacks);
         bool guarded = false;
-        if (import.cpuWritable && import.section != 0) guarded = device.Guard(page);
-        else if (import.cpuWritable) device.SettleWrites(page);
+        if (import.cpuWritable && import.section != 0) {
+            if (const auto refusal = device.Guard(page); refusal != ResidencyRefusal::None) {
+                ++counts.unguardable;
+                noteRefused(page, refusal);
+                freeSlot(*slot);
+                continue;
+            }
+            guarded = true;
+        } else if (import.cpuWritable) {
+            device.SettleWrites(page);
+        }
         const auto id = newPage(page, *slot, import, guarded);
         pages[id].used = !sharedOnly;
-        if (import.cpuWritable && !guarded && import.section != 0) {
-            ++counts.unguardable;
-            markHotForImport(page, Epoch());
-        } else if (import.cpuWritable && !guarded) {
+        if (import.cpuWritable && !guarded) {
             ++counts.unsettledGuards;
             markHot(page, Epoch());
         }
@@ -1957,7 +1974,8 @@ void ResidencyManager::rearm(std::uint32_t id) {
         markHot(page.index, Epoch());
         return;
     }
-    if (device.Guard(page.index)) {
+    const auto refusal = device.Guard(page.index);
+    if (refusal == ResidencyRefusal::None) {
         page.guarded = true;
         return;
     }
@@ -1966,7 +1984,8 @@ void ResidencyManager::rearm(std::uint32_t id) {
         return;
     }
     ++counts.unguardable;
-    markHotForImport(page.index, Epoch());
+    noteRefused(page.index, refusal);
+    leaveForImport(page.index, Epoch());
 }
 
 bool ResidencyManager::writePending(std::uint64_t page) {
@@ -2074,19 +2093,58 @@ void ResidencyManager::RefreshHot() {
     serveHotFromImports();
 }
 
-void ResidencyManager::markHotForImport(std::uint64_t page, std::uint64_t at) {
+void ResidencyManager::leaveForImport(std::uint64_t page, std::uint64_t at) {
     markHot(page, at);
-    hotForImport.push_back(page);
+    leavingForImport.push_back(page);
+}
+
+void ResidencyManager::noteRefused(std::uint64_t page, ResidencyRefusal refusal) {
+    ++counts.refusals[static_cast<std::size_t>(refusal)];
+    refused.insert_or_assign(page, refusal);
+}
+
+void ResidencyManager::QueueRefusalCleared(std::uint64_t address, std::uint64_t bytes, std::uint32_t cleared) {
+    if (bytes == 0) return;
+    const std::lock_guard lock(queueMutex);
+    refusalQueue.emplace_back(address, bytes, cleared);
+    queued.store(true, std::memory_order_release);
+}
+
+std::optional<ResidencyRefusal> ResidencyManager::Refused(std::uint64_t page) const {
+    const std::lock_guard structureLock(structure);
+    const auto found = refused.find(page);
+    if (found == refused.end()) return std::nullopt;
+    return found->second;
+}
+
+void ResidencyManager::applyRefusalClears(std::span<const std::tuple<std::uint64_t, std::uint64_t, std::uint32_t>> clears) {
+    std::vector<std::uint32_t> retry;
+    for (const auto& [address, bytes, cleared] : clears) {
+        const auto span = PagesOf(address, bytes);
+        if (span.empty) continue;
+        for (auto it = refused.lower_bound(span.first); it != refused.end() && it->first <= span.last;) {
+            if ((cleared & ResidencyRefusalBit(it->second)) == 0) {
+                ++it;
+                continue;
+            }
+            ++counts.refusalRetries;
+            if (const auto id = find(it->first); id && !pages[*id].guarded) retry.push_back(*id);
+            it = refused.erase(it);
+        }
+    }
+    for (const auto id : retry) {
+        if (!hotResident.contains(pages[id].index)) rearm(id);
+    }
 }
 
 void ResidencyManager::serveHotFromImports() {
-    if (hotForImport.empty()) return;
-    std::sort(hotForImport.begin(), hotForImport.end());
-    hotForImport.erase(std::unique(hotForImport.begin(), hotForImport.end()), hotForImport.end());
+    if (leavingForImport.empty()) return;
+    std::sort(leavingForImport.begin(), leavingForImport.end());
+    leavingForImport.erase(std::unique(leavingForImport.begin(), leavingForImport.end()), leavingForImport.end());
     std::vector<std::uint32_t> ids;
     std::vector<std::uint64_t> served;
     std::vector<std::uint64_t> pinned;
-    for (const auto index : hotForImport) {
+    for (const auto index : leavingForImport) {
         const auto id = find(index);
         if (!id || !hotResident.contains(index) || pages[*id].guarded) continue;
         if (!pages[*id].shared && !pages[*id].importSettled) continue;
@@ -2097,13 +2155,15 @@ void ResidencyManager::serveHotFromImports() {
         ids.push_back(*id);
         served.push_back(index);
     }
-    hotForImport = std::move(pinned);
+    leavingForImport = std::move(pinned);
     if (ids.empty()) return;
     counts.hotServed += ids.size();
     demote(ids);
     const auto generation = device.Generation();
     const auto now = Frame();
-    for (const auto index : served) hot.insert_or_assign(index, Cooling{generation, now});
+    for (const auto index : served) {
+        if (!refused.contains(index)) hot.insert_or_assign(index, Cooling{generation, now});
+    }
 }
 
 void ResidencyManager::coolTouched(std::span<const std::uint64_t> touched) {
@@ -2275,6 +2335,7 @@ ResidencyCounts ResidencyManager::Counts() const {
     }
     result.accessGuarded = static_cast<std::uint32_t>(accessGuards.size());
     result.hotResident = static_cast<std::uint32_t>(hotResident.size());
+    result.refusedPages = static_cast<std::uint32_t>(refused.size());
     result.retiring = static_cast<std::uint32_t>(retiring.size());
     result.free = 0;
     for (const auto& record : chunks) {

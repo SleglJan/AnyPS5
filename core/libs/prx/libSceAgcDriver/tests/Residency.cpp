@@ -131,7 +131,8 @@ public:
     ResidencyManager* manager = nullptr;
     std::map<std::uint64_t, ImportPage> imports;
     std::map<std::uint64_t, bool> armed;
-    std::set<std::uint64_t> guardRefused;
+    std::map<std::uint64_t, ResidencyRefusal> guardRefused;
+    std::map<std::uint64_t, std::uint64_t> guardCalls;
     std::set<std::uint64_t> reported;
     std::set<std::uint64_t> accessUnguarded;
     std::uint64_t protections = 0;
@@ -291,13 +292,14 @@ public:
 
     void SettleImport(std::uint64_t page, std::uint64_t stamp) override { hostSettled[page] = std::max(hostSettled[page], stamp); }
 
-    bool Guard(std::uint64_t page) override {
+    ResidencyRefusal Guard(std::uint64_t page) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "a write guard armed on private " + Name(page) + " before its import settled");
         Expect(imports[page].attributes.section != 0 || ImportSettled(page), "a write guard armed on private " + Name(page) + " before its newest host import settled");
         ++protections;
-        if (guardRefused.contains(page)) return false;
+        ++guardCalls[page];
+        if (const auto refusal = guardRefused.find(page); refusal != guardRefused.end()) return refusal->second;
         armed[imports[page].group] = true;
-        return true;
+        return ResidencyRefusal::None;
     }
 
     void Unguard(std::span<const std::uint64_t> pages) override {
@@ -305,11 +307,12 @@ public:
         for (const auto page : pages) armed[imports[page].group] = false;
     }
 
-    bool GuardAccess(std::uint64_t page, ResidencyMask) override {
+    ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "an access guard armed on private " + Name(page) + " before its import settled");
         Expect(imports[page].attributes.section != 0 || ImportSettled(page), "an access guard armed on private " + Name(page) + " before its newest host import settled");
         ++protections;
-        return !guardRefused.contains(page);
+        const auto refusal = guardRefused.find(page);
+        return refusal == guardRefused.end() ? ResidencyRefusal::None : refusal->second;
     }
 
     void UnguardAccess(std::uint64_t page) override {
@@ -591,9 +594,9 @@ public:
     void ReleaseChunk(std::uint32_t) override {}
     ResidencyToken CopyIn(std::span<const ResidencyCopy>) override { return {}; }
     ResidencyToken WriteBack(std::span<const ResidencyCopy>) override { return {}; }
-    bool Guard(std::uint64_t) override { return true; }
+    ResidencyRefusal Guard(std::uint64_t) override { return ResidencyRefusal::None; }
     void Unguard(std::span<const std::uint64_t>) override {}
-    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+    ResidencyRefusal GuardAccess(std::uint64_t, ResidencyMask) override { return ResidencyRefusal::None; }
     void UnguardAccess(std::uint64_t) override {}
 };
 
@@ -886,30 +889,73 @@ void HotPagesStayAndCool() {
 void UnguardablePages() {
     scope = "unguardable pages";
     Fixture fixture(8, 1);
-    fixture.gpu.guardRefused.insert(BasePage + 3);
+    fixture.gpu.guardRefused.insert_or_assign(BasePage + 3, ResidencyRefusal::SharedPinned);
     fixture.Share(BasePage + 3);
     fixture.Share(BasePage + 4);
     fixture.Use(0, BasePage + 3, 2);
     fixture.gpu.Drain();
     fixture.manager->Prepare();
     Expect(!fixture.manager->Slot(BasePage + 3) && fixture.manager->Slot(BasePage + 4), "a page whose guard cannot be armed is served from its import");
-    Expect(fixture.manager->Hot(BasePage + 3) && !fixture.Armed(BasePage + 3) && !fixture.manager->Hot(BasePage + 4), "and not polled from a mirror");
+    Expect(fixture.manager->Refused(BasePage + 3) == ResidencyRefusal::SharedPinned && !fixture.manager->Hot(BasePage + 3) && !fixture.Armed(BasePage + 3), "it is refused for its reason, not hot, and not polled from a mirror");
     fixture.gpu.Drain();
     fixture.gpu.CpuWrite(BasePage + 3, 0x0001, 9);
     Expect(fixture.gpu.faults == 0, "a store into the unguarded page does not fault");
     fixture.Use(0, BasePage + 3);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 3, 0x0001, 9);
     fixture.gpu.Drain();
-    fixture.gpu.guardRefused.insert(BasePage + 4);
+    fixture.gpu.guardRefused.insert_or_assign(BasePage + 4, ResidencyRefusal::AliasHostWrite);
     fixture.gpu.CpuWrite(BasePage + 4, 0x0001, 10);
     fixture.manager->Prepare();
     fixture.gpu.Drain();
     fixture.manager->Prepare();
-    Expect(!fixture.manager->Slot(BasePage + 4) && fixture.manager->Hot(BasePage + 4), "a page whose re-arm fails leaves its mirror for its import");
+    Expect(!fixture.manager->Slot(BasePage + 4) && fixture.manager->Refused(BasePage + 4) == ResidencyRefusal::AliasHostWrite && !fixture.manager->Hot(BasePage + 4), "a page whose re-arm fails leaves its mirror for its import, refused, not hot");
     fixture.Use(0, BasePage + 4);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 4, 0x0001, 10);
     fixture.gpu.Drain();
-    Expect(fixture.manager->Counts().unguardable == 2, "two unguardable events counted");
+    const auto counts = fixture.manager->Counts();
+    Expect(counts.unguardable == 2 && counts.hot == 0 && counts.refusedPages == 2, "two unguardable events counted, no hot page, two refused pages");
+    Expect(counts.refusals[static_cast<std::size_t>(ResidencyRefusal::SharedPinned)] == 1 && counts.refusals[static_cast<std::size_t>(ResidencyRefusal::AliasHostWrite)] == 1, "each refusal is counted under its reason");
+}
+
+void RefusedUntilTheirEvent() {
+    scope = "refused pages wait for their reason's event";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 2);
+    fixture.gpu.guardRefused.insert_or_assign(BasePage + 2, ResidencyRefusal::SharedPinned);
+    fixture.Use(0, BasePage + 2);
+    fixture.gpu.Drain();
+    Expect(!fixture.manager->Slot(BasePage + 2) && fixture.manager->Refused(BasePage + 2) == ResidencyRefusal::SharedPinned && fixture.gpu.guardCalls[BasePage + 2] == 1, "a page libc refuses to guard is not admitted");
+    for (std::uint32_t frame = 0; frame < 2 * ResidencyHotQuietFrames; ++frame) {
+        fixture.manager->NextFrame();
+        for (std::uint32_t point = 0; point < 4; ++point) {
+            fixture.manager->Prepare();
+            fixture.manager->RefreshHot();
+            fixture.Use(0, BasePage + 2);
+            const std::array<std::uint64_t, 1> touched{BasePage + 2};
+            fixture.manager->AdmitTouched(touched);
+            fixture.gpu.Drain();
+        }
+    }
+    Expect(fixture.gpu.guardCalls[BasePage + 2] == 1 && !fixture.manager->Slot(BasePage + 2), "frames, ordering points, uses and touches retried the guard " + std::to_string(fixture.gpu.guardCalls[BasePage + 2] - 1) + " times");
+    fixture.manager->QueueRefusalCleared(Address(BasePage + 2), ResidencyPageBytes, ResidencyRefusalBit(ResidencyRefusal::AliasHostWrite) | ResidencyRefusalBit(ResidencyRefusal::UnsettledImport));
+    fixture.manager->Prepare();
+    fixture.Use(0, BasePage + 2);
+    fixture.gpu.Drain();
+    Expect(fixture.gpu.guardCalls[BasePage + 2] == 1 && fixture.manager->Refused(BasePage + 2) == ResidencyRefusal::SharedPinned, "an event that cannot clear the reason retried the guard");
+    fixture.manager->QueueRefusalCleared(Address(BasePage + 3), ResidencyPageBytes, ResidencyRefusalBit(ResidencyRefusal::SharedPinned));
+    fixture.manager->Prepare();
+    fixture.Use(0, BasePage + 2);
+    fixture.gpu.Drain();
+    Expect(fixture.gpu.guardCalls[BasePage + 2] == 1, "the event of another page retried the guard");
+    fixture.gpu.guardRefused.erase(BasePage + 2);
+    fixture.manager->QueueRefusalCleared(Address(BasePage + 2), ResidencyPageBytes, ResidencyRefusalBit(ResidencyRefusal::SharedPinned) | ResidencyRefusalBit(ResidencyRefusal::PrivatePinned));
+    fixture.manager->Prepare();
+    Expect(!fixture.manager->Refused(BasePage + 2).has_value() && fixture.gpu.guardCalls[BasePage + 2] == 1, "the pin release lifts the refusal and costs nothing until the page is used");
+    fixture.Use(0, BasePage + 2);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 2, 0x0001, fixture.Stored(BasePage + 2, 0));
+    fixture.gpu.Drain();
+    Expect(fixture.gpu.guardCalls[BasePage + 2] == 2 && fixture.manager->Slot(BasePage + 2) && fixture.Armed(BasePage + 2), "the next use admits the page into a guarded mirror");
+    Expect(fixture.manager->Counts().refusalRetries == 1, "one retry counted");
 }
 
 struct WriterCost {
@@ -1671,7 +1717,7 @@ struct Stress {
             attributes.whole = kind != 1;
             attributes.gpuWritable = kind > 3;
             if (kind >= 7) attributes.section = fixture.gpu.imports[BasePage + page].group + 1;
-            if (kind == 2) fixture.gpu.guardRefused.insert(BasePage + page);
+            if (kind == 2) fixture.gpu.guardRefused.insert_or_assign(BasePage + page, ResidencyRefusal::PrivatePinned);
         }
         for (std::uint32_t page = AliasFirst; page < Pages; ++page) {
             auto& owner = fixture.gpu.imports[BasePage + page - AliasFirst + AliasOf].attributes;
@@ -1910,8 +1956,13 @@ struct Stress {
             case 21: hammer(); break;
             case 22: {
                 const auto page = BasePage + pick(AliasFirst);
-                if (fixture.gpu.guardRefused.contains(page)) fixture.gpu.guardRefused.erase(page);
-                else fixture.gpu.guardRefused.insert(page);
+                if (const auto refusal = fixture.gpu.guardRefused.find(page); refusal != fixture.gpu.guardRefused.end()) {
+                    const auto cleared = ResidencyRefusalBit(refusal->second);
+                    fixture.gpu.guardRefused.erase(refusal);
+                    fixture.manager->QueueRefusalCleared(Address(page), ResidencyPageBytes, cleared);
+                } else {
+                    fixture.gpu.guardRefused.insert_or_assign(page, pick(2) == 0 ? ResidencyRefusal::SharedPinned : ResidencyRefusal::AliasHostWrite);
+                }
                 break;
             }
             default: {
@@ -1989,6 +2040,7 @@ int main() {
         OrderingPointsReportQueuedWork();
         HotPagesStayAndCool();
         UnguardablePages();
+        RefusedUntilTheirEvent();
         DemotionAndDrops();
         UnboundedWriterCostIndependentOfMirrors();
         DirtyMirrorsOnSharedPages();

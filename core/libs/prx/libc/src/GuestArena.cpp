@@ -35,12 +35,15 @@ void notifyMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t gene
     if (const auto callback = mappingObserver.load(std::memory_order_acquire)) callback(address, bytes, generation, change, protection);
 }
 
+void notifyRefusalClears();
+
 void notifyDemoted() {
     for (const auto& run : WindowsMappings::Get().TakeDemoted()) {
         const auto generation = commitGeneration.load(std::memory_order_acquire);
         notifyMapping(run.begin, run.end - run.begin, generation, MappingChange::Released, 0);
         notifyMapping(run.begin, run.end - run.begin, generation, MappingChange::Mapped, run.protection);
     }
+    notifyRefusalClears();
 }
 
 std::atomic<void (*)(const std::uintptr_t*, std::size_t)> writeGuardObserver{nullptr};
@@ -49,6 +52,15 @@ std::atomic<void (*)(std::uintptr_t)> accessGuardObserver{nullptr};
 void notifyGuarded(const std::vector<std::uintptr_t>& pages) {
     if (pages.empty()) return;
     if (const auto callback = writeGuardObserver.load(std::memory_order_acquire)) callback(pages.data(), pages.size());
+}
+
+std::atomic<void (*)(std::uintptr_t, std::size_t, std::uint32_t)> refusalObserver{nullptr};
+
+void notifyRefusalClears() {
+    const auto clears = WindowsMappings::Get().TakeRefusalClears();
+    const auto callback = refusalObserver.load(std::memory_order_acquire);
+    if (callback == nullptr) return;
+    for (const auto& clear : clears) callback(clear.address, clear.bytes, clear.cleared);
 }
 #endif
 
@@ -374,7 +386,7 @@ bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address) {
     return handled;
 }
 
-bool GuestArenaGuardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+GuardRefusal GuestArenaGuardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     if (!Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) throw OutsideArena("write guard", reinterpret_cast<const void*>(address), bytes);
     return WindowsMappings::Get().Guard(address, bytes);
 }
@@ -387,7 +399,7 @@ bool GuestArenaWriteGuarded_nid_postfix(std::uintptr_t page) {
     return WindowsMappings::Get().IsGuarded(page);
 }
 
-bool GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+GuardRefusal GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     if (!Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) throw OutsideArena("access guard", reinterpret_cast<const void*>(address), bytes);
     return WindowsMappings::Get().GuardAccess(address, bytes);
 }
@@ -405,6 +417,7 @@ std::uint64_t GuestArenaImportStamp_nid_postfix() {
 void GuestArenaSettleImports_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint64_t stamp) {
     if (bytes == 0 || !Arena::Get().Contains(reinterpret_cast<const void*>(address), bytes)) return;
     WindowsMappings::Get().SettleImports(address, bytes, stamp);
+    notifyRefusalClears();
 }
 
 bool GuestArenaImportSettled_nid_postfix(std::uintptr_t address, std::size_t bytes) {
@@ -437,6 +450,10 @@ void GuestArenaSetWriteGuardObserver_nid_postfix(void (*callback)(const std::uin
     writeGuardObserver.store(callback, std::memory_order_release);
 }
 
+void GuestArenaSetGuardRefusalObserver_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, std::uint32_t)) {
+    refusalObserver.store(callback, std::memory_order_release);
+}
+
 void GuestArenaAliases_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*callback)(void*, std::uintptr_t, std::size_t), void* context) {
     for (const auto& [alias, size] : WindowsMappings::Get().Aliases(address, bytes)) callback(context, alias, size);
 }
@@ -458,6 +475,7 @@ void GuestArenaPinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
 void GuestArenaUnpinWritable_nid_postfix(const void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) return;
     WindowsMappings::Get().Unpin(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    notifyRefusalClears();
 }
 
 bool GuestArenaProtection_nid_postfix(std::uintptr_t address, std::uint32_t* protection, std::uintptr_t* end) {
@@ -637,12 +655,14 @@ bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     for (auto guarded = mappings.FirstAccessGuarded(address, bytes); guarded != 0; guarded = mappings.FirstAccessGuarded(address, bytes)) {
         if (!GuestArenaHandleAccess_nid_postfix(guarded, true)) {
             mappings.CancelHostWrite(address, bytes);
+            notifyRefusalClears();
             return false;
         }
     }
     const bool open = mappings.OpenHostWrite(address, bytes);
     if (!open) mappings.CancelHostWrite(address, bytes);
     notifyGuarded(mappings.TakeGuardReports());
+    notifyRefusalClears();
     return open;
 #else
     GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(pointer, bytes);
@@ -653,6 +673,7 @@ bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32
     WindowsMappings::Get().EndHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+    notifyRefusalClears();
 #else
     GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(pointer, bytes);
 #endif

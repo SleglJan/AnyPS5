@@ -379,7 +379,7 @@ ResidencyToken ResidencyDriver::WriteBack(std::span<const ResidencyCopy> copies)
     return record(copies, false);
 }
 
-bool ResidencyDriver::Guard(std::uint64_t page) {
+ResidencyRefusal ResidencyDriver::Guard(std::uint64_t page) {
     return guest.Guard(page);
 }
 
@@ -387,7 +387,7 @@ void ResidencyDriver::Unguard(std::span<const std::uint64_t> pages) {
     guest.Unguard(pages);
 }
 
-bool ResidencyDriver::GuardAccess(std::uint64_t page, ResidencyMask mask) {
+ResidencyRefusal ResidencyDriver::GuardAccess(std::uint64_t page, ResidencyMask mask) {
     return guest.GuardAccess(page, mask);
 }
 

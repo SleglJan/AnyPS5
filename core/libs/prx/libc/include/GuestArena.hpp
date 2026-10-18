@@ -9,6 +9,9 @@
 namespace GuestArena {
 
 enum class MappingChange : std::uint32_t { Committed, Mapped, Released };
+enum class GuardRefusal : std::uint8_t { None, UnsettledImport, PrivateHostWrite, PrivatePinned, ResidentView, SharedPinned, AliasHostWrite, Unavailable };
+constexpr std::uint32_t GuardRefusals = 8;
+constexpr std::uint32_t RefusalBit(GuardRefusal refusal) { return 1u << static_cast<std::uint32_t>(refusal); }
 
 #ifndef _WIN32
 using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
@@ -45,9 +48,9 @@ bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_
 std::uint64_t GuestArenaCommitGeneration_nid_postfix();
 void GuestArenaSetMappingObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, MappingChange change, std::uint32_t protection));
 void GuestArenaForEachMapping_nid_postfix(void (*callback)(void* context, std::uintptr_t address, std::size_t bytes, MappingChange change, std::uint32_t protection), void* context);
-bool GuestArenaGuardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes);
+GuardRefusal GuestArenaGuardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnguardWrites_nid_postfix(std::uintptr_t address, std::size_t bytes);
-bool GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes);
+GuardRefusal GuestArenaGuardAccess_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaNoteImport_nid_postfix(std::uintptr_t address, std::size_t bytes);
 std::uint64_t GuestArenaImportStamp_nid_postfix();
 void GuestArenaSettleImports_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint64_t stamp);
@@ -58,6 +61,7 @@ bool GuestArenaHandleAccess_nid_postfix(std::uintptr_t address, bool write);
 void GuestArenaSetAccessGuardObserver_nid_postfix(void (*callback)(std::uintptr_t page));
 bool GuestArenaWriteGuarded_nid_postfix(std::uintptr_t page);
 void GuestArenaSetWriteGuardObserver_nid_postfix(void (*callback)(const std::uintptr_t* pages, std::size_t count));
+void GuestArenaSetGuardRefusalObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, std::uint32_t cleared));
 void GuestArenaAliases_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*callback)(void* context, std::uintptr_t address, std::size_t bytes), void* context);
 bool GuestArenaBacking_nid_postfix(std::uintptr_t page, std::uint64_t* section, std::uint64_t* offset, bool* uniform, bool* aliased);
 void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection);

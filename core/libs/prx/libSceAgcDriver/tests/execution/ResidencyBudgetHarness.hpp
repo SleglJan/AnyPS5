@@ -122,9 +122,9 @@ public:
         for (std::size_t k = 0; k < generations.size(); ++k) changed[k] = generations[k] == 0 ? 1 : 0;
     }
 
-    bool Guard(std::uint64_t) override { return true; }
+    ResidencyRefusal Guard(std::uint64_t) override { return ResidencyRefusal::None; }
     void Unguard(std::span<const std::uint64_t>) override {}
-    bool GuardAccess(std::uint64_t, ResidencyMask) override { return true; }
+    ResidencyRefusal GuardAccess(std::uint64_t, ResidencyMask) override { return ResidencyRefusal::None; }
     void UnguardAccess(std::uint64_t) override {}
 
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override {

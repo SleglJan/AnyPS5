@@ -13,6 +13,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <span>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -29,6 +30,10 @@ constexpr std::uint64_t ResidencyUnchecked = ~std::uint64_t{0};
 constexpr std::uint64_t ResidencyMeasuredBudget = ~std::uint64_t{0};
 constexpr std::uint32_t ResidencyHotQuietFrames = 4;
 constexpr std::size_t ResidencyHotGapBuckets = 8;
+
+enum class ResidencyRefusal : std::uint8_t { None, UnsettledImport, PrivateHostWrite, PrivatePinned, ResidentView, SharedPinned, AliasHostWrite, Unavailable };
+constexpr std::size_t ResidencyRefusals = 8;
+constexpr std::uint32_t ResidencyRefusalBit(ResidencyRefusal refusal) { return 1u << static_cast<std::uint32_t>(refusal); }
 
 using ResidencyToken = std::array<std::uint64_t, ResidencyStreams>;
 using ResidencyMask = std::uint16_t;
@@ -120,9 +125,9 @@ public:
     virtual void ReleaseChunk(std::uint32_t chunk) = 0;
     virtual ResidencyToken CopyIn(std::span<const ResidencyCopy> copies) = 0;
     virtual ResidencyToken WriteBack(std::span<const ResidencyCopy> copies) = 0;
-    virtual bool Guard(std::uint64_t page) = 0;
+    virtual ResidencyRefusal Guard(std::uint64_t page) = 0;
     virtual void Unguard(std::span<const std::uint64_t> pages) = 0;
-    virtual bool GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
+    virtual ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask mask) = 0;
     virtual void UnguardAccess(std::uint64_t page) = 0;
     virtual std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) {
         static_cast<void>(generation);
@@ -187,6 +192,9 @@ struct ResidencyCounts {
     std::uint64_t hotCollects = 0;
     std::uint64_t hotServed = 0;
     std::array<std::uint64_t, ResidencyHotGapBuckets> hotWriteGaps{};
+    std::array<std::uint64_t, ResidencyRefusals> refusals{};
+    std::uint64_t refusalRetries = 0;
+    std::uint32_t refusedPages = 0;
     std::uint64_t retiles = 0;
     std::uint64_t retiledBytes = 0;
     std::uint64_t eagerRetiles = 0;
@@ -241,6 +249,8 @@ public:
     std::vector<ResidencyMirrorStore> StoreThroughMirrors(std::uint64_t address, std::uint64_t bytes, const ResidencyToken& lands);
     void RefreshImportWritten(std::uint64_t address, std::uint64_t bytes);
     void QueueCpuWritten(std::span<const std::uint64_t> pages);
+    void QueueRefusalCleared(std::uint64_t address, std::uint64_t bytes, std::uint32_t cleared);
+    std::optional<ResidencyRefusal> Refused(std::uint64_t page) const;
     void NoteGpuWritten(std::uint64_t address, std::uint64_t bytes, bool written = false);
     void QueueGpuWritten(std::uint64_t address, std::uint64_t bytes);
     bool AnyDirty() const { return dirtyPages.load(std::memory_order_relaxed) != 0; }
@@ -412,7 +422,9 @@ private:
     void rearm(std::uint32_t id);
     void coolHot(std::uint64_t first, std::span<const std::uint8_t> written);
     void markHot(std::uint64_t page, std::uint64_t at);
-    void markHotForImport(std::uint64_t page, std::uint64_t at);
+    void leaveForImport(std::uint64_t page, std::uint64_t at);
+    void noteRefused(std::uint64_t page, ResidencyRefusal refusal);
+    void applyRefusalClears(std::span<const std::tuple<std::uint64_t, std::uint64_t, std::uint32_t>> clears);
     void serveHotFromImports();
     void coolTouched(std::span<const std::uint64_t> touched);
     void unmarkHot(std::uint64_t page);
@@ -497,7 +509,8 @@ private:
     std::unordered_map<std::uint64_t, Cooling> hot;
     std::unordered_map<std::uint64_t, std::uint64_t> hotResident;
     std::map<std::uint64_t, std::uint64_t> hotRuns;
-    std::vector<std::uint64_t> hotForImport;
+    std::vector<std::uint64_t> leavingForImport;
+    std::map<std::uint64_t, ResidencyRefusal> refused;
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
     std::unordered_set<std::uint64_t> unsettledImports;
@@ -537,6 +550,7 @@ private:
     std::mutex queueMutex;
     std::vector<ResidencyRange> dropQueue;
     std::vector<std::uint64_t> cpuQueue;
+    std::vector<std::tuple<std::uint64_t, std::uint64_t, std::uint32_t>> refusalQueue;
     std::vector<ResidencyRange> gpuQueue;
 };
 

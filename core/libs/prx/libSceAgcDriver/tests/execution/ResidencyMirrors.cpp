@@ -448,11 +448,11 @@ public:
         return stream.Current();
     }
 
-    bool Guard(std::uint64_t page) override {
+    ResidencyRefusal Guard(std::uint64_t page) override {
         const auto index = static_cast<std::uint32_t>(page - BasePage);
         ProtectOrThrow(index, true);
         faultLog.guarded[index] = true;
-        return true;
+        return ResidencyRefusal::None;
     }
 
     void Unguard(std::span<const std::uint64_t> pages) override {
@@ -462,9 +462,9 @@ public:
         }
     }
 
-    bool GuardAccess(std::uint64_t page, ResidencyMask mask) override {
+    ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask mask) override {
         accessGuards[page] = static_cast<ResidencyMask>(accessGuards[page] | mask);
-        return true;
+        return ResidencyRefusal::None;
     }
 
     void UnguardAccess(std::uint64_t page) override { accessGuards.erase(page); }
