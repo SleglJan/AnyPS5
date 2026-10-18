@@ -2044,6 +2044,12 @@ void VulkanDevice::SubmitRecorded(bool reapFirst) {
     state->recorder->Submit();
 }
 
+void VulkanDevice::SubmitLabelled(bool reapFirst) {
+    if (!state->recorder) return;
+    if (reapFirst && OpportunisticReap()) state->recorder->Reap();
+    state->recorder->SubmitLabelled();
+}
+
 bool VulkanDevice::CanWaitUnlocked() const {
     return state->recorder && state->recorder->HasTimeline();
 }

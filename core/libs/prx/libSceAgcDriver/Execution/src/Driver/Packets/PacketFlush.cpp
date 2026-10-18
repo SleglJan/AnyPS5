@@ -82,7 +82,8 @@ void Driver::flushBetweenPackets(std::uint32_t queue, std::uint32_t header, bool
     if (submit || capped) {
 
         if (!Graphics::Recorder::PendingLabelSince().has_value() && (batchCap() == 0 || Graphics::Recorder::RecordedWorkSinceSubmit() < batchCap())) return;
-        localDevice->SubmitRecorded(queue == 0);
+        if (capped) localDevice->SubmitRecorded(queue == 0);
+        else localDevice->SubmitLabelled(queue == 0);
         if (capped) ++capFlushes;
         else if (!labelPacket && packetFlush) ++packetFlushes;
         else ++deadlineFlushes;

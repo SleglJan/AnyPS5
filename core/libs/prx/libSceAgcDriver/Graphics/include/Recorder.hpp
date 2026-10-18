@@ -201,6 +201,7 @@ public:
     std::optional<PendingWriteInfo> DescribePendingWrite(std::uint64_t address, std::size_t bytes) const;
     // Ends and submits the open batch without waiting.
     void Submit();
+    void SubmitLabelled();
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -283,6 +284,7 @@ public:
     std::uint64_t Submissions() const { const std::lock_guard guard(recording); return submissions; }
     bool CallerBatchValue(std::uint32_t& stream, std::uint64_t& value) const;
     std::uint64_t OrderSubmits() const { const std::lock_guard guard(recording); return orderSubmits; }
+    std::uint64_t OpenBatchValue(std::uint32_t stream) const { const std::lock_guard guard(recording); return stream < streams.size() && opens[stream] != nullptr ? opens[stream]->value : 0; }
     bool BatchValueFinished(std::uint32_t stream, std::uint64_t value) const { const std::lock_guard guard(recording); return stream < streams.size() && value <= streams[stream].finished; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
     std::size_t InFlightBatches() const { const std::lock_guard guard(recording); return inFlight.size(); }
@@ -874,6 +876,8 @@ private:
     const Batch* callerBatch() const;
     bool anyOpen() const;
     void submitStream(std::uint32_t stream);
+    void startLabelDeadline(std::uint32_t stream);
+    void endLabelDeadline(std::uint32_t stream);
     bool awaitsUnsubmitted(const Batch& batch) const;
     void beginSection();
     template<typename TVisit>
@@ -908,6 +912,7 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::array<std::unique_ptr<Batch>, MaxRecorderStreams> opens;
+    std::array<std::int64_t, MaxRecorderStreams> labelSince{};
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;

@@ -1136,6 +1136,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
 }
 
 Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(context), id(nextRecorderId.fetch_add(1)) {
+    labelSince.fill(NoPendingLabel);
     {
         std::lock_guard lock(liveRecordersMutex);
         liveRecorders.push_back(id);
@@ -3598,9 +3599,7 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
         open->wideLabels.push_back(wideLabels.emplace(address, WideLabel{address + bytes.size(), std::vector<std::byte>(bytes.begin(), bytes.end())}));
         wideLabelBytes = std::max<std::uint64_t>(wideLabelBytes, bytes.size());
     }
-    if (activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
-        pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
-    }
+    startLabelDeadline(open->stream);
     noteWriteOn(*open, address, bytes.size(), true);
 }
 
@@ -3798,9 +3797,7 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     // poller that sees the bump then finds the label without the GPU mutex.
     noteLabelOn(batch, address, bytes, stamp, queue, behindCompletion);
     noteWriteOn(batch, address, bytes.size(), true);
-    if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
-        pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
-    }
+    if (&batch == open.get()) startLabelDeadline(batch.stream);
 }
 
 bool Recorder::AfterRecordedWork(std::function<void()> action) {
@@ -3812,9 +3809,7 @@ bool Recorder::AfterRecordedWork(std::function<void()> action) {
     batch.completions.push_back(std::move(action));
     ++batch.completionLabelCount;
     completionLabels.fetch_add(1, std::memory_order_acq_rel);
-    if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
-        pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
-    }
+    if (&batch == open.get()) startLabelDeadline(batch.stream);
     return true;
 }
 
@@ -3871,6 +3866,16 @@ void Recorder::Submit() {
     if (activeRecorder == this) workSinceSubmit.store(0, std::memory_order_relaxed);
     dropStaleHoldKept();
     for (std::uint32_t stream = 0; stream < streams.size(); ++stream) submitStream(stream);
+}
+
+void Recorder::SubmitLabelled() {
+    const std::lock_guard recordingGuard(recording);
+    PerformanceTimer frameTiming("Recorder.Submit");
+    dropStaleHoldKept();
+    for (std::uint32_t stream = 0; stream < streams.size(); ++stream) {
+        if (labelSince[stream] != NoPendingLabel) submitStream(stream);
+    }
+    if (activeRecorder == this && !anyOpen()) workSinceSubmit.store(0, std::memory_order_relaxed);
 }
 
 void Recorder::submitStream(std::uint32_t stream) {
@@ -3995,7 +4000,25 @@ void Recorder::submitStream(std::uint32_t stream) {
     inFlight.push_back(std::move(batch));
     inFlightKeptBytes += inFlight.back()->keptBytes;
     target.newest = inFlight.back().get();
-    if (activeRecorder == this && !anyOpen()) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
+    endLabelDeadline(stream);
+}
+
+void Recorder::startLabelDeadline(std::uint32_t stream) {
+    const std::lock_guard recordingGuard(recording);
+    if (activeRecorder != this || labelSince[stream] != NoPendingLabel) return;
+    labelSince[stream] = std::chrono::steady_clock::now().time_since_epoch().count();
+    if (pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) pendingLabelSince.store(labelSince[stream], std::memory_order_release);
+}
+
+void Recorder::endLabelDeadline(std::uint32_t stream) {
+    const std::lock_guard recordingGuard(recording);
+    if (activeRecorder != this || labelSince[stream] == NoPendingLabel) return;
+    labelSince[stream] = NoPendingLabel;
+    std::int64_t oldest = NoPendingLabel;
+    for (std::uint32_t other = 0; other < streams.size(); ++other) {
+        if (labelSince[other] != NoPendingLabel && (oldest == NoPendingLabel || labelSince[other] < oldest)) oldest = labelSince[other];
+    }
+    pendingLabelSince.store(oldest, std::memory_order_release);
 }
 
 std::uint64_t Recorder::SubmitAndEpoch() {
@@ -4631,7 +4654,7 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     removeLabels(*batch);
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
-    if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
+    endLabelDeadline(batch->stream);
     release(*batch);
     try {
         publishPendingWrites();

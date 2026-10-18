@@ -266,7 +266,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             }
         }
         if (labelDue && !submitted && Graphics::Recorder::PendingLabelSince().has_value()) {
-            localDevice->SubmitRecorded(false);
+            localDevice->SubmitLabelled(false);
             submitted = true;
         }
         if (submitted) {
