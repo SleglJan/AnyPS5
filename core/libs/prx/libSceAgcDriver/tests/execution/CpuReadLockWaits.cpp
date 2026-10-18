@@ -204,6 +204,66 @@ void DirtyMirrorWaitsUnlocked(PrivatePages& labels, std::uint32_t& labelValue) {
     Expect(false, what + ": in all " + std::to_string(SpinAttempts) + " attempts the read of the dirty mirrored page did not wait behind the spinning dispatch");
 }
 
+void SettledWriterReadSkipsDeviceLock(PrivatePages& labels, std::uint32_t& labelValue) {
+    constexpr auto HoldTime = std::chrono::milliseconds(300);
+    const std::string what = "a CPU read of a mirrored page whose GPU writer and write-back have settled";
+    SharedPages mirrored(1);
+    for (std::uint32_t lane = 0; lane < SpinLanes; ++lane) mirrored.Words()[lane] = 0u;
+    AgcDriver::GuestMemory::CollectWritesUncached(mirrored.Address(), SpinLanes * 4u);
+    Settle();
+    const auto marker = labels.Address(MarkerOffset);
+    volatile auto* markerWord = labels.Words() + MarkerOffset / 4u;
+    *markerWord = 0u;
+    AgcDriver::GuestMemory::CollectWritesUncached(marker, 4u);
+    const auto value = ++labelValue;
+    Commands store;
+    store.Dispatch(Storer, BufferResource(mirrored.Address(), SpinLanes * 4u), SpinLanes);
+    store.WriteData(marker, {value});
+    store.Submit(WriterQueue);
+    const auto start = Clock::now();
+    while (*markerWord != value && Clock::now() - start < std::chrono::seconds(10)) std::this_thread::yield();
+    Expect(*markerWord == value, what + ": the store's label did not land");
+    bool dirty = false;
+    Locked([&] { dirty = Residency().Manager().DirtyIn(mirrored.Address(), SpinLanes * 4u); });
+    if (!dirty) {
+        Expect(false, what + ": the GPU's store did not stay in the page's mirror");
+        return;
+    }
+    bool settledBefore = true;
+    Locked([&] {
+        AgcDriver::Graphics::WriteBackAllMirrors();
+        dirty = Residency().Manager().DirtyIn(mirrored.Address(), SpinLanes * 4u);
+        settledBefore = Residency().Manager().CpuReadSettled(mirrored.Address(), SpinLanes * 4u);
+    });
+    if (dirty || settledBefore) {
+        Expect(false, what + ": after the write-back the page should be clean with its writer still recorded (dirty " + std::to_string(dirty) + ", settled " + std::to_string(settledBefore) + ")");
+        return;
+    }
+    std::atomic<bool> holding{false};
+    std::jthread holder([&] {
+        Locked([&] {
+            holding.store(true);
+            std::this_thread::sleep_for(HoldTime);
+        });
+    });
+    while (!holding.load()) std::this_thread::yield();
+    std::vector<std::uint32_t> seen(SpinLanes, 0u);
+    const auto readStart = Clock::now();
+    DirectRead(mirrored.Address(), seen);
+    const auto readMs = Ms(Clock::now() - readStart);
+    holder.join();
+    bool storedSeen = true;
+    for (std::uint32_t lane = 0; lane < SpinLanes; ++lane) storedSeen = storedSeen && seen[lane] == lane;
+    Expect(storedSeen, what + ": the CPU read did not return the values the GPU stored");
+    bool settledAfter = false;
+    Locked([&] { settledAfter = Residency().Manager().CpuReadSettled(mirrored.Address(), SpinLanes * 4u); });
+    Expect(settledAfter, what + ": the read left the settled writer recorded");
+    std::printf("%s: read %.1f ms while another thread held the device lock for %lld ms\n", what.c_str(), readMs, static_cast<long long>(HoldTime.count()));
+    Expect(readMs < LockWaitLimitMs, what + ": the read waited " + std::to_string(readMs) + " ms for a thread holding the device lock, although it needed only residency work");
+    WaitIdle();
+    Settle();
+}
+
 constexpr std::uint32_t DisplayExtent = 64;
 constexpr std::uint64_t DisplayBgra8 = 0x8000000000000000ull;
 
@@ -347,6 +407,7 @@ int main() {
             ReaderWaitsUnlocked("a mirrored page", mirrored, labels, labelValue, [&](std::vector<std::uint32_t>& seen) { DirectRead(mirrored.Address(), seen); });
         }
         DirtyMirrorWaitsUnlocked(labels, labelValue);
+        SettledWriterReadSkipsDeviceLock(labels, labelValue);
         {
             PrivatePages pending(1);
             ReaderWaitsUnlocked("a pending write", pending, labels, labelValue, [&](std::vector<std::uint32_t>& seen) { DirectRead(pending.Address(), seen); });

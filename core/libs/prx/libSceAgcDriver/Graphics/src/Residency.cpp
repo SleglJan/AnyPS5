@@ -10,6 +10,51 @@ namespace AgcDriver::Graphics {
 
 namespace {
 
+const void* ResidencyThreadToken() {
+    thread_local const char token = 0;
+    return &token;
+}
+
+}
+
+void ResidencyMutex::lock() {
+    if (owner.load(std::memory_order_relaxed) == ResidencyThreadToken()) {
+        ++depth;
+        return;
+    }
+    mutex.lock();
+    owner.store(ResidencyThreadToken(), std::memory_order_relaxed);
+    depth = 1;
+}
+
+void ResidencyMutex::unlock() {
+    if (--depth != 0) return;
+    owner.store(nullptr, std::memory_order_relaxed);
+    mutex.unlock();
+}
+
+bool ResidencyMutex::HeldByThisThread() const {
+    return owner.load(std::memory_order_relaxed) == ResidencyThreadToken();
+}
+
+std::uint32_t ResidencyMutex::ReleaseAll() {
+    if (!HeldByThisThread()) return 0;
+    const auto held = depth;
+    depth = 0;
+    owner.store(nullptr, std::memory_order_relaxed);
+    mutex.unlock();
+    return held;
+}
+
+void ResidencyMutex::Reacquire(std::uint32_t held) {
+    if (held == 0) return;
+    mutex.lock();
+    owner.store(ResidencyThreadToken(), std::memory_order_relaxed);
+    depth = held;
+}
+
+namespace {
+
 struct PageSpan {
     std::uint64_t first = 0;
     std::uint64_t last = 0;
@@ -259,14 +304,16 @@ bool ResidencyManager::retileStale(std::span<const std::uint64_t> stalePages, st
             }
         }
     }
-    for (const auto& item : work) {
-        ++counts.retiles;
-        item.owner->Retile(item.ranges);
-    }
-    return !work.empty();
+    if (work.empty()) return false;
+    counts.retiles += work.size();
+    const auto held = structure.ReleaseAll();
+    for (const auto& item : work) item.owner->Retile(item.ranges);
+    structure.Reacquire(held);
+    return true;
 }
 
 void ResidencyManager::Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
@@ -291,6 +338,7 @@ void ResidencyManager::Own(std::uint64_t address, std::uint64_t bytes, IResidenc
 }
 
 void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
@@ -340,16 +388,20 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
     if (eager.empty()) return;
     ++counts.eagerRetiles;
     for (const auto& range : eager) counts.retiledBytes += range.bytes;
+    const auto held = structure.ReleaseAll();
     owner->Retile(eager);
+    structure.Reacquire(held);
 }
 
 bool ResidencyManager::RetileOwned(std::uint64_t address, std::uint64_t bytes, std::span<const IResidencyOwner* const> except) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     if (staleCount.load(std::memory_order_acquire) == 0) return false;
     return retileStale(staleIn(address, bytes), except);
 }
 
 bool ResidencyManager::RetileUnguarded() {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<std::uint64_t> unguarded;
     {
@@ -365,6 +417,7 @@ bool ResidencyManager::RetileUnguarded() {
 }
 
 bool ResidencyManager::RetileAllOwned(std::span<const IResidencyOwner* const> except) {
+    const std::lock_guard structureLock(structure);
     std::vector<std::uint64_t> stale;
     {
         const std::shared_lock lock(ownedMutex);
@@ -376,6 +429,7 @@ bool ResidencyManager::RetileAllOwned(std::span<const IResidencyOwner* const> ex
 }
 
 void ResidencyManager::Disown(IResidencyOwner* owner) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<std::uint64_t> stale;
     {
@@ -472,6 +526,7 @@ std::vector<std::shared_ptr<IResidencyOwner>> ResidencyManager::HoldStaleOwners(
 }
 
 bool ResidencyManager::GuardedStaleIn(std::uint64_t address, std::uint64_t bytes, const IResidencyOwner* owner) const {
+    const std::lock_guard structureLock(structure);
     if (!StaleIn(address, bytes)) return false;
     const auto span = PagesOf(address, bytes);
     const std::shared_lock lock(ownedMutex);
@@ -505,6 +560,7 @@ bool ResidencyManager::StaleOfOthers(std::uint64_t address, std::uint64_t bytes,
 }
 
 void ResidencyManager::WriteBackAll() {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     RetileAllOwned();
     std::vector<std::uint32_t> ids;
@@ -532,6 +588,10 @@ void ResidencyManager::WriteBackAll() {
 }
 
 void ResidencyManager::settleImports() {
+    for (const auto page : settlesWithoutToken) {
+        if (const auto id = find(page); id && !pages[*id].importSettled && !pages[*id].settleIssued) pages[*id].settle = device.Newest();
+    }
+    settlesWithoutToken.clear();
     std::vector<std::uint64_t> settledPages;
     for (auto it = unsettledImports.begin(); it != unsettledImports.end();) {
         const auto id = find(*it);
@@ -571,14 +631,26 @@ void ResidencyManager::unsettle(std::uint32_t id) {
     auto& page = pages[id];
     page.importSettled = false;
     page.importStamp = device.ImportStamp();
-    page.settle = device.Newest();
+    if (withoutRecorder) settlesWithoutToken.push_back(page.index);
+    else page.settle = device.Newest();
     page.settleIssued = false;
     unsettledImports.insert(page.index);
     ++counts.unsettledGuards;
     markHot(page.index, Epoch());
 }
 
+bool ResidencyManager::Hot(std::uint64_t page) const {
+    const std::lock_guard structureLock(structure);
+    return hot.contains(page);
+}
+
+bool ResidencyManager::HotResident(std::uint64_t page) const {
+    const std::lock_guard structureLock(structure);
+    return hotResident.contains(page);
+}
+
 bool ResidencyManager::ImportSettled(std::uint64_t page) const {
+    const std::lock_guard structureLock(structure);
     const auto id = find(page);
     return id && pages[*id].importSettled;
 }
@@ -589,7 +661,9 @@ bool ResidencyManager::settled(const ResidencyToken& token) {
 
 void ResidencyManager::waitFor(const ResidencyToken& token) {
     ++counts.waits;
+    const auto held = structure.ReleaseAll();
     device.Wait(token);
+    structure.Reacquire(held);
 }
 
 std::optional<std::uint32_t> ResidencyManager::find(std::uint64_t page) const {
@@ -1129,6 +1203,7 @@ bool ResidencyManager::Advance() {
 }
 
 void ResidencyManager::Apply() {
+    const std::lock_guard structureLock(structure);
     settleImports();
     applyQueued();
     retireReached();
@@ -1185,17 +1260,20 @@ void ResidencyManager::admitEager() {
 }
 
 void ResidencyManager::Prepare() {
+    const std::lock_guard structureLock(structure);
     Advance();
     Apply();
 }
 
 void ResidencyManager::SetBudget(std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     budget = bytes;
     measuredEpoch = 0;
     ApplyBudget();
 }
 
 void ResidencyManager::ApplyBudget() {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     measuredEpoch = 0;
     appliedOthers = device.OtherDeviceBytes();
@@ -1237,6 +1315,7 @@ void ResidencyManager::evictDraining() {
 }
 
 void ResidencyManager::Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token) {
+    const std::lock_guard structureLock(structure);
     for (const auto id : residentIn(address, bytes)) {
         auto& page = pages[id];
         page.used = true;
@@ -1248,6 +1327,7 @@ void ResidencyManager::Pin(std::uint64_t address, std::uint64_t bytes, Residency
 }
 
 void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
@@ -1289,6 +1369,7 @@ void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, Residency
 }
 
 void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     ++touchFrame;
     reservedTouches.clear();
@@ -1433,6 +1514,7 @@ std::vector<ResidencyManager::Fill> ResidencyManager::demoteUnused(std::span<con
 }
 
 void ResidencyManager::Demote(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<std::uint32_t> ids;
     for (const auto& fill : withAliases(address, bytes)) ids.push_back(fill.id);
@@ -1440,6 +1522,7 @@ void ResidencyManager::Demote(std::uint64_t address, std::uint64_t bytes) {
 }
 
 void ResidencyManager::DemoteWritable() {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<std::uint32_t> ids;
     for (auto id = oldest; id != None; id = pages[id].newer) {
@@ -1456,6 +1539,7 @@ void ResidencyManager::DropRange(std::uint64_t address, std::uint64_t bytes) {
 }
 
 void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     const auto fills = demoteUnused(withAliases(address, bytes));
     waitWriters(fills);
@@ -1464,6 +1548,7 @@ void ResidencyManager::NoteImportWritten(std::uint64_t address, std::uint64_t by
 }
 
 std::vector<ResidencyMirrorStore> ResidencyManager::StoreThroughMirrors(std::uint64_t address, std::uint64_t bytes, const ResidencyToken& lands) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<ResidencyMirrorStore> stores;
     if (bytes == 0) return stores;
@@ -1497,6 +1582,7 @@ std::vector<ResidencyMirrorStore> ResidencyManager::StoreThroughMirrors(std::uin
 }
 
 void ResidencyManager::RefreshImportWritten(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     const auto fills = demoteUnused(withAliases(address, bytes));
     for (const auto& fill : fills) clearDirty(fill.id, fill.begin, fill.end);
@@ -1511,6 +1597,7 @@ void ResidencyManager::QueueCpuWritten(std::span<const std::uint64_t> written) {
 }
 
 void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes, bool written) {
+    const std::lock_guard structureLock(structure);
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
     std::vector<std::uint32_t> unguardable;
@@ -1557,10 +1644,12 @@ void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes
 }
 
 void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     flushForCpuRead(address, bytes, false);
 }
 
 bool ResidencyManager::FlushForCpuReadUnlocked(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     return flushForCpuRead(address, bytes, true);
 }
 
@@ -1577,7 +1666,10 @@ bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t byte
             return true;
         }
         ++counts.waits;
-        return device.WaitUnlocked(token);
+        const auto held = structure.ReleaseAll();
+        const bool alive = device.WaitUnlocked(token);
+        structure.Reacquire(held);
+        return alive;
     };
     for (;;) {
         applyQueued();
@@ -1615,13 +1707,51 @@ bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t byte
         if (!wait(copied)) return false;
         if (!unlocked) break;
     }
+    releaseCpuRead(span.first, span.last, false);
+    return true;
+}
+
+bool ResidencyManager::FlushForCpuReadSettled(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return true;
+    const auto inSpan = [&](std::uint64_t page) { return page >= span.first && page <= span.last; };
+    queuedCpuPages.clear();
+    if (queued.load(std::memory_order_acquire)) {
+        const std::lock_guard queueLock(queueMutex);
+        for (const auto& range : dropQueue) {
+            const auto dropped = PagesOf(range.address, range.bytes);
+            if (!dropped.empty && dropped.first <= span.last && dropped.last >= span.first) return false;
+        }
+        for (const auto page : cpuQueue) {
+            if (inSpan(page)) queuedCpuPages.push_back(page);
+        }
+    }
+    if (!staleIn(address, bytes).empty()) return false;
+    for (const auto* entries : {&writers, &writingBack}) {
+        for (const auto& [page, token] : *entries) {
+            if (inSpan(page) && !TokenEmpty(token) && !device.Signaled(token)) return false;
+        }
+    }
+    for (const auto id : residentIn(address, bytes)) {
+        if (!pages[id].dirtyRuns.empty()) return false;
+    }
+    withoutRecorder = true;
+    releaseCpuRead(span.first, span.last, true);
+    withoutRecorder = false;
+    queuedCpuPages.clear();
+    return true;
+}
+
+void ResidencyManager::releaseCpuRead(std::uint64_t firstPage, std::uint64_t lastPage, bool writersSettled) {
+    const auto inSpan = [&](std::uint64_t page) { return page >= firstPage && page <= lastPage; };
     eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return inSpan(entry.first); });
-    eraseUnsettledIf(writers, UnsettledWriter, [&](const auto& entry) { return inSpan(entry.first) && settled(entry.second); });
-    for (auto page = span.first; page <= span.last; ++page) {
+    eraseUnsettledIf(writers, UnsettledWriter, [&](const auto& entry) { return inSpan(entry.first) && (writersSettled || settled(entry.second)); });
+    for (auto page = firstPage; page <= lastPage; ++page) {
         const auto id = find(page);
         if (id && !pages[*id].dirtyRuns.empty()) continue;
         if (isStale(page)) continue;
-        if (!accessGuards.contains(page) && !(id && pages[*id].accessGuarded) && span.last - span.first >= 16) continue;
+        if (!accessGuards.contains(page) && !(id && pages[*id].accessGuarded) && lastPage - firstPage >= 16) continue;
         device.UnguardAccess(page);
         accessGuards.erase(page);
         if (!id) continue;
@@ -1629,13 +1759,13 @@ bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t byte
         pages[*id].accessMask = 0;
         rearm(*id);
     }
-    return true;
 }
 
 void ResidencyManager::rearm(std::uint32_t id) {
     auto& page = pages[id];
     if (!page.cpuWritable || page.guarded) return;
     if (hotResident.contains(page.index)) return;
+    if (withoutRecorder && std::find(queuedCpuPages.begin(), queuedCpuPages.end(), page.index) != queuedCpuPages.end()) return;
     if (!page.importSettled) {
         ++counts.unsettledGuards;
         markHot(page.index, Epoch());
@@ -1680,6 +1810,7 @@ void ResidencyManager::writeBackDirty(std::span<const std::uint32_t> ids, bool k
 }
 
 void ResidencyManager::PrepareImportWrite(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     std::vector<std::uint32_t> ids;
     for (const auto& fill : withAliases(address, bytes)) ids.push_back(fill.id);
@@ -1739,6 +1870,7 @@ void ResidencyManager::unmarkHot(std::uint64_t page) {
 }
 
 void ResidencyManager::RefreshHot() {
+    const std::lock_guard structureLock(structure);
     applyQueued();
     if (hotResident.empty()) return;
     const auto now = Epoch();
@@ -1762,6 +1894,7 @@ void ResidencyManager::RefreshHot() {
 }
 
 void ResidencyManager::Retire() {
+    const std::lock_guard structureLock(structure);
     settleImports();
     applyQueued();
     retireReached();
@@ -1773,6 +1906,7 @@ void ResidencyManager::Retire() {
 }
 
 std::optional<MirrorSlot> ResidencyManager::Slot(std::uint64_t page) {
+    const std::lock_guard structureLock(structure);
     applyDrops();
     const auto id = find(page);
     if (!id) return std::nullopt;
@@ -1780,6 +1914,7 @@ std::optional<MirrorSlot> ResidencyManager::Slot(std::uint64_t page) {
 }
 
 std::optional<MirrorSlot> ResidencyManager::WriteSlot(std::uint64_t page) {
+    const std::lock_guard structureLock(structure);
     applyDrops();
     const auto id = find(page);
     if (!id || !dirtyable(pages[*id])) return std::nullopt;
@@ -1793,12 +1928,14 @@ bool ResidencyManager::Used(std::uint64_t page) {
 }
 
 std::optional<std::uint64_t> ResidencyManager::Translate(std::uint64_t page) {
+    const std::lock_guard structureLock(structure);
     const auto slot = Slot(page);
     if (!slot) return std::nullopt;
     return chunks[slot->chunk].address + (std::uint64_t{slot->slot} << ResidencyPageShift);
 }
 
 ResidencyMask ResidencyManager::Dirty(std::uint64_t page) {
+    const std::lock_guard structureLock(structure);
     applyDrops();
     const auto id = find(page);
     return id ? pages[*id].dirty : ResidencyMask{0};
@@ -1818,6 +1955,7 @@ bool ResidencyManager::AnyResident(std::uint64_t address, std::uint64_t bytes) {
 }
 
 std::vector<ResidencyRange> ResidencyManager::ResidentRanges() {
+    const std::lock_guard structureLock(structure);
     applyDrops();
     if (rangesSerial == serial) return ranges;
     std::vector<std::uint64_t> indices;
@@ -1835,6 +1973,7 @@ std::vector<ResidencyRange> ResidencyManager::ResidentRanges() {
 }
 
 std::vector<std::uint64_t> ResidencyManager::TakeChanges() {
+    const std::lock_guard structureLock(structure);
     applyDrops();
     std::vector<std::uint64_t> taken(changes.begin(), changes.end());
     changes.clear();
@@ -1843,6 +1982,7 @@ std::vector<std::uint64_t> ResidencyManager::TakeChanges() {
 }
 
 std::vector<std::uint32_t> ResidencyManager::Chunks() const {
+    const std::lock_guard structureLock(structure);
     std::vector<std::uint32_t> live;
     for (std::uint32_t chunk = 0; chunk < chunks.size(); ++chunk) {
         if (chunks[chunk].live) live.push_back(chunk);
@@ -1851,11 +1991,13 @@ std::vector<std::uint32_t> ResidencyManager::Chunks() const {
 }
 
 std::uint64_t ResidencyManager::ChunkAddress(std::uint32_t chunk) const {
+    const std::lock_guard structureLock(structure);
     if (chunk >= chunks.size() || !chunks[chunk].live) throw std::out_of_range("residency: chunk " + std::to_string(chunk) + " is not live");
     return chunks[chunk].address;
 }
 
 ResidencyCounts ResidencyManager::Counts() const {
+    const std::lock_guard structureLock(structure);
     auto result = counts;
     result.chunks = liveChunks;
     result.resident = static_cast<std::uint32_t>(resident.size());

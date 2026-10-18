@@ -124,6 +124,7 @@ public:
     bool Reached(const ResidencyToken& token) override;
     void Wait(const ResidencyToken& token) override;
     bool WaitUnlocked(const ResidencyToken& token) override;
+    bool Signaled(const ResidencyToken& token) override;
     ResidencyToken Newest() override;
     ResidencyToken Current() override;
     ResidencyImport Import(std::uint64_t page) override;

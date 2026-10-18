@@ -102,6 +102,10 @@ public:
         Wait(token);
         return true;
     }
+    virtual bool Signaled(const ResidencyToken& token) {
+        static_cast<void>(token);
+        return false;
+    }
     virtual ResidencyToken Newest() = 0;
     virtual ResidencyToken Current() = 0;
     virtual ResidencyImport Import(std::uint64_t page) = 0;
@@ -190,6 +194,20 @@ struct ResidencyCounts {
     std::uint32_t free = 0;
 };
 
+class ResidencyMutex {
+public:
+    void lock();
+    void unlock();
+    bool HeldByThisThread() const;
+    std::uint32_t ReleaseAll();
+    void Reacquire(std::uint32_t depth);
+
+private:
+    std::mutex mutex;
+    std::atomic<const void*> owner{nullptr};
+    std::uint32_t depth = 0;
+};
+
 class ResidencyManager {
 public:
     ResidencyManager(IResidencyDevice& device, const ResidencyPolicy& policy);
@@ -219,6 +237,8 @@ public:
     void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
     bool FlushForCpuReadUnlocked(std::uint64_t address, std::uint64_t bytes);
+    bool FlushForCpuReadSettled(std::uint64_t address, std::uint64_t bytes);
+    ResidencyMutex& Mutex() const { return structure; }
     void WriteBackAll();
     void Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
     void MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
@@ -254,11 +274,17 @@ public:
     std::uint32_t ChunkSlots() const { return chunkSlots; }
     std::uint64_t Serial() const { return serial; }
     std::uint64_t Epoch() const { return epoch.load(std::memory_order_relaxed); }
-    bool Hot(std::uint64_t page) const { return hot.contains(page); }
-    bool HotResident(std::uint64_t page) const { return hotResident.contains(page); }
+    bool Hot(std::uint64_t page) const;
+    bool HotResident(std::uint64_t page) const;
     bool ImportSettled(std::uint64_t page) const;
-    std::uint64_t BudgetBytes() { return budgetBytes(); }
-    bool FullResidency() { return fullResidency(); }
+    std::uint64_t BudgetBytes() {
+        const std::lock_guard lock(structure);
+        return budgetBytes();
+    }
+    bool FullResidency() {
+        const std::lock_guard lock(structure);
+        return fullResidency();
+    }
     ResidencyCounts Counts() const;
 
 private:
@@ -414,7 +440,9 @@ private:
     void changed(std::uint64_t page);
     void waitFor(const ResidencyToken& token);
     bool flushForCpuRead(std::uint64_t address, std::uint64_t bytes, bool unlocked);
+    void releaseCpuRead(std::uint64_t firstPage, std::uint64_t lastPage, bool writersSettled);
 
+    mutable ResidencyMutex structure;
     IResidencyDevice& device;
     const std::uint32_t chunkSlots;
     const std::uint32_t hotFaults;
@@ -443,6 +471,9 @@ private:
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
     std::unordered_set<std::uint64_t> unsettledImports;
+    std::vector<std::uint64_t> settlesWithoutToken;
+    bool withoutRecorder = false;
+    std::vector<std::uint64_t> queuedCpuPages;
     mutable std::shared_mutex ownedMutex;
     std::unordered_map<std::uint64_t, Owned> owned;
     std::unordered_set<std::uint64_t> staleOwned;

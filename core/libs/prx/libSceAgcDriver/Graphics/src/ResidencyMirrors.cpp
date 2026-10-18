@@ -113,6 +113,7 @@ MirrorSpan::MirrorSpan(ResidencyDriver* residency, std::uint64_t begin, std::uin
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
     auto& manager = residency->Manager();
+    const std::lock_guard structureLock(manager.Mutex());
     first = begin >> ResidencyPageShift;
     const auto last = (end - 1) >> ResidencyPageShift;
     pages.resize(static_cast<std::size_t>(last - first + 1));
@@ -173,6 +174,7 @@ void MirrorSpan::NoteWritten(std::span<const MirrorPiece> pieces) const {
     if (residency == nullptr) return;
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
+    const std::lock_guard structureLock(residency->Manager().Mutex());
     for (const auto& piece : pieces) {
         if (piece.end <= piece.begin) continue;
         if (piece.buffer != VK_NULL_HANDLE) residency->NoteDriverWrite(piece.begin, piece.end - piece.begin);
@@ -183,9 +185,13 @@ void MirrorSpan::NoteWritten(std::span<const MirrorPiece> pieces) const {
 bool MirrorsDirty(std::uint64_t begin, std::uint64_t end) {
     auto* residency = ResidencyDriver::Active();
     if (residency == nullptr || end <= begin) return false;
+    auto& manager = residency->Manager();
+    const auto firstPage = begin & ~(ResidencyPageBytes - 1);
+    const auto lastPage = (end - 1) & ~(ResidencyPageBytes - 1);
+    if (!manager.DirtyIn(firstPage, lastPage - firstPage + ResidencyPageBytes)) return false;
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
-    auto& manager = residency->Manager();
+    const std::lock_guard structureLock(manager.Mutex());
     if (!manager.AnyDirty() || !manager.AnyResident(begin, end - begin)) return false;
     for (auto index = begin >> ResidencyPageShift; index <= (end - 1) >> ResidencyPageShift; ++index) {
         if (manager.Dirty(index) != 0) return true;

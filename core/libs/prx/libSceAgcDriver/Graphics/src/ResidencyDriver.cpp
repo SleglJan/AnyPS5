@@ -219,6 +219,7 @@ std::optional<ResidencyDriver::MirrorTarget> ResidencyDriver::MirrorOf(std::uint
 }
 
 void ResidencyDriver::NoteDriverWrite(std::uint64_t address, std::uint64_t bytes) {
+    const std::lock_guard structureLock(manager.Mutex());
     manager.Pin(address, bytes, ResidencyAccess::Write, recorder.CallerToken());
     manager.NoteGpuWritten(address, bytes, true);
 }
@@ -246,6 +247,7 @@ void ResidencyDriver::StoreThroughMirrors(std::uint64_t address, std::span<const
 }
 
 void ResidencyDriver::AccessFault(std::uint64_t page) {
+    if (!GuestMemory::GpuMutex().HeldByThisThread() && !Recorder::SnapshotWriteOverlaps(page << ResidencyPageShift, ResidencyPageBytes) && manager.FlushForCpuReadSettled(page << ResidencyPageShift, ResidencyPageBytes)) return;
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
     recorder.SyncThrough(page << ResidencyPageShift, ResidencyPageBytes, lock.owns_lock());
@@ -265,6 +267,7 @@ void ResidencyDriver::WriteBackAll() {
 void ResidencyDriver::UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     constexpr std::uint64_t largest = std::uint64_t{8u} << 20u;
     const std::lock_guard lock(GuestMemory::GpuMutex());
+    const std::lock_guard structureLock(manager.Mutex());
     for (const auto& [begin, end] : ranges) {
         if (end <= begin || end - begin > largest) continue;
         manager.Use(begin, end - begin, ResidencyAccess::Read);
@@ -277,6 +280,7 @@ void ResidencyDriver::DropMirrors(std::span<const ResidencyRange> ranges) {
 
 void ResidencyDriver::BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports) {
     const std::lock_guard lock(GuestMemory::GpuMutex());
+    const std::lock_guard structureLock(manager.Mutex());
     for (const auto& grant : grants) manager.NoteGpuWritten(grant.address, grant.bytes);
     if (writableImports) manager.DemoteWritable();
     for (const auto& grant : grants) manager.Pin(grant.address, grant.bytes, ResidencyAccess::Write, recorder.CallerToken());
@@ -284,6 +288,7 @@ void ResidencyDriver::BeforeWritingDispatch(std::span<const ResidencyRange> gran
 
 ResidencyPublication ResidencyDriver::Publish() {
     ResidencyPublication publication;
+    const std::lock_guard structureLock(manager.Mutex());
     const auto changes = manager.TakeChanges();
     publication.serial = manager.Serial();
     publication.changed.reserve(changes.size());
@@ -317,6 +322,10 @@ void ResidencyDriver::Wait(const ResidencyToken& token) {
 bool ResidencyDriver::WaitUnlocked(const ResidencyToken& token) {
     recorder.Submit();
     return recorder.WaitTokenUnlocked(token);
+}
+
+bool ResidencyDriver::Signaled(const ResidencyToken& token) {
+    return recorder.TokenSignaled(token);
 }
 
 ResidencyToken ResidencyDriver::Newest() {
