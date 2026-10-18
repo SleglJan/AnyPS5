@@ -373,6 +373,7 @@ public:
             if (recorder != nullptr && owned != nullptr) recorder->Keep(owned);
             std::unique_ptr<CommandBatch> batch;
             if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+            if (recorder != nullptr) recorder->DeclareSection({{image, true}, {view, true}});
             const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
             VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -460,6 +461,7 @@ public:
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        if (recorder != nullptr) recorder->DeclareSection({{image, true}, {view, true}});
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
         constexpr VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -976,6 +978,7 @@ public:
         const bool sampledUnchanged = samplingActive && collectedUnchanged(sampling.initial[0]);
         const GuestMemory::UnchangedQuery htileRange{target.htileAddress, static_cast<std::size_t>(htileBytes()), htileGeneration};
         const bool expandHtile = (links.count != 0u || links.htileAsked) && (samplingActive ? clearGeneration == 0u && collectedUnchanged(sampling.initial[1]) : collectedUnchanged(htileRange));
+        recorder->DeclareSection({{image, true}, {view, true}, residency->SectionAccess(false)});
         const auto commands = recorder->Commands();
         const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
         const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
@@ -1132,6 +1135,7 @@ public:
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        if (recorder != nullptr) recorder->DeclareSection({{image, true}, {view, true}, {source.image, true}, {source.view, true}});
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         constexpr VkAccessFlags all = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, all, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -1261,6 +1265,7 @@ public:
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        if (recorder != nullptr) recorder->DeclareSection({{image, true}, {view, true}, {storage->Image(), true}});
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         if (recorder != nullptr) recorder->Keep(storage);
         VkBufferImageCopy depthRegion{0, 0, 0, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, {0, 0, 0}, {target.extent.width, target.extent.height, 1}};
@@ -1368,6 +1373,7 @@ private:
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        if (recorder != nullptr) recorder->DeclareSection({{image, true}, {view, true}, {stencilCopy.image, true}});
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -1430,6 +1436,7 @@ private:
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
         const auto bytes = static_cast<std::size_t>(target.extent.width) * target.extent.height * (stencil ? 1u : d16 ? 2u : 4u);
         if (plane.staging == nullptr) plane.staging = std::make_unique<DeviceBuffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        recorder->DeclareSection({{image, true}, {view, true}, {storage->Image(), true}});
         const auto commands = recorder->Commands();
         recorder->Keep(storage);
         const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
@@ -1473,6 +1480,7 @@ private:
 struct DepthPlaneSlice {
     VkImage image = VK_NULL_HANDLE;
     std::uint64_t written = 0;
+    VkImageView view = VK_NULL_HANDLE;
 };
 
 class DepthPlaneCopy {
@@ -1593,6 +1601,13 @@ private:
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+        std::vector<Recorder::SectionObject> objects{{image, true}};
+        for (const auto& slice : slices) {
+            if (slice.image == VK_NULL_HANDLE) continue;
+            objects.push_back({slice.image, true});
+            objects.push_back({slice.view, true});
+        }
+        if (recorder != nullptr) recorder->DeclareSection(objects);
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -1687,6 +1702,12 @@ public:
         if (slices.empty()) return;
         auto* recorder = Recorder::Active();
         Require(recorder != nullptr, "depth surface storage copies need an active recorder");
+        std::vector<Recorder::SectionObject> objects{{storage->Image(), true}};
+        for (const auto& slice : slices) {
+            objects.push_back({slice.surface->image, true});
+            objects.push_back({slice.surface->view, true});
+        }
+        recorder->DeclareSection(objects);
         const auto commands = recorder->Commands();
         recorder->Keep(storage);
         const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
@@ -1931,6 +1952,7 @@ std::optional<VkImageAspectFlags> storeBackFilledHtile(const Context& context, R
         PrepareImportWrite(target.htileAddress, bytes);
         recorder.FlushStoresOverlapping(target.htileAddress, bytes);
         recorder.FlushKeyStoresOverlapping(target.htileAddress, bytes);
+        recorder.DeclareSection({});
         const auto commands = recorder.Commands();
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, import->buffer, target.htileAddress - import->base, bytes, expandedHtileWord(pattern, target.htileStencil, cleared));
@@ -2271,6 +2293,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         found->CheckCurrent();
         found->CheckResource(resource);
         Require(found->pendingClear == 0u, "native multisample depth fast-clear transition is not implemented");
+        recorder->DeclareSection({{found->image, true}, {found->view, true}});
         RecordMemoryBarrier(context, recorder->Commands(), VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         return found->Sampled(words, resource, components);
@@ -2306,7 +2329,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         auto* slice = depthSlice(context.device, address, base);
         if (slice != nullptr) slice->ApplyFastClear();
         if (slice == nullptr) slices.push_back({});
-        else slices.push_back({slice->image, slice == drawnDepth ? 0u : slice->written});
+        else slices.push_back({slice->image, slice == drawnDepth ? 0u : slice->written, slice->view});
     }
     const auto imageFormat = integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT;
     auto& copy = planeCopies()[{context.device, base.address, base.extent.width, base.extent.height, imageFormat, layers}];

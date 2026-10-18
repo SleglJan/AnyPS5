@@ -3760,7 +3760,20 @@ Recorder::Batch* Recorder::callerNewest() {
 void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu) {
     const std::lock_guard recordingGuard(recording);
     auto& open = callerOpen();
-    if (streams.size() > 1) beginSection();
+    if (streams.size() > 1) {
+        DeclareSection({});
+        beginSection();
+        const auto stream = streamOfCaller();
+        const auto end = address + bytes.size();
+        Epoch after{};
+        for (std::uint32_t other = 0; other < streams.size(); ++other) {
+            if (other != stream && opens[other] != nullptr && overlaps(*opens[other], address, end)) after[other] = opens[other]->value;
+        }
+        for (const auto& batch : inFlight) {
+            if (batch->stream != stream && overlaps(*batch, address, end)) after[batch->stream] = std::max(after[batch->stream], batch->value);
+        }
+        dependOn(after);
+    }
     Require(open != nullptr || !inFlight.empty(), "no batch to append a completion label to");
     Batch& batch = open != nullptr ? *open : *inFlight.back();
     std::vector<std::byte> copy(bytes.begin(), bytes.end());
@@ -3875,6 +3888,14 @@ void Recorder::SubmitLabelled() {
     for (std::uint32_t stream = 0; stream < streams.size(); ++stream) {
         if (labelSince[stream] != NoPendingLabel) submitStream(stream);
     }
+    if (activeRecorder == this && !anyOpen()) workSinceSubmit.store(0, std::memory_order_relaxed);
+}
+
+void Recorder::SubmitCaller() {
+    const std::lock_guard recordingGuard(recording);
+    PerformanceTimer frameTiming("Recorder.Submit");
+    dropStaleHoldKept();
+    submitStream(streamOfCaller());
     if (activeRecorder == this && !anyOpen()) workSinceSubmit.store(0, std::memory_order_relaxed);
 }
 

@@ -41,10 +41,11 @@ VkClearColorValue fastClearColor(const ColorTarget& target) {
 }
 
 template<typename Record>
-void recordCommands(const Context& context, Record&& record) {
+void recordCommands(const Context& context, std::initializer_list<Recorder::SectionObject> objects, Record&& record) {
     auto* recorder = Recorder::Active();
     std::unique_ptr<CommandBatch> batch;
     if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
+    if (recorder != nullptr) recorder->DeclareSection(objects);
     record(recorder != nullptr ? recorder->Commands() : batch->Handle(), recorder);
     if (batch) batch->SubmitAndWait();
 }
@@ -90,7 +91,7 @@ public:
             viewInfo.format = target.format;
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView multisampled target");
-            recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+            recordCommands(context, {{image, true}, {view, true}}, [&](VkCommandBuffer commands, Recorder* recorder) {
                 VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
                 toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -117,7 +118,7 @@ public:
     void ApplyFastClear(const ColorTarget& use) {
         VkClearColorValue clear{};
         if (!TakeMultisampledClear(cmask, colorFill, use, clear)) return;
-        recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+        recordCommands(context, {{image, true}, {view, true}}, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             context.Resolved(&DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
@@ -132,7 +133,7 @@ public:
         Require(cmask.Keys() != DccKeys::Clear0000, "sampling a multisampled color target whose CMASK fast clear no draw has applied is not implemented");
         Require(Recorder::Active() != nullptr, "a multisampled color target is only sampled by recorded draws and dispatches");
         ApplyFastClear(target);
-        recordCommands(context, [&](VkCommandBuffer commands, Recorder*) {
+        recordCommands(context, {{image, true}, {view, true}}, [&](VkCommandBuffer commands, Recorder*) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
             Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         });
@@ -500,7 +501,7 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
     auto& target = acquire(context, source);
     const std::array<VkImageView, 2> views{target.view, destinationView};
     auto framebuffer = std::make_shared<Framebuffer>(context, target.ResolvePass(), views, source.extent);
-    recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
+    recordCommands(context, {{target.image, true}, {target.view, true}, {destination.Image(), true}, {destinationView, true}}, [&](VkCommandBuffer commands, Recorder* recorder) {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         begin.renderPass = target.ResolvePass();

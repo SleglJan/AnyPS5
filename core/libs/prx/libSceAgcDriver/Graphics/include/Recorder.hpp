@@ -12,6 +12,7 @@
 #include <deque>
 #include <mutex>
 #include <functional>
+#include <initializer_list>
 #include <list>
 #include <map>
 #include <memory>
@@ -202,6 +203,7 @@ public:
     // Ends and submits the open batch without waiting.
     void Submit();
     void SubmitLabelled();
+    void SubmitCaller();
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
@@ -217,6 +219,7 @@ public:
         bool written;
     };
     void DeclareSection(std::span<const SectionObject> objects);
+    void DeclareSection(std::initializer_list<SectionObject> objects) { DeclareSection(std::span<const SectionObject>(objects.begin(), objects.size())); }
     void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     static std::uint64_t LabelTableLookups();

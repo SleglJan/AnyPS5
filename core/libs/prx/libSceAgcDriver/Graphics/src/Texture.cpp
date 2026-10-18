@@ -373,6 +373,10 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             std::unique_ptr<CommandBatch> batch;
             VkCommandBuffer commands = VK_NULL_HANDLE;
             if (recorder != nullptr) {
+                const auto* residency = ResidencyDriver::Active();
+                const bool mirrored = residency != nullptr && std::any_of(gather.begin(), gather.end(), [](const auto& copy) { return copy.owner != nullptr; });
+                if (mirrored) recorder->DeclareSection({{image, true}, residency->SectionAccess(false)});
+                else recorder->DeclareSection({{image, true}});
                 commands = recorder->Commands();
                 if (staging != nullptr) recorder->Keep(staging, static_cast<std::size_t>(guestBytes));
                 recorder->Keep(tiled, static_cast<std::size_t>(guestBytes));
@@ -708,6 +712,7 @@ bool Texture::RefreshCopy() {
     std::unique_ptr<CommandBatch> batch;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     if (recorder != nullptr) {
+        recorder->DeclareSection({{image, true}, {storageSource->Image(), true}});
         commands = recorder->Commands();
     } else {
         batch = std::make_unique<CommandBatch>(context);
@@ -2720,6 +2725,7 @@ void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<s
         VkCommandBuffer commands = VK_NULL_HANDLE;
         auto timing = Recorder::NoTiming;
         if (recorder != nullptr) {
+            recorder->DeclareSection({{image, true}});
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::DccClear);
             if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
@@ -2835,6 +2841,7 @@ void StorageTexture::upload(const std::vector<bool>* layers, const std::vector<s
         if (recorder != nullptr) {
             // A queued label store in the surface lands before the detile reads it.
             recorder->FlushStoresOverlapping(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+            recorder->DeclareSection({{image, true}});
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
             if (linear) recorder->Keep(linear, linear->Size());
@@ -3289,6 +3296,9 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         }
         // A queued label store in a run lands before the detile reads it.
         for (const auto& [begin, end] : reads) recorder->FlushStoresOverlapping(begin, static_cast<std::size_t>(end - begin));
+        const auto* residency = ResidencyDriver::Active();
+        if (residency != nullptr && std::any_of(sources.begin(), sources.end(), [](const Source& source) { return source.mirror; })) recorder->DeclareSection({{image, true}, residency->SectionAccess(false)});
+        else recorder->DeclareSection({{image, true}});
         commands = recorder->Commands();
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
         if (linear) recorder->Keep(linear, linear->Size());
@@ -4908,6 +4918,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
             BumpPendingSerial();
         }
     }
+    recorder->DeclareSection({{image, true}});
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::DccClear);
     if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
@@ -5039,6 +5050,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     static std::atomic<int> traced{0};
     if (trace && (descriptor.dccAddress != 0 || aliasedKeys) && traced.fetch_add(1) < 16) std::fprintf(stderr, "[fill-cover] clear of surface 0x%llx+0x%llx (format %u, keys 0x%llx%s): pattern %08x %08x %08x %08x\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), descriptor.format, static_cast<unsigned long long>(descriptor.dccAddress), aliasedKeys ? ", another image over the memory has keys" : "", pattern[0], pattern[1], pattern[2], pattern[3]);
     GuestMemory::MarkWritten(begin, bytes);
+    recorder->DeclareSection({{image, true}});
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::FillClear);
     Recorder::CountBarriers(Recorder::CommandClass::FillClear, 2);
@@ -5166,6 +5178,7 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
         }
     }
     GuestMemory::MarkWritten(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
+    recorder->DeclareSection({{image, true}, {source.image, true}});
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
     Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
@@ -5353,6 +5366,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     VkCommandBuffer commands = VK_NULL_HANDLE;
     auto timing = Recorder::NoTiming;
     if (recorder != nullptr) {
+        recorder->DeclareSection({{image, true}, {source.image, true}});
         commands = recorder->Commands();
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
         if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
@@ -5654,6 +5668,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (recorder != nullptr) {
             recorder->FlushKeyStoresOverlapping(firstStored, static_cast<std::size_t>(lastStored - firstStored));
             recorder->FlushStoresOverlapping(firstStored, static_cast<std::size_t>(lastStored - firstStored));
+            if (const auto* residency = ResidencyDriver::Active(); residency != nullptr) recorder->DeclareSection({{image, true}, residency->SectionAccess(false)});
+            else recorder->DeclareSection({{image, true}});
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
             if (linear) recorder->Keep(linear, linear->Size());

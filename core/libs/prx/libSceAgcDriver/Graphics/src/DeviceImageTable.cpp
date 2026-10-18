@@ -573,6 +573,7 @@ void DeviceImageTable::record(Recorder& recorder) {
     const bool rebuilt = grown || keys.Rebuilt();
     const auto changed = keys.TakeChanged();
     if (!assign && !rebuilt && changed.empty()) return;
+    recorder.DeclareSection({{this, true}});
     const auto commands = recorder.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
     const auto words = keys.Words();

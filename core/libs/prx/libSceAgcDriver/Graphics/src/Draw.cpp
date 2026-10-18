@@ -1569,6 +1569,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             if (texture->SampledImage() != VK_NULL_HANDLE && (!texture->ViewsStorageImage() || texture->SampledImage() != texture->StorageSource()->Image())) objects.push_back({texture->SampledImage(), false});
         }
         if (resources.UsesDeviceImages()) {
+            objects.push_back({context.deviceImages, false});
             for (const auto& image : context.deviceImages->DispatchStorage()) objects.push_back({image->Image(), true});
             for (const auto& texture : context.deviceImages->DispatchTextures()) {
                 if (texture->SampledImage() != VK_NULL_HANDLE) objects.push_back({texture->SampledImage(), false});

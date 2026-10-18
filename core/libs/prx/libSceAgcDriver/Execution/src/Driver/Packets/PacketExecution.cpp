@@ -58,7 +58,7 @@ void Driver::execute(const Submission& submission) {
             recordDeferredLabels(localDevice.get(), submission.queue);
             if (localDevice != nullptr) {
                 if (suspendDrain) localDevice->WaitIdle();
-                else localDevice->SubmitRecorded(submission.queue == 0);
+                else localDevice->SubmitCallerRecorded(submission.queue == 0);
             }
             ++costs.suspends;
             if (profile) costs.suspendNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
@@ -348,7 +348,7 @@ void Driver::execute(const Submission& submission) {
             const auto localDevice = device.Load();
 
             recordDeferredLabels(localDevice.get(), submission.queue);
-            if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
+            if (localDevice != nullptr) localDevice->SubmitCallerRecorded(submission.queue == 0);
         }
     }
     endTiming.Finish();
