@@ -17,7 +17,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        if (device == nullptr) device = std::make_shared<VulkanDevice>();
+        if (device == nullptr) openDevice();
         const std::shared_ptr<VulkanDevice> localDevice = device;
         recordLabelsForPacket(localDevice.get(), submission.queue);
         localDevice->ColorMetadataPass(*pass);

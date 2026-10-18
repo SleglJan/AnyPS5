@@ -81,6 +81,7 @@ public:
 private:
     friend struct PacketTimer;
     void stop();
+    void openDevice();
     Driver();
     void rethrowFailure() const;
     void checkStopping() const;

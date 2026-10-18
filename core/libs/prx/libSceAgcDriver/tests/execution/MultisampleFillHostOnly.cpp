@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -233,8 +234,9 @@ bool FillsTakenAsMultisampledClearsAreNotStored(AgcDriver::VulkanDevice& device)
 
 int main() {
     try {
-        const auto device = OpenVulkanTestDevice();
+        const std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        AgcDriver::DriverDetail::Driver::Get().AdoptDeviceForTest(device);
         const bool tested = FillsTakenAsMultisampledClearsAreNotStored(*device);
         LibcRunShutdown_nid_postfix();
         if (!tested) return VulkanTestSkipped;

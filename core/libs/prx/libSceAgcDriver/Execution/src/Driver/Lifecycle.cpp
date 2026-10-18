@@ -7,7 +7,9 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProcessTermination.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <atomic>
 #include <cstdint>
@@ -65,6 +67,13 @@ void Driver::AdoptDeviceForTest(std::shared_ptr<VulkanDevice> adopted) {
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     require(adopted != nullptr && device == nullptr, "the driver adopts a device only before it opens its own");
     device = std::move(adopted);
+}
+
+void Driver::openDevice() {
+    GuestMemory::AssertGpuLockHeld("Driver::openDevice");
+    require(device == nullptr, "the driver opens its device once");
+    require(Graphics::Recorder::Active() == nullptr, "the driver would open a second device while another device is live in this process; a test that opened its own device hands it over with AdoptDeviceForTest");
+    device = std::make_shared<VulkanDevice>();
 }
 
 void Driver::stop() {

@@ -1728,7 +1728,7 @@ void Driver::RegisterShader(const Shader* shader) {
     std::shared_ptr<VulkanDevice> localDevice = device.Load();
     if (localDevice == nullptr) {
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        if (device == nullptr) device = std::make_shared<VulkanDevice>();
+        if (device == nullptr) openDevice();
         localDevice = device;
     }
     snapshot.registeredState = std::make_shared<const RegisteredShaderState>(DecodeRegisteredState(snapshot));
