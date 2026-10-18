@@ -25,6 +25,7 @@ bool ImageStoresRecorded(const IrProgram& program, std::span<const std::uint32_t
 const StorageImageMemoryFunctions* StorageImageMemoryFunctionsOf(const SpirvEmitterState& state);
 
 void DefineImageStoreRecord(SpirvEmitterState& state);
+void EmitImageStoreNote(SpirvEmitterState& state, std::uint32_t noted);
 
 }
 

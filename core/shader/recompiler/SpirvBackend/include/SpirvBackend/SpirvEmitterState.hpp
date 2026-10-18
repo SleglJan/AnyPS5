@@ -142,6 +142,7 @@ struct SpirvEmitterState {
     std::uint32_t hostSubgroupSize = 0;
     bool splitSubgroup = false;
     bool waveSpansSubgroups = false;
+    bool entryBody = false;
     bool waveExchange = false;
     std::uint32_t waveExchangeVariable = 0;
     std::uint32_t waveExchangeParity = 0;

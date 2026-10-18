@@ -55,17 +55,6 @@ void EmitCountedLoop(SpirvEmitterState& state, std::uint32_t counter, std::uint3
     EmitLabel(state, merge);
 }
 
-void ReturnUnless(SpirvEmitterState& state, std::uint32_t condition, const std::function<void()>& before) {
-    const auto stop = state.module.AllocateId();
-    const auto next = state.module.AllocateId();
-    state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, condition, next, stop);
-    EmitLabel(state, stop);
-    if (before) before();
-    state.module.AddFunction(spv::OpReturn);
-    EmitLabel(state, next);
-}
-
 namespace Memory = StorageImageMemory;
 
 std::vector<std::uint32_t> FunctionParameters(SpirvEmitterState& state, std::uint32_t count) {
@@ -500,52 +489,19 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpLoad, type, value, pointer);
         return value;
     };
-    const auto supports = [&](spv::Capability capability) { return std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end(); };
-    const bool shared = !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformBallot) && supports(spv::CapabilityGroupNonUniformArithmetic);
-    if (shared) {
-        state.module.EmitCapability(spv::CapabilityGroupNonUniform);
-        state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
-        state.module.EmitCapability(spv::CapabilityGroupNonUniformArithmetic);
-    }
-    std::uint32_t pendingVariable = 0;
-    const auto call = [&](std::uint32_t key, std::uint32_t bit) {
-        state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.writtenChunkNoteFunction, key, bit);
-    };
-    const auto note = [&](std::uint32_t key, std::uint32_t bit) {
-        if (!shared) {
-            call(key, bit);
-            return;
-        }
-        const auto subgroup = constant(spv::ScopeSubgroup);
-        state.module.AddFunction(spv::OpStore, pendingVariable, ConstantBool(state, true));
-        const auto header = state.module.AllocateId();
-        const auto loop = state.module.AllocateId();
-        const auto continuation = state.module.AllocateId();
-        const auto merge = state.module.AllocateId();
-        state.module.AddFunction(spv::OpBranch, header);
-        EmitLabel(state, header);
-        const auto pending = load(boolean, pendingVariable);
-        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, pending, loop, merge);
-        EmitLabel(state, loop);
-        const auto first = state.module.AllocateId();
-        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, first, subgroup, key);
-        EmitIfCondition(state, equal(key, first), [&] {
-            const auto bits = state.module.AllocateId();
-            state.module.AddFunction(spv::OpGroupNonUniformBitwiseOr, u32, bits, subgroup, spv::GroupOperationReduce, bit);
-            const auto elected = state.module.AllocateId();
-            state.module.AddFunction(spv::OpGroupNonUniformElect, boolean, elected, subgroup);
-            EmitIfCondition(state, elected, [&] { call(first, bits); });
-            state.module.AddFunction(spv::OpStore, pendingVariable, ConstantBool(state, false));
-        });
-        state.module.AddFunction(spv::OpBranch, continuation);
-        EmitLabel(state, continuation);
-        state.module.AddFunction(spv::OpBranch, header);
-        EmitLabel(state, merge);
+    const auto noted = TypeU32Vector(state, 2u);
+    const auto returnUnless = [&](std::uint32_t condition, std::uint32_t key, std::uint32_t bit) {
+        const auto stop = state.module.AllocateId();
+        const auto next = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, condition, next, stop);
+        EmitLabel(state, stop);
+        state.module.AddFunction(spv::OpReturnValue, state.module.Constant(spv::OpConstantComposite, noted, constant(key), constant(bit)));
+        EmitLabel(state, next);
     };
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "record_image_store");
-    state.module.AddFunction(spv::OpFunction, TypeVoid(state), function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, u32, u32, u32, u32, u32, u32, u32, u32, u32));
+    state.module.AddFunction(spv::OpFunction, noted, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, noted, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32));
     std::array<std::uint32_t, 10> parameters{};
     for (auto& parameter : parameters) {
         parameter = state.module.AllocateId();
@@ -562,7 +518,6 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto totalVariable = variable(u64);
     const auto aboveVariable = variable(u64);
     const auto paddedVariable = variable(u32);
-    pendingVariable = variable(boolean);
     const auto [w0, w1, w2, w3, w4, w5, x, y, layer, lod] = parameters;
     const auto base = op(spv::OpShiftLeftLogical, u64, op(spv::OpBitwiseOr, u64, widen(w0), op(spv::OpShiftLeftLogical, u64, widen(andBits(w1, 0xffu)), wide(32u))), wide(8u));
     const auto format = field(w1, 20u, 0x1ffu);
@@ -594,13 +549,13 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto level = add(baseLevel, lod);
     const auto placeable = both(both(both(op(spv::OpINotEqual, boolean, sizeCode, constant(0u)), either(either(linear, block256), either(block4KB, block64KB))), both(typed, is(arrayPitch, 0u))),
         both(both(lessEqual(baseLevel, maxMip), lessEqual(baseLevel, lastLevel)), both(both(op(spv::OpINotEqual, boolean, start, wide(0u)), blockAligned), both(lessEqual(lod, constant(15u)), lessEqual(level, umin(lastLevel, maxMip))))));
-    ReturnUnless(state, placeable, [&] { note(constant(BdaAbi::WrittenImageWholeKey), constant(1u)); });
+    returnUnless(placeable, BdaAbi::WrittenImageWholeKey, 1u);
     const auto lastLayer = pick(u32, both(is(type, 11u), equal(baseArray, depth)), add(depth, constant(5u)), depth);
     const auto absoluteLayer = pick(u32, arrayed, add(baseArray, layer), constant(0u));
     const auto layerInside = either(none(arrayed), both(lessEqual(layer, lastLayer), lessEqual(absoluteLayer, lastLayer)));
     const auto levelWidth = EmitGlsl<GLSLstd450UMax, IrType::U32>(state, shr(width, level), constant(1u));
     const auto levelHeight = EmitGlsl<GLSLstd450UMax, IrType::U32>(state, shr(height, level), constant(1u));
-    ReturnUnless(state, both(layerInside, both(less(x, levelWidth), less(y, levelHeight))), nullptr);
+    returnUnless(both(layerInside, both(less(x, levelWidth), less(y, levelHeight))), 0u, 0u);
     const auto elementLog2 = sub(sizeCode, constant(1u));
     const auto mipCount = add(maxMip, constant(1u));
     const auto widthLog2 = shr(add(sub(blockLog2, elementLog2), constant(1u)), constant(1u));
@@ -663,10 +618,66 @@ void DefineImageStoreRecord(SpirvEmitterState& state) {
     const auto address = pick(u64, linear, linearAddress, tiledAddress);
     const auto key = op(spv::OpBitwiseOr, u32, add(Unary(state, spv::OpUConvert, u32, op(spv::OpShiftRightLogical, u64, address, wide(BdaAbi::WrittenChunkShift))), constant(1u)), constant(BdaAbi::WrittenImageKeyBit));
     const auto page = andBits(Unary(state, spv::OpUConvert, u32, op(spv::OpShiftRightLogical, u64, address, wide(BdaAbi::WrittenPageShift))), BdaAbi::WrittenChunkPages - 1u);
-    note(key, shl(constant(1u), page));
-    state.module.AddFunction(spv::OpReturn);
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, noted, result, key, shl(constant(1u), page));
+    state.module.AddFunction(spv::OpReturnValue, result);
     state.module.AddFunction(spv::OpFunctionEnd);
     state.imageStoreRecordFunction = function;
+}
+
+void EmitImageStoreNote(SpirvEmitterState& state, std::uint32_t noted) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto part = [&](std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, value, noted, index);
+        return value;
+    };
+    const auto key = part(0u);
+    const auto bit = part(1u);
+    const auto call = [&](std::uint32_t chunk, std::uint32_t bits) {
+        state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.writtenChunkNoteFunction, chunk, bits);
+    };
+    const auto supports = [&](spv::Capability capability) { return std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end(); };
+    const bool shared = state.entryBody && !state.module.InHelperFunction() && !HostSubgroupSingleLane(state) && supports(spv::CapabilityGroupNonUniformBallot) && supports(spv::CapabilityGroupNonUniformArithmetic);
+    EmitIfCondition(state, Binary(state, spv::OpINotEqual, boolean, key, ConstantU32(state, 0u)), [&] {
+        if (!shared) {
+            call(key, bit);
+            return;
+        }
+        state.module.EmitCapability(spv::CapabilityGroupNonUniform);
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformBallot);
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformArithmetic);
+        const auto subgroup = ConstantU32(state, spv::ScopeSubgroup);
+        const auto entry = state.currentLabel;
+        const auto header = state.module.AllocateId();
+        const auto loop = state.module.AllocateId();
+        const auto continuation = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        const auto pending = state.module.AllocateId();
+        const auto remaining = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, header);
+        state.module.AddFunction(spv::OpPhi, boolean, pending, ConstantBool(state, true), entry, remaining, continuation);
+        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, pending, loop, merge);
+        EmitLabel(state, loop);
+        const auto first = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, first, subgroup, key);
+        const auto same = Binary(state, spv::OpIEqual, boolean, key, first);
+        state.module.AddFunction(spv::OpLogicalNot, boolean, remaining, same);
+        EmitIfCondition(state, same, [&] {
+            const auto bits = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformBitwiseOr, u32, bits, subgroup, spv::GroupOperationReduce, bit);
+            const auto elected = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformElect, boolean, elected, subgroup);
+            EmitIfCondition(state, elected, [&] { call(first, bits); });
+        });
+        state.module.AddFunction(spv::OpBranch, continuation);
+        EmitLabel(state, continuation);
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, merge);
+    });
 }
 
 }

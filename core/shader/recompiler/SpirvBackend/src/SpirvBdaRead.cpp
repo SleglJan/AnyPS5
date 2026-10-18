@@ -561,13 +561,17 @@ std::uint32_t DefineBdaNotePages(SpirvEmitterState& state, std::uint32_t touch) 
     const auto voidType = state.module.Type(spv::OpTypeVoid);
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "note_bda_pages");
-    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, u32, u32, u32));
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, u32, u32, u32, u32, boolean));
     const auto first = state.module.AllocateId();
     const auto last = state.module.AllocateId();
     const auto noted = state.module.AllocateId();
+    const auto leader = state.module.AllocateId();
+    const auto elected = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, u32, first);
     state.module.AddFunction(spv::OpFunctionParameter, u32, last);
     state.module.AddFunction(spv::OpFunctionParameter, u32, noted);
+    state.module.AddFunction(spv::OpFunctionParameter, u32, leader);
+    state.module.AddFunction(spv::OpFunctionParameter, boolean, elected);
     EmitLabel(state, state.module.AllocateId());
     const auto note = [&](std::uint32_t page) {
         const auto address = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, page), BdaConstant(state, BdaTouchAbi::PageShift));
@@ -575,15 +579,7 @@ std::uint32_t DefineBdaNotePages(SpirvEmitterState& state, std::uint32_t touch) 
     };
     const auto moved = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, first, noted), Binary(state, spv::OpINotEqual, boolean, last, noted));
     EmitIfCondition(state, moved, [&] {
-        if (BdaSegmentsShared(state)) {
-            const auto leader = state.module.AllocateId();
-            state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, leader, ConstantU32(state, spv::ScopeSubgroup), first);
-            const auto elected = state.module.AllocateId();
-            EmitSubgroupElect(state, elected);
-            EmitIfCondition(state, Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, first, leader), elected), [&] { note(first); });
-        } else {
-            note(first);
-        }
+        EmitIfCondition(state, Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpINotEqual, boolean, first, leader), elected), [&] { note(first); });
         EmitIfCondition(state, Binary(state, spv::OpINotEqual, boolean, last, first), [&] { note(last); });
     });
     state.module.AddFunction(spv::OpReturn);
@@ -600,7 +596,15 @@ void NoteBdaSegmentRead(SpirvEmitterState& state, std::uint32_t address, std::ui
     const auto last = page(Binary(state, spv::OpISub, u64, Binary(state, spv::OpIAdd, u64, address, bytes), BdaConstant(state, 1u)));
     const auto noted = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, u32, noted, state.bdaNotedPage);
-    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNotePagesFunction, first, last, noted);
+    auto leader = first;
+    auto elected = ConstantBool(state, true);
+    if (state.entryBody && !state.module.InHelperFunction() && BdaSegmentsShared(state)) {
+        leader = state.module.AllocateId();
+        state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, u32, leader, ConstantU32(state, spv::ScopeSubgroup), first);
+        elected = state.module.AllocateId();
+        EmitSubgroupElect(state, elected);
+    }
+    state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNotePagesFunction, first, last, noted, leader, elected);
     state.module.AddFunction(spv::OpStore, state.bdaNotedPage, last);
 }
 

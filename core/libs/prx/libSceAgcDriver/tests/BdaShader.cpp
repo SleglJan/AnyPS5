@@ -326,6 +326,7 @@ std::vector<std::uint32_t> MakeImageStoreRecordTestShader(const std::array<std::
     if (state.imageStoreRecordFunction == 0u) throw std::runtime_error("the image store record function was not defined");
     const auto main = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), main, spv::FunctionControlMaskNone, TypeFunction(state));
+    state.entryBody = true;
     EmitLabel(state, state.module.AllocateId());
     const auto u32 = TypeU32(state);
     const auto ids = state.module.AllocateId();
@@ -338,10 +339,12 @@ std::vector<std::uint32_t> MakeImageStoreRecordTestShader(const std::array<std::
     EmitIfCondition(state, inside, [&] {
         const auto x = Binary(state, spv::OpIAdd, u32, column, ConstantU32(state, rect.x));
         const auto y = Binary(state, spv::OpIAdd, u32, row, ConstantU32(state, rect.y));
-        std::vector<std::uint32_t> call{spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.imageStoreRecordFunction};
+        const auto noted = state.module.AllocateId();
+        std::vector<std::uint32_t> call{spv::OpFunctionCall, TypeU32Vector(state, 2u), noted, state.imageStoreRecordFunction};
         for (std::uint32_t word = 0; word < 6u; ++word) call.push_back(ConstantU32(state, words[word]));
         call.insert(call.end(), {x, y, ConstantU32(state, rect.layer), ConstantU32(state, rect.lod)});
         state.module.AddFunction(call);
+        EmitImageStoreNote(state, noted);
     });
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);

@@ -2455,7 +2455,9 @@ void EmitImageStoreRecord(SpirvValueEmitContext& ctx, const IrValue& inst, const
     std::array<std::uint32_t, 6> words{};
     for (std::uint32_t word = 0; word < words.size(); ++word) words[word] = ctx.Def(handle->Argument(word));
     EmitIfCondition(state, active, [&] {
-        state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.imageStoreRecordFunction, words[0], words[1], words[2], words[3], words[4], words[5], x, y, layer, lod);
+        const auto noted = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionCall, TypeU32Vector(state, 2u), noted, state.imageStoreRecordFunction, words[0], words[1], words[2], words[3], words[4], words[5], x, y, layer, lod);
+        EmitImageStoreNote(state, noted);
     });
 }
 

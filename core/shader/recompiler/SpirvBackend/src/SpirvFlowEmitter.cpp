@@ -1196,8 +1196,11 @@ CalleeSignature EmitCalleeFunction(SpirvValueEmitContext& caller, const IrProgra
     StructuredFunctionState functionState;
     functionState.blockExitLabels.emplace(blocks[layout.callBlock[function]], state.currentLabel);
     state.module.AddFunction(spv::OpBranch, low.Label(layout.entry[function]));
+    const bool entryBody = state.entryBody;
+    state.entryBody = false;
     EmitFunctionBlocks(low, functionState, program, layout, function, &signature.exit);
     PatchStructuredPhis(low, functionState);
+    state.entryBody = entryBody;
     const auto words = state.module.TakeFunctionWords(start);
     std::vector<std::uint32_t> types{signature.type};
     std::vector<std::uint32_t> ids;

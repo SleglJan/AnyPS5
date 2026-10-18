@@ -1158,6 +1158,7 @@ void EmitProgram(SpirvEmitterState& state) {
         }
     }
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.meshGuestFunc != 0u ? state.meshGuestFunc : state.mainFunc, spv::FunctionControlMaskNone, TypeFunction(state));
+    state.entryBody = state.meshGuestFunc == 0u;
     EmitLabel(state, state.entryLabel);
     if (state.requirements.functionLds) {
         state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsDwordCount(state)), state.ldsVariable, spv::StorageClassFunction);
@@ -1280,6 +1281,7 @@ void EmitProgram(SpirvEmitterState& state) {
         EmitControlFlow(ctx, functionState, program);
     }
     state.module.AddFunction(spv::OpFunctionEnd);
+    state.entryBody = false;
     state.entryInvocationId = 0u;
     state.entryInvocationIndex = 0u;
     if (state.program.Resources().stage == IrShaderStage::Mesh) {
