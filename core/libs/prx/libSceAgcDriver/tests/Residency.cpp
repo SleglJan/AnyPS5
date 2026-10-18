@@ -1586,6 +1586,41 @@ void DemotionRetilesStalePages() {
     Expect(!fixture.manager->Slot(BasePage + 3) && owner.retiled.size() == 1 && fixture.Stored(BasePage + 3, 9) == 905, "an unbounded writer's demotion retiled the stale subpage and wrote it back");
 }
 
+class DemotingOwner final : public IResidencyOwner {
+public:
+    explicit DemotingOwner(Fixture& fixture) : fixture(fixture) {}
+
+    void Retile(std::span<const ResidencyRange> ranges) override {
+        ++retiles;
+        for (const auto& range : ranges) {
+            std::thread other([&] { fixture.manager->Demote(range.address & ~(ResidencyPageBytes - 1), ResidencyPageBytes); });
+            other.join();
+        }
+    }
+
+    Fixture& fixture;
+    int retiles = 0;
+};
+
+void PageLeftDuringDemotionRetileLeavesOnce() {
+    scope = "a page another thread demotes while a demotion retiles leaves its mirror once";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 3);
+    DemotingOwner owner(fixture);
+    fixture.manager->Own(Address(BasePage + 3), ResidencyPageBytes, &owner);
+    fixture.gpu.Drain();
+    fixture.manager->MarkStale(Address(BasePage + 3, 9), ResidencySubpageBytes, &owner);
+    fixture.manager->DemoteWritable();
+    fixture.gpu.Drain();
+    Expect(owner.retiles == 1 && !fixture.manager->Slot(BasePage + 3), "the stale page was retiled and left its mirror");
+    Expect(fixture.manager->Counts().demoted == 1, "the page left once, not again by the demotion that held its id across the retile: demoted " + std::to_string(fixture.manager->Counts().demoted));
+    fixture.Use(0, BasePage + 4);
+    fixture.Use(0, BasePage + 5);
+    const auto first = fixture.manager->Slot(BasePage + 4);
+    const auto second = fixture.manager->Slot(BasePage + 5);
+    Expect(first && second && (first->chunk != second->chunk || first->slot != second->slot), "two pages admitted after the demotion hold their own mirror slots");
+}
+
 void AdmissionRule() {
     scope = "admission rule";
     Fixture fixture(8, 1);
@@ -2066,6 +2101,7 @@ int main() {
         UnguardedStalePagesRetiledForSignals();
         StaleOwnedPagesKeptAndDisowned();
         DemotionRetilesStalePages();
+        PageLeftDuringDemotionRetileLeavesOnce();
         AdmissionRule();
         CanonicalAliases();
         EvictedAliasKeepsSharedGuard();

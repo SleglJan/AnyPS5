@@ -398,6 +398,10 @@ private:
     std::vector<std::uint32_t> residentIn(std::uint64_t address, std::uint64_t bytes) const;
     std::vector<Fill> withAliases(std::uint64_t address, std::uint64_t bytes);
     std::optional<std::uint32_t> find(std::uint64_t page) const;
+    std::vector<std::uint64_t> indicesOf(std::span<const std::uint32_t> ids) const;
+    std::vector<std::uint32_t> stillResident(std::span<const std::uint32_t> ids, std::span<const std::uint64_t> indices) const;
+    std::vector<std::uint64_t> indicesOf(std::span<const Fill> fills) const;
+    std::vector<Fill> stillResident(std::span<const Fill> fills, std::span<const std::uint64_t> indices) const;
     void unlink(std::uint32_t id);
     void linkNewest(std::uint32_t id);
     std::uint32_t newPage(std::uint64_t page, MirrorSlot slot, const ResidencyImport& import, bool guarded);
@@ -466,15 +470,15 @@ private:
     void appendDirty(std::uint32_t id, std::vector<ResidencyCopy>& copies) const;
     void appendClean(std::uint32_t id, std::uint32_t begin, std::uint32_t end, std::vector<ResidencyCopy>& copies) const;
     void copyIn(std::span<const Fill> fills);
-    void refresh(std::span<const Fill> fills);
+    void refresh(std::vector<Fill> fills);
     void refreshOrdered(std::span<const Fill> fills);
-    void waitWriters(std::span<const Fill> fills);
+    bool waitWriters(std::span<const Fill> fills);
     void applyFaults(std::vector<std::uint64_t> written);
     void applyRecorded(std::uint64_t address, std::uint64_t bytes);
     bool unboundedPending(const Page& page) const { return page.gpuWritable && unboundedIssued > std::max(page.unboundedSerial, unboundedApplied); }
     ResidencyToken unboundedSince(std::uint64_t serial) const;
     void exposeToWriters(std::uint32_t id);
-    void settleUnbounded(std::span<const std::uint32_t> ids, bool guard);
+    bool settleUnbounded(std::span<const std::uint32_t> ids, bool guard);
     void liftUnboundedGuards();
     bool guardDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void evictDraining();
