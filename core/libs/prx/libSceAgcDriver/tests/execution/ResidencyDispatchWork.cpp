@@ -194,8 +194,10 @@ HotWork HotRunsBeside(MirrorReader& reader, std::uint32_t sharedPages, std::uint
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     for (std::uint32_t run = 0; run < runs; ++run) Use(pages.Address(std::uint64_t{2u * run} * PageBytes));
     Settle();
+    for (std::uint32_t warm = 0; warm < 64 && Counts().hotResident != 0; ++warm) Submit(reader, target.Address());
     for (std::uint32_t warm = 0; warm < 2; ++warm) Submit(reader, target.Address());
     const auto before = Counts();
+    Expect(before.hotResident == 0, "hot runs beside resident pages: " + std::to_string(before.hotResident) + " pages still wait for their imports to settle after 64 submissions");
     HotWork hot;
     hot.work = Dispatch(reader, target.Address());
     const auto after = Counts();
