@@ -517,6 +517,13 @@ public:
     }
 
     bool BeginHostWrite(std::uintptr_t address, std::size_t bytes) {
+        if (!ReserveHostWrite(address, bytes)) return false;
+        if (OpenHostWrite(address, bytes)) return true;
+        CancelHostWrite(address, bytes);
+        return false;
+    }
+
+    bool ReserveHostWrite(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         const auto first = views.lower_bound(address & ~(pageBytes - 1));
         const auto end = address + bytes;
@@ -526,8 +533,24 @@ public:
         for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end; ++it) {
             if (!writable(it->second.protection)) return false;
         }
-        if (firstAccessGuarded(address, end) != 0) return false;
         privateHostWrites.emplace_back(address, end);
+        for (auto it = first; it != views.end() && it->first < end; ++it) ++it->second.hostWrites;
+        return true;
+    }
+
+    void CancelHostWrite(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        const auto end = address + bytes;
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) --it->second.hostWrites;
+        const auto open = std::find(privateHostWrites.begin(), privateHostWrites.end(), std::make_pair(address, end));
+        if (open != privateHostWrites.end()) privateHostWrites.erase(open);
+    }
+
+    bool OpenHostWrite(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        const auto first = views.lower_bound(address & ~(pageBytes - 1));
+        const auto end = address + bytes;
+        if (firstAccessGuarded(address, end) != 0) return false;
         for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
             auto& page = it->second;
             dropPrivateGuard(it->first);
@@ -538,7 +561,6 @@ public:
         }
         for (auto it = first; it != views.end() && it->first < end; ++it) {
             auto& view = it->second;
-            ++view.hostWrites;
             const auto written = subpagesOf(it->first, address, end);
             invalidate(*view.page, written);
             dropGuard(*view.page);

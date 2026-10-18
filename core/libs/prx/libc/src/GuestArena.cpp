@@ -632,13 +632,18 @@ bool GuestArenaWriteWatched_nid_postfix() {
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
-    for (;;) {
-        const bool open = WindowsMappings::Get().BeginHostWrite(address, bytes);
-        notifyGuarded(WindowsMappings::Get().TakeGuardReports());
-        if (open) return true;
-        const auto guarded = WindowsMappings::Get().FirstAccessGuarded(address, bytes);
-        if (guarded == 0 || !GuestArenaHandleAccess_nid_postfix(guarded, true)) return false;
+    auto& mappings = WindowsMappings::Get();
+    if (!mappings.ReserveHostWrite(address, bytes)) return false;
+    for (auto guarded = mappings.FirstAccessGuarded(address, bytes); guarded != 0; guarded = mappings.FirstAccessGuarded(address, bytes)) {
+        if (!GuestArenaHandleAccess_nid_postfix(guarded, true)) {
+            mappings.CancelHostWrite(address, bytes);
+            return false;
+        }
     }
+    const bool open = mappings.OpenHostWrite(address, bytes);
+    if (!open) mappings.CancelHostWrite(address, bytes);
+    notifyGuarded(mappings.TakeGuardReports());
+    return open;
 #else
     GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(pointer, bytes);
     return true;

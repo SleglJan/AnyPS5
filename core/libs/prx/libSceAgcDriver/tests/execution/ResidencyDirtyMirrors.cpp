@@ -1,6 +1,9 @@
 #include "NewPathFixture.hpp"
 #include "VulkanTestDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyGuest.hpp"
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -378,6 +381,105 @@ void FileReadIntoStoredPage(MirrorReader& reader) {
     ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the file read");
 }
 
+struct GuardingWriter {
+    std::uint64_t addresses = 0;
+    std::uint32_t releases = 0;
+    std::string failure;
+};
+
+GuardingWriter* guardingWriter = nullptr;
+
+void ReleaseThenWrite(std::uintptr_t page) {
+    Residency().AccessFault(static_cast<std::uint64_t>(page) >> AgcDriver::Graphics::ResidencyPageShift);
+    auto* writer = guardingWriter;
+    if (writer == nullptr || writer->releases >= 8) return;
+    ++writer->releases;
+    Commands commands;
+    commands.Dispatch(UnboundedProgram(), BufferResource(writer->addresses, 16u), 1);
+    writer->failure += Submitted(commands);
+}
+
+void FileReadWhileWritersGuard(MirrorReader& reader) {
+    SharedPages pages(ReadPages);
+    PrivatePages first(1);
+    PrivatePages second(1);
+    Model model(pages.Address(), pages.Bytes(), 13);
+    const std::string what = "file read across stored pages while writers guard them again";
+    for (auto* addresses : {&first, &second}) {
+        const auto target = model.Address(addresses == &first ? 6 : 7, 3);
+        addresses->Words()[0] = Low(target);
+        addresses->Words()[1] = High(target);
+        AgcDriver::GuestMemory::CollectWritesUncached(addresses->Address(), addresses->Bytes());
+        static_cast<void>(reader.Read(addresses->Address(), 1));
+        static_cast<void>(reader.Read(addresses->Address(), 1));
+    }
+    Settle();
+    for (auto* addresses : {&first, &second}) {
+        Commands commands;
+        commands.Dispatch(UnboundedProgram(), BufferResource(addresses->Address(), 16u), 1);
+        const auto failure = Submitted(commands);
+        Expect(failure.empty(), what + ": the writer's submission failed: " + failure);
+    }
+    model.Set(6, 3 * WordsPerSubpage, UnboundedValue);
+    model.Set(7, 3 * WordsPerSubpage, UnboundedValue);
+    for (const std::uint64_t page : {6u, 7u}) {
+        const auto dirty = DirtyMask(model.Address(page));
+        Expect(dirty == 1u << 3u, what + ": page " + std::to_string(page) + " has dirty subpages " + Hex(dirty) + " before the file read, expected 0x8");
+        Expect(Protection(model.Address(page, 3)) == PAGE_NOACCESS, what + ": the stored subpage of page " + std::to_string(page) + " is not guarded before the file read");
+    }
+    constexpr std::uint32_t firstWord = 4 * WordsPerSubpage;
+    constexpr std::uint32_t words = WordsPerPage - firstWord + 3 * WordsPerSubpage;
+    std::vector<std::uint32_t> contents(words);
+    for (std::uint32_t word = 0; word < words; ++word) contents[word] = 0x5f000000u | word;
+    const auto path = std::filesystem::temp_directory_path() / ("residency_guarded_read_" + std::to_string(GetCurrentProcessId()) + ".bin");
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(contents.data()), static_cast<std::streamsize>(contents.size() * 4u));
+    }
+    const auto destination = model.Address(6, 0, firstWord);
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(file != INVALID_HANDLE_VALUE, what + ": cannot open the test file");
+    GuardingWriter writer;
+    writer.addresses = first.Address();
+    DWORD read = 0;
+    DWORD error = 0;
+    bool opened = false;
+    std::atomic<bool> done{false};
+    guardingWriter = &writer;
+    GuestArena::GuestArenaSetAccessGuardObserver_nid_postfix(&ReleaseThenWrite);
+    std::thread host([&] {
+        {
+            const GuestArena::HostWrite write(reinterpret_cast<void*>(static_cast<std::uintptr_t>(destination)), words * 4u);
+            opened = write.Open();
+            if (opened && !ReadFile(file, reinterpret_cast<void*>(static_cast<std::uintptr_t>(destination)), words * 4u, &read, nullptr)) error = GetLastError();
+        }
+        done.store(true, std::memory_order_release);
+    });
+    const auto deadline = Clock::now() + std::chrono::seconds(60);
+    while (!done.load(std::memory_order_acquire) && Clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!done.load(std::memory_order_acquire)) {
+        std::fprintf(stderr, "FAIL: %s: the host write did not open within 60 s\n", what.c_str());
+        std::fflush(stderr);
+        std::_Exit(1);
+    }
+    host.join();
+    AgcDriver::Graphics::InstallResidencyHooks();
+    guardingWriter = nullptr;
+    CloseHandle(file);
+    std::error_code removal;
+    std::filesystem::remove(path, removal);
+    Expect(writer.failure.empty(), what + ": a writer submitted while the host write opened failed: " + writer.failure);
+    Expect(opened, what + ": the host write into pages 6 and 7 was refused after " + std::to_string(writer.releases) + " releases");
+    Expect(error == 0 && read == words * 4u, what + ": the OS read returned " + std::to_string(read) + " of " + std::to_string(words * 4u) + " bytes, error " + std::to_string(error));
+    for (std::uint32_t word = 0; word < words; ++word) {
+        const auto at = firstWord + word;
+        model.Set(6 + at / WordsPerPage, at % WordsPerPage, contents[word]);
+    }
+    ExpectBytes(model, 6, what + ": page 6 after the file read, which must hold the writer's store and the file's bytes");
+    ExpectBytes(model, 7, what + ": page 7 after the file read, which must hold the writer's store and the file's bytes");
+    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the file read");
+}
+
 void SubpageGranularity(MirrorReader& reader) {
     SharedPages pages(ReadPages);
     Model model(pages.Address(), pages.Bytes(), 5);
@@ -673,6 +775,7 @@ int main() {
                  {"GPU read of a GPU store", GpuReadsGpuStore},
                  {"compute chain", ComputeChain},
                  {"file read into a stored page", FileReadIntoStoredPage},
+                 {"file read while writers guard again", FileReadWhileWritersGuard},
                  {"4 KiB granularity", SubpageGranularity},
                  {"CPU and GPU in one page", CpuAndGpuInOnePage},
                  {"cross-stream", CrossStream},
