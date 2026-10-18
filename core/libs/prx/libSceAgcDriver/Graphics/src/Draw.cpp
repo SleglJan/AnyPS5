@@ -1555,7 +1555,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool unknownMemory = addressBased || resources.UsesAddressTable();
     const PassAccess passAccess{passReads, resources.MemoryWrites(), passImages, passAttachments, resources.MemoryReadsUnknown(), resources.MemoryWritesUnknown()};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    if (resources.NeedsDeviceTransfers(*recorder)) resources.PrepareDeviceRecords(recorder, recorder->Commands());
+    if (resources.NeedsDeviceTransfers(*recorder)) static_cast<void>(recorder->Commands());
     if (recorder->Streams() > 1 && !unknownMemory && !capture) {
         std::vector<Recorder::SectionObject> objects{{record.resources.get(), true}};
         for (const auto& [image, written] : passImages) objects.push_back({image, written});
@@ -1581,6 +1581,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     outcome.passBegun = !continued;
     (continued ? drawPassesContinued : drawPassesBegun).fetch_add(1, std::memory_order_relaxed);
     const auto commands = start.commands;
+    resources.UseBatchFaultRecord(*recorder);
+    if (resources.NeedsDeviceTransfers(*recorder)) {
+        Require(!continued, "a continued draw pass needs device record transfers");
+        resources.PrepareDeviceRecords(recorder, commands);
+    }
     if (!continued) recorder->PrepareSampleSlot();
     if (capture) captureInputs(context, *recorder, commands, resources, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
