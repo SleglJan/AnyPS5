@@ -271,6 +271,8 @@ public:
     bool AnyStaleOwned() const;
     std::vector<ResidencyRange> ResidentRanges();
     std::vector<std::uint64_t> TakeChanges();
+    bool ChangesSince(std::uint64_t serial, std::uint64_t& now, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> Mirrored(std::uint64_t& now);
     std::vector<std::uint32_t> Chunks() const;
     std::uint64_t ChunkAddress(std::uint32_t chunk) const;
     std::uint32_t ChunkSlots() const { return chunkSlots; }
@@ -490,6 +492,8 @@ private:
     std::atomic<bool> queued{false};
     std::uint64_t serial = 0;
     std::uint64_t rangesSerial = ~std::uint64_t{0};
+    static constexpr std::size_t ChangeLogPages = std::size_t{1} << 12;
+    std::vector<std::uint32_t> changeLog;
     std::vector<ResidencyRange> ranges;
     std::atomic<std::uint32_t> dirtyPages{0};
     std::atomic<std::uint64_t> unsettledPages{0};

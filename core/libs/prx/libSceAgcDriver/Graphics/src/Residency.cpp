@@ -732,6 +732,8 @@ void ResidencyManager::linkNewest(std::uint32_t id) {
 
 void ResidencyManager::changed(std::uint64_t page) {
     changes.insert(page);
+    if (changeLog.empty()) changeLog.resize(ChangeLogPages);
+    changeLog[serial % ChangeLogPages] = static_cast<std::uint32_t>(page);
     ++serial;
 }
 
@@ -1981,6 +1983,36 @@ std::vector<ResidencyRange> ResidencyManager::ResidentRanges() {
     }
     rangesSerial = serial;
     return ranges;
+}
+
+bool ResidencyManager::ChangesSince(std::uint64_t since, std::uint64_t& now, std::vector<std::pair<std::uint64_t, std::uint64_t>>& changed) {
+    const std::lock_guard structureLock(structure);
+    applyDrops();
+    now = serial;
+    if (since > serial || serial - since > ChangeLogPages) return false;
+    std::vector<std::uint64_t> taken;
+    taken.reserve(static_cast<std::size_t>(serial - since));
+    for (auto at = since; at < serial; ++at) taken.push_back(changeLog[at % ChangeLogPages]);
+    std::sort(taken.begin(), taken.end());
+    taken.erase(std::unique(taken.begin(), taken.end()), taken.end());
+    changed.clear();
+    changed.reserve(taken.size());
+    for (const auto page : taken) {
+        const auto id = find(page);
+        changed.emplace_back(page, id ? chunks[pages[*id].slot.chunk].address + (std::uint64_t{pages[*id].slot.slot} << ResidencyPageShift) : 0u);
+    }
+    return true;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ResidencyManager::Mirrored(std::uint64_t& now) {
+    const std::lock_guard structureLock(structure);
+    applyDrops();
+    now = serial;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> mirrored;
+    mirrored.reserve(resident.size());
+    for (const auto& [page, id] : resident) mirrored.emplace_back(page, chunks[pages[id].slot.chunk].address + (std::uint64_t{pages[id].slot.slot} << ResidencyPageShift));
+    std::sort(mirrored.begin(), mirrored.end());
+    return mirrored;
 }
 
 std::vector<std::uint64_t> ResidencyManager::TakeChanges() {

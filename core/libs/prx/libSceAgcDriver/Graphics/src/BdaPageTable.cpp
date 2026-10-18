@@ -41,6 +41,38 @@ Abi::PageEntry Encode(std::vector<Abi::PageEntry>& entries, std::span<const Abi:
     return Abi::SplitEntry(block * sizeof(Abi::PageEntry));
 }
 
+std::uint64_t CoveredPages(std::uint32_t window, std::span<const Abi::Range> ranges) {
+    const auto start = static_cast<std::uint64_t>(window) << Abi::WindowShift;
+    const auto end = start + WindowBytes;
+    std::uint64_t pages = 0;
+    std::uint64_t counted = 0;
+    for (const auto& range : ranges) {
+        const auto first = std::max({range.begin, start, counted}) & ~(PageBytes - 1u);
+        const auto last = std::min(range.end, end);
+        if (last <= first) continue;
+        const auto stop = (last + PageBytes - 1u) & ~(PageBytes - 1u);
+        pages += (stop - std::max(first, counted)) >> Abi::PageShift;
+        counted = stop;
+    }
+    return pages;
+}
+
+bool SameSegment(const Abi::Range& left, const Abi::Range& right) {
+    return left.end == right.end && left.deviceAddress - left.begin == right.deviceAddress - right.begin && left.permissions == right.permissions && left.reserved == right.reserved;
+}
+
+Abi::PageEntry EncodePage(std::vector<Abi::PageEntry>& entries, std::span<const Abi::Range> ranges, std::uint64_t pageStart) {
+    const auto pageEnd = pageStart + PageBytes;
+    auto at = std::upper_bound(ranges.begin(), ranges.end(), pageStart, [](std::uint64_t value, const Abi::Range& range) { return value < range.end; });
+    std::vector<std::size_t> meeting;
+    for (; at != ranges.end() && at->begin < pageEnd; ++at) {
+        if (at->begin <= pageStart && pageEnd <= at->end) return Segment(*at, pageStart);
+        meeting.push_back(static_cast<std::size_t>(at - ranges.begin()));
+    }
+    if (meeting.empty()) return {};
+    return Encode(entries, ranges, pageStart, Abi::PageShift, meeting);
+}
+
 struct Newest {
     std::mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
@@ -123,6 +155,7 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
     std::shared_ptr<BdaPageTable> table(new BdaPageTable());
     std::vector<std::uint64_t> addresses(Abi::WindowCount, 0u);
     std::uint64_t shared = 0;
+    std::uint64_t encoded = 0;
     for (auto& [window, held] : windows) {
         std::shared_ptr<const Leaf> old;
         for (const auto& candidate : shares) {
@@ -136,10 +169,11 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
             table->leaves.push_back(std::move(old));
             ++shared;
         } else {
-            const auto entries = EncodeBdaWindow(window, held);
             auto leaf = std::make_shared<Leaf>();
             leaf->window = window;
-            stage(context, leaf->table, entries.data(), entries.size() * sizeof(Abi::PageEntry));
+            leaf->entries = EncodeBdaWindow(window, held);
+            stage(context, leaf->table, leaf->entries.data(), leaf->entries.size() * sizeof(Abi::PageEntry));
+            encoded += CoveredPages(window, held);
             leaf->ranges = std::move(held);
             table->leaves.push_back(std::move(leaf));
         }
@@ -162,6 +196,165 @@ std::shared_ptr<const BdaPageTable> BdaPageTable::Build(const Context& context, 
     ++newest.counts.tables;
     newest.counts.sharedWindows += shared;
     newest.counts.encodedWindows += windows.size() - shared;
+    newest.counts.encodedPages += encoded;
+    return built;
+}
+
+void BdaPageTable::overlapping(std::uint64_t begin, std::uint64_t end, std::vector<Abi::Range>& found) const {
+    if (begin >= end || begin >= Abi::PageTableEnd) return;
+    const auto firstWindow = static_cast<std::uint32_t>(begin >> Abi::WindowShift);
+    const auto lastWindow = static_cast<std::uint32_t>((std::min(end, Abi::PageTableEnd) - 1u) >> Abi::WindowShift);
+    auto leaf = std::lower_bound(leaves.begin(), leaves.end(), firstWindow, [](const auto& held, std::uint32_t value) { return held->window < value; });
+    for (; leaf != leaves.end() && (*leaf)->window <= lastWindow; ++leaf) {
+        const auto& ranges = (*leaf)->ranges;
+        auto at = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t value, const Abi::Range& range) { return value < range.end; });
+        for (; at != ranges.end() && at->begin < end; ++at) {
+            if (found.empty() || found.back().begin < at->begin) found.push_back(*at);
+        }
+    }
+}
+
+std::shared_ptr<const BdaPageTable> BdaPageTable::Patch(const Context& context, const std::shared_ptr<const BdaPageTable>& previous, std::span<const std::uint64_t> changedPages, const Pieces& pieces) {
+    Require(previous != nullptr, "a BDA page table patch has no table to patch");
+    struct Extent {
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        std::vector<Abi::Range> fresh;
+        std::vector<Abi::Range> old;
+    };
+    const auto settle = [&](Extent& extent) {
+        for (;;) {
+            extent.old.clear();
+            previous->overlapping(extent.begin, extent.end, extent.old);
+            extent.fresh = pieces(extent.begin, extent.end);
+            auto low = extent.begin;
+            auto high = extent.end;
+            for (const auto& range : extent.old) {
+                low = std::min(low, range.begin);
+                high = std::max(high, range.end);
+            }
+            for (const auto& range : extent.fresh) {
+                low = std::min(low, range.begin);
+                high = std::max(high, range.end);
+            }
+            if (low == extent.begin && high == extent.end) return;
+            extent.begin = low;
+            extent.end = high;
+        }
+    };
+    std::vector<Extent> extents;
+    for (const auto page : changedPages) {
+        const auto begin = page << Abi::PageShift;
+        if (begin >= Abi::PageTableEnd) continue;
+        if (std::any_of(extents.begin(), extents.end(), [&](const Extent& held) { return held.begin <= begin && begin < held.end; })) continue;
+        Extent extent{begin, begin + PageBytes, {}, {}};
+        settle(extent);
+        for (bool merged = true; merged;) {
+            merged = false;
+            for (auto at = extents.begin(); at != extents.end(); ++at) {
+                if (extent.end < at->begin || at->end < extent.begin) continue;
+                extent.begin = std::min(extent.begin, at->begin);
+                extent.end = std::max(extent.end, at->end);
+                extents.erase(at);
+                settle(extent);
+                merged = true;
+                break;
+            }
+        }
+        extents.push_back(std::move(extent));
+    }
+    std::map<std::uint32_t, std::vector<const Extent*>> windows;
+    for (const auto& extent : extents) {
+        const auto last = static_cast<std::uint32_t>((std::min(extent.end, Abi::PageTableEnd) - 1u) >> Abi::WindowShift);
+        for (auto window = static_cast<std::uint32_t>(extent.begin >> Abi::WindowShift); window <= last; ++window) windows[window].push_back(&extent);
+    }
+    for (auto& [window, held] : windows) std::sort(held.begin(), held.end(), [](const Extent* left, const Extent* right) { return left->begin < right->begin; });
+    std::shared_ptr<BdaPageTable> table(new BdaPageTable());
+    std::uint64_t encoded = 0;
+    std::uint64_t patched = 0;
+    auto kept = previous->leaves.begin();
+    for (const auto& [window, held] : windows) {
+        for (; kept != previous->leaves.end() && (*kept)->window < window; ++kept) table->leaves.push_back(*kept);
+        std::shared_ptr<const Leaf> old;
+        if (kept != previous->leaves.end() && (*kept)->window == window) old = *kept++;
+        const auto start = static_cast<std::uint64_t>(window) << Abi::WindowShift;
+        const auto stop = start + WindowBytes;
+        std::vector<Abi::Range> ranges;
+        if (old != nullptr) {
+            ranges.reserve(old->ranges.size() + 2u * held.size());
+            auto range = old->ranges.begin();
+            for (const auto* extent : held) {
+                for (; range != old->ranges.end() && range->end <= extent->begin; ++range) ranges.push_back(*range);
+                for (; range != old->ranges.end() && range->begin < extent->end; ++range) {}
+                for (const auto& fresh : extent->fresh) {
+                    if (fresh.begin < stop && start < fresh.end) ranges.push_back(fresh);
+                }
+            }
+            for (; range != old->ranges.end(); ++range) ranges.push_back(*range);
+        } else {
+            for (const auto* extent : held) {
+                for (const auto& fresh : extent->fresh) {
+                    if (fresh.begin < stop && start < fresh.end) ranges.push_back(fresh);
+                }
+            }
+        }
+        ++patched;
+        if (ranges.empty()) continue;
+        auto leaf = std::make_shared<Leaf>();
+        leaf->window = window;
+        if (old != nullptr) leaf->entries = old->entries;
+        else leaf->entries.resize(Abi::WindowPages);
+        for (const auto* extent : held) {
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> same;
+            for (const auto& fresh : extent->fresh) {
+                for (const auto& before : extent->old) {
+                    if (!SameSegment(before, fresh) || fresh.end <= before.begin || before.end <= fresh.begin) continue;
+                    const auto from = (std::max(fresh.begin, before.begin) + PageBytes - 1u) & ~(PageBytes - 1u);
+                    const auto to = fresh.end & ~(PageBytes - 1u);
+                    if (from < to) same.emplace_back(from, to);
+                }
+            }
+            std::sort(same.begin(), same.end());
+            auto skip = same.begin();
+            const auto last = std::min(extent->end, stop);
+            for (auto at = std::max(extent->begin & ~(PageBytes - 1u), start); at < last;) {
+                while (skip != same.end() && skip->second <= at) ++skip;
+                if (skip != same.end() && skip->first <= at) {
+                    at = skip->second;
+                    continue;
+                }
+                const auto entry = EncodePage(leaf->entries, ranges, at);
+                leaf->entries[(at - start) >> Abi::PageShift] = entry;
+                ++encoded;
+                at += PageBytes;
+            }
+        }
+        if (leaf->entries.size() > 2u * Abi::WindowPages) {
+            leaf->entries = EncodeBdaWindow(window, ranges);
+            encoded += CoveredPages(window, ranges);
+        }
+        stage(context, leaf->table, leaf->entries.data(), leaf->entries.size() * sizeof(Abi::PageEntry));
+        leaf->ranges = std::move(ranges);
+        table->leaves.push_back(std::move(leaf));
+    }
+    for (; kept != previous->leaves.end(); ++kept) table->leaves.push_back(*kept);
+    if (table->leaves.empty()) return nullptr;
+    std::vector<std::uint64_t> addresses(Abi::WindowCount, 0u);
+    for (const auto& leaf : table->leaves) {
+        const auto address = leaf->table.buffer->DeviceAddress();
+        Require(address != 0 && address % sizeof(Abi::PageEntry) == 0, "a BDA page table leaf is not aligned for its entries");
+        addresses[leaf->window] = address;
+    }
+    stage(context, table->first, addresses.data(), addresses.size() * sizeof(std::uint64_t));
+    Require(table->first.buffer->DeviceAddress() % sizeof(std::uint64_t) == 0, "the BDA page table is not aligned for its entries");
+    std::shared_ptr<const BdaPageTable> built = std::move(table);
+    auto& newest = NewestTable();
+    std::lock_guard lock(newest.mutex);
+    newest.device = context.device;
+    newest.table = built;
+    ++newest.counts.tables;
+    newest.counts.encodedPages += encoded;
+    newest.counts.patchedWindows += patched;
     return built;
 }
 

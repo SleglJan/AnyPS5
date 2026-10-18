@@ -71,6 +71,8 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::mutex tableMutex;
     mutable std::shared_ptr<const BdaPageTable> pageTable;
     mutable std::vector<ShaderRecompiler::BdaAbi::Range> resident;
+    mutable std::map<std::uint64_t, std::uint64_t> mirrors;
+    mutable bool residentStale = false;
     mutable std::shared_ptr<const BdaPageTable> lastOverride;
     mutable std::uint64_t residencySerial = 0;
     struct OverrideTable {
@@ -2503,6 +2505,45 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::OwnRanges() cons
     return {};
 }
 
+namespace {
+
+bool MirrorInside(std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t page) {
+    const auto begin = page << ResidencyPageShift;
+    const auto end = begin + ResidencyPageBytes;
+    const auto found = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& range) { return value < range.end; });
+    return found != ranges.end() && found->begin < end;
+}
+
+std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const ShaderRecompiler::BdaAbi::Range> ranges, const std::map<std::uint64_t, std::uint64_t>& mirrors, std::uint64_t begin, std::uint64_t end) {
+    std::vector<ShaderRecompiler::BdaAbi::Range> pieces;
+    const auto emit = [&](const ShaderRecompiler::BdaAbi::Range& range, std::uint64_t low, std::uint64_t high, std::uint64_t device) {
+        if (low < high && low < end && begin < high) pieces.push_back({low, high, device, range.permissions, range.reserved});
+    };
+    auto range = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& held) { return value < held.end; });
+    for (; range != ranges.end() && range->begin < end; ++range) {
+        const auto from = std::max(begin, range->begin);
+        auto mirror = mirrors.lower_bound(from >> ResidencyPageShift);
+        auto cursor = range->begin;
+        if (mirror != mirrors.begin()) {
+            const auto previousEnd = (std::prev(mirror)->first + 1u) << ResidencyPageShift;
+            if (previousEnd > cursor) cursor = previousEnd;
+        }
+        for (; mirror != mirrors.end() && cursor < end; ++mirror) {
+            const auto pageBegin = mirror->first << ResidencyPageShift;
+            if (pageBegin >= range->end) break;
+            const auto low = std::max(pageBegin, range->begin);
+            const auto high = std::min(pageBegin + ResidencyPageBytes, range->end);
+            emit(*range, cursor, low, range->deviceAddress + (cursor - range->begin));
+            emit(*range, low, high, mirror->second + (low - pageBegin));
+            cursor = high;
+        }
+        emit(*range, cursor, range->end, range->deviceAddress + (cursor - range->begin));
+    }
+    return pieces;
+}
+
+}
+
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {
     Require(uploaded && !committed, "guest GPU address ranges are not available");
     auto* residency = ResidencyDriver::Active();
@@ -2511,11 +2552,34 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
         if (space->ranges.empty()) return nullptr;
         std::lock_guard lock(space->tableMutex);
         if (space->pageTable == nullptr || space->residencySerial != serial) {
-            space->resident = WithResidentPages(space->ranges);
-            const std::array<std::shared_ptr<const BdaPageTable>, 2> shares{space->pageTable, space->inherited};
-            space->pageTable = BdaPageTable::Build(context, space->resident, shares);
-            space->inherited.reset();
-            space->residencySerial = serial;
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> changed;
+            std::uint64_t now = serial;
+            if (space->pageTable != nullptr && residency != nullptr && residency->Manager().ChangesSince(space->residencySerial, now, changed)) {
+                std::vector<std::uint64_t> pages;
+                for (const auto& [page, mirror] : changed) {
+                    if (!MirrorInside(space->ranges, page)) continue;
+                    if (mirror != 0) space->mirrors[page] = mirror;
+                    else space->mirrors.erase(page);
+                    pages.push_back(page);
+                }
+                if (!pages.empty()) {
+                    space->pageTable = BdaPageTable::Patch(context, space->pageTable, pages, [&](std::uint64_t begin, std::uint64_t end) { return SpliceMirrors(space->ranges, space->mirrors, begin, end); });
+                    space->residentStale = true;
+                }
+            } else {
+                space->mirrors.clear();
+                if (residency != nullptr) {
+                    for (const auto& [page, mirror] : residency->Manager().Mirrored(now)) {
+                        if (MirrorInside(space->ranges, page)) space->mirrors.emplace_hint(space->mirrors.end(), page, mirror);
+                    }
+                }
+                space->resident = SpliceMirrors(space->ranges, space->mirrors, 0, ~std::uint64_t{0});
+                space->residentStale = false;
+                const std::array<std::shared_ptr<const BdaPageTable>, 2> shares{space->pageTable, space->inherited};
+                space->pageTable = BdaPageTable::Build(context, space->resident, shares);
+                space->inherited.reset();
+            }
+            space->residencySerial = now;
         }
         return space->pageTable;
     }
@@ -2579,6 +2643,10 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::buildWith(const Context& 
     std::array<std::shared_ptr<const BdaPageTable>, 2> shares{};
     if (space != nullptr) {
         std::lock_guard lock(space->tableMutex);
+        if (space->residentStale) {
+            space->resident = SpliceMirrors(space->ranges, space->mirrors, 0, ~std::uint64_t{0});
+            space->residentStale = false;
+        }
         resident = space->resident;
         shares = {space->lastOverride, space->pageTable};
     } else {
