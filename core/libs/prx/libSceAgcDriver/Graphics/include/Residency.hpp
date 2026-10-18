@@ -220,6 +220,7 @@ public:
     void AdmitTouched(std::span<const std::uint64_t> pages);
     bool Advance();
     void Apply();
+    void AdmitEager();
     void Prepare();
     void Use(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access);
     void Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token);

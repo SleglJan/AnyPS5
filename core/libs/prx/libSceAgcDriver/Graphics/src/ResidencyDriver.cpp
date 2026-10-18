@@ -150,6 +150,7 @@ void ResidencyDriver::frameBoundary() {
     ++frames;
     usageStale = true;
     manager.ApplyBudget();
+    manager.AdmitEager();
     if (!context.bufferDeviceAddress) return;
     const auto commands = recorder.Commands();
     const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");

@@ -1210,6 +1210,11 @@ void ResidencyManager::Apply() {
     settleAccessGuards();
     if (budget == ResidencyMeasuredBudget && device.OtherDeviceBytes() != appliedOthers) ApplyBudget();
     admitReservedTouches();
+}
+
+void ResidencyManager::AdmitEager() {
+    const std::lock_guard structureLock(structure);
+    applyQueued();
     admitEager();
 }
 
@@ -1263,6 +1268,7 @@ void ResidencyManager::Prepare() {
     const std::lock_guard structureLock(structure);
     Advance();
     Apply();
+    admitEager();
 }
 
 void ResidencyManager::SetBudget(std::uint64_t bytes) {

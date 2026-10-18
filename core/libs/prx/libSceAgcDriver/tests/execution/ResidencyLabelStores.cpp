@@ -19,6 +19,7 @@ void Run(MirrorReader& reader) {
     Fill(pages.Words(), 1, Tag);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     PrivatePages other(1);
+    Residency().Flip();
     reader.Read(other.Address(), 1);
     Expect(Resident(pages.Address()), what + ": the shared page has a mirror before the labels");
     const auto label = pages.Address(0, LabelSubpage);

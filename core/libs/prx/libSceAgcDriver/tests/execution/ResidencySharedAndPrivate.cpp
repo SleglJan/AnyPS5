@@ -20,6 +20,7 @@ void SharedViewsAdmittedEagerly(MirrorReader& reader) {
     Fill(pages.Words(), SharedPageCount, 10);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     PrivatePages other(1);
+    Residency().Flip();
     reader.Read(other.Address(), 1);
     std::uint32_t resident = 0;
     for (std::uint32_t page = 0; page < SharedPageCount; ++page) resident += Resident(pages.Address(page)) ? 1u : 0u;
