@@ -55,6 +55,7 @@ public:
                 reset(cursor, size);
                 const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
                 if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+                privateAllocations.emplace(cursor, cursor + size);
                 if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
                 else created.emplace_back(cursor, size);
                 cursor += size;
@@ -629,6 +630,12 @@ public:
         return false;
     }
 
+    void CollectWork(std::uint64_t* systemCalls, std::uint64_t* pieces) {
+        std::lock_guard lock(mutex);
+        *systemCalls = collectSystemCalls;
+        *pieces = collectPieces;
+    }
+
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
         std::lock_guard lock(mutex);
         const auto capacity = *count;
@@ -763,13 +770,15 @@ public:
                     cursor = next == views.end() ? end : std::min(end, next->first);
                     continue;
                 }
-                const auto memory = query(cursor);
-                if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-                const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                const auto allocationEnd = privateAllocationEnd(cursor);
+                if (allocationEnd == 0) return false;
+                const auto stop = std::min(end, allocationEnd);
                 if (capacity == *count) return true;
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
+                ++collectSystemCalls;
+                collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
                 if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
                 *count += available;
                 if (*count == capacity) return true;
@@ -792,12 +801,19 @@ private:
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
-            const auto memory = query(cursor);
-            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-            cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            const auto allocationEnd = privateAllocationEnd(cursor);
+            if (allocationEnd == 0) return false;
+            cursor = std::min(end, allocationEnd);
         }
         remember(collectableRanges, address, end);
         return true;
+    }
+
+    std::uintptr_t privateAllocationEnd(std::uintptr_t address) const {
+        const auto next = privateAllocations.upper_bound(address);
+        if (next == privateAllocations.begin()) return 0;
+        const auto allocation = std::prev(next);
+        return address < allocation->second ? allocation->second : 0;
     }
 
     static constexpr std::size_t pageBytes = 0x4000;
@@ -1214,6 +1230,7 @@ private:
         collectableRanges.clear();
         const auto end = address + bytes;
         privatePieces.erase(privatePieces.lower_bound(address), privatePieces.lower_bound(end));
+        privateAllocations.erase(privateAllocations.lower_bound(address), privateAllocations.lower_bound(end));
         for (auto page = (address + guardBytes - 1) / guardBytes; page < end / guardBytes; ++page) unsettledImports.erase(page);
         forgetClean(address, end);
         breakRun(address);
@@ -1294,6 +1311,9 @@ private:
 
     Ranges cleanRanges;
     Ranges collectableRanges;
+    Ranges privateAllocations;
+    std::uint64_t collectSystemCalls = 0;
+    std::uint64_t collectPieces = 0;
     Ranges freshRanges;
     std::map<std::uintptr_t, View> views;
     Guarded guardReports;

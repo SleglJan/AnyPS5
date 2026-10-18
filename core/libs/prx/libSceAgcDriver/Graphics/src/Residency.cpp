@@ -1885,7 +1885,10 @@ void ResidencyManager::RefreshHot() {
     if (sweptEpoch != now) {
         sweptEpoch = now;
         ++counts.hotSweeps;
-        for (const auto& [first, last] : hotRuns) device.CollectWrites(first, last - first + 1);
+        for (const auto& [first, last] : hotRuns) {
+            device.CollectWrites(first, last - first + 1);
+            ++counts.hotCollects;
+        }
         applyQueued();
     }
     std::vector<std::uint32_t> cooled;

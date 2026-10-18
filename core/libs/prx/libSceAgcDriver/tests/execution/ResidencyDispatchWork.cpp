@@ -18,6 +18,8 @@ struct Work {
     ResidencyCounts residency;
     AgcDriver::Graphics::BdaPageTable::Counts tables;
     double microseconds = 0;
+    std::uint64_t collectCalls = 0;
+    std::uint64_t collectPieces = 0;
 };
 
 Work Between(const ResidencyCounts& before, const ResidencyCounts& after, const AgcDriver::Graphics::BdaPageTable::Counts& tablesBefore, double microseconds) {
@@ -120,7 +122,53 @@ void PageTable(MirrorReader& reader) {
     Expect(many.tables.encodedPages <= few.tables.encodedPages + Dispatches, "page table: the page-table work of one changed page per dispatch grows with the resident pages: beside 64 shared pages " + Describe(few) + "; beside 4096 " + Describe(many));
 }
 
+Work HotRuns(MirrorReader& reader, PrivatePages& target, std::uint32_t runs) {
+    PrivatePages pages(2u * runs);
+    GuestArena::GuestArenaPinWritable_nid_postfix(pages.Data(), pages.Bytes());
+    Fill(pages.Words(), 2u * runs, Tag);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+    for (std::uint32_t run = 0; run < runs; ++run) Use(pages.Address(std::uint64_t{2u * run} * PageBytes));
+    Settle();
+    const auto before = Counts();
+    std::uint64_t callsBefore = 0;
+    std::uint64_t piecesBefore = 0;
+    GuestArena::GuestArenaCollectWork_nid_postfix(&callsBefore, &piecesBefore);
+    const auto work = Dispatch(reader, target.Address());
+    std::uint64_t callsAfter = 0;
+    std::uint64_t piecesAfter = 0;
+    GuestArena::GuestArenaCollectWork_nid_postfix(&callsAfter, &piecesAfter);
+    const auto calls = callsAfter - callsBefore;
+    const auto pieces = piecesAfter - piecesBefore;
+    const auto after = Counts();
+    std::printf("[residency-work] %u hot runs: %llu hot collects, %llu collect system calls over %llu private pieces; %s\n", runs, static_cast<unsigned long long>(after.hotCollects - before.hotCollects), static_cast<unsigned long long>(calls), static_cast<unsigned long long>(pieces), Describe(work).c_str());
+    const auto last = runs - 1u;
+    pages.Words()[2u * last * WordsPerPage + 3u * WordsPerSubpage] = 0x5e00000fu;
+    const auto read = reader.Read(pages.Address(std::uint64_t{2u * last} * PageBytes), 1);
+    Expect(read[3] == 0x5e00000fu, "hot runs: the CPU store into the last hot run reached the GPU read: " + Hex(read[3]));
+    Settle();
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(pages.Data(), pages.Bytes());
+    Work collected = work;
+    collected.residency.hotCollects = after.hotCollects - before.hotCollects;
+    collected.collectCalls = calls;
+    collected.collectPieces = pieces;
+    return collected;
+}
+
+void HotSweep(MirrorReader& reader) {
+    PrivatePages target(1);
+    Fill(target.Words(), 1, Tag);
+    static_cast<void>(reader.Read(target.Address(), 1));
+    const auto few = HotRuns(reader, target, 8);
+    const auto many = HotRuns(reader, target, 256);
+    constexpr std::uint64_t piecesPerPage = PageBytes / 16384;
+    for (const auto* work : {&few, &many}) {
+        Expect(work->collectPieces >= work->residency.hotCollects * piecesPerPage, "hot sweep: the collects cover fewer private pieces than the hot runs: " + std::to_string(work->collectPieces) + " for " + std::to_string(work->residency.hotCollects) + " hot collects");
+        Expect(work->collectCalls <= work->collectPieces, "hot sweep: the write-watch read takes more than one system call per private piece: " + std::to_string(work->collectCalls) + " for " + std::to_string(work->collectPieces) + " pieces");
+    }
+}
+
 void Run(MirrorReader& reader) {
+    HotSweep(reader);
     Admission(reader);
     PageTable(reader);
 }

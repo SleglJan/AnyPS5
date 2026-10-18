@@ -180,6 +180,7 @@ struct ResidencyCounts {
     std::uint64_t recordRefreshed = 0;
     std::uint64_t hotRefreshed = 0;
     std::uint64_t hotSweeps = 0;
+    std::uint64_t hotCollects = 0;
     std::uint64_t retiles = 0;
     std::uint64_t retiledBytes = 0;
     std::uint64_t eagerRetiles = 0;
