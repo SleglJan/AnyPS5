@@ -18,7 +18,9 @@ constexpr std::uint64_t WindowBytes = std::uint64_t{1} << Abi::WindowShift;
 
 Abi::PageEntry Segment(const Abi::Range& range, std::uint64_t start) {
     const auto first = range.begin > start ? static_cast<std::uint32_t>(range.begin - start) : 0u;
-    return Abi::SegmentEntry(range.deviceAddress - range.begin, first, std::min(range.end - start, Abi::LimitMax), range.permissions);
+    auto entry = Abi::SegmentEntry(range.deviceAddress - range.begin, first, std::min(range.end - start, Abi::LimitMax), range.permissions);
+    if ((range.reserved & Abi::RangeMirrored) != 0) entry.bounds |= 1u << Abi::MirroredShift;
+    return entry;
 }
 
 Abi::PageEntry Encode(std::vector<Abi::PageEntry>& entries, std::span<const Abi::Range> ranges, std::uint64_t start, std::uint32_t shift, const std::vector<std::size_t>& meeting) {
@@ -103,7 +105,7 @@ void ValidateBdaPageRanges(std::span<const Abi::Range> ranges) {
     for (const auto& range : ranges) {
         Require(range.begin < range.end && range.end <= Abi::PageTableEnd, "a BDA page range is empty or ends past the page table");
         Require(range.deviceAddress != 0 && range.end - range.begin <= std::numeric_limits<std::uint64_t>::max() - range.deviceAddress, "a BDA page range has no device address or its device range wraps");
-        Require(range.reserved == 0 && (range.permissions & ~(Abi::Read | Abi::Write)) == 0, "a BDA page range has unknown permissions or reserved bits");
+        Require((range.reserved & ~Abi::RangeMirrored) == 0 && (range.permissions & ~(Abi::Read | Abi::Write)) == 0, "a BDA page range has unknown permissions or reserved bits");
     }
 }
 

@@ -47,6 +47,66 @@ MirrorChunk::~MirrorChunk() {
     context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
 }
 
+SparseResidency::SparseResidency(const Context& context) : context(context) {
+    constexpr std::uint64_t MostBytes = std::uint64_t{512} << 30;
+    bytes = std::min<std::uint64_t>(MostBytes, context.limits.sparseAddressSpaceSize) & ~(ResidencyPageBytes - 1u);
+    Require(bytes != 0, "residency: the device has no sparse address space");
+    VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    info.flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
+    info.size = bytes;
+    info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer sparse residency");
+    VkMemoryRequirements requirements{};
+    context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+    if (requirements.alignment > ResidencyPageBytes || ResidencyPageBytes % requirements.alignment != 0) {
+        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        throw std::runtime_error("residency: the sparse residency buffer's block of " + std::to_string(requirements.alignment) + " bytes does not divide a residency page");
+    }
+    VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    addressInfo.buffer = buffer;
+    address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    if (address == 0) {
+        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        throw std::runtime_error("vkGetBufferDeviceAddressKHR returned a null address for the sparse residency buffer");
+    }
+}
+
+std::shared_ptr<SparseResidency> SparseResidency::Of(const Context& context) {
+    static std::mutex mutex;
+    static std::map<VkDevice, std::weak_ptr<SparseResidency>> devices;
+    const std::lock_guard lock(mutex);
+    auto& held = devices[context.device];
+    if (auto shared = held.lock()) return shared;
+    auto created = std::make_shared<SparseResidency>(context);
+    held = created;
+    return created;
+}
+
+SparseResidency::~SparseResidency() {
+    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+}
+
+void SparseResidency::Bind(std::span<const VkSparseMemoryBind> binds) const {
+    if (binds.empty()) return;
+    const VkSparseBufferMemoryBindInfo bufferBind{buffer, static_cast<std::uint32_t>(binds.size()), binds.data()};
+    VkBindSparseInfo info{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+    info.bufferBindCount = 1;
+    info.pBufferBinds = &bufferBind;
+    const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkFence fence = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkCreateFence>("vkCreateFence")(context.device, &fenceInfo, nullptr, &fence), "vkCreateFence sparse bind");
+    const auto destroy = [&] { context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr); };
+    try {
+        Check(context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(context.queue, 1, &info, fence), "vkQueueBindSparse residency");
+        Check(context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, ~std::uint64_t{0}), "vkWaitForFences sparse bind");
+    } catch (...) {
+        destroy();
+        throw;
+    }
+    destroy();
+}
+
 ResidencyMirrors::ResidencyMirrors(const Context& context, std::uint32_t chunkSlots)
     : context(context), chunkSlots(chunkSlots),
       copyBuffer(context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")),
@@ -69,6 +129,13 @@ void ResidencyMirrors::Release(std::uint32_t chunk) {
 std::shared_ptr<MirrorChunk> ResidencyMirrors::Chunk(std::uint32_t chunk) const {
     Require(chunk < chunks.size() && chunks[chunk] != nullptr, "residency: mirror chunk " + std::to_string(chunk) + " is not allocated");
     return chunks[chunk];
+}
+
+std::pair<VkDeviceMemory, VkDeviceSize> ResidencyMirrors::Locate(VkDeviceAddress mirror) const {
+    for (const auto& chunk : chunks) {
+        if (chunk != nullptr && mirror >= chunk->address && mirror - chunk->address < chunk->bytes) return {chunk->memory, mirror - chunk->address};
+    }
+    throw std::runtime_error("residency: no mirror chunk holds the mirror address");
 }
 
 std::uint64_t ResidencyMirrors::DeviceBytes() const {

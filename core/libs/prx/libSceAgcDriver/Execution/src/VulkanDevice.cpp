@@ -1121,7 +1121,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         std::vector<VkQueueFamilyProperties> queues(families);
         getFamilies(physical, &families, queues.data());
         for (std::uint32_t i = 0; i < families; ++i) {
-            if (queues[i].queueCount != 0 && (queues[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
+            if (queues[i].queueCount != 0 && (queues[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_SPARSE_BINDING_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_SPARSE_BINDING_BIT)) {
                 if (window != nullptr) {
                     VkBool32 supported = VK_FALSE;
                     check(state->InstanceFunction<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>("vkGetPhysicalDeviceSurfaceSupportKHR")(physical, i, state->surface, &supported), "vkGetPhysicalDeviceSurfaceSupportKHR");
@@ -1525,8 +1525,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     VkPhysicalDeviceFeatures available{};
     state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(selected, &available);
     require(available.vertexPipelineStoresAndAtomics && available.fragmentStoresAndAtomics, "graphics shader buffer writes and atomics are unavailable");
+    require(available.sparseBinding && available.sparseResidencyBuffer, "sparse buffer residency is unavailable");
     VkPhysicalDeviceFeatures enabled{};
     enabled.shaderInt64 = VK_TRUE;
+    enabled.sparseBinding = VK_TRUE;
+    enabled.sparseResidencyBuffer = VK_TRUE;
     enabled.shaderFloat64 = available.shaderFloat64 && floatControls.shaderSignedZeroInfNanPreserveFloat64;
     if (enabled.shaderFloat64) state->capabilities.push_back(spv::CapabilityFloat64);
     state->float64DenormPreserve = enabled.shaderFloat64 && floatControls.shaderDenormPreserveFloat64 == VK_TRUE &&

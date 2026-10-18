@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
 #include "BdaPageReference.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -192,7 +193,15 @@ void ValidationTests() {
     rejects({{Abi::PageTableEnd - 0x10u, Abi::PageTableEnd + 0x10u, 0x1000u, Abi::Read, 0u}}, "a page range past the page table was accepted");
     rejects({{base, base + 0x10u, 0u, Abi::Read, 0u}}, "a page range without a device address was accepted");
     rejects({{base, base + 0x10u, ~std::uint64_t{0} - 4u, Abi::Read, 0u}}, "a page range whose device range wraps was accepted");
-    rejects({{base, base + 0x10u, 0x1000u, Abi::Read, 1u}}, "a page range with reserved bits was accepted");
+    rejects({{base, base + 0x10u, 0x1000u, Abi::Read, 2u}}, "a page range with reserved bits was accepted");
+    {
+        const std::vector<Abi::Range> mirrored{{base, base + 0x10000u, 0x1000000u, Abi::Read, Abi::RangeMirrored}};
+        const auto entries = EncodeBdaWindow(static_cast<std::uint32_t>(base >> Abi::WindowShift), mirrored);
+        const bool marked = std::any_of(entries.begin(), entries.end(), [](const Abi::PageEntry& entry) { return Abi::KindOf(entry) == Abi::PageKind::Segment && ((entry.bounds >> Abi::MirroredShift) & 1u) != 0u; });
+        Expect(marked, "a mirrored page range did not set the mirrored bit of its segment entry");
+        const auto walked = Walked(Encode(mirrored), base + 0x20u, 4u);
+        Expect(walked == Mapped(0x1000020u), "a mirrored page range translated " + Hex(walked.device) + ", expected 0x1000020");
+    }
     rejects({{base, base + 0x10u, 0x1000u, 4u, 0u}}, "a page range with unknown permissions was accepted");
     const auto listRejects = [](std::vector<Abi::Range> ranges, const char* what) {
         bool thrown = false;

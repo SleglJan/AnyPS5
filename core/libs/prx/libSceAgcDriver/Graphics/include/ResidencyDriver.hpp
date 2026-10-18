@@ -10,7 +10,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <vector>
@@ -116,6 +118,10 @@ public:
     void NoteDriverWrite(std::uint64_t address, std::uint64_t bytes);
     void DropMirrors(std::span<const ResidencyRange> ranges);
     ResidencyPublication Publish();
+    void SyncBindings();
+    std::uint64_t ResidentAddress(std::uint64_t page, std::uint64_t mirror) const;
+    bool Bound(std::uint64_t page) const;
+    VkDeviceAddress SparseAddress() const { return sparse->Address(); }
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
     Recorder::SectionObject SectionAccess(bool written) const { return {this, written}; }
     void KeepChunks();
@@ -172,6 +178,11 @@ private:
     std::uint64_t reportedChanges = 0;
     bool usageStale = true;
     ResidencyMirrors mirrors;
+    std::shared_ptr<SparseResidency> sparse;
+    mutable std::mutex bindMutex;
+    std::map<std::uint64_t, std::uint64_t> bound;
+    std::atomic<std::uint64_t> bindSerial{0};
+    std::vector<std::shared_ptr<MirrorChunk>> retired;
     ResidencyManager manager;
     std::shared_ptr<Buffer> touchTable;
     std::atomic<VkDeviceAddress> touchAddress{0};

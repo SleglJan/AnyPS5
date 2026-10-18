@@ -29,13 +29,20 @@ std::uint32_t DeviceLocalHeap(const Context& context) {
 }
 
 ResidencyDriver::ResidencyDriver(const Context& context, Recorder& recorder, IResidencyGuestMemory& guest, const ResidencyPolicy& policy)
-    : context(context), recorder(recorder), guest(guest), deviceHeap(DeviceLocalHeap(context)), mirrors(context, policy.chunkSlots), manager(*this, policy) {
+    : context(context), recorder(recorder), guest(guest), deviceHeap(DeviceLocalHeap(context)), mirrors(context, policy.chunkSlots), sparse(SparseResidency::Of(context)), manager(*this, policy) {
     activeDriver.store(this);
 }
 
 ResidencyDriver::~ResidencyDriver() {
     ResidencyDriver* expected = this;
     activeDriver.compare_exchange_strong(expected, nullptr);
+    std::vector<VkSparseMemoryBind> binds;
+    for (const auto& [page, mirror] : bound) binds.push_back({page << ResidencyPageShift, ResidencyPageBytes, VK_NULL_HANDLE, 0, 0});
+    if (binds.empty()) return;
+    std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    if (context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device) != VK_SUCCESS) return;
+    sparse->Bind(binds);
 }
 
 ResidencyDriver* ResidencyDriver::Active() {
@@ -306,6 +313,62 @@ ResidencyPublication ResidencyDriver::Publish() {
     return publication;
 }
 
+void ResidencyDriver::SyncBindings() {
+    if (manager.Serial() == bindSerial.load(std::memory_order_acquire)) return;
+    std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> wanted;
+    std::uint64_t now = 0;
+    const bool partial = manager.ChangesSince(bindSerial.load(std::memory_order_relaxed), now, wanted);
+    if (!partial) wanted = manager.Mirrored(now);
+    const std::lock_guard lock(bindMutex);
+    if (!partial) {
+        std::set<std::uint64_t> held;
+        for (const auto& [page, mirror] : wanted) held.insert(page);
+        for (const auto& [page, mirror] : bound) {
+            if (!held.contains(page)) wanted.emplace_back(page, 0u);
+        }
+    }
+    bindSerial.store(now, std::memory_order_release);
+    std::vector<VkSparseMemoryBind> binds;
+    bool releases = false;
+    for (const auto& [page, mirror] : wanted) {
+        if (((page + 1u) << ResidencyPageShift) > sparse->Bytes()) continue;
+        const auto found = bound.find(page);
+        const auto held = found != bound.end() ? found->second : 0u;
+        if (held == mirror) continue;
+        VkSparseMemoryBind bind{page << ResidencyPageShift, ResidencyPageBytes, VK_NULL_HANDLE, 0, 0};
+        if (mirror != 0) {
+            const auto [memory, offset] = mirrors.Locate(mirror);
+            bind.memory = memory;
+            bind.memoryOffset = offset;
+            bound[page] = mirror;
+        } else {
+            bound.erase(found);
+        }
+        releases = releases || held != 0;
+        binds.push_back(bind);
+    }
+    if (!binds.empty()) {
+        if (releases) Wait(Newest());
+        sparse->Bind(binds);
+    }
+    std::erase_if(retired, [&](const std::shared_ptr<MirrorChunk>& chunk) {
+        return std::none_of(bound.begin(), bound.end(), [&](const auto& held) { return held.second >= chunk->address && held.second - chunk->address < chunk->bytes; });
+    });
+}
+
+std::uint64_t ResidencyDriver::ResidentAddress(std::uint64_t page, std::uint64_t mirror) const {
+    const std::lock_guard lock(bindMutex);
+    const auto found = bound.find(page);
+    return found != bound.end() && found->second == mirror ? sparse->Address() + (page << ResidencyPageShift) : mirror;
+}
+
+bool ResidencyDriver::Bound(std::uint64_t page) const {
+    const std::lock_guard lock(bindMutex);
+    return bound.contains(page);
+}
+
 std::vector<Recorder::SectionObject> ResidencyDriver::ChunkObjects(bool written) const {
     std::vector<Recorder::SectionObject> objects;
     for (const auto chunk : manager.Chunks()) objects.push_back({mirrors.Chunk(chunk).get(), written});
@@ -368,6 +431,11 @@ std::uint64_t ResidencyDriver::AllocateChunk(std::uint32_t chunk, std::uint32_t)
 }
 
 void ResidencyDriver::ReleaseChunk(std::uint32_t chunk) {
+    {
+        auto held = mirrors.Chunk(chunk);
+        const std::lock_guard lock(bindMutex);
+        if (std::any_of(bound.begin(), bound.end(), [&](const auto& page) { return page.second >= held->address && page.second - held->address < held->bytes; })) retired.push_back(std::move(held));
+    }
     mirrors.Release(chunk);
 }
 

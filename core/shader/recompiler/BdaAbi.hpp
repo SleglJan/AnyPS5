@@ -44,6 +44,8 @@ inline constexpr std::uint32_t FirstMask = 0x1ffffu;
 inline constexpr std::uint32_t LimitHighShift = 17;
 inline constexpr std::uint32_t PermissionShift = 18;
 inline constexpr std::uint32_t KindShift = 30;
+inline constexpr std::uint32_t MirroredShift = 20;
+inline constexpr std::uint32_t RangeMirrored = 1;
 
 enum class PageKind : std::uint32_t { None, Segment, Split };
 

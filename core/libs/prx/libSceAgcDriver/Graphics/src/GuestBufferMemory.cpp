@@ -2516,8 +2516,10 @@ bool MirrorInside(std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::
 
 std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const ShaderRecompiler::BdaAbi::Range> ranges, const std::map<std::uint64_t, std::uint64_t>& mirrors, std::uint64_t begin, std::uint64_t end) {
     std::vector<ShaderRecompiler::BdaAbi::Range> pieces;
-    const auto emit = [&](const ShaderRecompiler::BdaAbi::Range& range, std::uint64_t low, std::uint64_t high, std::uint64_t device) {
-        if (low < high && low < end && begin < high) pieces.push_back({low, high, device, range.permissions, range.reserved});
+    const auto* residency = ResidencyDriver::Active();
+    const auto sparse = residency != nullptr ? residency->SparseAddress() : 0u;
+    const auto emit = [&](const ShaderRecompiler::BdaAbi::Range& range, std::uint64_t low, std::uint64_t high, std::uint64_t device, std::uint32_t flags = 0u) {
+        if (low < high && low < end && begin < high) pieces.push_back({low, high, device, range.permissions, range.reserved | flags});
     };
     auto range = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& held) { return value < held.end; });
     for (; range != ranges.end() && range->begin < end; ++range) {
@@ -2534,7 +2536,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const Shade
             const auto low = std::max(pageBegin, range->begin);
             const auto high = std::min(pageBegin + ResidencyPageBytes, range->end);
             emit(*range, cursor, low, range->deviceAddress + (cursor - range->begin));
-            emit(*range, low, high, mirror->second + (low - pageBegin));
+            emit(*range, low, high, mirror->second + (low - pageBegin), sparse != 0 && mirror->second == sparse + pageBegin ? ShaderRecompiler::BdaAbi::RangeMirrored : 0u);
             cursor = high;
         }
         emit(*range, cursor, range->end, range->deviceAddress + (cursor - range->begin));
@@ -2547,6 +2549,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const Shade
 std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& context) const {
     Require(uploaded && !committed, "guest GPU address ranges are not available");
     auto* residency = ResidencyDriver::Active();
+    if (residency != nullptr) residency->SyncBindings();
     const auto serial = residency != nullptr ? residency->Manager().Serial() : 0;
     if (space != nullptr) {
         if (space->ranges.empty()) return nullptr;
@@ -2558,7 +2561,7 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
                 std::vector<std::uint64_t> pages;
                 for (const auto& [page, mirror] : changed) {
                     if (!MirrorInside(space->ranges, page)) continue;
-                    if (mirror != 0) space->mirrors[page] = mirror;
+                    if (mirror != 0) space->mirrors[page] = residency->ResidentAddress(page, mirror);
                     else space->mirrors.erase(page);
                     pages.push_back(page);
                 }
@@ -2570,7 +2573,7 @@ std::shared_ptr<const BdaPageTable> GuestBufferMemory::PageTable(const Context& 
                 space->mirrors.clear();
                 if (residency != nullptr) {
                     for (const auto& [page, mirror] : residency->Manager().Mirrored(now)) {
-                        if (MirrorInside(space->ranges, page)) space->mirrors.emplace_hint(space->mirrors.end(), page, mirror);
+                        if (MirrorInside(space->ranges, page)) space->mirrors.emplace_hint(space->mirrors.end(), page, residency->ResidentAddress(page, mirror));
                     }
                 }
                 space->resident = SpliceMirrors(space->ranges, space->mirrors, 0, ~std::uint64_t{0});

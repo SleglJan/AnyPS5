@@ -239,7 +239,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> WithResidentPages(std::span<const S
         for (auto page = run.address >> ResidencyPageShift; page < (run.address + run.bytes) >> ResidencyPageShift; ++page) {
             const auto mirror = manager.Translate(page);
             if (!mirror) continue;
-            mirrors.push_back({page << ResidencyPageShift, (page + 1) << ResidencyPageShift, *mirror});
+            mirrors.push_back({page << ResidencyPageShift, (page + 1) << ResidencyPageShift, driver->ResidentAddress(page, *mirror)});
         }
     }
     if (mirrors.empty()) return result;
@@ -254,7 +254,8 @@ std::vector<ShaderRecompiler::BdaAbi::Range> WithResidentPages(std::span<const S
             const auto low = std::max(page->begin, range.begin);
             const auto high = std::min(page->end, range.end);
             if (low > begin) merged.push_back({begin, low, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});
-            merged.push_back({low, high, page->device + (low - page->begin), range.permissions, range.reserved});
+            const auto flags = page->device == driver->SparseAddress() + page->begin ? ShaderRecompiler::BdaAbi::RangeMirrored : 0u;
+            merged.push_back({low, high, page->device + (low - page->begin), range.permissions, range.reserved | flags});
             begin = high;
         }
         if (begin < range.end) merged.push_back({begin, range.end, range.deviceAddress + (begin - range.begin), range.permissions, range.reserved});

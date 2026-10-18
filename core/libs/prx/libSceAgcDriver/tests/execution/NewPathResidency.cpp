@@ -148,6 +148,23 @@ std::uint16_t Dirty(const SharedPages& pages, std::uint64_t page) {
     return dirty;
 }
 
+bool BoundAtGuestOffset(const SharedPages& pages, std::uint64_t page) {
+    bool bound = false;
+    Locked([&] {
+        auto& residency = Residency();
+        const auto at = PageOf(pages.Address(page));
+        const auto mirror = residency.Manager().Translate(at);
+        bound = mirror.has_value() && residency.Bound(at) && residency.ResidentAddress(at, *mirror) == residency.SparseAddress() + (at << 16u);
+    });
+    return bound;
+}
+
+bool Unbound(const SharedPages& pages, std::uint64_t page) {
+    bool unbound = false;
+    Locked([&] { unbound = !Residency().Bound(PageOf(pages.Address(page))); });
+    return unbound;
+}
+
 void Use(const SharedPages& pages, std::uint64_t first, std::uint64_t count) {
     Locked([&] { Residency().Manager().Use(pages.Address(first), count * PageBytes, ResidencyAccess::Read); });
 }
@@ -176,6 +193,7 @@ void Admission(Harness& harness, Model& model) {
     const auto read = Counts();
     const auto lanes = harness.Read(pages, 0);
     ExpectLanes(lanes, model, 0, ReadPages, {{1 * SubpagesPerPage + 2, MirrorMarker}}, "a dispatch reading a resident page through the page table did not read its mirror");
+    for (std::uint64_t page = 0; page < ReadPages; ++page) Expect(BoundAtGuestOffset(pages, page), "sparse residency: resident page " + std::to_string(page) + " read by a dispatch is not bound at its guest offset in the sparse residency buffer");
     Expect(pages.Words(1)[2 * WordsPerSubpage] == model.Value(1, 2 * WordsPerSubpage), "admission: a change made only to the mirror reached guest memory");
     Expect(Counts().admitted == read.admitted && Counts().writtenBackBytes == read.writtenBackBytes, "admission: a read of resident pages admitted or wrote back pages");
 }
@@ -348,8 +366,10 @@ void EvictionUnderBudget(Harness& harness) {
     }
     Expect(Resident(pages, 2 * ReadPages), "eviction: a more recently used page was evicted");
     ExpectLanes(harness.Read(pages, ReadPages), model, ReadPages, ReadPages, {}, "eviction: a dispatch did not read the guest memory of evicted pages");
+    for (std::uint64_t page = 0; page < ReadPages; ++page) Expect(Unbound(pages, ReadPages + page), "sparse residency: evicted page " + std::to_string(ReadPages + page) + " is still bound in the sparse residency buffer after a dispatch");
     FillMirror(pages.Address(chunkSlots + 1, 2), AdmittedMarker);
     ExpectLanes(harness.Read(pages, chunkSlots), model, chunkSlots, ReadPages, {{1 * SubpagesPerPage + 2, AdmittedMarker}}, "eviction: a dispatch did not read the mirror of a page admitted in an evicted page's slot");
+    for (std::uint64_t page = 0; page < ReadPages; ++page) Expect(BoundAtGuestOffset(pages, chunkSlots + page), "sparse residency: page " + std::to_string(chunkSlots + page) + ", admitted in an evicted page's slot, is not bound at its guest offset");
     Settle();
     Locked([&] { Residency().Manager().SetBudget(0); });
 }

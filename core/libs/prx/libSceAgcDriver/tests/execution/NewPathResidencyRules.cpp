@@ -26,13 +26,18 @@ void SharedMirrorsTakeStores(MirrorReader& reader) {
     Locked([&] {
         published = AgcDriver::Graphics::WithResidentPages(ranges);
         mirror = Residency().Manager().Translate(PageOf(pages.Address(0)));
+        if (mirror) mirror = Residency().ResidentAddress(PageOf(pages.Address(0)), *mirror);
     });
     const auto find = [&](std::uint64_t begin) { return std::ranges::find_if(published, [&](const BdaAbi::Range& range) { return range.begin == begin; }); };
     const auto resident = find(pages.Address(0));
     std::optional<std::uint64_t> second;
-    Locked([&] { second = Residency().Manager().Translate(PageOf(pages.Address(1))); });
+    Locked([&] {
+        second = Residency().Manager().Translate(PageOf(pages.Address(1)));
+        if (second) second = Residency().ResidentAddress(PageOf(pages.Address(1)), *second);
+    });
     const auto beside = find(pages.Address(1));
     Expect(mirror.has_value() && resident != published.end() && resident->end == pages.Address(1) && resident->deviceAddress == *mirror && resident->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: a resident page of a shared view is not published at its mirror with the range's write permission");
+    Expect(resident != published.end() && resident->deviceAddress == Residency().SparseAddress() + pages.Address(0) && resident->reserved == BdaAbi::RangeMirrored, "rule 1: a resident page of a shared view is not published at its guest offset in the sparse residency buffer with the mirrored flag");
     Expect(second.has_value() && beside != published.end() && beside->end == pages.Address(2) && beside->deviceAddress == *second && beside->permissions == (BdaAbi::Read | BdaAbi::Write), "rule 1: the resident page beside it is not published at its own mirror with the range's permissions");
     const auto before = Counts();
     Store(pages.Address(0));
