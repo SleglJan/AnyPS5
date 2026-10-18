@@ -1588,6 +1588,10 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
             ++counts.inadmissible;
             continue;
         }
+        if (import.resident) {
+            ++counts.residentSkipped;
+            continue;
+        }
         if (sharedOnly && import.section == 0) continue;
         const auto key = std::pair{import.section, import.offset};
         if (import.aliased && canonical.contains(key)) {

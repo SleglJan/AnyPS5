@@ -54,6 +54,7 @@ struct ResidencyImport {
     std::uint64_t section = 0;
     std::uint64_t offset = 0;
     std::uint64_t serial = 0;
+    bool resident = false;
 };
 
 struct ResidencyWrites {
@@ -173,6 +174,7 @@ struct ResidencyCounts {
     std::uint64_t cooled = 0;
     std::uint64_t unguardable = 0;
     std::uint64_t aliasSkipped = 0;
+    std::uint64_t residentSkipped = 0;
     std::uint64_t conflicts = 0;
     std::uint64_t waits = 0;
     std::uint64_t copiedInBytes = 0;

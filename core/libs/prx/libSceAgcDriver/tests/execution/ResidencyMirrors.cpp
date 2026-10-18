@@ -422,7 +422,9 @@ public:
 
     ResidencyImport Import(std::uint64_t page) override {
         if (page < BasePage || page >= BasePage + GuestPages || unmapped.contains(page)) return {};
-        return {true, true, true, false, 1, (page - BasePage) << ResidencyPageShift};
+        ResidencyImport import{true, true, true, false, 1, (page - BasePage) << ResidencyPageShift};
+        import.resident = residentViews.contains(page);
+        return import;
     }
 
     std::vector<ResidencyRange> Aliases(std::uint64_t, std::uint64_t) override { return {}; }
@@ -449,6 +451,7 @@ public:
     }
 
     ResidencyRefusal Guard(std::uint64_t page) override {
+        ++guardCalls[page];
         const auto index = static_cast<std::uint32_t>(page - BasePage);
         ProtectOrThrow(index, true);
         faultLog.guarded[index] = true;
@@ -480,6 +483,8 @@ public:
     GuestRange& guest;
     ResidencyMirrors mirrors;
     std::set<std::uint64_t> unmapped;
+    std::set<std::uint64_t> residentViews;
+    std::map<std::uint64_t, std::uint32_t> guardCalls;
 
 private:
     ResidencyImportLocator locator() {
@@ -882,6 +887,25 @@ void Release(Fixture& fixture) {
     for (std::uint32_t page = 0; page < GuestPages; ++page) Expect(!faultLog.guarded[page].load(), "no guard left after every page left residency");
 }
 
+void ResidentViewsStayOnImports(const Context& context) {
+    Fixture fixture(context, std::uint64_t{ChunkSlots} << ResidencyPageShift);
+    const auto view = BasePage + 2;
+    fixture.device.residentViews.insert(view);
+    fixture.Ordering();
+    const auto before = fixture.manager.Counts();
+    fixture.CheckRead(BasePage, 4, "resident view: the first dispatch reading pages 0 to 3");
+    fixture.Store(view, 3 * WordsPerSubpage, 0x600dcafeu);
+    fixture.Ordering();
+    fixture.CheckRead(BasePage, 4, "resident view: a dispatch after the CPU stored into the resident view");
+    fixture.CheckWords(view, ResidencyPageBytes / 4, "resident view: every word of the resident view after the store");
+    const auto after = fixture.manager.Counts();
+    Expect(!fixture.manager.Slot(view).has_value(), "resident view: the page the guest keeps resident was admitted");
+    Expect(fixture.manager.Slot(BasePage + 1).has_value() && fixture.manager.Slot(BasePage + 3).has_value(), "resident view: its neighbours were not admitted");
+    Expect(fixture.device.guardCalls[view] == 0 && !faultLog.guarded[2].load(), "resident view: " + std::to_string(fixture.device.guardCalls[view]) + " guard calls on the resident view");
+    Expect(after.copiedInBytes == before.copiedInBytes + 3 * ResidencyPageBytes, "resident view: " + std::to_string((after.copiedInBytes - before.copiedInBytes) >> ResidencyPageShift) + " pages copied in, expected the three neighbours only");
+    Expect(after.residentSkipped > before.residentSkipped, "resident view: the skipped admission is not counted");
+}
+
 void BackingCommit(const Context& context) {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS_EX before{};
@@ -924,6 +948,7 @@ int main() {
             Release(fixture);
         }
         BackingCommit(device->Get());
+        ResidentViewsStayOnImports(device->Get());
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: exception: %s\n", error.what());
         return 1;

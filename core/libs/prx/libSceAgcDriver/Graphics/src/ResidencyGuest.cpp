@@ -19,6 +19,7 @@ std::optional<ResidencyGuestImport> ResidencyGuest::ImportOf(std::uint64_t page)
     result.attributes.section = backing.resident ? 0 : backing.section;
     result.attributes.offset = backing.offset;
     result.attributes.serial = imported->serial;
+    result.attributes.resident = backing.resident;
     result.buffer = imported->buffer;
     result.offset = imported->offset;
     result.address = imported->address;
