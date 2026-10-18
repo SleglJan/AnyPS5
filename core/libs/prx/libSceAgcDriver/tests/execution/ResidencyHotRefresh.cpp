@@ -11,10 +11,10 @@ constexpr std::uint32_t Tag = 12;
 constexpr std::uint32_t FirstStore = 0x5e000001u;
 constexpr std::uint32_t SecondStore = 0x5e000002u;
 
-bool HotResident(std::uint64_t address) {
-    bool hot = false;
-    Locked([&] { hot = Residency().Manager().HotResident(PageOf(address)); });
-    return hot;
+bool Resident(std::uint64_t address) {
+    bool resident = false;
+    Locked([&] { resident = Residency().Manager().Slot(PageOf(address)).has_value(); });
+    return resident;
 }
 
 void Run(MirrorReader& reader) {
@@ -29,25 +29,21 @@ void Run(MirrorReader& reader) {
         return Pattern(Tag, page, subpage * WordsPerSubpage);
     };
     ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read that admits the pages");
-    std::uint32_t hot = 0;
-    for (std::uint32_t page = 0; page < HotPages; ++page) hot += HotResident(pages.Address(std::uint64_t{page} * PageBytes)) ? 1u : 0u;
-    Expect(hot == HotPages, "hot refresh: " + std::to_string(hot) + " of " + std::to_string(HotPages) + " pinned private pages admitted by a read are kept current from the write tracking");
+    for (std::uint32_t round = 0; round < 3; ++round) ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: a read while the imports settle");
+    std::uint32_t served = 0;
+    for (std::uint32_t page = 0; page < HotPages; ++page) served += Resident(pages.Address(std::uint64_t{page} * PageBytes)) ? 0u : 1u;
+    Expect(served == HotPages, "hot refresh: " + std::to_string(served) + " of " + std::to_string(HotPages) + " pinned private pages, which libc refuses to guard, are served from their imports once their imports settled");
     const auto quiet = Counts();
     for (std::uint32_t round = 0; round < 3; ++round) ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: a read with no CPU store since the last one");
     const auto afterQuiet = Counts();
-    Expect(afterQuiet.hotSweeps > quiet.hotSweeps, "hot refresh: three dispatches in new epochs collected no writes of the hot pages");
-    Expect(afterQuiet.hotRefreshed == quiet.hotRefreshed && afterQuiet.copiedInBytes == quiet.copiedInBytes, "hot refresh: three dispatches with no CPU store refreshed " + std::to_string(afterQuiet.hotRefreshed - quiet.hotRefreshed) + " hot pages and copied " + std::to_string(afterQuiet.copiedInBytes - quiet.copiedInBytes) + " bytes");
+    Expect(afterQuiet.hotCollects == quiet.hotCollects && afterQuiet.hotRefreshed == quiet.hotRefreshed && afterQuiet.copiedInBytes == quiet.copiedInBytes, "hot refresh: three dispatches with no CPU store collected " + std::to_string(afterQuiet.hotCollects - quiet.hotCollects) + " hot runs, refreshed " + std::to_string(afterQuiet.hotRefreshed - quiet.hotRefreshed) + " hot pages and copied " + std::to_string(afterQuiet.copiedInBytes - quiet.copiedInBytes) + " bytes");
     pages.Words()[3 * WordsPerPage + 5 * WordsPerSubpage] = FirstStore;
     pages.Words()[11 * WordsPerPage] = SecondStore;
     stored = true;
     const auto before = Counts();
-    ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read after CPU stores into two of the hot pages");
+    ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read after CPU stores into two of the pages");
     const auto after = Counts();
-    Expect(after.hotRefreshed - before.hotRefreshed == 2u, "hot refresh: CPU stores into 2 of " + std::to_string(HotPages) + " hot pages refreshed " + std::to_string(after.hotRefreshed - before.hotRefreshed) + " pages");
-    Expect(after.copiedInBytes - before.copiedInBytes == 2u * SubpageBytes, "hot refresh: CPU stores into 2 subpages copied " + std::to_string(after.copiedInBytes - before.copiedInBytes) + " bytes, expected " + std::to_string(2u * SubpageBytes));
-    const auto settled = Counts();
-    ExpectRead(reader.Read(pages.Address(), HotPages), HotPages, expected, "hot refresh: the read after the refresh");
-    Expect(Counts().copiedInBytes == settled.copiedInBytes, "hot refresh: a refreshed page was copied again with no CPU store");
+    Expect(after.hotCollects == before.hotCollects && after.copiedInBytes == before.copiedInBytes && after.writtenBackBytes == before.writtenBackBytes, "hot refresh: CPU stores into 2 pages served from their imports reached the read with " + std::to_string(after.hotCollects - before.hotCollects) + " hot collects, " + std::to_string(after.copiedInBytes - before.copiedInBytes) + " bytes copied in and " + std::to_string(after.writtenBackBytes - before.writtenBackBytes) + " written back, expected none");
     Settle();
     GuestArena::GuestArenaUnpinWritable_nid_postfix(pages.Data(), pages.Bytes());
 }

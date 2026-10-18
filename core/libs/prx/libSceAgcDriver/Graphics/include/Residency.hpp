@@ -27,6 +27,8 @@ constexpr std::uint32_t ResidencySubpages = 1u << (ResidencyPageShift - Residenc
 constexpr std::size_t ResidencyStreams = 16;
 constexpr std::uint64_t ResidencyUnchecked = ~std::uint64_t{0};
 constexpr std::uint64_t ResidencyMeasuredBudget = ~std::uint64_t{0};
+constexpr std::uint32_t ResidencyHotQuietFrames = 4;
+constexpr std::size_t ResidencyHotGapBuckets = 8;
 
 using ResidencyToken = std::array<std::uint64_t, ResidencyStreams>;
 using ResidencyMask = std::uint16_t;
@@ -64,7 +66,8 @@ struct ResidencyPolicy {
     std::uint32_t chunkSlots = 1024;
     std::uint64_t budgetBytes = 0;
     std::uint32_t hotFaults = 2;
-    std::uint32_t hotEpochs = 2;
+    std::uint32_t hotFrames = 2;
+    std::uint32_t quietFrames = ResidencyHotQuietFrames;
 };
 
 struct MirrorSlot {
@@ -182,6 +185,8 @@ struct ResidencyCounts {
     std::uint64_t hotRefreshed = 0;
     std::uint64_t hotSweeps = 0;
     std::uint64_t hotCollects = 0;
+    std::uint64_t hotServed = 0;
+    std::array<std::uint64_t, ResidencyHotGapBuckets> hotWriteGaps{};
     std::uint64_t retiles = 0;
     std::uint64_t retiledBytes = 0;
     std::uint64_t eagerRetiles = 0;
@@ -221,6 +226,8 @@ public:
     void ApplyBudget();
     void AdmitTouched(std::span<const std::uint64_t> pages);
     bool Advance();
+    void NextFrame();
+    std::uint64_t Frame() const;
     void Apply();
     void AdmitEager();
     void Prepare();
@@ -317,7 +324,7 @@ private:
         MirrorSlot slot;
         std::uint32_t older = None;
         std::uint32_t newer = None;
-        std::uint64_t faultEpoch = 0;
+        std::uint64_t faultFrame = 0;
         std::uint64_t faultHistory = 0;
         ResidencyMask dirty = 0;
         std::vector<Run> dirtyRuns;
@@ -340,7 +347,7 @@ private:
 
     struct Cooling {
         std::uint64_t generation = 0;
-        std::uint64_t epoch = 0;
+        std::uint64_t frame = 0;
     };
 
     struct Chunk {
@@ -405,6 +412,9 @@ private:
     void rearm(std::uint32_t id);
     void coolHot(std::uint64_t first, std::span<const std::uint8_t> written);
     void markHot(std::uint64_t page, std::uint64_t at);
+    void markHotForImport(std::uint64_t page, std::uint64_t at);
+    void serveHotFromImports();
+    void coolTouched(std::span<const std::uint64_t> touched);
     void unmarkHot(std::uint64_t page);
     std::optional<MirrorSlot> acquireSlot(std::uint64_t protectFirst, std::uint64_t protectLast, WriteBacks& writeBacks, bool* evicted = nullptr);
     void leave(std::uint32_t id, WriteBacks& writeBacks);
@@ -465,7 +475,8 @@ private:
     IResidencyDevice& device;
     const std::uint32_t chunkSlots;
     const std::uint32_t hotFaults;
-    const std::uint32_t hotEpochs;
+    const std::uint32_t hotFrames;
+    const std::uint32_t quietFrames;
     std::uint64_t budget = 0;
     std::uint32_t maxChunks = 0;
     std::uint64_t limitEpoch = 0;
@@ -486,7 +497,7 @@ private:
     std::unordered_map<std::uint64_t, Cooling> hot;
     std::unordered_map<std::uint64_t, std::uint64_t> hotResident;
     std::map<std::uint64_t, std::uint64_t> hotRuns;
-    std::deque<std::pair<std::uint64_t, std::uint64_t>> hotCooling;
+    std::vector<std::uint64_t> hotForImport;
     std::uint64_t sweptEpoch = 0;
     std::unordered_set<std::uint64_t> accessGuards;
     std::unordered_set<std::uint64_t> unsettledImports;
@@ -520,6 +531,7 @@ private:
     std::atomic<std::uint64_t> unsettledPages{0};
     std::unique_ptr<std::atomic<DirtyLeaf*>[]> dirtyLeaves;
     std::uint64_t touchFrame = 0;
+    std::atomic<std::uint64_t> frame{1};
     ResidencyCounts counts;
     mutable std::mutex residentMutex;
     std::mutex queueMutex;

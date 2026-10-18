@@ -11,6 +11,7 @@ namespace {
 
 using namespace NewPath;
 using AgcDriver::Graphics::ResidencyAccess;
+using AgcDriver::Graphics::ResidencyHotQuietFrames;
 using AgcDriver::Graphics::ResidencyCounts;
 
 constexpr std::uint32_t ReadLanes = MirrorReader::Lanes;
@@ -135,9 +136,9 @@ bool Guarded(const SharedPages& pages, std::uint64_t page) {
     return AgcDriver::GuestMemory::WriteGuarded(PageOf(pages.Address(page)));
 }
 
-bool HotResident(const SharedPages& pages, std::uint64_t page) {
+bool Hot(const SharedPages& pages, std::uint64_t page) {
     bool hot = false;
-    Locked([&] { hot = Residency().Manager().HotResident(PageOf(pages.Address(page))); });
+    Locked([&] { hot = Residency().Manager().Hot(PageOf(pages.Address(page))); });
     return hot;
 }
 
@@ -231,24 +232,37 @@ void HotRule(Harness& harness, Model& model) {
     Use(pages, 6, 1);
     ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read after admission");
     Expect(Resident(pages, 6), "hot rule: page 6 was not admitted");
-    std::uint32_t stores = 0;
-    for (; stores < 8 && !HotResident(pages, 6); ++stores) {
-        model.Store(6, 4 * WordsPerSubpage, HotStore + stores);
-        ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a dispatch after a CPU store to page 6");
+    model.Store(6, 3 * WordsPerSubpage, HotStore + 0x40u);
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a dispatch after one CPU store to page 6");
+    model.Store(6, 3 * WordsPerSubpage, HotStore + 0x41u);
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a dispatch after a second CPU store to page 6 in the same frame");
+    Expect(Resident(pages, 6) && Guarded(pages, 6) && !Hot(pages, 6), "hot rule: CPU stores inside one frame moved page 6 out of its mirror or left it unguarded");
+    std::uint32_t frames = 0;
+    for (; frames < 8 && !Hot(pages, 6); ++frames) {
+        Residency().Flip();
+        model.Store(6, 4 * WordsPerSubpage, HotStore + frames);
+        ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a dispatch after a CPU store to page 6 in a new frame");
     }
-    Expect(Resident(pages, 6) && HotResident(pages, 6), "hot rule: a page the CPU stored to before each of " + std::to_string(stores) + " submissions left residency or did not turn hot");
-    Expect(!Guarded(pages, 6), "hot rule: a hot page kept its guard");
+    Expect(Hot(pages, 6) && frames <= 2, "hot rule: a page the CPU stored to in each of " + std::to_string(frames) + " frames did not turn hot within two frames");
+    for (std::uint32_t read = 0; read < 2; ++read) ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: a read while page 6 is hot");
+    Expect(!Resident(pages, 6) && !Guarded(pages, 6), "hot rule: a hot page kept its mirror or its guard");
     const auto faults = Counts().faults;
+    const auto polled = Counts();
     model.Store(6, 5 * WordsPerSubpage, HotStore + 0x80u);
     Expect(Counts().faults == faults, "hot rule: a store to a hot page faulted");
-    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read of a hot page after an unguarded CPU store");
+    for (std::uint32_t read = 0; read < 3; ++read) ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read of a hot page after an unguarded CPU store");
+    const auto afterPolled = Counts();
+    Expect(afterPolled.hotCollects == polled.hotCollects && afterPolled.copiedInBytes == polled.copiedInBytes && afterPolled.writtenBackBytes == polled.writtenBackBytes, "hot rule: the CPU store reached three reads of the hot page with " + std::to_string(afterPolled.hotCollects - polled.hotCollects) + " hot collects, " + std::to_string(afterPolled.copiedInBytes - polled.copiedInBytes) + " bytes copied in and " + std::to_string(afterPolled.writtenBackBytes - polled.writtenBackBytes) + " written back, expected none");
     const auto cooled = Counts().cooled;
     bool cool = false;
-    for (std::uint32_t quiet = 0; quiet < 6 && !cool; ++quiet) {
+    std::uint32_t quiet = 0;
+    for (; quiet < ResidencyHotQuietFrames + 2u && !cool; ++quiet) {
+        Residency().Flip();
         harness.Read(pages, 0);
-        cool = !HotResident(pages, 6);
+        Use(pages, 6, 1);
+        cool = !Hot(pages, 6);
     }
-    Expect(cool && Counts().cooled > cooled && Resident(pages, 6) && Guarded(pages, 6), "hot rule: a hot page the CPU stopped writing was not guarded again within six quiet submissions");
+    Expect(cool && quiet >= ResidencyHotQuietFrames && Counts().cooled > cooled && Resident(pages, 6) && Guarded(pages, 6), "hot rule: a hot page the CPU stopped writing did not return to a guarded mirror after " + std::to_string(ResidencyHotQuietFrames) + " quiet frames (" + std::to_string(quiet) + " frames, cool " + std::to_string(cool) + ")");
     ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "hot rule: the read after the page cooled");
 }
 

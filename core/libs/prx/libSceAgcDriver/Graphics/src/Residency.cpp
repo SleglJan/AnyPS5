@@ -105,11 +105,12 @@ ResidencyMask SubpageMask(std::uint64_t page, std::uint64_t address, std::uint64
 }
 
 ResidencyManager::ResidencyManager(IResidencyDevice& device, const ResidencyPolicy& policy)
-    : device(device), chunkSlots(policy.chunkSlots), hotFaults(policy.hotFaults), hotEpochs(policy.hotEpochs), dirtyLeaves(new std::atomic<DirtyLeaf*>[DirtyLeaves]()) {
+    : device(device), chunkSlots(policy.chunkSlots), hotFaults(policy.hotFaults), hotFrames(policy.hotFrames), quietFrames(policy.quietFrames), dirtyLeaves(new std::atomic<DirtyLeaf*>[DirtyLeaves]()) {
     if (chunkSlots == 0 || chunkSlots > (std::numeric_limits<std::uint32_t>::max() >> ResidencyPageShift))
         throw std::invalid_argument("residency: a chunk holds 1 to 65535 pages, not " + std::to_string(chunkSlots));
-    if (hotEpochs == 0 || hotEpochs > 64 || hotFaults == 0 || hotFaults > hotEpochs)
-        throw std::invalid_argument("residency: a hot page faults in 1 to " + std::to_string(hotEpochs) + " of the last 1 to 64 epochs, not " + std::to_string(hotFaults) + " of " + std::to_string(hotEpochs));
+    if (hotFrames == 0 || hotFrames > 64 || hotFaults == 0 || hotFaults > hotFrames)
+        throw std::invalid_argument("residency: a hot page faults in 1 to " + std::to_string(hotFrames) + " of the last 1 to 64 frames, not " + std::to_string(hotFaults) + " of " + std::to_string(hotFrames));
+    if (quietFrames == 0) throw std::invalid_argument("residency: a hot page cools after at least one quiet frame");
     SetBudget(policy.budgetBytes);
 }
 
@@ -1264,8 +1265,8 @@ void ResidencyManager::settleUnbounded(std::span<const std::uint32_t> ids, bool 
 void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
     std::sort(written.begin(), written.end());
     written.erase(std::unique(written.begin(), written.end()), written.end());
-    const auto window = hotEpochs >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << hotEpochs) - 1;
-    const auto now = Epoch();
+    const auto window = hotFrames >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << hotFrames) - 1;
+    const auto now = Frame();
     std::vector<Fill> fills;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> partial;
     std::vector<Fill> unused;
@@ -1279,12 +1280,12 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
         }
         ++counts.faults;
         if (hotResident.contains(index)) ++counts.hotRefreshed;
-        const auto distance = now - page.faultEpoch;
+        const auto distance = now - page.faultFrame;
         page.faultHistory = (distance >= 64 ? 0 : page.faultHistory << distance) | 1u;
-        page.faultEpoch = now;
+        page.faultFrame = now;
         if (static_cast<std::uint32_t>(std::popcount(page.faultHistory & window)) >= hotFaults && !hotResident.contains(index)) {
             ++counts.hot;
-            markHot(index, now);
+            markHotForImport(index, now);
             page.guarded = false;
         } else if (hotResident.contains(index)) {
             markHot(index, now);
@@ -1292,7 +1293,7 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
         } else if (page.guarded && !device.Guard(index)) {
             ++counts.unguardable;
             page.guarded = false;
-            markHot(index, now);
+            markHotForImport(index, now);
         }
         const auto writes = device.PageWrites(index, page.generation);
         if (writes.other) {
@@ -1315,15 +1316,17 @@ void ResidencyManager::applyFaults(std::vector<std::uint64_t> written) {
 
 void ResidencyManager::coolHot(std::uint64_t first, std::span<const std::uint8_t> written) {
     const auto generation = device.Generation();
-    const auto now = Epoch();
+    const auto now = Frame();
     for (std::size_t k = 0; k < written.size(); ++k) {
         const auto entry = hot.find(first + k);
         if (entry == hot.end()) continue;
         if (written[k] != 0) {
+            const auto gap = now - entry->second.frame;
+            ++counts.hotWriteGaps[gap < 5 ? gap : gap <= 8 ? 5 : gap <= 16 ? 6 : 7];
             entry->second = {generation, now};
             continue;
         }
-        if (now - entry->second.epoch < hotEpochs) continue;
+        if (now - entry->second.frame < quietFrames) continue;
         hot.erase(entry);
         ++counts.cooled;
     }
@@ -1334,6 +1337,14 @@ bool ResidencyManager::Advance() {
     return queued.load(std::memory_order_acquire);
 }
 
+void ResidencyManager::NextFrame() {
+    frame.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t ResidencyManager::Frame() const {
+    return frame.load(std::memory_order_relaxed);
+}
+
 void ResidencyManager::Apply() {
     const std::lock_guard structureLock(structure);
     settleImports();
@@ -1342,6 +1353,7 @@ void ResidencyManager::Apply() {
     settleAccessGuards();
     if (budget == ResidencyMeasuredBudget && device.OtherDeviceBytes() != appliedOthers) ApplyBudget();
     admitReservedTouches();
+    serveHotFromImports();
 }
 
 void ResidencyManager::AdmitEager() {
@@ -1526,6 +1538,7 @@ void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
         unlink(*id);
         linkNewest(*id);
     }
+    coolTouched(missing);
     std::uint64_t quota = TouchPagesPerFrame;
     for (std::size_t first = 0; first < missing.size();) {
         auto last = first;
@@ -1598,9 +1611,11 @@ std::uint64_t ResidencyManager::admitPages(std::uint64_t first, std::uint64_t la
         else if (import.cpuWritable) device.SettleWrites(page);
         const auto id = newPage(page, *slot, import, guarded);
         pages[id].used = !sharedOnly;
-        if (import.cpuWritable && !guarded) {
-            if (import.section != 0) ++counts.unguardable;
-            else ++counts.unsettledGuards;
+        if (import.cpuWritable && !guarded && import.section != 0) {
+            ++counts.unguardable;
+            markHotForImport(page, Epoch());
+        } else if (import.cpuWritable && !guarded) {
+            ++counts.unsettledGuards;
             markHot(page, Epoch());
         }
         fills.push_back({id});
@@ -1951,7 +1966,7 @@ void ResidencyManager::rearm(std::uint32_t id) {
         return;
     }
     ++counts.unguardable;
-    markHot(page.index, Epoch());
+    markHotForImport(page.index, Epoch());
 }
 
 bool ResidencyManager::writePending(std::uint64_t page) {
@@ -2013,7 +2028,6 @@ void ResidencyManager::settleAccessGuards() {
 void ResidencyManager::markHot(std::uint64_t page, std::uint64_t at) {
     const auto [entry, inserted] = hotResident.insert_or_assign(page, at);
     static_cast<void>(entry);
-    hotCooling.emplace_back(at, page);
     if (!inserted) return;
     auto next = hotRuns.upper_bound(page);
     auto first = page;
@@ -2045,6 +2059,7 @@ void ResidencyManager::unmarkHot(std::uint64_t page) {
 void ResidencyManager::RefreshHot() {
     const std::lock_guard structureLock(structure);
     applyQueued();
+    serveHotFromImports();
     if (hotResident.empty()) return;
     const auto now = Epoch();
     if (sweptEpoch != now) {
@@ -2056,17 +2071,57 @@ void ResidencyManager::RefreshHot() {
         }
         applyQueued();
     }
-    std::vector<std::uint32_t> cooled;
-    while (!hotCooling.empty() && now - hotCooling.front().first >= hotEpochs) {
-        const auto [at, index] = hotCooling.front();
-        hotCooling.pop_front();
-        const auto entry = hotResident.find(index);
-        if (entry == hotResident.end() || entry->second != at) continue;
-        unmarkHot(index);
-        ++counts.cooled;
-        if (const auto id = find(index)) cooled.push_back(*id);
+    serveHotFromImports();
+}
+
+void ResidencyManager::markHotForImport(std::uint64_t page, std::uint64_t at) {
+    markHot(page, at);
+    hotForImport.push_back(page);
+}
+
+void ResidencyManager::serveHotFromImports() {
+    if (hotForImport.empty()) return;
+    std::sort(hotForImport.begin(), hotForImport.end());
+    hotForImport.erase(std::unique(hotForImport.begin(), hotForImport.end()), hotForImport.end());
+    std::vector<std::uint32_t> ids;
+    std::vector<std::uint64_t> served;
+    std::vector<std::uint64_t> pinned;
+    for (const auto index : hotForImport) {
+        const auto id = find(index);
+        if (!id || !hotResident.contains(index) || pages[*id].guarded) continue;
+        if (!pages[*id].shared && !pages[*id].importSettled) continue;
+        if (!settled(pages[*id].pin)) {
+            pinned.push_back(index);
+            continue;
+        }
+        ids.push_back(*id);
+        served.push_back(index);
     }
-    for (const auto id : cooled) rearm(id);
+    hotForImport = std::move(pinned);
+    if (ids.empty()) return;
+    counts.hotServed += ids.size();
+    demote(ids);
+    const auto generation = device.Generation();
+    const auto now = Frame();
+    for (const auto index : served) hot.insert_or_assign(index, Cooling{generation, now});
+}
+
+void ResidencyManager::coolTouched(std::span<const std::uint64_t> touched) {
+    if (hot.empty()) return;
+    for (std::size_t first = 0; first < touched.size();) {
+        if (!hot.contains(touched[first])) {
+            ++first;
+            continue;
+        }
+        auto last = first;
+        while (last + 1 < touched.size() && touched[last + 1] == touched[last] + 1 && hot.contains(touched[last + 1])) ++last;
+        std::vector<std::uint64_t> generations;
+        for (auto index = first; index <= last; ++index) generations.push_back(hot.at(touched[index]).generation);
+        std::vector<std::uint8_t> stale(generations.size(), 0);
+        device.ChangedPages(touched[first], generations, stale);
+        coolHot(touched[first], stale);
+        first = last + 1;
+    }
 }
 
 void ResidencyManager::Retire() {

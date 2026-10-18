@@ -598,14 +598,14 @@ public:
 };
 
 struct Fixture {
-    explicit Fixture(std::uint32_t pageCount, std::uint32_t budgetChunks, std::uint32_t hotFaults = 2, std::uint32_t hotEpochs = 2) {
+    explicit Fixture(std::uint32_t pageCount, std::uint32_t budgetChunks, std::uint32_t hotFaults = 2, std::uint32_t hotFrames = 2) {
         for (std::uint32_t page = 0; page < pageCount; ++page) {
             auto& entry = gpu.imports[BasePage + page];
             entry.group = page;
             for (std::uint32_t subpage = 0; subpage < ResidencySubpages; ++subpage) (*entry.storage)[subpage] = (std::uint64_t{page} << 8) | subpage;
         }
         gpu.budgetChunks = budgetChunks;
-        manager = std::make_unique<ResidencyManager>(gpu, ResidencyPolicy{ChunkSlots, std::uint64_t{budgetChunks} * ChunkSlots * ResidencyPageBytes, hotFaults, hotEpochs});
+        manager = std::make_unique<ResidencyManager>(gpu, ResidencyPolicy{ChunkSlots, std::uint64_t{budgetChunks} * ChunkSlots * ResidencyPageBytes, hotFaults, hotFrames});
         gpu.manager = manager.get();
     }
 
@@ -825,7 +825,7 @@ void OrderingPointsReportQueuedWork() {
 }
 
 void HotPagesStayAndCool() {
-    scope = "hot pages stay resident and cool";
+    scope = "hot pages leave for their imports and cool";
     Fixture fixture(4, 1, 2, 2);
     fixture.Share(BasePage + 0);
     fixture.Share(BasePage + 2);
@@ -836,37 +836,51 @@ void HotPagesStayAndCool() {
     for (std::uint32_t round = 0; round < 4; ++round) {
         fixture.gpu.CpuWrite(BasePage + 2, 0x0001, 500 + round);
         fixture.manager->Prepare();
+        fixture.manager->NextFrame();
+        fixture.manager->NextFrame();
+    }
+    Expect(fixture.manager->Slot(BasePage + 2).has_value() && fixture.manager->Counts().faults == 4 && !fixture.manager->Hot(BasePage + 2), "a page written every other frame faults every time and stays guarded in its mirror");
+    for (std::uint32_t round = 0; round < 3; ++round) {
+        fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 1 + round);
         fixture.manager->Prepare();
     }
-    Expect(fixture.manager->Slot(BasePage + 2).has_value() && fixture.manager->Counts().faults == 4 && !fixture.manager->HotResident(BasePage + 2), "a page written every other epoch faults every time and stays guarded");
-    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 1);
+    Expect(fixture.manager->Slot(BasePage + 0).has_value() && !fixture.manager->Hot(BasePage + 0) && fixture.Armed(BasePage + 0), "faults inside one frame: the page stays in its mirror and guarded");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 3);
+    fixture.gpu.Drain();
+    fixture.manager->NextFrame();
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 4);
     fixture.manager->Prepare();
-    Expect(fixture.manager->Slot(BasePage + 0).has_value() && !fixture.manager->HotResident(BasePage + 0), "one fault: still resident and guarded");
-    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 2);
+    fixture.gpu.Drain();
     fixture.manager->Prepare();
-    Expect(fixture.manager->Slot(BasePage + 0).has_value() && fixture.manager->HotResident(BasePage + 0), "faults in consecutive epochs: the page stays resident and turns hot");
+    Expect(!fixture.manager->Slot(BasePage + 0).has_value() && fixture.manager->Hot(BasePage + 0) && !fixture.manager->HotResident(BasePage + 0), "faults in consecutive frames: the page turns hot and leaves its mirror for its import");
     Expect(!fixture.Armed(BasePage + 0), "a hot page is unguarded");
     const auto faults = fixture.gpu.faults;
-    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 3);
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 5);
     Expect(fixture.gpu.faults == faults, "stores to a hot page do not fault");
     fixture.gpu.copiedIn.clear();
-    fixture.manager->RefreshHot();
-    Expect(fixture.gpu.copiedIn.size() == 1 && fixture.gpu.copiedIn[0].page == BasePage + 0 && fixture.gpu.copiedIn[0].bytes == ResidencyPageBytes, "the refresh before the next dispatch copies the page the CPU wrote");
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 3);
+    const auto collected = fixture.gpu.collectedPages;
+    for (std::uint32_t point = 0; point < 4; ++point) {
+        fixture.manager->Prepare();
+        fixture.manager->RefreshHot();
+    }
+    Expect(fixture.gpu.copiedIn.empty() && fixture.gpu.collectedPages == collected, "ordering points copy and collect nothing for a hot page");
+    fixture.Use(0, BasePage + 0);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 5);
     fixture.gpu.Drain();
-    fixture.gpu.copiedIn.clear();
-    fixture.manager->RefreshHot();
-    Expect(fixture.gpu.copiedIn.empty(), "an unchanged hot page is not copied again");
-    fixture.manager->Prepare();
-    fixture.manager->RefreshHot();
-    Expect(fixture.manager->HotResident(BasePage + 0) && !fixture.Armed(BasePage + 0), "one quiet epoch is not enough");
-    fixture.manager->Prepare();
-    fixture.manager->RefreshHot();
-    Expect(fixture.manager->Slot(BasePage + 0).has_value() && !fixture.manager->HotResident(BasePage + 0) && fixture.Armed(BasePage + 0), "quiet for two epochs: guarded again, still resident");
-    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 3);
+    Expect(!fixture.manager->Slot(BasePage + 0).has_value(), "a dispatch reads the hot page from its import");
+    for (std::uint32_t quiet = 1; quiet < ResidencyHotQuietFrames; ++quiet) {
+        fixture.manager->NextFrame();
+        fixture.Use(0, BasePage + 0);
+        fixture.gpu.Drain();
+        Expect(!fixture.manager->Slot(BasePage + 0).has_value() && fixture.manager->Hot(BasePage + 0), "quiet for " + std::to_string(quiet) + " frames: still served from its import");
+    }
+    fixture.manager->NextFrame();
+    fixture.Use(0, BasePage + 0);
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 5);
     fixture.gpu.Drain();
+    Expect(fixture.manager->Slot(BasePage + 0).has_value() && !fixture.manager->Hot(BasePage + 0) && fixture.Armed(BasePage + 0), "quiet for the quiet frames: back in a guarded mirror, read correctly");
     const auto counts = fixture.manager->Counts();
-    Expect(counts.hot == 1 && counts.cooled == 1, "one page turned hot and cooled");
+    Expect(counts.hot == 1 && counts.cooled == 1 && counts.hotServed == 1, "one page turned hot, was served from its import and cooled");
 }
 
 void UnguardablePages() {
@@ -876,18 +890,23 @@ void UnguardablePages() {
     fixture.Share(BasePage + 3);
     fixture.Share(BasePage + 4);
     fixture.Use(0, BasePage + 3, 2);
-    Expect(fixture.manager->Slot(BasePage + 3) && fixture.manager->Slot(BasePage + 4), "a page whose guard cannot be armed is admitted");
-    Expect(fixture.manager->HotResident(BasePage + 3) && !fixture.Armed(BasePage + 3) && !fixture.manager->HotResident(BasePage + 4), "and kept current from the write tracking instead of a guard");
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    Expect(!fixture.manager->Slot(BasePage + 3) && fixture.manager->Slot(BasePage + 4), "a page whose guard cannot be armed is served from its import");
+    Expect(fixture.manager->Hot(BasePage + 3) && !fixture.Armed(BasePage + 3) && !fixture.manager->Hot(BasePage + 4), "and not polled from a mirror");
     fixture.gpu.Drain();
     fixture.gpu.CpuWrite(BasePage + 3, 0x0001, 9);
     Expect(fixture.gpu.faults == 0, "a store into the unguarded page does not fault");
-    fixture.manager->RefreshHot();
+    fixture.Use(0, BasePage + 3);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 3, 0x0001, 9);
     fixture.gpu.Drain();
     fixture.gpu.guardRefused.insert(BasePage + 4);
     fixture.gpu.CpuWrite(BasePage + 4, 0x0001, 10);
     fixture.manager->Prepare();
-    Expect(fixture.manager->Slot(BasePage + 4) && fixture.manager->HotResident(BasePage + 4), "a page whose re-arm fails stays resident, kept current from the write tracking");
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    Expect(!fixture.manager->Slot(BasePage + 4) && fixture.manager->Hot(BasePage + 4), "a page whose re-arm fails leaves its mirror for its import");
+    fixture.Use(0, BasePage + 4);
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 4, 0x0001, 10);
     fixture.gpu.Drain();
     Expect(fixture.manager->Counts().unguardable == 2, "two unguardable events counted");
@@ -1842,6 +1861,7 @@ struct Stress {
             const auto stored = ++value;
             fixture.gpu.CpuWrite(page, 0x0001, stored);
             truthOf(page)[0] = stored;
+            fixture.manager->NextFrame();
             call("Prepare", false, 0, 0, false, [&] { fixture.manager->Prepare(); });
         }
     }
@@ -1883,7 +1903,10 @@ struct Stress {
                 break;
             }
             case 19: driverWrite(); break;
-            case 20: call("Prepare", false, 0, 0, false, [&] { fixture.manager->Prepare(); }); break;
+            case 20:
+                if (pick(2) == 0) fixture.manager->NextFrame();
+                call("Prepare", false, 0, 0, false, [&] { fixture.manager->Prepare(); });
+                break;
             case 21: hammer(); break;
             case 22: {
                 const auto page = BasePage + pick(AliasFirst);

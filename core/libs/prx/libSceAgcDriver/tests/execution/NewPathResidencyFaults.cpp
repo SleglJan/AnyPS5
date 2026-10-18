@@ -36,7 +36,7 @@ bool Guarded(std::uint64_t address) {
 
 bool Hot(std::uint64_t address) {
     bool hot = false;
-    Locked([&] { hot = Residency().Manager().HotResident(PageOf(address)); });
+    Locked([&] { hot = Residency().Manager().Hot(PageOf(address)) || Residency().Manager().HotResident(PageOf(address)); });
     return hot;
 }
 
@@ -99,11 +99,12 @@ void HotAcrossRemap() {
     Collect(pages.Address());
     Use(pages.Address());
     for (std::uint32_t store = 0; store < 2u; ++store) {
+        Locked([] { Residency().Manager().NextFrame(); });
         pages.Words()[7] = 0x3b000000u + store;
         Collect(pages.Address());
         OrderingPoint();
     }
-    Expect(Hot(pages.Address()), "remap: two CPU stores in two epochs did not make the page hot");
+    Expect(Hot(pages.Address()), "remap: two CPU stores in two frames did not make the page hot");
     pages.Unmap();
     pages.Map();
     OrderingPoint();

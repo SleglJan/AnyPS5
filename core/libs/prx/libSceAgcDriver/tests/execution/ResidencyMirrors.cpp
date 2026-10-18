@@ -769,9 +769,9 @@ void CpuAndGpuSubpages(Fixture& fixture) {
 }
 
 void UnmapDropsDirty(Fixture& fixture) {
-    const auto page = BasePage + 4;
+    const auto page = BasePage + 7;
     fixture.manager.Use(Fixture::Address(page), ResidencyPageBytes, ResidencyAccess::Read);
-    Expect(fixture.manager.Slot(page).has_value(), "page 4 is resident before the unmap");
+    Expect(fixture.manager.Slot(page).has_value(), "page 7 is resident before the unmap");
     fixture.FillMirror(page, 2, 0x22222222u);
     const auto before = fixture.manager.Counts();
     fixture.device.unmapped.insert(page);
@@ -831,29 +831,46 @@ void Frames(Fixture& fixture) {
     constexpr std::uint32_t OrderingPoints = 4;
     const auto hotBefore = fixture.manager.Counts().hot;
     std::uint64_t faultTotal = 0;
-    std::printf("frames: faults per frame (constant buffer page 4 written once per frame, vertex ring page 5 written at every ordering point, page 2 static):");
+    bool wasResident = true;
+    std::uint32_t departures = 0;
+    std::uint32_t returns = 0;
+    std::uint32_t mostInOneFrame = 0;
+    std::printf("frames: faults per frame (constant buffer page 4 written once per frame, vertex ring page 5 written at every ordering point, page 6 written once per frame at its end or its start, page 2 static):");
     for (std::uint32_t frame = 0; frame < FrameCount; ++frame) {
+        fixture.manager.NextFrame();
         const auto faults = fixture.manager.Counts().faults;
+        std::uint32_t transitions = 0;
         for (std::uint32_t point = 0; point < OrderingPoints; ++point) {
             if (point == 0) fixture.Store(BasePage + 4, frame, 0x40000000u + frame);
+            if (point == (frame % 2 == 0 ? OrderingPoints - 1 : 0)) fixture.Store(BasePage + 6, frame, 0x60000000u + frame);
             fixture.Store(BasePage + 5, frame * OrderingPoints + point, 0x50000000u + frame * OrderingPoints + point);
             fixture.Ordering();
             fixture.CheckRead(BasePage + 2, 1, "a static page");
             fixture.CheckWords(BasePage + 4, 64, "frame " + std::to_string(frame) + ", the constant buffer");
             fixture.CheckWords(BasePage + 5, 64, "frame " + std::to_string(frame) + ", the vertex ring");
+            fixture.CheckWords(BasePage + 6, 64, "frame " + std::to_string(frame) + ", the page written once per frame at its end or its start");
+            const bool resident = fixture.manager.Slot(BasePage + 6).has_value();
+            if (resident != wasResident) {
+                ++transitions;
+                ++(resident ? returns : departures);
+            }
+            wasResident = resident;
         }
+        mostInOneFrame = std::max(mostInOneFrame, transitions);
         const auto frameFaults = fixture.manager.Counts().faults - faults;
         faultTotal += frameFaults;
         std::printf(" %llu", static_cast<unsigned long long>(frameFaults));
     }
     std::printf("\n");
     const auto counts = fixture.manager.Counts();
-    std::printf("frames: %llu faults in %u frames, %llu pages turned hot, page 4 %s, page 5 %s, %.2f us per faulting store (%llu timed)\n", static_cast<unsigned long long>(faultTotal), FrameCount,
-        static_cast<unsigned long long>(counts.hot - hotBefore), fixture.manager.Slot(BasePage + 4) ? "resident" : "not resident", fixture.manager.Slot(BasePage + 5) ? "resident" : "not resident",
+    std::printf("frames: %llu faults in %u frames, %llu pages turned hot, page 4 %s, page 5 %s, page 6 left its mirror %u times and returned %u times, %.2f us per faulting store (%llu timed)\n", static_cast<unsigned long long>(faultTotal), FrameCount,
+        static_cast<unsigned long long>(counts.hot - hotBefore), fixture.manager.Slot(BasePage + 4) ? "resident" : "not resident", fixture.manager.Slot(BasePage + 5) ? "resident" : "not resident", departures, returns,
         fixture.faultsTimed == 0 ? 0.0 : fixture.faultMicroseconds / static_cast<double>(fixture.faultsTimed), static_cast<unsigned long long>(fixture.faultsTimed));
-    Expect(counts.hot - hotBefore == 1 && fixture.manager.Slot(BasePage + 5).has_value() && !fixture.manager.Hot(BasePage + 5) && !faultLog.guarded[5].load() && counts.hotResident == 1, "the vertex ring faults in consecutive epochs, turns hot and stays resident without a write guard");
-    Expect(fixture.manager.Slot(BasePage + 4).has_value(), "the constant buffer, one fault per frame, stays resident");
-    Expect(faultTotal == FrameCount + 2, "one fault per frame for the constant buffer plus the vertex ring's two before it turned hot");
+    Expect(!fixture.manager.Slot(BasePage + 5).has_value() && fixture.manager.Hot(BasePage + 5) && !faultLog.guarded[5].load(), "the vertex ring faults in consecutive frames, turns hot and is served from its import without a write guard");
+    Expect(!fixture.manager.Slot(BasePage + 4).has_value() && fixture.manager.Hot(BasePage + 4), "the constant buffer, written in consecutive frames, turns hot and is served from its import");
+    Expect(departures == 1 && returns == 0 && mostInOneFrame <= 1, "a page written once per frame stays on one side: it left its mirror " + std::to_string(departures) + " times and returned " + std::to_string(returns) + " times, " + std::to_string(mostInOneFrame) + " moves in one frame");
+    Expect(counts.hot - hotBefore == 3 && counts.hotResident == 0, "three pages turned hot and none of them is polled in a mirror");
+    Expect(faultTotal == 9, "only the first two frames fault: the vertex ring at each of its four ordering points and then once, the constant buffer and page 6 once in each; " + std::to_string(faultTotal) + " faults");
 }
 
 void Release(Fixture& fixture) {

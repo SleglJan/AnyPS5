@@ -52,6 +52,7 @@ void ResidencyDriver::OrderingPoint() {
 
 void ResidencyDriver::Flip() {
     flips.fetch_add(1, std::memory_order_acq_rel);
+    manager.NextFrame();
 }
 
 void ResidencyDriver::BeforeCompletionSignal() {

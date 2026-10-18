@@ -167,7 +167,62 @@ void HotSweep(MirrorReader& reader) {
     }
 }
 
+struct HotWork {
+    Work work;
+    std::uint64_t collects = 0;
+    std::uint64_t rearms = 0;
+    std::uint64_t settles = 0;
+    std::uint64_t cooled = 0;
+    std::uint32_t hotResident = 0;
+};
+
+std::string Describe(const HotWork& hot) {
+    return std::to_string(hot.collects) + " hot collects, " + std::to_string(hot.rearms) + " failed re-arms, " + std::to_string(hot.settles) + " import settles, " + std::to_string(hot.cooled) + " cooled, " + std::to_string(hot.hotResident) + " hot resident pages; " + Describe(hot.work);
+}
+
+HotWork HotRunsBeside(MirrorReader& reader, std::uint32_t sharedPages, std::uint32_t runs) {
+    PrivatePages target(1);
+    Fill(target.Words(), 1, Tag);
+    static_cast<void>(reader.Read(target.Address(), 1));
+    SharedPages shared(sharedPages);
+    Fill(shared.Words(), sharedPages, Tag + 5u);
+    AgcDriver::GuestMemory::CollectWritesUncached(shared.Address(), shared.Bytes());
+    AdmitEagerly();
+    PrivatePages pages(2u * runs);
+    GuestArena::GuestArenaPinWritable_nid_postfix(pages.Data(), pages.Bytes());
+    Fill(pages.Words(), 2u * runs, Tag);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+    for (std::uint32_t run = 0; run < runs; ++run) Use(pages.Address(std::uint64_t{2u * run} * PageBytes));
+    Settle();
+    for (std::uint32_t warm = 0; warm < 2; ++warm) Submit(reader, target.Address());
+    const auto before = Counts();
+    HotWork hot;
+    hot.work = Dispatch(reader, target.Address());
+    const auto after = Counts();
+    hot.collects = after.hotCollects - before.hotCollects;
+    hot.rearms = after.unguardable - before.unguardable;
+    hot.settles = (after.importsSettled - before.importsSettled) + (after.unsettledGuards - before.unsettledGuards);
+    hot.cooled = after.cooled - before.cooled;
+    hot.hotResident = after.hotResident;
+    std::printf("[residency-work] %u hot runs beside %u resident shared pages: %s\n", runs, sharedPages, Describe(hot).c_str());
+    const auto last = runs - 1u;
+    pages.Words()[2u * last * WordsPerPage + 7u * WordsPerSubpage] = 0x5e000010u;
+    const auto read = reader.Read(pages.Address(std::uint64_t{2u * last} * PageBytes), 1);
+    Expect(read[7] == 0x5e000010u, "hot runs beside resident pages: the CPU store into the last hot run reached the GPU read: " + Hex(read[7]));
+    Settle();
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(pages.Data(), pages.Bytes());
+    return hot;
+}
+
+void HotRunsPerDispatch(MirrorReader& reader) {
+    const auto few = HotRunsBeside(reader, 4096, 8);
+    const auto many = HotRunsBeside(reader, 4096, 256);
+    const auto work = [](const HotWork& hot) { return hot.collects + hot.rearms + hot.settles + hot.cooled; };
+    Expect(work(many) <= work(few), "hot runs beside resident pages: the per-dispatch hot-page work grows with the hot runs: beside 8 " + Describe(few) + "; beside 256 " + Describe(many));
+}
+
 void Run(MirrorReader& reader) {
+    HotRunsPerDispatch(reader);
     HotSweep(reader);
     Admission(reader);
     PageTable(reader);
