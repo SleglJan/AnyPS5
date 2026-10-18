@@ -98,6 +98,10 @@ public:
     virtual ~IResidencyDevice() = default;
     virtual bool Reached(const ResidencyToken& token) = 0;
     virtual void Wait(const ResidencyToken& token) = 0;
+    virtual bool WaitUnlocked(const ResidencyToken& token) {
+        Wait(token);
+        return true;
+    }
     virtual ResidencyToken Newest() = 0;
     virtual ResidencyToken Current() = 0;
     virtual ResidencyImport Import(std::uint64_t page) = 0;
@@ -213,6 +217,7 @@ public:
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
     void RefreshHot();
     void FlushForCpuRead(std::uint64_t address, std::uint64_t bytes);
+    bool FlushForCpuReadUnlocked(std::uint64_t address, std::uint64_t bytes);
     void WriteBackAll();
     void Own(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
     void MarkStale(std::uint64_t address, std::uint64_t bytes, IResidencyOwner* owner);
@@ -404,6 +409,7 @@ private:
     void demote(std::span<const std::uint32_t> ids);
     void changed(std::uint64_t page);
     void waitFor(const ResidencyToken& token);
+    bool flushForCpuRead(std::uint64_t address, std::uint64_t bytes, bool unlocked);
 
     IResidencyDevice& device;
     const std::uint32_t chunkSlots;

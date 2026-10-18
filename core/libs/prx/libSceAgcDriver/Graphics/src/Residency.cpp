@@ -1526,35 +1526,64 @@ void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes
 }
 
 void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t bytes) {
-    applyQueued();
+    flushForCpuRead(address, bytes, false);
+}
+
+bool ResidencyManager::FlushForCpuReadUnlocked(std::uint64_t address, std::uint64_t bytes) {
+    return flushForCpuRead(address, bytes, true);
+}
+
+bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t bytes, bool unlocked) {
     const auto span = PagesOf(address, bytes);
-    if (span.empty) return;
-    const bool retiled = retileStale(staleIn(address, bytes));
+    if (span.empty) {
+        applyQueued();
+        return true;
+    }
     const auto inSpan = [&](std::uint64_t page) { return page >= span.first && page <= span.last; };
-    ResidencyToken pending = retiled ? device.Current() : ResidencyToken{};
-    for (const auto& [page, token] : writers) {
-        if (inSpan(page) && !settled(token)) pending = MergeTokens(pending, token);
+    const auto wait = [&](const ResidencyToken& token) {
+        if (!unlocked) {
+            waitFor(token);
+            return true;
+        }
+        ++counts.waits;
+        return device.WaitUnlocked(token);
+    };
+    for (;;) {
+        applyQueued();
+        const bool retiled = retileStale(staleIn(address, bytes));
+        ResidencyToken pending = retiled ? device.Current() : ResidencyToken{};
+        for (const auto& [page, token] : writers) {
+            if (inSpan(page) && !settled(token)) pending = MergeTokens(pending, token);
+        }
+        if (!TokenEmpty(pending)) {
+            if (!wait(pending)) return false;
+            if (unlocked) continue;
+        }
+        std::vector<ResidencyCopy> copies;
+        std::vector<std::uint32_t> written;
+        for (const auto id : residentIn(address, bytes)) {
+            if (pages[id].dirtyRuns.empty()) continue;
+            appendDirty(id, copies);
+            written.push_back(id);
+        }
+        ResidencyToken copied{};
+        if (!copies.empty()) {
+            for (const auto id : written) clearAllDirty(id);
+            copied = device.WriteBack(copies);
+            ++counts.cpuWriteBacks;
+            for (const auto& copy : copies) counts.writtenBackBytes += copy.bytes;
+            for (const auto id : written) {
+                pages[id].pin = MergeTokens(pages[id].pin, copied);
+                addUnsettled(writingBack, pages[id].index, copied, UnsettledWriteBack);
+            }
+        }
+        for (const auto& [page, token] : writingBack) {
+            if (inSpan(page)) copied = MergeTokens(copied, token);
+        }
+        if (settled(copied)) break;
+        if (!wait(copied)) return false;
+        if (!unlocked) break;
     }
-    if (!TokenEmpty(pending)) waitFor(pending);
-    std::vector<ResidencyCopy> copies;
-    std::vector<std::uint32_t> written;
-    for (const auto id : residentIn(address, bytes)) {
-        if (pages[id].dirtyRuns.empty()) continue;
-        appendDirty(id, copies);
-        written.push_back(id);
-    }
-    ResidencyToken wait{};
-    if (!copies.empty()) {
-        for (const auto id : written) clearAllDirty(id);
-        wait = device.WriteBack(copies);
-        ++counts.cpuWriteBacks;
-        for (const auto& copy : copies) counts.writtenBackBytes += copy.bytes;
-        for (const auto id : written) pages[id].pin = MergeTokens(pages[id].pin, wait);
-    }
-    for (const auto& [page, token] : writingBack) {
-        if (inSpan(page)) wait = MergeTokens(wait, token);
-    }
-    if (!settled(wait)) waitFor(wait);
     eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return inSpan(entry.first); });
     eraseUnsettledIf(writers, UnsettledWriter, [&](const auto& entry) { return inSpan(entry.first) && settled(entry.second); });
     for (auto page = span.first; page <= span.last; ++page) {
@@ -1569,6 +1598,7 @@ void ResidencyManager::FlushForCpuRead(std::uint64_t address, std::uint64_t byte
         pages[*id].accessMask = 0;
         rearm(*id);
     }
+    return true;
 }
 
 void ResidencyManager::rearm(std::uint32_t id) {

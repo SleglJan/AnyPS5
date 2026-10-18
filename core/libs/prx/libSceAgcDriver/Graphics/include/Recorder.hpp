@@ -206,6 +206,7 @@ public:
     Token AllToken() const;
     bool Reached(const Token& token) const;
     void WaitToken(const Token& token);
+    bool WaitTokenUnlocked(const Token& token);
     void FinishToken(const Token& token);
     bool TokenSignaled(const Token& token) const;
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:

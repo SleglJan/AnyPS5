@@ -3794,6 +3794,39 @@ void Recorder::WaitToken(const Token& token) {
     Check(WaitTimeline(context.device, points, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), 0), "vkWaitSemaphoresKHR recorder token");
 }
 
+bool Recorder::WaitTokenUnlocked(const Token& token) {
+    auto& mutex = GuestMemory::GpuMutex();
+    Require(mutex.DepthOnThisThread() == 1, "an unlocked token wait needs the device lock held once by its caller");
+    TimelinePoints points;
+    {
+        std::lock_guard lock(completedMutex);
+        const auto& submitted = submittedValues[newestSubmitted % submittedValues.size()];
+        for (std::uint32_t stream = 0; stream < streams.size(); ++stream) {
+            if (token[stream] == 0 || token[stream] <= streams[stream].finished) continue;
+            Require(streams[stream].timeline != VK_NULL_HANDLE && submitted.serial == newestSubmitted && token[stream] <= submitted.values[stream], "a token wait targets work that was not submitted");
+            points.Add(streams[stream].timeline, token[stream]);
+        }
+    }
+    if (points.count == 0) {
+        FinishToken(token);
+        return true;
+    }
+    const auto myId = id;
+    const auto device = context.device;
+    const auto waitSemaphores = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR");
+    VkResult result = VK_SUCCESS;
+    {
+        const UnlockedWaiter waiter{myId};
+        mutex.unlock();
+        result = WaitTimeline(device, points, waitSemaphores, 0);
+    }
+    mutex.lock();
+    Check(result, "vkWaitSemaphoresKHR recorder token");
+    if (!RecorderAlive(myId)) return false;
+    FinishToken(token);
+    return true;
+}
+
 void Recorder::FinishToken(const Token& token) {
     WaitToken(token);
     Reap();

@@ -160,6 +160,50 @@ void ReaderWaitsUnlocked(const std::string& what, Pages& pages, PrivatePages& la
     Expect(false, what + ": in all " + std::to_string(SpinAttempts) + " attempts the spinning dispatch finished before it was seen recorded or before the CPU read could be observed waiting");
 }
 
+void DirtyMirrorWaitsUnlocked(PrivatePages& labels, std::uint32_t& labelValue) {
+    const std::string what = "a dirty mirrored page behind a running dispatch";
+    for (std::uint32_t attempt = 0; attempt < SpinAttempts; ++attempt) {
+        SharedPages mirrored(1);
+        PrivatePages busy(1);
+        for (std::uint32_t lane = 0; lane < SpinLanes; ++lane) {
+            mirrored.Words()[lane] = 0u;
+            busy.Words()[lane] = 0u;
+        }
+        AgcDriver::GuestMemory::CollectWritesUncached(mirrored.Address(), SpinLanes * 4u);
+        AgcDriver::GuestMemory::CollectWritesUncached(busy.Address(), SpinLanes * 4u);
+        Settle();
+        Commands store;
+        store.Dispatch(Storer, BufferResource(mirrored.Address(), SpinLanes * 4u), SpinLanes);
+        store.Submit(WriterQueue);
+        WaitIdle();
+        Settle();
+        bool dirty = false;
+        Locked([&] { dirty = Residency().Manager().DirtyIn(mirrored.Address(), SpinLanes * 4u); });
+        if (!dirty) {
+            Expect(false, what + ": the GPU's store did not stay in the page's mirror");
+            return;
+        }
+        std::vector<std::uint32_t> stored(SpinLanes, 0u);
+        double mirroredMs = 0;
+        const auto outcome = ReadWhileOthersLock(busy.Address(), attempt, labels, ++labelValue, [&](std::vector<std::uint32_t>& seen) {
+            const auto start = Clock::now();
+            DirectRead(mirrored.Address(), stored);
+            mirroredMs = Ms(Clock::now() - start);
+            DirectRead(busy.Address(), seen);
+        });
+        bool storedSeen = true;
+        for (std::uint32_t lane = 0; lane < SpinLanes; ++lane) storedSeen = storedSeen && stored[lane] == lane;
+        Expect(storedSeen, what + ": the CPU read did not return the values the GPU stored into the mirror");
+        if (!outcome.recordedFirst || mirroredMs < MeaningfulReadMs) continue;
+        Expect(outcome.valuesSeen, what + ": the CPU read returned other values than the spinning dispatch stored (it did not wait for the GPU)");
+        std::printf("%s: mirrored read %.1f ms, lock wait %.1f ms, label recorded after %.1f ms\n", what.c_str(), mirroredMs, outcome.lockWaitMs, outcome.labelMs);
+        Expect(outcome.lockWaitMs < LockWaitLimitMs, what + ": a thread taking the device lock waited " + std::to_string(outcome.lockWaitMs) + " ms while the read of a dirty mirrored page waited " + std::to_string(mirroredMs) + " ms for its write-back");
+        Expect(outcome.labelMs >= 0 && outcome.labelMs < LabelLimitMs, what + ": another queue's label was recorded after " + std::to_string(outcome.labelMs) + " ms while the read of a dirty mirrored page waited " + std::to_string(mirroredMs) + " ms for its write-back");
+        return;
+    }
+    Expect(false, what + ": in all " + std::to_string(SpinAttempts) + " attempts the read of the dirty mirrored page did not wait behind the spinning dispatch");
+}
+
 constexpr std::uint32_t DisplayExtent = 64;
 constexpr std::uint64_t DisplayBgra8 = 0x8000000000000000ull;
 
@@ -302,6 +346,7 @@ int main() {
             SharedPages mirrored(1);
             ReaderWaitsUnlocked("a mirrored page", mirrored, labels, labelValue, [&](std::vector<std::uint32_t>& seen) { DirectRead(mirrored.Address(), seen); });
         }
+        DirtyMirrorWaitsUnlocked(labels, labelValue);
         {
             PrivatePages pending(1);
             ReaderWaitsUnlocked("a pending write", pending, labels, labelValue, [&](std::vector<std::uint32_t>& seen) { DirectRead(pending.Address(), seen); });

@@ -249,7 +249,11 @@ void ResidencyDriver::AccessFault(std::uint64_t page) {
     std::unique_lock lock(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) lock.lock();
     recorder.SyncThrough(page << ResidencyPageShift, ResidencyPageBytes, lock.owns_lock());
-    manager.FlushForCpuRead(page << ResidencyPageShift, ResidencyPageBytes);
+    if (!lock.owns_lock()) {
+        manager.FlushForCpuRead(page << ResidencyPageShift, ResidencyPageBytes);
+        return;
+    }
+    static_cast<void>(manager.FlushForCpuReadUnlocked(page << ResidencyPageShift, ResidencyPageBytes));
 }
 
 void ResidencyDriver::WriteBackAll() {
@@ -308,6 +312,11 @@ bool ResidencyDriver::Reached(const ResidencyToken& token) {
 void ResidencyDriver::Wait(const ResidencyToken& token) {
     recorder.Submit();
     recorder.FinishToken(token);
+}
+
+bool ResidencyDriver::WaitUnlocked(const ResidencyToken& token) {
+    recorder.Submit();
+    return recorder.WaitTokenUnlocked(token);
 }
 
 ResidencyToken ResidencyDriver::Newest() {
