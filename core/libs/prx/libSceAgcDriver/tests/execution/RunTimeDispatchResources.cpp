@@ -1,7 +1,13 @@
 #include "WrittenImageFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
+#include <chrono>
+#include <mutex>
+#include <stdexcept>
+#include <thread>
 
 namespace {
 
@@ -495,41 +501,235 @@ const Program& CatchAllValueWriterProgram() {
     return program;
 }
 
+constexpr std::uint64_t ParkedHits = 3;
+
+class ParkedSubmission {
+public:
+    void Dispatch(const Program& program, std::span<const std::uint32_t> userData, std::uint32_t threads, std::uint32_t groups = 1) {
+        Registers(0x207, {threads, 1u, 1u});
+        Registers(0x20c, {Low(program.Address() >> 8u), Low(program.Address() >> 40u)});
+        Registers(0x213, {(static_cast<std::uint32_t>(userData.size()) << 1u) | (1u << 7u)});
+        Registers(0x240, userData);
+        words.insert(words.end(), {0xc0031500u, groups, 1u, 1u, 0x41u});
+    }
+
+    void Flip(std::uint32_t handle) {
+        words.insert(words.end(), {AgcDriver::FlipPacketHeader, handle, 0xfffffffeu, 1u, 0u, 0u});
+    }
+
+    void Submit(std::uint32_t queue) {
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        AgcDriver::Submit(&packet, queue);
+        words.clear();
+    }
+
+private:
+    void Registers(std::uint32_t first, std::span<const std::uint32_t> values) {
+        words.push_back(0xc0007600u | (static_cast<std::uint32_t>(values.size()) << 16u));
+        words.push_back(first);
+        words.insert(words.end(), values.begin(), values.end());
+    }
+
+    void Registers(std::uint32_t first, std::initializer_list<std::uint32_t> values) { Registers(first, std::span<const std::uint32_t>(values.begin(), values.size())); }
+
+    std::vector<std::uint32_t> words;
+};
+
+class ParkedReader {
+public:
+    ParkedReader(std::uint32_t chain, std::uint32_t slot) : chain(chain), slot(slot) {
+        RegisterChainProgram();
+        FillImage(chain);
+        LinkChain(chain, ChainDescriptor(chain));
+        root = Link(Roots, chain);
+        tableLow = root[0];
+        CatchAllTarget.fill(0u);
+        target = AddressOf(root);
+        const auto resource = Buffer(CatchAllTarget.data(), 8u);
+        writerData = {resource[0], resource[1], resource[2], resource[3], tableLow};
+        addressData = {resource[0], resource[1], resource[2], resource[3], Low(target), High(target)};
+        ParkedSubmission warm;
+        Append(warm);
+        warm.Submit(0);
+        NewPath::WaitIdle();
+        root[0] = 0u;
+        waitsBefore = AgcDriver::GuestMemory::PendingReadWaitCounts().reads;
+        deferredBefore = Deferred();
+        hitsBefore = Hits();
+    }
+
+    void Submit(std::uint32_t flip = 0) const {
+        ParkedSubmission submission;
+        Append(submission);
+        if (flip != 0u) submission.Flip(flip);
+        submission.Submit(0);
+    }
+
+    static std::uint64_t Deferred() {
+        return AgcDriver::DriverDetail::Driver::Get().DeferredDispatches();
+    }
+
+    std::uint64_t DeferredSince() const {
+        return Deferred() - deferredBefore;
+    }
+
+    std::uint64_t HitsSince() const {
+        return Hits() - hitsBefore;
+    }
+
+    bool AwaitParked() const {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (DeferredSince() == 0u && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        return DeferredSince() != 0u;
+    }
+
+    void ExpectRecorded(const std::string& what) const {
+        const auto waits = AgcDriver::GuestMemory::PendingReadWaitCounts().reads - waitsBefore;
+        Expect(waits == 0u, what + ": the recording thread waited for the writer " + std::to_string(waits) + " times");
+        Expect(DeferredSince() != 0u, what + ": the reader was not deferred");
+        AgcDriver::GuestMemory::FlushGpuWrites(target, 4u);
+        Expect(root[0] == tableLow, what + ": the writer did not store the table address: " + Hex(root[0]));
+        const auto sampled = chain;
+        ExpectChain(slot, [sampled](std::uint32_t x, std::uint32_t y, std::uint32_t component, std::uint32_t word) { return Matches(sampled, x, y, component, word); }, what + ": the deferred reader samples through the written table address");
+    }
+
+private:
+    void Append(ParkedSubmission& submission) const {
+        submission.Dispatch(AddressWriterProgram(), addressData, 1);
+        submission.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
+        submission.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+    }
+
+    std::uint32_t chain;
+    std::uint32_t slot;
+    std::uint32_t* root = nullptr;
+    std::uint32_t tableLow = 0;
+    std::uint64_t target = 0;
+    std::array<std::uint32_t, 5> writerData{};
+    std::array<std::uint32_t, 6> addressData{};
+    std::uint64_t waitsBefore = 0;
+    std::uint64_t deferredBefore = 0;
+    std::uint64_t hitsBefore = 0;
+};
+
 void PrePassUnderCatchAllDeferred() {
-    constexpr std::uint32_t chain = 1;
-    constexpr std::uint32_t slot = StoredSlot + 2u;
-    RegisterChainProgram();
-    FillImage(chain);
-    LinkChain(chain, ChainDescriptor(chain));
-    auto* root = Link(Roots, chain);
-    const auto tableLow = root[0];
-    CatchAllTarget.fill(0u);
-    const auto target = AddressOf(root);
-    const auto resource = Buffer(CatchAllTarget.data(), 8u);
-    const std::array<std::uint32_t, 5> writerData{resource[0], resource[1], resource[2], resource[3], tableLow};
-    const std::array<std::uint32_t, 6> addressData{resource[0], resource[1], resource[2], resource[3], Low(target), High(target)};
-    Commands warm;
-    warm.Dispatch(AddressWriterProgram(), addressData, 1);
-    warm.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
-    warm.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
-    warm.Submit(0);
+    ParkedReader reader(1, StoredSlot + 2u);
+    reader.Submit();
     NewPath::WaitIdle();
-    root[0] = 0u;
-    const auto waitsBefore = AgcDriver::GuestMemory::PendingReadWaitCounts().reads;
-    const auto deferredBefore = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches();
-    Commands commands;
-    commands.Dispatch(AddressWriterProgram(), addressData, 1);
-    commands.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
-    commands.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
-    commands.Submit(0);
+    const auto recorded = reader.HitsSince();
+    Expect(recorded == ParkedHits, "pre-pass under a catch-all writer: the idle wait returned with " + std::to_string(recorded) + " of " + std::to_string(ParkedHits) + " served dispatches recorded");
+    reader.ExpectRecorded("pre-pass under a catch-all writer");
+}
+
+constexpr std::uint32_t ParkedOutputHandle = 0x74bu;
+
+class ParkedFlip final : public AgcDriver::IFlipRequest {
+public:
+    void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override {
+        hitsAtFlip.store(Hits(), std::memory_order_release);
+        deferredAtFlip.store(ParkedReader::Deferred(), std::memory_order_release);
+        ready.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    void Fail(std::exception_ptr) noexcept override { failed.fetch_add(1, std::memory_order_acq_rel); }
+
+    std::atomic<std::uint64_t> hitsAtFlip{0};
+    std::atomic<std::uint64_t> deferredAtFlip{0};
+    std::atomic<int> ready{0};
+    std::atomic<int> failed{0};
+};
+
+class ParkedOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
+        auto flip = std::make_shared<ParkedFlip>();
+        std::lock_guard lock(mutex);
+        flips.push_back(flip);
+        return flip;
+    }
+
+    void Fail(std::exception_ptr) noexcept override {}
+
+    std::shared_ptr<ParkedFlip> Only() {
+        std::lock_guard lock(mutex);
+        return flips.size() == 1u ? flips.front() : nullptr;
+    }
+
+    std::size_t Reserved() {
+        std::lock_guard lock(mutex);
+        return flips.size();
+    }
+
+private:
+    std::mutex mutex;
+    std::vector<std::shared_ptr<ParkedFlip>> flips;
+};
+
+void FlipBehindParkedReader() {
+    auto output = std::make_shared<ParkedOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(ParkedOutputHandle, output);
+    ParkedReader reader(1, StoredSlot + 3u);
+    const auto deferredBefore = ParkedReader::Deferred();
+    reader.Submit(ParkedOutputHandle);
     NewPath::WaitIdle();
-    const auto waits = AgcDriver::GuestMemory::PendingReadWaitCounts().reads - waitsBefore;
-    const auto deferred = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches() - deferredBefore;
-    Expect(waits == 0u, "pre-pass under a catch-all writer: the recording thread waited for the writer " + std::to_string(waits) + " times");
-    Expect(deferred != 0u, "pre-pass under a catch-all writer: the reader was not deferred");
-    AgcDriver::GuestMemory::FlushGpuWrites(target, 4u);
-    Expect(root[0] == tableLow, "pre-pass under a catch-all writer: the writer did not store the table address: " + Hex(root[0]));
-    ExpectChain(slot, [](std::uint32_t x, std::uint32_t y, std::uint32_t component, std::uint32_t word) { return Matches(chain, x, y, component, word); }, "pre-pass under a catch-all writer: the deferred reader samples through the written table address");
+    const auto hits = Hits();
+    AgcDriverUnregisterVideoOutput_nid_postfix(ParkedOutputHandle, output);
+    const auto flip = output->Only();
+    Expect(flip != nullptr, "flip behind a parked reader: " + std::to_string(output->Reserved()) + " flips reserved, expected 1");
+    if (flip != nullptr) {
+        Expect(flip->ready.load() == 1 && flip->failed.load() == 0, "flip behind a parked reader: the flip was presented " + std::to_string(flip->ready.load()) + " times and failed " + std::to_string(flip->failed.load()) + " times");
+        Expect(flip->deferredAtFlip.load() > deferredBefore, "flip behind a parked reader: the flip ran before the reader was deferred");
+        Expect(flip->hitsAtFlip.load() == hits, "flip behind a parked reader: the flip ran before the deferred reader recorded");
+    }
+    reader.ExpectRecorded("flip behind a parked reader");
+}
+
+void SuspendOfParkedQueue() {
+    ParkedReader reader(1, StoredSlot + 4u);
+    reader.Submit();
+    AgcDriverSuspendPoint_nid_postfix();
+    NewPath::WaitIdle();
+    const auto recorded = reader.HitsSince();
+    Expect(recorded == ParkedHits, "suspend of a parked queue: the suspend completed with " + std::to_string(recorded) + " of " + std::to_string(ParkedHits) + " served dispatches recorded");
+    reader.ExpectRecorded("suspend of a parked queue");
+    ParkedReader after(1, StoredSlot + 5u);
+    after.Submit();
+    NewPath::WaitIdle();
+    after.ExpectRecorded("suspend of a parked queue: the next submission");
+}
+
+void ShutdownWithParkedQueue() {
+    ParkedReader reader(1, StoredSlot + 6u);
+    reader.Submit();
+    Expect(reader.AwaitParked(), "shutdown with a parked queue: the reader was not deferred");
+}
+
+void FailureWhileParked() {
+    auto output = std::make_shared<ParkedOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(ParkedOutputHandle, output);
+    ParkedReader reader(1, StoredSlot + 7u);
+    reader.Submit(ParkedOutputHandle);
+    Expect(reader.AwaitParked(), "failure while parked: the reader was not deferred");
+    NewPath::Locked([] { AgcDriverReportFailure_nid_postfix(std::make_exception_ptr(std::runtime_error("device failure while a queue is parked"))); });
+    bool threw = false;
+    try {
+        NewPath::WaitIdle();
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Expect(threw, "failure while parked: the idle wait returned without the failure");
+    const auto settled = [&] {
+        const auto flip = output->Only();
+        return flip != nullptr && flip->failed.load() + flip->ready.load() != 0;
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!settled() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const auto flip = output->Only();
+    Expect(flip != nullptr, "failure while parked: " + std::to_string(output->Reserved()) + " flips reserved, expected 1");
+    if (flip != nullptr) {
+        Expect(flip->failed.load() == 1 && flip->ready.load() == 0, "failure while parked: the parked submission's flip failed " + std::to_string(flip->failed.load()) + " times and was presented " + std::to_string(flip->ready.load()) + " times");
+    }
+    AgcDriverUnregisterVideoOutput_nid_postfix(ParkedOutputHandle, output);
 }
 
 void PrePassAfterCatchAll() {
@@ -561,7 +761,7 @@ void PrePassAfterCatchAll() {
 }
 
 void Run() {
-    const std::array<std::pair<const char*, void (*)()>, 7> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 10> cases{{
         {"chain per dispatch", ChainPerDispatch},
         {"rewritten table", RewrittenTable},
         {"V# from user data", UserDataBuffers},
@@ -569,6 +769,9 @@ void Run() {
         {"storage image", StoredThenSampled},
         {"pre-pass after a catch-all writer", PrePassAfterCatchAll},
         {"pre-pass under a catch-all writer is deferred", PrePassUnderCatchAllDeferred},
+        {"flip behind a parked reader", FlipBehindParkedReader},
+        {"suspend of a parked queue", SuspendOfParkedQueue},
+        {"shutdown with a parked queue", ShutdownWithParkedQueue},
     }};
     for (const auto& [name, run] : cases) {
         try {
@@ -581,6 +784,28 @@ void Run() {
 
 }
 
-int main() {
+int FailureWhileParkedMain() {
+    {
+        const auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+    }
+    try {
+        FillTextures();
+        FailureWhileParked();
+    } catch (const std::exception& error) {
+        Expect(false, std::string("failure while parked: exception: ") + error.what());
+    }
+    bool threw = false;
+    try {
+        AgcDriverShutdown_nid_postfix();
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Expect(threw, "failure while parked: shutdown did not report the failure");
+    return Finish("run time dispatch resources, failure while parked");
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--failure-while-parked") return FailureWhileParkedMain();
     return Main("run time dispatch resources", Run);
 }
