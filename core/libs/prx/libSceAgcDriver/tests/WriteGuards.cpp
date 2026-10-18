@@ -189,6 +189,23 @@ void CheckSharedGuard() {
     std::cout << "shared write guard: ok\n";
 }
 
+void CheckSharedAccessGuardKeepsTracking() {
+    auto* memory = mapShared(Page);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    memory[64] = 1;
+    CollectWritesUncached(base, Page);
+    const auto before = CollectWritesUncached(base, Page);
+    Require(protectionAt(memory) == PAGE_READONLY, "the collection did not arm write tracking on the shared page");
+    Require(GuardAccess(base, Page) == GuestArena::GuardRefusal::None, "a mapped shared page could not be access guarded");
+    Require(protectionAt(memory) == PAGE_NOACCESS, "the access guard did not make the shared page inaccessible");
+    UnguardAccess(base, Page);
+    Require(protectionAt(memory) == PAGE_READONLY, "lifting the access guard dropped the shared page's write tracking");
+    memory[128] = 5;
+    CollectWritesUncached(base, Page);
+    Require(!UnchangedSince(base, Page, before), "the write tracking missed a store after an access guard was lifted");
+    std::cout << "shared access guard keeps write tracking: ok\n";
+}
+
 void CheckGuestProtectionPreserved() {
     auto* memory = mapShared(Page);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -310,6 +327,7 @@ int main() {
         AgcDriver::GuestMemory::SetResidencyHooks(&hooks);
         CheckPrivateGuards();
         CheckSharedGuard();
+        CheckSharedAccessGuardKeepsTracking();
         CheckGuestProtectionPreserved();
         CheckSharedGuardAliases();
         CheckHostWriteOpensGuard();

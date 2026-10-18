@@ -294,6 +294,7 @@ public:
             for (const auto alias : page->aliases) {
                 auto& view = views.at(alias);
                 protectSubpages(alias, adding, PAGE_NOACCESS, "arm a guest access guard");
+                view.armedUnderAccess |= static_cast<std::uint8_t>(view.armed & adding);
                 view.armed &= static_cast<std::uint8_t>(~adding);
             }
         }
@@ -319,12 +320,13 @@ public:
             page.accessGuarded &= static_cast<std::uint8_t>(~dropping);
             for (const auto alias : page.aliases) {
                 auto& view = views.at(alias);
-                if (page.guarded && writable(view.protection)) {
-                    protectSubpages(alias, dropping, view.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY, "drop a guest access guard behind a write guard");
-                    view.armed |= dropping;
-                } else {
-                    protectSubpages(alias, dropping, view.protection, "drop a guest access guard");
+                const auto rearming = static_cast<std::uint8_t>(writable(view.protection) ? (page.guarded ? dropping : dropping & view.armedUnderAccess) : 0);
+                view.armedUnderAccess &= static_cast<std::uint8_t>(~dropping);
+                if (rearming != 0) {
+                    protectSubpages(alias, rearming, view.protection == PAGE_EXECUTE_READWRITE ? PAGE_EXECUTE_READ : PAGE_READONLY, "drop a guest access guard behind a write guard");
+                    view.armed |= rearming;
                 }
+                if (const auto open = static_cast<std::uint8_t>(dropping & ~rearming); open != 0) protectSubpages(alias, open, view.protection, "drop a guest access guard");
             }
         }
         for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
@@ -1019,6 +1021,7 @@ private:
         std::uint8_t collected = 0;
         bool resident = false;
         std::shared_ptr<Physical> slot;
+        std::uint8_t armedUnderAccess = 0;
     };
     struct Run {
         std::uintptr_t end;
