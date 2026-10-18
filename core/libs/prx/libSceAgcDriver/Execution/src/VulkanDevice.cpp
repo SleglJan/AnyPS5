@@ -316,6 +316,7 @@ struct VulkanDevice::State {
     VkQueue queue = VK_NULL_HANDLE;
     std::array<VkQueue, Graphics::MaxRecorderStreams> streamQueues{};
     std::uint32_t streamQueueCount = 1;
+    std::uint32_t streamQueueFamily = 0;
     VkCommandPool pool = VK_NULL_HANDLE;
     void* window = nullptr;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -1849,6 +1850,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     state->streamQueueCount = queueInfo.queueCount;
+    state->streamQueueFamily = family;
     state->streamQueues[0] = state->queue;
     for (std::uint32_t index = 1; index < state->streamQueueCount; ++index) state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, index, &state->streamQueues[index]);
     if (checkpoints) state->checkpointMarker = state->DeviceFunction<PFN_vkCmdSetCheckpointNV>("vkCmdSetCheckpointNV");
@@ -2121,6 +2123,35 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{address, address + bytes}}};
     if (Graphics::StorageTexture::AnyPendingOverlaps(range) || Graphics::MirrorsDirty(address, address + bytes)) return true;
     return state->recorder && (state->recorder->PendingWriteOverlaps(address, bytes) || state->recorder->PendingLabelIn(address, bytes));
+}
+
+Graphics::Recorder::OwnStreamOutcome VulkanDevice::WriteLabelsOnOwnStream(std::span<const OwnStreamLabelWrite> labels, std::uint32_t queue, bool submit) {
+    using Outcome = Graphics::Recorder::OwnStreamOutcome;
+    static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
+    static const bool gateAll = std::getenv("APS5_LABEL_GATE_ALL") != nullptr;
+    if (!state->recorder || storeAtLabel || gateAll || labels.empty()) return Outcome::Refused;
+    auto& recorder = *state->recorder;
+    if (!recorder.OwnsStream()) return Outcome::Refused;
+    const auto& context = readyContext();
+    std::vector<Graphics::Recorder::OwnStreamLabel> stores;
+    std::vector<std::uint64_t> epochs;
+    std::vector<Graphics::ResidencyRange> spans;
+    stores.reserve(labels.size());
+    for (const auto& label : labels) {
+        const auto size = label.bytes.size();
+        if (size == 0 || size > 65536 || label.address % 4 != 0 || size % 4 != 0) return Outcome::Refused;
+        const auto import = Graphics::CurrentHostImport(context, label.address, size);
+        if (!import) return Outcome::Refused;
+        stores.push_back({import->buffer, label.address - import->base, label.bytes, label.address, label.stamp, queue});
+        epochs.push_back(import->epoch);
+        const auto stored = Graphics::MirrorStoreSpans(label.address, size);
+        spans.insert(spans.end(), stored.begin(), stored.end());
+    }
+    const auto unchanged = [&] { return std::all_of(epochs.begin(), epochs.end(), [](std::uint64_t epoch) { return Graphics::HostImportEpochIs(epoch); }) && !Graphics::AnyMirrored(spans); };
+    const auto outcome = recorder.RecordLabelsOnOwnStream(stores, unchanged, submit);
+    if (outcome == Outcome::Refused) return outcome;
+    for (const auto& label : labels) GuestMemory::MarkWrittenThroughMirrors(label.address, label.bytes.size());
+    return outcome;
 }
 
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
@@ -3562,6 +3593,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.dmaBufImport = state->dmaBufImport;
     context.streamQueues = state->streamQueues;
     context.streamQueueCount = state->streamQueueCount;
+    context.streamQueueFamily = state->streamQueueFamily;
     context.recorder = state->recorder.get();
     context.descriptorCache = state->descriptorCache.get();
     context.samplerCache = state->samplerCache.get();

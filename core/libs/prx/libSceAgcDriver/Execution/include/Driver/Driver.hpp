@@ -172,6 +172,7 @@ private:
     static bool reapEachPacket();
     static std::uint64_t batchCap();
     void recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue);
+    bool submitLabelsOnOwnStream(VulkanDevice* localDevice, std::uint32_t queue);
     bool recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queue);
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterPrePass(std::uint32_t queue);

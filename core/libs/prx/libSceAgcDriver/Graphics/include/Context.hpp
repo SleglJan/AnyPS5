@@ -212,6 +212,7 @@ struct Context {
     VkSampleCountFlags sampleLocationSampleCounts = 0;
     std::array<VkQueue, MaxRecorderStreams> streamQueues{};
     std::uint32_t streamQueueCount = 0;
+    std::uint32_t streamQueueFamily = 0;
     VkSampleCountFlags sampleLocationGridSampleCounts = 0;
     bool shaderTerminateInvocation = false;
 

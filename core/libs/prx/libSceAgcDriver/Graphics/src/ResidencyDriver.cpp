@@ -65,6 +65,12 @@ void PublishForCompletionSignal() {
     if (auto* residency = ResidencyDriver::Active()) residency->BeforeCompletionSignal();
 }
 
+bool CompletionPublicationPending() {
+    if (StorageTexture::AnyPending()) return true;
+    auto* residency = ResidencyDriver::Active();
+    return residency != nullptr && residency->Manager().AnyStaleOwned();
+}
+
 void PublishBeforeCompletionSignal(SignalKind kind) {
     if (kind == SignalKind::BareWrite) return;
     if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->DeferSignalPublication()) return;

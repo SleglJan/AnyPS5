@@ -192,6 +192,20 @@ void StoreThroughMirrors(std::uint64_t address, std::span<const std::byte> bytes
     if (auto* driver = ResidencyDriver::Active(); driver != nullptr && !bytes.empty()) driver->StoreThroughMirrors(address, bytes);
 }
 
+std::vector<ResidencyRange> MirrorStoreSpans(std::uint64_t address, std::uint64_t bytes) {
+    std::vector<ResidencyRange> spans;
+    if (ResidencyDriver::Active() == nullptr || bytes == 0) return spans;
+    for (const auto& [alias, size] : GuestMemory::Aliases(address, static_cast<std::size_t>(bytes))) spans.push_back({alias, size});
+    spans.push_back({address, bytes});
+    return spans;
+}
+
+bool AnyMirrored(std::span<const ResidencyRange> spans) {
+    auto* driver = ResidencyDriver::Active();
+    if (driver == nullptr) return false;
+    return std::any_of(spans.begin(), spans.end(), [&](const ResidencyRange& span) { return driver->Manager().AnyResident(span.address, span.bytes); });
+}
+
 void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes) {
     if (auto* driver = ResidencyDriver::Active(); driver != nullptr && bytes != 0) driver->PrepareImportWrite(address, bytes);
 }

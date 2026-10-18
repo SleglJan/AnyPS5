@@ -31,6 +31,32 @@ class BatchFaults;
 
 enum class SignalKind { BareWrite, Completion };
 
+class RecordingMutex {
+public:
+    void lock();
+    void unlock();
+    bool HeldByThisThread() const;
+    std::uint32_t ReleaseAll();
+    void Reacquire(std::uint32_t depth);
+
+private:
+    std::mutex mutex;
+    std::atomic<const void*> owner{nullptr};
+    std::uint32_t depth = 0;
+};
+
+class RecordingRelease {
+public:
+    explicit RecordingRelease(RecordingMutex& mutex) : mutex(mutex), depth(mutex.ReleaseAll()) {}
+    ~RecordingRelease() { mutex.Reacquire(depth); }
+    RecordingRelease(const RecordingRelease&) = delete;
+    RecordingRelease& operator=(const RecordingRelease&) = delete;
+
+private:
+    RecordingMutex& mutex;
+    std::uint32_t depth;
+};
+
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
 // Sync waits for every batch, then runs its completion actions (write-backs) in order. Objects handed
@@ -81,24 +107,24 @@ public:
     // unaligned head or tail; [begin, end) is the guest range. Debug aid: APS5_DCC_KEYS_EACH=1
     // records every store at once, as before (QueueKeyStore then records and returns).
     void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end);
-    bool HasQueuedKeyStores() const { const auto* open = callerBatch(); return open != nullptr && !open->keyStores.empty(); }
+    bool HasQueuedKeyStores() const { const std::lock_guard guard(recording); const auto* open = callerBatch(); return open != nullptr && !open->keyStores.empty(); }
     bool QueuedKeyStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's range.
     bool AnyQueuedKeyStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushKeyStores();
     void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes)) FlushKeyStores(); }
-    bool Recording() const { return anyOpen(); }
-    bool Idle() const { return !anyOpen() && inFlight.empty(); }
+    bool Recording() const { const std::lock_guard guard(recording); return anyOpen(); }
+    bool Idle() const { const std::lock_guard guard(recording); return !anyOpen() && inFlight.empty(); }
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
     void KeepBytes(const void* owner, std::size_t bytes);
-    std::size_t OpenKeptBytes() const { const auto* open = callerBatch(); return open != nullptr ? open->keptBytes : 0; }
+    std::size_t OpenKeptBytes() const { const std::lock_guard guard(recording); const auto* open = callerBatch(); return open != nullptr ? open->keptBytes : 0; }
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
-    std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
+    std::size_t InFlightKeptBytes() const { const std::lock_guard guard(recording); return inFlightKeptBytes; }
     enum class IndexKind : std::uint8_t { Index16, Index32, Index16Restart, Index32Restart };
     static constexpr std::size_t IndexRangeEntries = 16384;
     static constexpr std::size_t KeptIndexRangeIndices = 4096;
@@ -197,7 +223,7 @@ public:
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
     bool UseRecord(const std::shared_ptr<Buffer>& device, VkDeviceSize offset, VkDeviceSize cleared, const std::shared_ptr<Buffer>& host, VkDeviceSize hostOffset, VkDeviceSize bytes);
-    std::uint32_t CallerStream() const { return streamOfCaller(); }
+    std::uint32_t CallerStream() const { const std::lock_guard guard(recording); return streamOfCaller(); }
     bool RecordUsed(const Buffer* device, VkDeviceSize offset) const;
     bool CallerFaultRecordCurrent(const BatchFaultRecord& record) const;
     BatchFaults& CallerBatchFaults();
@@ -253,11 +279,11 @@ public:
     void SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked = false);
     // Completes batches that already finished; returns whether nothing is in flight.
     bool Reap();
-    std::uint64_t Submissions() const { return submissions; }
+    std::uint64_t Submissions() const { const std::lock_guard guard(recording); return submissions; }
     bool CallerBatchValue(std::uint32_t& stream, std::uint64_t& value) const;
-    bool BatchValueFinished(std::uint32_t stream, std::uint64_t value) const { return stream < streams.size() && value <= streams[stream].finished; }
+    bool BatchValueFinished(std::uint32_t stream, std::uint64_t value) const { const std::lock_guard guard(recording); return stream < streams.size() && value <= streams[stream].finished; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
-    std::size_t InFlightBatches() const { return inFlight.size(); }
+    std::size_t InFlightBatches() const { const std::lock_guard guard(recording); return inFlight.size(); }
     // Reaps that retired at least one batch so far (the [recorder] line's 'with work' count).
     static std::uint64_t ReapsWithWork();
 
@@ -278,13 +304,24 @@ public:
     // stores at once and closes the run at the next command (Commands()) or at Submit, as
     // before; APS5_NO_LABEL_RUNS=1 gives every store barriers of its own.
     void RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address);
-    bool HasQueuedStores() const { const auto* open = callerBatch(); return open != nullptr && !open->run.queued.empty(); }
+    bool HasQueuedStores() const { const std::lock_guard guard(recording); const auto* open = callerBatch(); return open != nullptr && !open->run.queued.empty(); }
     bool QueuedStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's guest range.
     bool AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;
     void FlushStores();
-    void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes)) FlushStores(); }
+    void FlushStoresOverlapping(std::uint64_t address, std::size_t bytes) { const std::lock_guard guard(recording); if (HasQueuedStores() && QueuedStoreOverlaps(address, bytes)) FlushStores(); }
     bool DeferSignalPublication();
+    struct OwnStreamLabel {
+        VkBuffer buffer;
+        VkDeviceSize offset;
+        std::span<const std::byte> bytes;
+        std::uint64_t address;
+        std::uint64_t stamp;
+        std::uint32_t queue;
+    };
+    enum class OwnStreamOutcome : std::uint8_t { Refused, Recorded, Submitted };
+    OwnStreamOutcome RecordLabelsOnOwnStream(std::span<const OwnStreamLabel> labels, const std::function<bool()>& unchanged, bool submit);
+    bool OwnsStream() const;
 
     // Pending-label table. A GPU label (RELEASE_MEM/WRITE_DATA recorded as a store into the batch)
     // is noted per 4-byte dword with the value it will store and a record-order stamp (the driver's
@@ -555,6 +592,7 @@ private:
         std::uint64_t serial = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        bool labelsOnly = false;
         std::uint32_t stream = 0;
         std::uint64_t value = 0;
         std::array<std::uint64_t, MaxRecorderStreams> waits{};
@@ -797,6 +835,8 @@ private:
         std::uint64_t barrier = 0;
         Batch* newest = nullptr;
         std::shared_ptr<BatchFaultRecord> faultRecord;
+        VkCommandPool pool = VK_NULL_HANDLE;
+        std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
     };
     struct ObjectUse {
         std::array<std::uint64_t, MaxRecorderStreams> read{};
@@ -821,6 +861,9 @@ private:
     static constexpr std::uint32_t NoStream = 0xffffffffu;
     std::uint32_t submittingStream = NoStream;
     std::uint32_t streamOfCaller() const;
+    bool streamOwnedByCaller(std::uint32_t stream) const;
+    VkCommandPool streamPool(std::uint32_t stream) const;
+    mutable RecordingMutex recording;
     std::unique_ptr<Batch>& callerOpen();
     const Batch* callerBatch() const;
     bool anyOpen() const;
@@ -871,7 +914,6 @@ private:
     std::uint64_t writeNoteCount = 0;
     // Command buffers and fences of completed batches, reused by later ones (hundreds of batches per
     // frame would otherwise allocate and free their objects each time).
-    std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
     std::vector<VkQueryPool> sparePools;
     mutable std::mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;

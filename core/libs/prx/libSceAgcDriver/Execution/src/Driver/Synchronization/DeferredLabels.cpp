@@ -133,6 +133,27 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     }
 }
 
+bool Driver::submitLabelsOnOwnStream(VulkanDevice* localDevice, std::uint32_t queue) {
+    auto& deferred = deferredLabels();
+    if (localDevice == nullptr || queue == 0 || deferred.labels.empty()) return false;
+    const bool completion = std::any_of(deferred.labels.begin(), deferred.labels.end(), [](const DeferredLabel& label) { return label.completion; });
+    if (completion && Graphics::CompletionPublicationPending()) return false;
+    std::vector<VulkanDevice::OwnStreamLabelWrite> writes;
+    writes.reserve(deferred.labels.size());
+    for (const auto& label : deferred.labels) writes.push_back({label.address, std::span<const std::byte>(label.bytes).first(label.size), ++eventSerial});
+    const auto outcome = localDevice->WriteLabelsOnOwnStream(writes, queue, true);
+    if (outcome == Graphics::Recorder::OwnStreamOutcome::Refused) return false;
+    for (const auto& write : writes) {
+        countLabelOutcome(0);
+        noteLabelStore(write.address, write.bytes, write.stamp, queue);
+    }
+    ++labelGroups;
+    deferred.labels.clear();
+    Graphics::Recorder::ForgetQueuedLabels();
+    queuedLabelsNoted() = 0;
+    return outcome == Graphics::Recorder::OwnStreamOutcome::Submitted;
+}
+
 bool Driver::recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queue) {
     static const bool packetFlush = !LabelBatchSubmit() && std::getenv("APS5_NO_LABEL_PACKET_FLUSH") == nullptr;
 

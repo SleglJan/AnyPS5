@@ -37,6 +37,10 @@ constexpr double LockWaitLimitMs = 20.0;
 constexpr double LabelLimitMs = 60.0;
 constexpr auto SettleDelay = std::chrono::milliseconds(30);
 constexpr std::uint64_t MarkerOffset = 1024;
+constexpr std::uint64_t OwnStreamOffset = 2048;
+constexpr std::uint64_t GateOffset = 2052;
+constexpr std::uint32_t WaitEqual = 3;
+constexpr auto RecordingHold = std::chrono::milliseconds(300);
 
 std::array<Program, SpinAttempts> Spinners;
 Program Storer;
@@ -327,6 +331,67 @@ void PresenterWaitsUnlocked(Window& window, PrivatePages& labels, std::uint32_t&
     });
 }
 
+bool LandsWithin(volatile std::uint32_t* word, std::uint32_t value, Clock::duration limit) {
+    const auto start = Clock::now();
+    while (*word != value && Clock::now() - start < limit) std::this_thread::yield();
+    return *word == value;
+}
+
+void LabelBesideOtherQueueRecording(PrivatePages& labels, std::uint32_t& labelValue) {
+    const auto address = labels.Address(OwnStreamOffset);
+    volatile auto* word = labels.Words() + OwnStreamOffset / 4u;
+    const auto gate = labels.Address(GateOffset);
+    labels.Words()[GateOffset / 4u] = 0x6a7e0001u;
+    AgcDriver::GuestMemory::CollectWritesUncached(gate, 4u);
+    Locked([] {
+        auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        recorder->DeclareSection({});
+        static_cast<void>(recorder->Commands());
+    });
+    Commands warm;
+    warm.Wait(gate, WaitEqual, 0x6a7e0001u, 0xffffffffu);
+    warm.WriteData(address, {++labelValue});
+    warm.Submit(WriterQueue);
+    Expect(LandsWithin(word, labelValue, std::chrono::seconds(10)), "a label beside another queue's recording: the first label did not land");
+    WaitIdle();
+    Settle();
+    for (const bool barrier : {false, true}) {
+        const std::string what = barrier ? "a label after another queue's barrier section" : "a label beside another queue's open batch";
+        for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+            std::atomic<bool> holding{false};
+            Clock::time_point released{};
+            std::jthread holder([&] {
+                Locked([&] {
+                    auto* recorder = AgcDriver::Graphics::Recorder::Active();
+                    if (!barrier) recorder->DeclareSection({});
+                    static_cast<void>(recorder->Commands());
+                    holding.store(true);
+                    std::this_thread::sleep_for(RecordingHold);
+                    released = Clock::now();
+                });
+            });
+            while (!holding.load()) std::this_thread::yield();
+            const auto value = ++labelValue;
+            Commands label;
+            label.Wait(gate, WaitEqual, 0x6a7e0001u, 0xffffffffu);
+            label.WriteData(address, {value});
+            const auto start = Clock::now();
+            label.Submit(WriterQueue);
+            const bool landed = LandsWithin(word, value, std::chrono::seconds(10));
+            const auto landedAt = Clock::now();
+            holder.join();
+            const auto landedMs = Ms(landedAt - start);
+            const auto holdLeftMs = Ms(released - landedAt);
+            std::printf("%s (attempt %u): label landed after %.1f ms, %.1f ms before the device lock was released\n", what.c_str(), attempt, landedMs, holdLeftMs);
+            Expect(landed, what + ": the label did not land within 10 s");
+            if (barrier) Expect(landedAt >= released, what + ": the label landed " + std::to_string(holdLeftMs) + " ms before the barrier section's batch could be submitted");
+            else Expect(landedMs < LabelLimitMs && landedAt < released, what + ": the label landed after " + std::to_string(landedMs) + " ms, behind the device lock held by another queue's recording");
+            WaitIdle();
+            Settle();
+        }
+    }
+}
+
 void ThreeQueueLoad(PrivatePages& labels) {
     constexpr std::uint32_t Rounds = 40;
     constexpr std::array<std::uint32_t, 3> Queues{0x0u, WriterQueue, LabelQueue};
@@ -414,6 +479,7 @@ int main() {
         }
         if (window->Attached()) PresenterWaitsUnlocked(*window, labels, labelValue);
         else std::printf("a presentation: skipped, no window could be created\n");
+        LabelBesideOtherQueueRecording(labels, labelValue);
         ThreeQueueLoad(labels);
         Locked([] { Residency().Manager().SetBudget(0); });
         window.reset();

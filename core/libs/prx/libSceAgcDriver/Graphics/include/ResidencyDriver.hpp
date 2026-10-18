@@ -188,6 +188,7 @@ private:
 };
 
 void PublishForCompletionSignal();
+bool CompletionPublicationPending();
 void PublishBeforeCompletionSignal(SignalKind kind);
 
 }

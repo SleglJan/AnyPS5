@@ -341,12 +341,15 @@ void Driver::execute(const Submission& submission) {
             return;
         }
         ++costs.endSubmits;
-        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
-        std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        const auto localDevice = device.Load();
+        const auto ownDevice = device.Load();
+        if (!submitLabelsOnOwnStream(ownDevice.get(), submission.queue)) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            const auto localDevice = device.Load();
 
-        recordDeferredLabels(localDevice.get(), submission.queue);
-        if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
+        }
     }
     endTiming.Finish();
     if (submission.rewindTail != nullptr) executeRewindTail(submission);

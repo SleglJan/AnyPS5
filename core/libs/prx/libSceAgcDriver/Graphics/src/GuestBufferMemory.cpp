@@ -1890,6 +1890,21 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     return importAccess(context, state, address, address + bytes, lease);
 }
 
+std::optional<HostImportHit> CurrentHostImport(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return std::nullopt;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importsStale(context, state)) return std::nullopt;
+    const auto* entry = findImport(state, address, address + bytes);
+    if (entry == nullptr) return std::nullopt;
+    entry->lastUse = ++state.useCounter;
+    return HostImportHit{entry->buffer, entry->base, state.epoch.load(std::memory_order_acquire)};
+}
+
+bool HostImportEpochIs(std::uint64_t epoch) {
+    return Imports().epoch.load(std::memory_order_acquire) == epoch;
+}
+
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (context.hostImportAlignment == 0) return true;
     ensurePinWaiter();

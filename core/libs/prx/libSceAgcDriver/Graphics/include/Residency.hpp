@@ -267,6 +267,7 @@ public:
     std::optional<std::uint64_t> Translate(std::uint64_t page);
     ResidencyMask Dirty(std::uint64_t page);
     bool AnyResident(std::uint64_t address, std::uint64_t bytes);
+    bool AnyStaleOwned() const;
     std::vector<ResidencyRange> ResidentRanges();
     std::vector<std::uint64_t> TakeChanges();
     std::vector<std::uint32_t> Chunks() const;

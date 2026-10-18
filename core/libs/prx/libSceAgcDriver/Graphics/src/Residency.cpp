@@ -1941,6 +1941,11 @@ ResidencyMask ResidencyManager::Dirty(std::uint64_t page) {
     return id ? pages[*id].dirty : ResidencyMask{0};
 }
 
+bool ResidencyManager::AnyStaleOwned() const {
+    const std::shared_lock lock(ownedMutex);
+    return !staleOwned.empty();
+}
+
 bool ResidencyManager::AnyResident(std::uint64_t address, std::uint64_t bytes) {
     const auto span = PagesOf(address, bytes);
     if (span.empty) return false;
