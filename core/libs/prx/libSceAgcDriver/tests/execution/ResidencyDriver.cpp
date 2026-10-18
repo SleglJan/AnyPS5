@@ -504,8 +504,9 @@ void GrantsAndDrops(Harness& harness) {
         harness.driver.BeforeWritingDispatch(grants, false);
     });
     Expect(harness.driver.Manager().Slot(harness.Page(5)) && harness.driver.Manager().Dirty(harness.Page(5)) == 0x0001 && harness.driver.Manager().Slot(harness.Page(4)), "a write grant into a settled private page keeps it resident with the granted subpage dirty");
+    const auto resident = harness.driver.Manager().Counts().resident;
     harness.OnStream(0, true, [&] { harness.driver.BeforeWritingDispatch({}, true); });
-    Expect(harness.driver.Manager().Counts().resident == 0, "a dispatch that may write any writable import demotes every GPU-writable mirror");
+    Expect(resident != 0 && harness.driver.Manager().Counts().resident == resident && harness.driver.Manager().Dirty(harness.Page(5)) == 0x0001, "a dispatch that may write any writable import keeps the settled GPU-writable mirrors and their dirty subpages");
     harness.Drain();
     harness.OnStream(0, true, [&] { harness.Use(6, 1); });
     harness.driver.Publish();
@@ -520,6 +521,8 @@ void GrantsAndDrops(Harness& harness) {
         harness.driver.Manager().Retire();
         harness.driver.Manager().SetBudget(0);
     });
+    harness.Drain();
+    harness.OnStream(0, true, [&] { harness.driver.Manager().Retire(); });
     Expect(harness.driver.Manager().Counts().chunks == 0 && harness.driver.Mirrors().DeviceBytes() == 0, "a zero budget releases the chunk");
 }
 

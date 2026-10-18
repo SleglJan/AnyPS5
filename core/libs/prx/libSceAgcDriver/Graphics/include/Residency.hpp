@@ -227,6 +227,7 @@ public:
     void Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token);
     void Demote(std::uint64_t address, std::uint64_t bytes);
     void DemoteWritable();
+    void NoteUnboundedWriter(const ResidencyToken& token);
     void DropRange(std::uint64_t address, std::uint64_t bytes);
     void NoteImportWritten(std::uint64_t address, std::uint64_t bytes);
     std::vector<ResidencyMirrorStore> StoreThroughMirrors(std::uint64_t address, std::uint64_t bytes, const ResidencyToken& lands);
@@ -304,6 +305,7 @@ private:
     };
     static constexpr std::uint8_t UnsettledWriteBack = 1u;
     static constexpr std::uint8_t UnsettledWriter = 2u;
+    static constexpr std::uint8_t UnsettledUnbounded = 4u;
     static constexpr std::uint32_t WholeEnd = static_cast<std::uint32_t>(ResidencyPageBytes);
 
     using Run = std::pair<std::uint32_t, std::uint32_t>;
@@ -325,13 +327,14 @@ private:
         bool guarded = false;
         bool used = false;
         bool accessGuarded = false;
+        bool settleIssued = false;
         ResidencyMask accessMask = 0;
         std::uint64_t importSerial = 0;
         std::uint64_t touchFrame = 0;
+        std::uint64_t unboundedSerial = 0;
         ResidencyToken pin{};
         ResidencyToken settle{};
         std::uint64_t importStamp = 0;
-        bool settleIssued = false;
     };
 
     struct Cooling {
@@ -358,6 +361,10 @@ private:
         std::uint32_t end = WholeEnd;
     };
 
+    struct UnboundedWriter {
+        std::uint64_t serial = 0;
+        ResidencyToken token{};
+    };
     struct WriteBacks {
         std::vector<ResidencyCopy> copies;
         std::vector<Retiring> slots;
@@ -439,6 +446,10 @@ private:
     void waitWriters(std::span<const Fill> fills);
     void applyFaults(std::vector<std::uint64_t> written);
     void applyRecorded(std::uint64_t address, std::uint64_t bytes);
+    bool unboundedPending(const Page& page) const { return page.unboundedSerial > unboundedApplied; }
+    void settleUnbounded(std::span<const std::uint32_t> ids, bool guard);
+    void liftUnboundedGuards();
+    bool guardDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
     void evictDraining();
     void demote(std::span<const std::uint32_t> ids);
     std::vector<Fill> demoteUnused(std::span<const Fill> fills);
@@ -487,6 +498,10 @@ private:
     std::uint64_t importsGeneration = 0;
     std::vector<ResidencyRange> pendingImports;
     std::vector<std::uint64_t> reservedTouches;
+    std::deque<UnboundedWriter> unboundedWriters;
+    std::vector<std::uint64_t> unboundedGuarded;
+    std::uint64_t unboundedIssued = 0;
+    std::uint64_t unboundedApplied = 0;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;
     std::unordered_map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> aliasKeys;
     std::atomic<std::uint64_t> epoch{1};

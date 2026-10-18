@@ -284,29 +284,48 @@ void GpuReadsGpuStore(MirrorReader& reader) {
     ExpectBytes(model, 4, what + ": the test's own read of page 4 at the end");
 }
 
-void UnboundedWriter(MirrorReader& reader) {
+bool ImportSettled(std::uint64_t address);
+
+void ComputeChain(MirrorReader& reader) {
     SharedPages pages(ReadPages);
     PrivatePages addresses(1);
     Model model(pages.Address(), pages.Bytes(), 4);
-    const auto target = model.Address(6) + 8u;
+    const auto target = model.Address(6, 3);
     addresses.Words()[0] = Low(target);
     addresses.Words()[1] = High(target);
     AgcDriver::GuestMemory::CollectWritesUncached(addresses.Address(), addresses.Bytes());
+    static_cast<void>(reader.Read(addresses.Address(), 1));
+    static_cast<void>(reader.Read(addresses.Address(), 1));
     Settle();
-    const std::string what = "unbounded writer";
-    ExpectResident(model, 0, ReadPages, what + ": before the dispatch");
-    const auto before = Counts();
-    Commands commands;
-    commands.Dispatch(UnboundedProgram(), BufferResource(addresses.Address(), 16u), 1);
-    model.Set(6, 2, UnboundedValue);
-    const auto failure = Submitted(commands);
-    Expect(failure.empty(), what + ": the submission of a dispatch storing through an address it loads from memory failed: " + failure);
-    const auto after = Counts();
-    Expect(after.demoted >= before.demoted + ReadPages, what + ": a dispatch storing through an address it loads from memory demoted " + std::to_string(after.demoted - before.demoted) + " of the view's " + std::to_string(ReadPages) + " GPU-writable mirrors before it ran");
-    Expect(after.dirty == 0u, what + ": " + std::to_string(after.dirty) + " pages are dirty in their mirrors after a store with no record-time grant");
-    ExpectClean(model, 6, what + ": the page the store reached");
-    ExpectBytes(model, 6, what + ": the test's own read of the stored page");
-    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the unbounded store");
+    const std::string what = "compute chain";
+    Expect(ImportSettled(addresses.Address()), what + ": the address page's import did not settle before the chain");
+    ExpectResident(model, 0, ReadPages, what + ": before the first frame");
+    model.Set(6, 3 * WordsPerSubpage, UnboundedValue);
+    const auto start = Counts();
+    for (int frame = 0; frame < 3; ++frame) {
+        const auto label = what + ", frame " + std::to_string(frame);
+        const auto before = Counts();
+        Commands commands;
+        commands.Dispatch(UnboundedProgram(), BufferResource(addresses.Address(), 16u), 1);
+        const auto failure = Submitted(commands);
+        Expect(failure.empty(), label + ": the submission of the writer, which stores through an address it loads from memory, failed: " + failure);
+        const auto written = Counts();
+        Expect(written.demoted == before.demoted, label + ": the writer demoted " + std::to_string(written.demoted - before.demoted) + " GPU-writable mirrors");
+        ExpectResident(model, 0, ReadPages, label + ": after the writer");
+        ExpectDirtySubpages(model, 6, 1u << 3u, label + ": the subpage the writer stored into, from its written-page record");
+        ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, label + ": the reader after the writer");
+        Settle();
+        const auto read = Counts();
+        const auto admittedBytes = (read.admitted - before.admitted) * PageBytes;
+        Expect(read.writtenBackBytes == start.writtenBackBytes && read.copiedInBytes - before.copiedInBytes == admittedBytes && (frame == 0 || admittedBytes == 0), label + ": the chain wrote " + std::to_string(read.writtenBackBytes - start.writtenBackBytes) + " bytes back to guest memory and copied " + std::to_string(read.copiedInBytes - before.copiedInBytes) + " bytes into mirrors with " + std::to_string(admittedBytes) + " bytes of first admissions; the reader must read the writer's result in the mirror");
+        Expect(read.demoted == before.demoted && read.evicted == before.evicted, label + ": " + std::to_string(read.demoted - before.demoted + read.evicted - before.evicted) + " pages left their mirrors during the frame");
+        ExpectResident(model, 0, ReadPages, label + ": after the reader");
+    }
+    ExpectBytes(model, 6, what + ": the CPU's own read of the stored page");
+    const auto end = Counts();
+    Expect(end.writtenBackBytes == start.writtenBackBytes + SubpageBytes && end.cpuWriteBacks > start.cpuWriteBacks, what + ": the CPU read wrote back " + std::to_string(end.writtenBackBytes - start.writtenBackBytes) + " bytes, expected the one stored subpage");
+    ExpectClean(model, 6, what + ": after the CPU read");
+    ExpectResident(model, 0, ReadPages, what + ": after the CPU read");
 }
 
 void SubpageGranularity(MirrorReader& reader) {
@@ -602,7 +621,7 @@ int main() {
                  {"CPU writes after mirroring", CpuWritesAfterMirroring},
                  {"CPU read of a GPU store", CpuReadsGpuStore},
                  {"GPU read of a GPU store", GpuReadsGpuStore},
-                 {"unbounded writer", UnboundedWriter},
+                 {"compute chain", ComputeChain},
                  {"4 KiB granularity", SubpageGranularity},
                  {"CPU and GPU in one page", CpuAndGpuInOnePage},
                  {"cross-stream", CrossStream},

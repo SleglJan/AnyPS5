@@ -291,7 +291,7 @@ void ResidencyDriver::BeforeWritingDispatch(std::span<const ResidencyRange> gran
     const std::lock_guard lock(GuestMemory::GpuMutex());
     const std::lock_guard structureLock(manager.Mutex());
     for (const auto& grant : grants) manager.NoteGpuWritten(grant.address, grant.bytes);
-    if (writableImports) manager.DemoteWritable();
+    if (writableImports) manager.NoteUnboundedWriter(recorder.CallerToken());
     for (const auto& grant : grants) manager.Pin(grant.address, grant.bytes, ResidencyAccess::Write, recorder.CallerToken());
 }
 

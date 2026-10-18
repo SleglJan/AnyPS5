@@ -67,7 +67,7 @@ void AliasStoreDemotes(MirrorReader& reader) {
     Settle();
 }
 
-void UnboundedWriterDemotes(MirrorReader& reader) {
+void UnboundedWriterKeepsMirrors(MirrorReader& reader) {
     SharedPages writable(3);
     PrivatePages addresses(1);
     Fill(writable.Words(), 3, 3);
@@ -82,7 +82,7 @@ void UnboundedWriterDemotes(MirrorReader& reader) {
     commands.Dispatch(UnboundedProgram(), BufferResource(addresses.Address(), 16u), 1);
     commands.Submit(0);
     WaitIdle();
-    Expect(!Resident(writable.Address(0)) && !Resident(writable.Address(1)) && !Resident(writable.Address(2)), "rule 2: a dispatch storing through an address it loads from memory did not demote every GPU-writable mirror");
+    Expect(Resident(writable.Address(0)) && Resident(writable.Address(1)) && Resident(writable.Address(2)), "rule 2: a dispatch storing through an address it loads from memory demoted GPU-writable mirrors");
     AgcDriver::GuestMemory::FlushGpuWrites(writable.Address(1), PageBytes);
     Expect(writable.Words(1)[2] == UnboundedValue, "rule 2: the unbounded store did not reach guest memory: " + Hex(writable.Words(1)[2]));
     ExpectRead(reader.Read(writable.Address(), 3), 3, [](std::uint64_t page, std::uint32_t subpage) { return Pattern(3, page, subpage * WordsPerSubpage); }, "rule 2: the read after the unbounded writer");
@@ -132,7 +132,7 @@ void OneMirrorPerPhysicalPage(MirrorReader& reader) {
 void Run(MirrorReader& reader) {
     SharedMirrorsTakeStores(reader);
     AliasStoreDemotes(reader);
-    UnboundedWriterDemotes(reader);
+    UnboundedWriterKeepsMirrors(reader);
     DriverWriteThroughAlias(reader);
     OneMirrorPerPhysicalPage(reader);
 }
