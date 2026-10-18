@@ -152,6 +152,8 @@ void ResidencyDriver::frameBoundary() {
     manager.ApplyBudget();
     manager.AdmitEager();
     if (!context.bufferDeviceAddress) return;
+    const std::array<Recorder::SectionObject, 1> objects{SectionAccess(true)};
+    recorder.DeclareSection(objects);
     const auto commands = recorder.Commands();
     const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
     const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
@@ -434,6 +436,7 @@ ResidencyToken ResidencyDriver::record(std::span<const ResidencyCopy> copies, bo
     if (intoMirror) {
         std::vector<Recorder::SectionObject> objects;
         for (const auto chunk : chunks) objects.push_back({mirrors.Chunk(chunk).get(), true});
+        objects.push_back(SectionAccess(true));
         recorder.DeclareSection(objects);
     }
     const auto commands = recorder.Commands();

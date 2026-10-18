@@ -1577,8 +1577,9 @@ bool Recorder::anyOpen() const {
 
 void Recorder::DeclareSection(std::span<const SectionObject> objects) {
     const std::lock_guard recordingGuard(recording);
-    declaredObjects.assign(objects.begin(), objects.end());
-    sectionDeclared = true;
+    auto& declaration = declarations[streamOfCaller()];
+    declaration.objects.assign(objects.begin(), objects.end());
+    declaration.declared = true;
 }
 
 void Recorder::dependOn(const Epoch& after) {
@@ -1587,7 +1588,11 @@ void Recorder::dependOn(const Epoch& after) {
     Epoch waits = opens[stream] != nullptr ? opens[stream]->waits : Epoch{};
     for (std::uint32_t other = 0; other < streams.size(); ++other) {
         if (other == stream || after[other] <= streams[other].finished) continue;
-        if (opens[other] != nullptr && opens[other]->value <= after[other]) submitStream(other);
+        const bool submit = opens[other] != nullptr && opens[other]->value <= after[other];
+        if (submit) {
+            ++orderSubmits;
+            submitStream(other);
+        }
         waits[other] = std::max(waits[other], after[other]);
     }
     ensureOpen();
@@ -1597,9 +1602,10 @@ void Recorder::dependOn(const Epoch& after) {
 
 void Recorder::beginSection() {
     const std::lock_guard recordingGuard(recording);
-    const bool declared = std::exchange(sectionDeclared, false);
+    auto& declaration = declarations[streamOfCaller()];
+    const bool declared = std::exchange(declaration.declared, false);
     std::vector<SectionObject> objects;
-    objects.swap(declaredObjects);
+    objects.swap(declaration.objects);
     ensureOpen();
     if (streams.size() == 1 || submittingStream != NoStream) return;
     const auto stream = streamOfCaller();

@@ -282,6 +282,7 @@ public:
     bool Reap();
     std::uint64_t Submissions() const { const std::lock_guard guard(recording); return submissions; }
     bool CallerBatchValue(std::uint32_t& stream, std::uint64_t& value) const;
+    std::uint64_t OrderSubmits() const { const std::lock_guard guard(recording); return orderSubmits; }
     bool BatchValueFinished(std::uint32_t stream, std::uint64_t value) const { const std::lock_guard guard(recording); return stream < streams.size() && value <= streams[stream].finished; }
     // Batches submitted and not yet finished (what a full Sync() waits for); under GuestMemory::GpuMutex.
     std::size_t InFlightBatches() const { const std::lock_guard guard(recording); return inFlight.size(); }
@@ -846,8 +847,12 @@ private:
     std::unordered_map<const void*, ObjectUse> objectUses;
     static constexpr std::size_t ObjectSweepMinimum = 4096;
     std::size_t objectSweepAt = ObjectSweepMinimum;
-    std::vector<SectionObject> declaredObjects;
-    bool sectionDeclared = false;
+    struct Declaration {
+        std::vector<SectionObject> objects;
+        bool declared = false;
+    };
+    std::array<Declaration, MaxRecorderStreams> declarations;
+    std::uint64_t orderSubmits = 0;
     using Epoch = std::array<std::uint64_t, MaxRecorderStreams>;
     void dependOn(const Epoch& after);
     void keepOnOtherStreams(const std::shared_ptr<void>& object);

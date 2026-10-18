@@ -4197,9 +4197,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     const auto workgroupDwords = record.shader->program->workgroupMemoryDwords;
     auto workgroupMemory = workgroupDwords != 0 ? state->WorkgroupMemoryFor(context, record.x, record.y, record.z, workgroupDwords) : nullptr;
-    if (recorder.Streams() > 1 && !resources.HoldsLease() && !resources.UsesAddressTable()) {
+    if (recorder.Streams() > 1) {
         std::vector<Graphics::Recorder::SectionObject> objects{{record.resources.get(), true}};
         if (workgroupMemory != nullptr) objects.push_back({workgroupMemory.get(), true});
+        if (const auto* residency = Graphics::ResidencyDriver::Active(); residency != nullptr && (resources.UsesAddressTable() || resources.HoldsLease())) objects.push_back(residency->SectionAccess(false));
         for (const auto& [image, written] : resources.StorageImages()) objects.push_back({image, written});
         for (const auto& texture : resources.SampledTextures()) {
             if (texture == nullptr) continue;
@@ -4878,17 +4879,27 @@ void VulkanDevice::DispatchContinuationRounds(const std::shared_ptr<Graphics::Bu
             context.deviceImages->BeforeDispatch(context, recorder);
         }
     }
-    const bool sectioned = recorder.Streams() > 1 && std::ranges::none_of(built, [](const Part& part) { return part.resources->HoldsLease() || part.resources->UsesAddressTable(); });
+    const bool sectioned = recorder.Streams() > 1;
     if (sectioned) {
         std::vector<Graphics::Recorder::SectionObject> objects{{block.get(), true}};
         for (const auto& part : built) {
             objects.push_back({part.resources.get(), true});
+            if (const auto* residency = Graphics::ResidencyDriver::Active(); residency != nullptr && (part.resources->UsesAddressTable() || part.resources->HoldsLease())) objects.push_back(residency->SectionAccess(false));
             if (part.workgroupMemory != nullptr) objects.push_back({part.workgroupMemory.get(), true});
             for (const auto& [image, written] : part.resources->StorageImages()) objects.push_back({image, written});
+            for (const auto& texture : part.resources->SampledTextures()) {
+                if (texture == nullptr) continue;
+                if (texture->ViewsStorageImage()) objects.push_back({texture->StorageSource()->Image(), false});
+                if (texture->SampledImage() != VK_NULL_HANDLE && (!texture->ViewsStorageImage() || texture->SampledImage() != texture->StorageSource()->Image())) objects.push_back({texture->SampledImage(), false});
+            }
+            if (part.resources->UsesDeviceImages()) {
+                for (const auto& image : context.deviceImages->DispatchStorage()) objects.push_back({image->Image(), true});
+                for (const auto& texture : context.deviceImages->DispatchTextures()) {
+                    if (texture->SampledImage() != VK_NULL_HANDLE) objects.push_back({texture->SampledImage(), false});
+                }
+            }
         }
         recorder.DeclareSection(objects);
-    } else {
-        recorder.DeclareSection({});
     }
     const auto commands = recorder.Commands();
     recorder.Keep(block);

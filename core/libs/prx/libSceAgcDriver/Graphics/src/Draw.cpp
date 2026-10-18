@@ -1552,12 +1552,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     for (const auto& target : record.targets) {
         if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
     }
-    const bool unknownMemory = addressBased || resources.UsesAddressTable();
     const PassAccess passAccess{passReads, resources.MemoryWrites(), passImages, passAttachments, resources.MemoryReadsUnknown(), resources.MemoryWritesUnknown()};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    if (resources.NeedsDeviceTransfers(*recorder)) static_cast<void>(recorder->Commands());
-    if (recorder->Streams() > 1 && !unknownMemory && !capture) {
-        std::vector<Recorder::SectionObject> objects{{record.resources.get(), true}};
+    const bool declared = recorder->Streams() > 1 && !capture;
+    std::vector<Recorder::SectionObject> objects;
+    if (declared) {
+        objects.push_back({record.resources.get(), true});
+        if (const auto* residency = ResidencyDriver::Active(); residency != nullptr && (resources.UsesAddressTable() || addressBased)) objects.push_back(residency->SectionAccess(false));
         for (const auto& [image, written] : passImages) objects.push_back({image, written});
         for (const auto& [image, written] : passAttachments) objects.push_back({image, written});
         for (const auto view : record.targetViews) objects.push_back({view, true});
@@ -1573,8 +1574,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
                 if (texture->SampledImage() != VK_NULL_HANDLE) objects.push_back({texture->SampledImage(), false});
             }
         }
-        recorder->DeclareSection(objects);
     }
+    if (resources.NeedsDeviceTransfers(*recorder)) {
+        if (declared) recorder->DeclareSection(objects);
+        static_cast<void>(recorder->Commands());
+    }
+    if (declared) recorder->DeclareSection(objects);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || inputs.restartStarts, fenced, passAccess);
     const bool continued = start.continued;
     outcome.passContinued = continued;

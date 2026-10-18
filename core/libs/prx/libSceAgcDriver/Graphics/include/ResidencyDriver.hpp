@@ -117,6 +117,7 @@ public:
     void DropMirrors(std::span<const ResidencyRange> ranges);
     ResidencyPublication Publish();
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
+    Recorder::SectionObject SectionAccess(bool written) const { return {this, written}; }
     void KeepChunks();
     VkDeviceAddress TouchTableAddress() const;
     ResidencyDriverCounts Counts() const;
