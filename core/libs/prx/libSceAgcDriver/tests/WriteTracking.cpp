@@ -156,13 +156,17 @@ void CheckStoredAllSince() {
 
     before = TrackerGeneration();
     constexpr unsigned PossibleIntervals = 8;
+    auto beforeNewest = before;
     for (unsigned interval = 0; interval < PossibleIntervals; ++interval) {
+        beforeNewest = TrackerGeneration();
         MarkPossiblyWritten(base + 4096 + static_cast<std::uint64_t>(interval) * 32, 16);
     }
-    Require(!StoredOver(base + 4096, 16, before), "an evicted possible-write interval remained in the bounded history");
-    Require(StoredOver(base + 4096 + (PossibleIntervals - 1) * 32, 16, before), "the newest possible-write interval was evicted");
+    Require(StoredOver(base + 4096, 16, before), "an evicted possible-write interval was forgotten instead of marking its block");
+    Require(StoredOver(base + 4096 + 16, 16, before), "an evicted possible write did not mark the rest of its block");
+    Require(StoredOver(base + 4096 + (PossibleIntervals - 1) * 32, 16, beforeNewest), "the newest possible-write interval was evicted");
+    const auto beforeRecord = TrackerGeneration();
     MarkPossiblyWritten(base + 4096, 16);
-    Require(StoredOver(base + 4096, 16, before), "a possible-write interval was not retained after being re-recorded");
+    Require(StoredOver(base + 4096, 16, beforeRecord), "a possible-write interval was not retained after being re-recorded");
     Require(!StoredAllSince_nid_no_patch(base + 4096, 16, before), "possible-write eviction or re-recording proved complete byte coverage");
 
     before = TrackerGeneration();
