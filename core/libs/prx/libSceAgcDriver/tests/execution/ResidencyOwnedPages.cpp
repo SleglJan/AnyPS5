@@ -22,6 +22,8 @@ constexpr std::uint32_t FirstRendered = 0x6a000001u;
 constexpr std::uint32_t SecondRendered = 0x6a000002u;
 constexpr std::uint32_t ThirdRendered = 0x6a000003u;
 constexpr std::uint32_t FourthRendered = 0x6a000004u;
+constexpr std::uint32_t FrameRendered = 0x6a000010u;
+constexpr std::uint32_t LastRendered = 0x6a0000ffu;
 
 class RenderTarget final : public IResidencyOwner {
 public:
@@ -82,7 +84,11 @@ public:
             barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
             recorder->MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
             recorder->Keep(image);
+            for (const auto& piece : pieces) {
+                if (piece.buffer == VK_NULL_HANDLE) recorder->NotePendingWrite(piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
+            }
             span.NoteWritten(pieces);
+            for (const auto& piece : pieces) AgcDriver::GuestMemory::MarkWritten(piece.begin, static_cast<std::size_t>(piece.end - piece.begin));
         }
     }
 
@@ -210,11 +216,52 @@ void PrivatePageHeldForReaders(MirrorReader& reader) {
     Settle();
 }
 
+void WrittenBackInEveryFrame(MirrorReader& reader) {
+    const std::string what = "a page its owner writes back into the mirror in every frame";
+    SharedPages pages(1);
+    Fill(pages.Words(), 1, 10);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+    Use(pages.Address());
+    RenderTarget target(ContextOf(pages.Address()), pages.Address(), PageBytes);
+    const auto page = PageOf(pages.Address());
+    const auto before = Counts();
+    constexpr std::uint32_t Frames = 6;
+    std::uint32_t framesOnImport = 0;
+    for (std::uint32_t frame = 0; frame < Frames; ++frame) {
+        Residency().Flip();
+        target.Render(FrameRendered + frame);
+        ExpectRead(reader.Read(pages.Address(), 1), 1, [&](std::uint64_t, std::uint32_t) { return FrameRendered + frame; }, what + ": the dispatch of frame " + std::to_string(frame));
+        if (!Resident(pages.Address())) ++framesOnImport;
+    }
+    Settle();
+    ExpectRead(reader.Read(pages.Address(), 1), 1, [&](std::uint64_t, std::uint32_t) { return FrameRendered + Frames - 1; }, what + ": a dispatch after the GPU finished the frames");
+    const auto after = Counts();
+    bool hot = false;
+    Locked([&] { hot = Residency().Manager().Hot(page); });
+    Expect(framesOnImport == 0 && Resident(pages.Address()) && !hot && after.hot == before.hot && after.faults == before.faults, what + ": the GPU's write-backs in " + std::to_string(Frames) + " frames left the page on its import in " + std::to_string(framesOnImport) + " frames and counted " + std::to_string(after.faults - before.faults) + " CPU faults and " + std::to_string(after.hot - before.hot) + " hot pages, " + std::to_string(after.hotServed - before.hotServed) + " served from the import and " + std::to_string(after.cooled - before.cooled) + " cooled (resident " + std::to_string(Resident(pages.Address())) + ", hot " + std::to_string(hot) + "), expected none and the page in its mirror");
+    const auto generation = AgcDriver::GuestMemory::CollectWrites(pages.Address(), static_cast<std::size_t>(PageBytes));
+    target.Render(LastRendered);
+    const auto retiles = target.retiles;
+    Locked([&] { Residency().BeforeCompletionSignal(); });
+    bool pending = false;
+    Locked([&] { pending = Recorder::Active()->PendingWriteOverlaps(pages.Address(), static_cast<std::size_t>(PageBytes)); });
+    Expect(target.retiles == retiles && !pending, what + ": a completion signal after the last render retiled the page " + std::to_string(target.retiles - retiles) + " times (pending import write " + std::to_string(pending) + "), expected the render held behind its access guard");
+    const auto hookWaits = Recorder::ThreadHookWaits();
+    std::vector<std::uint32_t> drawRead(WordsPerPage);
+    const bool changed = AgcDriver::GuestMemory::CollectWrites(pages.Address(), static_cast<std::size_t>(PageBytes)) != generation;
+    if (changed) Locked([&] { AgcDriver::GuestMemory::Read(pages.Address(), std::as_writable_bytes(std::span(drawRead))); });
+    Expect(Recorder::ThreadHookWaits() == hookWaits, what + ": a record-time reader keyed on the guest bytes' generation (changed " + std::to_string(changed) + ") waited " + std::to_string(Recorder::ThreadHookWaits() - hookWaits) + " times for the GPU under the device lock");
+    const auto wrong = WrongWords(pages.Words(), WordsPerPage, LastRendered);
+    Expect(wrong == 0u, what + ": a CPU read after the last render misses " + std::to_string(wrong) + " words");
+    Settle();
+}
+
 void Run(MirrorReader& reader) {
     CpuReadGetsRenderedBytes();
     ReadThroughTheTable(reader);
     UnmapWritesBackFirst(reader);
     PrivatePageHeldForReaders(reader);
+    WrittenBackInEveryFrame(reader);
 }
 
 }

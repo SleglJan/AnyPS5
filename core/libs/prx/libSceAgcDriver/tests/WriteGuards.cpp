@@ -266,7 +266,7 @@ void CheckResidencyNotes() {
     const std::array<std::byte, 4> bytes{};
     StoreOwnBytes(base + 64, bytes);
     Require(reported(pageOf(memory)) == 2, "a driver store to a resident page was not reported");
-    Require(MarkWritten(base + 128, 4) != 0 && reported(pageOf(memory)) == 3, "a GPU write reported into a resident page was not reported");
+    Require(MarkWritten(base + 128, 4) != 0 && reported(pageOf(memory)) == 2, "a GPU write mark on a resident page was reported to residency as a CPU store");
     SetResidencyHooks(&hooks);
     dropped.clear();
     {

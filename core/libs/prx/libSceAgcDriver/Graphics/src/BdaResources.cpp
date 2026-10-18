@@ -428,7 +428,7 @@ void BdaResources::applyWrittenPages(std::uint32_t* words) {
 
 void BdaResources::markWrittenRange(std::uint64_t begin, std::size_t bytes) {
     if (auto* residency = ResidencyDriver::Active()) residency->NoteRecordedWrites(begin, bytes);
-    GuestMemory::MarkWrittenThroughMirrors(begin, bytes);
+    GuestMemory::MarkWritten(begin, bytes);
 }
 
 }

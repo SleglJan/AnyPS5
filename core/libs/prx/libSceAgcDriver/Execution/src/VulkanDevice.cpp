@@ -2166,7 +2166,7 @@ Graphics::Recorder::OwnStreamOutcome VulkanDevice::WriteLabelsOnOwnStream(std::s
     const auto unchanged = [&] { return std::all_of(epochs.begin(), epochs.end(), [](std::uint64_t epoch) { return Graphics::HostImportEpochIs(epoch); }) && !Graphics::AnyMirrored(spans); };
     const auto outcome = recorder.RecordLabelsOnOwnStream(stores, unchanged, submit);
     if (outcome == Outcome::Refused) return outcome;
-    for (const auto& label : labels) GuestMemory::MarkWrittenThroughMirrors(label.address, label.bytes.size());
+    for (const auto& label : labels) GuestMemory::MarkWritten(label.address, label.bytes.size());
     return outcome;
 }
 
@@ -2223,7 +2223,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     recordStore();
     // The table entry and the label's own pending-write note (Recorder::NoteLabel).
     recorder.NoteLabel(address, bytes, stamp, queue);
-    GuestMemory::MarkWrittenThroughMirrors(address, bytes.size());
+    GuestMemory::MarkWritten(address, bytes.size());
     Graphics::StoreThroughMirrors(address, bytes);
     // No submit per label: the batch goes out at the queue worker's next non-label packet, at a
     // wait on its range, after APS5_LABEL_FLUSH_US, or at the submission's end (Driver.cpp).

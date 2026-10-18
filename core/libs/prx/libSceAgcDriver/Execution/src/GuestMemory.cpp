@@ -1624,9 +1624,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
     });
 }
 
-namespace {
-
-std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool throughMirrors) {
+std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
@@ -1656,23 +1654,13 @@ std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool through
     const auto first = tracker.blockOf(address);
     const auto last = tracker.blockOf(address + bytes - 1);
     const bool settling = settlingWrites;
-    settlingWrites = settling || throughMirrors;
+    settlingWrites = true;
     for (auto block = first; block <= last; ++block) {
         tracker.stamp(block, tracker.generation, StampKind::Driver);
         tracker.noteDriverStore(block, address, address + bytes, tracker.generation);
     }
     settlingWrites = settling;
     return tracker.generation;
-}
-
-}
-
-std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
-    return markWritten(address, bytes, false);
-}
-
-std::uint64_t MarkWrittenThroughMirrors(std::uint64_t address, std::size_t bytes) {
-    return markWritten(address, bytes, true);
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
