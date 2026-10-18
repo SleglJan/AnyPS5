@@ -320,6 +320,83 @@ void StorageImageAfterFlushPrivate() {
     StorageImageAfterSignal(texels, Signal::WriteData, 11u, "a depth-layout storage image (kept off the memory path) a dispatch wrote in private memory, then a CS partial flush and a WRITE_DATA label");
 }
 
+void StorageImageResidentFrames() {
+    constexpr std::uint32_t Lanes = 128;
+    constexpr std::uint32_t Sentinel = 0xdeadbeefu;
+    constexpr std::uint32_t DepthTile = 24u;
+    constexpr std::uint32_t Frames = 4u;
+    const std::string what = "a depth-layout storage image a dispatch wrote in a resident shared view over several frames, each ended by a RELEASE_MEM label, with no guest reader";
+    NewPath::Locked([&] { NewPath::Residency().Manager().SetBudget(std::uint64_t{1} << 30); });
+    SharedPages texels(1);
+    PrivatePages labels(1);
+    auto* label = reinterpret_cast<volatile std::uint32_t*>(labels.Data());
+    *label = 0u;
+    const std::array<std::uint32_t, 16>* equation = nullptr;
+    for (const auto& entry : Graphics::kTextureSwizzleEquations) {
+        if (entry.swizzleMode == DepthTile && entry.elementBytes == 4u) equation = &entry.bits;
+    }
+    Require(equation != nullptr, what + ": no address equation for the 64 KiB Z swizzle");
+    std::array<std::uint32_t, Lanes> offsets{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) offsets[lane] |= static_cast<std::uint32_t>(std::popcount((*equation)[bit] & (lane & 0xfffu)) & 1) << bit;
+    }
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(static_cast<std::uintptr_t>(texels.Address()));
+    for (std::uint64_t word = 0; word < PageBytes / 4u; ++word) words[word] = Sentinel;
+    NewPath::Settle();
+    std::array<std::uint32_t, 12> user{};
+    auto image = NewPath::ImageResource(texels.Address(), NewPath::Format32Sint, Lanes, 1u);
+    image[3] |= DepthTile << 20u;
+    std::copy(image.begin(), image.end(), user.begin() + 4);
+    const auto counts = [] {
+        Graphics::ResidencyCounts read{};
+        NewPath::Locked([&] { read = NewPath::Residency().Manager().Counts(); });
+        return read;
+    };
+    std::uint64_t registry = 0;
+    std::uint64_t retiles = 0;
+    for (std::uint32_t frame = 0; frame <= Frames; ++frame) {
+        if (frame == 1u) {
+            registry = Graphics::StorageTexture::RegistryStores();
+            retiles = counts().retiles;
+        }
+        const auto value = 20u + frame;
+        Commands commands;
+        commands.Dispatch(LaneStoreProgram(), user, Lanes);
+        commands.Append(0x49u, {0x514u, (1u << 29u), NewPath::Low(labels.Address()), NewPath::High(labels.Address()), value, 0u, 0u});
+        std::string failure;
+        bool signalled = false;
+        {
+            NewPath::StderrCapture capture;
+            try {
+                commands.Submit(0);
+                signalled = AwaitLabel(label, value);
+                NewPath::WaitIdle();
+            } catch (const std::exception& error) {
+                failure = error.what();
+            }
+            const auto log = capture.Finish();
+            if (log.find("failed") != std::string::npos) failure += "\n" + log;
+        }
+        Expect(failure.empty(), what + ", frame " + std::to_string(frame) + ": the submission failed: " + failure);
+        Expect(signalled, what + ", frame " + std::to_string(frame) + ": the completion label never reached guest memory");
+        if (!failure.empty() || !signalled) return;
+    }
+    const auto stored = Graphics::StorageTexture::RegistryStores() - registry;
+    const auto retiled = counts().retiles - retiles;
+    Expect(stored == 0u && retiled == 0u, what + ": " + std::to_string(Frames) + " frames wrote the image back " + std::to_string(stored) + " times from the pending registry and retiled it " + std::to_string(retiled) + " times; GPU results stay on the device until a reader needs the guest bytes");
+    std::size_t wrong = 0;
+    std::string first;
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+        const auto read = static_cast<std::uint32_t>(words[offsets[lane] / 4u]);
+        if (read != lane && wrong++ == 0u) first = "lane " + std::to_string(lane) + " holds " + Hex(read);
+    }
+    Expect(wrong == 0u, what + ", read by the CPU afterwards: " + std::to_string(wrong) + " of " + std::to_string(Lanes) + " texels miss the dispatch's store, first " + first);
+    const auto storedAtRead = Graphics::StorageTexture::RegistryStores() - registry;
+    const auto retiledAtRead = counts().retiles - retiles;
+    Expect(storedAtRead + retiledAtRead == 1u, what + ": the CPU read wrote the image back " + std::to_string(storedAtRead) + " times from the registry and retiled it " + std::to_string(retiledAtRead) + " times; one write-back is expected");
+    NewPath::Settle();
+}
+
 void PrivateReleaseMem() {
     PrivatePages image(static_cast<std::uint32_t>((TargetBytes() + PageBytes - 1u) / PageBytes));
     ReadAfterSignal(image, Signal::ReleaseMem, 5u, 0u, "a render target in private memory, then a RELEASE_MEM label");
@@ -361,6 +438,7 @@ int main() {
             {"view-path storage image in private memory, RELEASE_MEM", StorageImageKeptOnViewPrivate},
             {"view-path storage image in a shared view, RELEASE_MEM", StorageImageKeptOnViewShared},
             {"view-path storage image in private memory, CS partial flush then WRITE_DATA", StorageImageAfterFlushPrivate},
+            {"view-path storage image in a resident shared view, several frames without a reader", StorageImageResidentFrames},
         });
     });
 #else

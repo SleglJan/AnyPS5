@@ -3783,6 +3783,7 @@ void StorageTexture::ResolveRecordedStores(std::uint64_t record, const std::vect
             const auto end = begin + image->layerBytes(unit);
             if (std::any_of(written->begin(), written->end(), [&](const std::pair<std::uint64_t, std::uint64_t>& range) { return range.first < end && begin < range.second; })) continue;
             image->layerPending[unit] = false;
+            if (auto* residency = ResidencyDriver::Active(); residency != nullptr && image->residencyOwned) residency->Manager().ClearStale(begin, end - begin, image.get());
             released = true;
         }
         if (released) image->reconcilePending();

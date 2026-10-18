@@ -192,6 +192,7 @@ void DeviceImageTable::AfterDispatch(const Context& build, Recorder& recorder, s
         recorder.Keep(use.image);
         if (const auto held = entries.find(use.key); held != entries.end() && held->second.storage == use.image) held->second.storage.reset();
         if (!use.written) continue;
+        use.image->OwnAsTarget();
         bool depthPlane = false;
         try {
             depthPlane = DepthSurfaceStoreBack(build, *use.image);
