@@ -470,6 +470,16 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    if(WIN32)
+        add_test_executable(agc_exit_with_busy_threads_tests tests/ExitWithBusyThreads.cpp)
+        target_link_libraries(agc_exit_with_busy_threads_tests PRIVATE libc)
+        configure_windows_unwind(agc_exit_with_busy_threads_tests)
+        add_dependencies(agc_exit_with_busy_threads_tests libSceAgcDriver)
+        add_test(NAME agc_exit_with_busy_threads COMMAND agc_exit_with_busy_threads_tests)
+        set_tests_properties(agc_exit_with_busy_threads PROPERTIES TIMEOUT 120 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
+    endif()
+
     add_test_executable(agc_stack_walk_tests tests/StackWalk.cpp)
     target_include_directories(agc_stack_walk_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_stack_walk_tests PRIVATE libc)

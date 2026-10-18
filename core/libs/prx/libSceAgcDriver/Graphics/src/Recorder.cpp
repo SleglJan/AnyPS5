@@ -48,9 +48,13 @@ const void* RecordingThreadToken() {
 thread_local bool ownStreamRecording = false;
 
 std::mutex orderWaitMutex;
-std::condition_variable orderWaitChanged;
 std::uint64_t orderWaitGeneration = 0;
 std::atomic<std::uint32_t> orderWaiters{0};
+
+std::condition_variable& OrderWaitChanged() {
+    static auto* const changed = new std::condition_variable;
+    return *changed;
+}
 
 void NotifyOrderWaiters() {
     if (orderWaiters.load(std::memory_order_acquire) == 0) return;
@@ -58,7 +62,7 @@ void NotifyOrderWaiters() {
         std::lock_guard lock(orderWaitMutex);
         ++orderWaitGeneration;
     }
-    orderWaitChanged.notify_all();
+    OrderWaitChanged().notify_all();
 }
 
 class RecordingHold {
@@ -1550,7 +1554,7 @@ Recorder::OwnStreamOutcome Recorder::RecordLabelsOnOwnStream(std::span<const Own
         }
         const auto held = recording.ReleaseAll();
         waitLock.lock();
-        orderWaitChanged.wait(waitLock, [&] { return orderWaitGeneration != generation; });
+        OrderWaitChanged().wait(waitLock, [&] { return orderWaitGeneration != generation; });
         orderWaiters.fetch_sub(1, std::memory_order_acq_rel);
         waitLock.unlock();
         if (!RecorderAlive(myId)) {
