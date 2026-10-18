@@ -5,6 +5,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace AgcDriver::Graphics {
 
@@ -587,6 +588,7 @@ void ResidencyManager::WriteBackAll() {
         accessGuards.insert(pages[id].index);
         pages[id].accessGuarded = false;
         pages[id].accessMask = 0;
+        exposeToWriters(id);
     }
     for (const auto page : accessGuards) device.UnguardAccess(page);
     accessGuards.clear();
@@ -642,6 +644,7 @@ void ResidencyManager::unsettle(std::uint32_t id) {
     unsettledImports.insert(page.index);
     ++counts.unsettledGuards;
     markHot(page.index, Epoch());
+    exposeToWriters(id);
 }
 
 bool ResidencyManager::Hot(std::uint64_t page) const {
@@ -766,6 +769,8 @@ std::uint32_t ResidencyManager::newPage(std::uint64_t page, MirrorSlot slot, con
     }
     record.importSerial = import.serial;
     record.guarded = guarded;
+    record.unboundedSerial = unboundedIssued;
+    exposeToWriters(id);
     {
         const std::lock_guard lock(residentMutex);
         resident.emplace(page, id);
@@ -776,6 +781,10 @@ std::uint32_t ResidencyManager::newPage(std::uint64_t page, MirrorSlot slot, con
 }
 
 void ResidencyManager::releasePage(std::uint32_t id) {
+    if (id / 64 < writerExposed.size() && (writerExposed[id / 64] & (std::uint64_t{1} << (id % 64))) != 0) {
+        writerExposed[id / 64] &= ~(std::uint64_t{1} << (id % 64));
+        --writerExposedCount;
+    }
     pages[id] = Page{};
     freePages.push_back(id);
 }
@@ -1105,6 +1114,11 @@ void ResidencyManager::applyDrops() {
                 continue;
             }
             device.UnguardAccess(*it);
+            if (const auto id = find(*it)) {
+                pages[*id].accessGuarded = false;
+                pages[*id].accessMask = 0;
+                exposeToWriters(*id);
+            }
             it = accessGuards.erase(it);
         }
     }
@@ -1153,6 +1167,7 @@ void ResidencyManager::applyRecorded(std::uint64_t address, std::uint64_t bytes)
             continue;
         }
         page.used = true;
+        unboundedStored.push_back(page.index);
         const bool guardable = dirtyable(page) && !aliasKeys.contains(page.index);
         if (!guardable || !guardDirty(fill.id, fill.begin, fill.end)) unguardable.push_back(fill.id);
         markDirty(fill.id, fill.begin, fill.end);
@@ -1182,7 +1197,7 @@ bool ResidencyManager::guardDirty(std::uint32_t id, std::uint32_t begin, std::ui
 
 void ResidencyManager::liftUnboundedGuards() {
     std::vector<std::uint32_t> unguardable;
-    std::erase_if(unboundedGuarded, [&](std::uint64_t index) {
+    std::erase_if(unboundedStored, [&](std::uint64_t index) {
         const auto id = find(index);
         if (id && unboundedPending(pages[*id])) return false;
         if (writingBack.contains(index) || isStale(index)) return true;
@@ -1195,6 +1210,7 @@ void ResidencyManager::liftUnboundedGuards() {
         device.UnguardAccess(index);
         page.accessMask = 0;
         page.accessGuarded = false;
+        exposeToWriters(*id);
         if (page.dirty != 0 && device.GuardAccess(index, page.dirty)) {
             page.accessMask = page.dirty;
             page.accessGuarded = true;
@@ -1212,15 +1228,12 @@ void ResidencyManager::liftUnboundedGuards() {
 }
 
 void ResidencyManager::settleUnbounded(std::span<const std::uint32_t> ids, bool guard) {
-    std::uint64_t newest = 0;
+    auto cover = unboundedIssued;
     for (const auto id : ids) {
-        if (unboundedPending(pages[id])) newest = std::max(newest, pages[id].unboundedSerial);
+        if (unboundedPending(pages[id])) cover = std::min(cover, pages[id].unboundedSerial);
     }
-    if (newest == 0) return;
-    ResidencyToken pending{};
-    for (const auto& writer : unboundedWriters) {
-        if (writer.serial <= newest) pending = MergeTokens(pending, writer.token);
-    }
+    if (cover == unboundedIssued) return;
+    const auto pending = unboundedSince(cover);
     if (!settled(pending)) waitFor(pending);
     std::vector<ResidencyRange> recorded;
     {
@@ -1231,7 +1244,7 @@ void ResidencyManager::settleUnbounded(std::span<const std::uint32_t> ids, bool 
     for (const auto id : ids) {
         auto& page = pages[id];
         if (!unboundedPending(page)) continue;
-        page.unboundedSerial = 0;
+        page.unboundedSerial = unboundedIssued;
         const auto base = page.index << ResidencyPageShift;
         for (const auto& range : recorded) {
             const auto first = std::max(range.address, base);
@@ -1660,23 +1673,38 @@ void ResidencyManager::DemoteWritable() {
 void ResidencyManager::NoteUnboundedWriter(const ResidencyToken& token) {
     const std::lock_guard structureLock(structure);
     applyQueued();
-    const auto writer = ++unboundedIssued;
     std::vector<std::uint32_t> unguardable;
-    for (auto id = oldest; id != None; id = pages[id].newer) {
-        auto& page = pages[id];
-        if (!page.gpuWritable) continue;
-        const bool guarded = page.accessMask == RunMask(0, WholeEnd);
-        if (!dirtyable(page) || aliasKeys.contains(page.index) || !guardDirty(id, 0, WholeEnd)) {
-            unguardable.push_back(id);
-            continue;
+    for (std::size_t word = 0; writerExposedCount != 0 && word < writerExposed.size(); ++word) {
+        for (auto bits = std::exchange(writerExposed[word], 0); bits != 0; bits &= bits - 1) {
+            --writerExposedCount;
+            const auto id = static_cast<std::uint32_t>(word * 64 + static_cast<std::size_t>(std::countr_zero(bits)));
+            auto& page = pages[id];
+            if (!dirtyable(page) || aliasKeys.contains(page.index) || !guardDirty(id, 0, WholeEnd)) {
+                unguardable.push_back(id);
+                continue;
+            }
+            publishUnsettled(page.index, UnsettledUnbounded, true);
         }
-        if (!guarded) unboundedGuarded.push_back(page.index);
-        page.unboundedSerial = writer;
-        page.pin = MergeTokens(page.pin, token);
-        publishUnsettled(page.index, UnsettledUnbounded, true);
     }
     demote(unguardable);
-    unboundedWriters.push_back({writer, token});
+    unboundedWriters.push_back({++unboundedIssued, token});
+}
+
+ResidencyToken ResidencyManager::unboundedSince(std::uint64_t serial) const {
+    ResidencyToken pending{};
+    for (const auto& writer : unboundedWriters) {
+        if (writer.serial > serial) pending = MergeTokens(pending, writer.token);
+    }
+    return pending;
+}
+
+void ResidencyManager::exposeToWriters(std::uint32_t id) {
+    if (!pages[id].gpuWritable) return;
+    if (id / 64 >= writerExposed.size()) writerExposed.resize(id / 64 + 1);
+    const auto bit = std::uint64_t{1} << (id % 64);
+    if ((writerExposed[id / 64] & bit) != 0) return;
+    writerExposed[id / 64] |= bit;
+    ++writerExposedCount;
 }
 
 void ResidencyManager::DropRange(std::uint64_t address, std::uint64_t bytes) {
@@ -1813,13 +1841,11 @@ bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t byte
         for (const auto& [page, token] : writers) {
             if (inSpan(page) && !settled(token)) pending = MergeTokens(pending, token);
         }
-        std::uint64_t newest = 0;
+        auto cover = unboundedIssued;
         for (const auto id : residentIn(address, bytes)) {
-            if (unboundedPending(pages[id])) newest = std::max(newest, pages[id].unboundedSerial);
+            if (unboundedPending(pages[id])) cover = std::min(cover, pages[id].unboundedSerial);
         }
-        for (const auto& writer : unboundedWriters) {
-            if (writer.serial <= newest) pending = MergeTokens(pending, writer.token);
-        }
+        if (cover != unboundedIssued) pending = MergeTokens(pending, unboundedSince(cover));
         if (!TokenEmpty(pending) && !settled(pending)) {
             if (!wait(pending)) return false;
             continue;
@@ -1892,6 +1918,7 @@ void ResidencyManager::releaseCpuRead(std::uint64_t firstPage, std::uint64_t las
     for (auto page = firstPage; page <= lastPage; ++page) {
         const auto id = find(page);
         if (!id || !unboundedPending(pages[*id])) publishUnsettled(page, UnsettledUnbounded, false);
+        if (id) exposeToWriters(*id);
         if (id && (!pages[*id].dirtyRuns.empty() || unboundedPending(pages[*id]))) continue;
         if (isStale(page)) continue;
         if (!accessGuards.contains(page) && !(id && pages[*id].accessGuarded) && lastPage - firstPage >= 16) continue;
@@ -1900,6 +1927,7 @@ void ResidencyManager::releaseCpuRead(std::uint64_t firstPage, std::uint64_t las
         if (!id) continue;
         pages[*id].accessGuarded = false;
         pages[*id].accessMask = 0;
+        exposeToWriters(*id);
         rearm(*id);
     }
 }
@@ -1977,6 +2005,7 @@ void ResidencyManager::settleAccessGuards() {
         if (!id) continue;
         pages[*id].accessGuarded = false;
         pages[*id].accessMask = 0;
+        exposeToWriters(*id);
         rearm(*id);
     }
 }

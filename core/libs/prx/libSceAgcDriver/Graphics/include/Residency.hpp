@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESIDENCY_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RESIDENCY_HPP
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -446,7 +447,9 @@ private:
     void waitWriters(std::span<const Fill> fills);
     void applyFaults(std::vector<std::uint64_t> written);
     void applyRecorded(std::uint64_t address, std::uint64_t bytes);
-    bool unboundedPending(const Page& page) const { return page.unboundedSerial > unboundedApplied; }
+    bool unboundedPending(const Page& page) const { return page.gpuWritable && unboundedIssued > std::max(page.unboundedSerial, unboundedApplied); }
+    ResidencyToken unboundedSince(std::uint64_t serial) const;
+    void exposeToWriters(std::uint32_t id);
     void settleUnbounded(std::span<const std::uint32_t> ids, bool guard);
     void liftUnboundedGuards();
     bool guardDirty(std::uint32_t id, std::uint32_t begin, std::uint32_t end);
@@ -499,7 +502,9 @@ private:
     std::vector<ResidencyRange> pendingImports;
     std::vector<std::uint64_t> reservedTouches;
     std::deque<UnboundedWriter> unboundedWriters;
-    std::vector<std::uint64_t> unboundedGuarded;
+    std::vector<std::uint64_t> unboundedStored;
+    std::vector<std::uint64_t> writerExposed;
+    std::size_t writerExposedCount = 0;
     std::uint64_t unboundedIssued = 0;
     std::uint64_t unboundedApplied = 0;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> canonical;

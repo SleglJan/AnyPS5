@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -133,6 +134,7 @@ public:
     std::set<std::uint64_t> guardRefused;
     std::set<std::uint64_t> reported;
     std::set<std::uint64_t> accessUnguarded;
+    std::uint64_t protections = 0;
     std::map<std::uint64_t, std::uint64_t> collected;
     std::uint64_t collectedPages = 0;
     std::vector<std::vector<Contents>> mirrors;
@@ -292,22 +294,28 @@ public:
     bool Guard(std::uint64_t page) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "a write guard armed on private " + Name(page) + " before its import settled");
         Expect(imports[page].attributes.section != 0 || ImportSettled(page), "a write guard armed on private " + Name(page) + " before its newest host import settled");
+        ++protections;
         if (guardRefused.contains(page)) return false;
         armed[imports[page].group] = true;
         return true;
     }
 
     void Unguard(std::span<const std::uint64_t> pages) override {
+        protections += pages.size();
         for (const auto page : pages) armed[imports[page].group] = false;
     }
 
     bool GuardAccess(std::uint64_t page, ResidencyMask) override {
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "an access guard armed on private " + Name(page) + " before its import settled");
         Expect(imports[page].attributes.section != 0 || ImportSettled(page), "an access guard armed on private " + Name(page) + " before its newest host import settled");
+        ++protections;
         return !guardRefused.contains(page);
     }
 
-    void UnguardAccess(std::uint64_t page) override { accessUnguarded.insert(page); }
+    void UnguardAccess(std::uint64_t page) override {
+        ++protections;
+        accessUnguarded.insert(page);
+    }
 
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override {
         if (generation == importsGeneration) return {};
@@ -883,6 +891,56 @@ void UnguardablePages() {
     fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 4, 0x0001, 10);
     fixture.gpu.Drain();
     Expect(fixture.manager->Counts().unguardable == 2, "two unguardable events counted");
+}
+
+struct WriterCost {
+    std::uint64_t protections = 0;
+    double microseconds = 0;
+};
+
+WriterCost UnboundedWriterCost(std::uint32_t mirrors) {
+    constexpr std::uint32_t Writers = 6;
+    Fixture fixture(mirrors, (mirrors + ChunkSlots - 1) / ChunkSlots);
+    for (std::uint32_t page = 0; page < mirrors; ++page) fixture.Share(BasePage + page);
+    fixture.Use(0, BasePage, mirrors, ResidencyAccess::Write);
+    fixture.gpu.Drain();
+    fixture.manager->Apply();
+    Expect(fixture.manager->Counts().resident == mirrors, std::to_string(mirrors) + " writable mirrors resident");
+    const auto stored = BasePage + 1;
+    WriterCost cost;
+    std::uint64_t first = 0;
+    for (std::uint32_t writer = 0; writer < Writers; ++writer) {
+        if (writer == 1) first = fixture.gpu.protections;
+        fixture.gpu.caller = 1;
+        const auto start = std::chrono::steady_clock::now();
+        fixture.manager->NoteUnboundedWriter(fixture.gpu.CallerToken(1));
+        auto spent = std::chrono::steady_clock::now() - start;
+        fixture.gpu.RecordTitle(FakeGpu::Kind::Write, stored, 0x0001, 900 + writer, true);
+        fixture.gpu.Drain();
+        fixture.manager->QueueGpuWritten(Address(stored), ResidencySubpageBytes);
+        const auto apply = std::chrono::steady_clock::now();
+        fixture.manager->Apply();
+        spent += std::chrono::steady_clock::now() - apply;
+        if (writer >= 1) cost.microseconds += std::chrono::duration<double, std::micro>(spent).count();
+    }
+    cost.protections = (fixture.gpu.protections - first) / (Writers - 1);
+    cost.microseconds /= Writers - 1;
+    const auto counts = fixture.manager->Counts();
+    Expect(counts.demoted == 0 && counts.resident == mirrors, "no writer demoted a mirror");
+    Expect(fixture.manager->Dirty(stored) == 0x0001, "the stored subpage is dirty in its mirror");
+    Expect(fixture.Stored(stored, 0) != 900 + Writers - 1, "the store has not reached guest memory yet");
+    fixture.manager->FlushForCpuRead(Address(stored), 8);
+    Expect(fixture.Stored(stored, 0) == 900 + Writers - 1, "a CPU read after the writers sees the last store");
+    return cost;
+}
+
+void UnboundedWriterCostIndependentOfMirrors() {
+    scope = "an unbounded writer's guard cost does not grow with the resident mirrors";
+    const auto few = UnboundedWriterCost(16);
+    const auto many = UnboundedWriterCost(4096);
+    std::printf("unbounded writer: %llu protection calls and %.1f us beside 16 mirrors, %llu and %.1f us beside 4096\n", static_cast<unsigned long long>(few.protections), few.microseconds, static_cast<unsigned long long>(many.protections), many.microseconds);
+    Expect(few.protections == many.protections, "the same protection calls per writer beside 16 and 4096 writable mirrors");
+    Expect(many.protections <= 4, "a writer that stores to one page makes a few protection calls");
 }
 
 void DemotionAndDrops() {
@@ -1909,6 +1967,7 @@ int main() {
         HotPagesStayAndCool();
         UnguardablePages();
         DemotionAndDrops();
+        UnboundedWriterCostIndependentOfMirrors();
         DirtyMirrorsOnSharedPages();
         CpuReadWritesDirtyBytesBack();
         ExactDirtyRanges();
