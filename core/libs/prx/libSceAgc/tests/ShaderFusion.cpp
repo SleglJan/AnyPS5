@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Misc/include/ShaderFusion.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -270,8 +272,9 @@ void testHullHalves() {
 
 int main() {
     try {
-        const auto device = OpenVulkanTestDevice();
+        const std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        AgcDriver::DriverDetail::Driver::Get().AdoptDeviceForTest(device);
         testFusion(0);
         testFusion(0xa0);
         testFusion(4);

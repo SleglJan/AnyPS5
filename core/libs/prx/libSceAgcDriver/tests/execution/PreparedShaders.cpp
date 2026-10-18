@@ -18,6 +18,7 @@
 #include <cstring>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -806,8 +807,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--registered-workgroup") {
-            const auto device = OpenVulkanTestDevice();
+            const std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            AgcDriver::DriverDetail::Driver::Get().AdoptDeviceForTest(device);
             RegisteredVertexWorkgroup(device->Target(), true);
             AgcDriverShutdown_nid_postfix();
             return 0;
