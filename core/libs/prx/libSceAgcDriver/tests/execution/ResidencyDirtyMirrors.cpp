@@ -2,6 +2,8 @@
 #include "VulkanTestDevice.hpp"
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 #include <thread>
@@ -328,6 +330,54 @@ void ComputeChain(MirrorReader& reader) {
     ExpectResident(model, 0, ReadPages, what + ": after the CPU read");
 }
 
+void FileReadIntoStoredPage(MirrorReader& reader) {
+    SharedPages pages(ReadPages);
+    PrivatePages addresses(1);
+    Model model(pages.Address(), pages.Bytes(), 12);
+    const auto target = model.Address(6, 3);
+    addresses.Words()[0] = Low(target);
+    addresses.Words()[1] = High(target);
+    AgcDriver::GuestMemory::CollectWritesUncached(addresses.Address(), addresses.Bytes());
+    static_cast<void>(reader.Read(addresses.Address(), 1));
+    static_cast<void>(reader.Read(addresses.Address(), 1));
+    Settle();
+    const std::string what = "file read into a page an unbounded writer stored into";
+    Commands commands;
+    commands.Dispatch(UnboundedProgram(), BufferResource(addresses.Address(), 16u), 1);
+    model.Set(6, 3 * WordsPerSubpage, UnboundedValue);
+    const auto failure = Submitted(commands);
+    Expect(failure.empty(), what + ": the writer's submission failed: " + failure);
+    ExpectDirtySubpages(model, 6, 1u << 3u, what + ": before the file read");
+    constexpr std::uint32_t firstWord = 3 * WordsPerSubpage + 16;
+    constexpr std::uint32_t words = WordsPerSubpage;
+    std::vector<std::uint32_t> contents(words);
+    for (std::uint32_t word = 0; word < words; ++word) contents[word] = 0x5e000000u | word;
+    const auto path = std::filesystem::temp_directory_path() / ("residency_file_read_" + std::to_string(GetCurrentProcessId()) + ".bin");
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(contents.data()), static_cast<std::streamsize>(contents.size() * 4u));
+    }
+    const auto destination = model.Address(6, 0, firstWord);
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(file != INVALID_HANDLE_VALUE, what + ": cannot open the test file");
+    DWORD read = 0;
+    DWORD error = 0;
+    bool opened = false;
+    {
+        const GuestArena::HostWrite write(reinterpret_cast<void*>(static_cast<std::uintptr_t>(destination)), words * 4u);
+        opened = write.Open();
+        if (opened && !ReadFile(file, reinterpret_cast<void*>(static_cast<std::uintptr_t>(destination)), words * 4u, &read, nullptr)) error = GetLastError();
+    }
+    CloseHandle(file);
+    std::error_code removal;
+    std::filesystem::remove(path, removal);
+    Expect(opened, what + ": the host write into page 6 was refused");
+    Expect(error == 0 && read == words * 4u, what + ": the OS read into page 6 returned " + std::to_string(read) + " of " + std::to_string(words * 4u) + " bytes, error " + std::to_string(error));
+    for (std::uint32_t word = 0; word < words; ++word) model.Set(6, firstWord + word, contents[word]);
+    ExpectBytes(model, 6, what + ": the CPU's read after the file read, which must hold the writer's store and the file's bytes");
+    ExpectLanes(reader.Read(model.Address(0), ReadPages), model, 0, what + ": a dispatch after the file read");
+}
+
 void SubpageGranularity(MirrorReader& reader) {
     SharedPages pages(ReadPages);
     Model model(pages.Address(), pages.Bytes(), 5);
@@ -622,6 +672,7 @@ int main() {
                  {"CPU read of a GPU store", CpuReadsGpuStore},
                  {"GPU read of a GPU store", GpuReadsGpuStore},
                  {"compute chain", ComputeChain},
+                 {"file read into a stored page", FileReadIntoStoredPage},
                  {"4 KiB granularity", SubpageGranularity},
                  {"CPU and GPU in one page", CpuAndGpuInOnePage},
                  {"cross-stream", CrossStream},

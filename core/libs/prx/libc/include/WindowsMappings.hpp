@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -510,6 +511,11 @@ public:
         physical.erase(physical.lower_bound(std::make_pair(key, std::uint64_t{0})), physical.lower_bound(std::make_pair(key + 1, std::uint64_t{0})));
     }
 
+    std::uintptr_t FirstAccessGuarded(std::uintptr_t address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        return firstAccessGuarded(address, address + bytes);
+    }
+
     bool BeginHostWrite(std::uintptr_t address, std::size_t bytes) {
         std::lock_guard lock(mutex);
         const auto first = views.lower_bound(address & ~(pageBytes - 1));
@@ -520,6 +526,7 @@ public:
         for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end; ++it) {
             if (!writable(it->second.protection)) return false;
         }
+        if (firstAccessGuarded(address, end) != 0) return false;
         privateHostWrites.emplace_back(address, end);
         for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end;) {
             auto& page = it->second;
@@ -869,6 +876,19 @@ private:
         PrivatePiece page;
         page.protection = memory.Protect;
         return &privatePieces.emplace(piece, page).first->second;
+    }
+
+    std::uintptr_t firstAccessGuarded(std::uintptr_t address, std::uintptr_t end) const {
+        std::uintptr_t found = 0;
+        const auto take = [&](std::uintptr_t piece, std::uint8_t guarded) {
+            const auto mask = static_cast<std::uint8_t>(guarded & subpagesOf(piece, address, end));
+            if (mask == 0) return;
+            const auto first = piece + static_cast<std::uintptr_t>(std::countr_zero(mask)) * subpageBytes;
+            if (found == 0 || first < found) found = first;
+        };
+        for (auto it = views.lower_bound(address & ~(pageBytes - 1)); it != views.end() && it->first < end; ++it) take(it->first, it->second.page->accessGuarded);
+        for (auto it = privatePieces.lower_bound(address & ~(pageBytes - 1)); it != privatePieces.end() && it->first < end; ++it) take(it->first, it->second.accessGuarded);
+        return found;
     }
 
     bool unsettledImport(std::uintptr_t address, std::uintptr_t end) const {
