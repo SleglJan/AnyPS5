@@ -220,6 +220,7 @@ public:
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     static std::uint64_t LabelTableLookups();
     void OrderAfterQueue(std::uint32_t queue);
+    bool OrderAfterQueueOnOwnStream(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     std::shared_ptr<BatchFaultRecord> CallerFaultRecord(std::uint32_t chunks);
     bool UseRecord(const std::shared_ptr<Buffer>& device, VkDeviceSize offset, VkDeviceSize cleared, const std::shared_ptr<Buffer>& host, VkDeviceSize hostOffset, VkDeviceSize bytes);
@@ -868,6 +869,7 @@ private:
     const Batch* callerBatch() const;
     bool anyOpen() const;
     void submitStream(std::uint32_t stream);
+    bool awaitsUnsubmitted(const Batch& batch) const;
     void beginSection();
     template<typename TVisit>
     void forEachOpen(TVisit&& visit) const {

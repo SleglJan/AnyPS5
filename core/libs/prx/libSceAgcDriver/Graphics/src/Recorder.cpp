@@ -47,6 +47,20 @@ const void* RecordingThreadToken() {
 
 thread_local bool ownStreamRecording = false;
 
+std::mutex orderWaitMutex;
+std::condition_variable orderWaitChanged;
+std::uint64_t orderWaitGeneration = 0;
+std::atomic<std::uint32_t> orderWaiters{0};
+
+void NotifyOrderWaiters() {
+    if (orderWaiters.load(std::memory_order_acquire) == 0) return;
+    {
+        std::lock_guard lock(orderWaitMutex);
+        ++orderWaitGeneration;
+    }
+    orderWaitChanged.notify_all();
+}
+
 class RecordingHold {
 public:
     explicit RecordingHold(RecordingMutex& mutex) : mutex(&mutex) { mutex.lock(); }
@@ -523,6 +537,7 @@ void JoinReleaseThread() {
 // The unlock hook: hands what this thread deferred to the release thread, or destroys it here
 // (APS5_RELEASE_ON_UNLOCK=1, the queue is full or stopping, or the hand-off cannot be made).
 void ReleaseDeferredKeeps() {
+    NotifyOrderWaiters();
     if (DeferredBatches().empty()) return;
     // Taken off the thread's list first: a destructor that took and released the mutex (none is
     // known to) would re-enter here and must find nothing.
@@ -1499,7 +1514,7 @@ bool Recorder::OwnsStream() const {
 }
 
 Recorder::OwnStreamOutcome Recorder::RecordLabelsOnOwnStream(std::span<const OwnStreamLabel> labels, const std::function<bool()>& unchanged, bool submit) {
-    const std::lock_guard recordingGuard(recording);
+    RecordingHold recordingHold(recording);
     if (labels.empty() || streams.size() == 1 || submittingStream != NoStream || !LabelRunsPerBatch() || FlipReadCheck()) return OwnStreamOutcome::Refused;
     const auto stream = streamOfCaller();
     if (!streamOwnedByCaller(stream) || streams[stream].pool == VK_NULL_HANDLE || Idle()) return OwnStreamOutcome::Refused;
@@ -1517,8 +1532,36 @@ Recorder::OwnStreamOutcome Recorder::RecordLabelsOnOwnStream(std::span<const Own
         RecordStore(label.buffer, label.offset, label.bytes, label.address);
         NoteLabel(label.address, label.bytes, label.stamp, label.queue);
     }
-    const auto& open = opens[stream];
-    if (!submit || !open->labelsOnly || !open->keyStores.empty() || open->sampleActive || open->segmentActive) return OwnStreamOutcome::Recorded;
+    const auto submittable = [&] {
+        const auto& open = opens[stream];
+        return open != nullptr && open->labelsOnly && open->keyStores.empty() && !open->sampleActive && !open->segmentActive;
+    };
+    if (!submit || !submittable()) return OwnStreamOutcome::Recorded;
+    std::unique_lock device(GuestMemory::GpuMutex(), std::defer_lock);
+    const auto myId = id;
+    while (opens[stream] != nullptr && awaitsUnsubmitted(*opens[stream])) {
+        std::unique_lock waitLock(orderWaitMutex);
+        const auto generation = orderWaitGeneration;
+        orderWaiters.fetch_add(1, std::memory_order_acq_rel);
+        waitLock.unlock();
+        if (device.try_lock()) {
+            orderWaiters.fetch_sub(1, std::memory_order_acq_rel);
+            break;
+        }
+        const auto held = recording.ReleaseAll();
+        waitLock.lock();
+        orderWaitChanged.wait(waitLock, [&] { return orderWaitGeneration != generation; });
+        orderWaiters.fetch_sub(1, std::memory_order_acq_rel);
+        waitLock.unlock();
+        if (!RecorderAlive(myId)) {
+            recordingHold.Abandon();
+            return OwnStreamOutcome::Recorded;
+        }
+        recording.Reacquire(held);
+    }
+    if (opens[stream] == nullptr) return OwnStreamOutcome::Submitted;
+    if (!submittable()) return OwnStreamOutcome::Recorded;
+    if (device.owns_lock()) ownStreamRecording = false;
     submitStream(stream);
     return OwnStreamOutcome::Submitted;
 }
@@ -1664,6 +1707,34 @@ void Recorder::OrderAfterQueue(std::uint32_t queue) {
     Epoch after{};
     after[other] = value;
     dependOn(after);
+}
+
+bool Recorder::OrderAfterQueueOnOwnStream(std::uint32_t queue) {
+    const std::lock_guard recordingGuard(recording);
+    if (streams.size() == 1) return true;
+    if (submittingStream != NoStream) return false;
+    const auto stream = streamOfCaller();
+    if (!streamOwnedByCaller(stream) || streams[stream].pool == VK_NULL_HANDLE) return false;
+    const std::uint32_t other = queue == 0 || queue >= queueStreams.size() || queueStreams[queue] == 0 ? 0 : queueStreams[queue] - 1u;
+    if (other == stream) return true;
+    const auto value = opens[other] != nullptr ? opens[other]->value : streams[other].submitted;
+    if (value <= streams[other].finished) return true;
+    struct Scope {
+        Scope() { ownStreamRecording = true; }
+        ~Scope() { ownStreamRecording = false; }
+    } scope;
+    ensureOpen();
+    auto& waits = opens[stream]->waits;
+    waits[other] = std::max(waits[other], value);
+    return true;
+}
+
+bool Recorder::awaitsUnsubmitted(const Batch& batch) const {
+    const std::lock_guard recordingGuard(recording);
+    for (std::uint32_t other = 0; other < streams.size(); ++other) {
+        if (other != batch.stream && batch.waits[other] > streams[other].submitted) return true;
+    }
+    return false;
 }
 
 void Recorder::OrderAfterValue(std::uint64_t address, std::size_t bytes) {
@@ -3796,6 +3867,12 @@ void Recorder::submitStream(std::uint32_t stream) {
     const std::lock_guard recordingGuard(recording);
     if (opens[stream] == nullptr) return;
     if (!ownStreamRecording) GuestMemory::AssertGpuLockHeld("Recorder::Submit");
+    for (std::uint32_t other = 0; other < streams.size() && opens[stream] != nullptr; ++other) {
+        if (other == stream || opens[stream]->waits[other] <= streams[other].submitted || opens[other] == nullptr) continue;
+        Require(!ownStreamRecording, "a batch recorded without the device lock was submitted before the batch it waits for");
+        submitStream(other);
+    }
+    if (opens[stream] == nullptr) return;
     struct Submitting {
         std::uint32_t& slot;
         std::uint32_t previous;
@@ -3889,6 +3966,7 @@ void Recorder::submitStream(std::uint32_t stream) {
     batch->serial = ++submissions;
     batch->submittedAt = std::chrono::steady_clock::now();
     target.submitted = batch->value;
+    NotifyOrderWaiters();
     if (DrawProfiled()) {
         const auto us = std::chrono::duration<double, std::micro>(batch->submittedAt - submitStart).count();
         ++submitCount;

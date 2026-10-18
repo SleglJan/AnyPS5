@@ -39,6 +39,7 @@ constexpr auto SettleDelay = std::chrono::milliseconds(30);
 constexpr std::uint64_t MarkerOffset = 1024;
 constexpr std::uint64_t OwnStreamOffset = 2048;
 constexpr std::uint64_t GateOffset = 2052;
+constexpr std::uint64_t WaitFreeOffset = 3072;
 constexpr std::uint32_t WaitEqual = 3;
 constexpr auto RecordingHold = std::chrono::milliseconds(300);
 
@@ -392,6 +393,50 @@ void LabelBesideOtherQueueRecording(PrivatePages& labels, std::uint32_t& labelVa
     }
 }
 
+void WaitFreeOrderBesideRecording(PrivatePages& labels, std::uint32_t& labelValue) {
+    const auto address = labels.Address(WaitFreeOffset);
+    volatile auto* word = labels.Words() + WaitFreeOffset / 4u;
+    const std::string what = "a wait-free submission ordered after queue 0's open batch";
+    for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+        std::atomic<bool> holding{false};
+        Clock::time_point released{};
+        AgcDriver::Graphics::Recorder::Token awaited{};
+        std::jthread holder([&] {
+            Locked([&] {
+                auto* recorder = AgcDriver::Graphics::Recorder::Active();
+                recorder->DeclareSection({});
+                static_cast<void>(recorder->Commands());
+                std::uint32_t stream = 0;
+                std::uint64_t value = 0;
+                Require(recorder->CallerBatchValue(stream, value) && stream == 0, what + ": queue 0 has no open batch");
+                awaited[0] = value;
+                holding.store(true);
+                std::this_thread::sleep_for(RecordingHold);
+                released = Clock::now();
+            });
+        });
+        while (!holding.load()) std::this_thread::yield();
+        const auto value = ++labelValue;
+        Commands label;
+        label.WriteData(address, {value});
+        const auto start = Clock::now();
+        label.Submit(WriterQueue);
+        while (*word != value && !Recorded(address) && Clock::now() - start < std::chrono::seconds(10)) std::this_thread::yield();
+        const auto recordedAt = Clock::now();
+        const bool landed = LandsWithin(word, value, std::chrono::seconds(10));
+        const auto landedAt = Clock::now();
+        const bool queue0Done = AgcDriver::Graphics::Recorder::Active()->TokenSignaled(awaited);
+        holder.join();
+        const auto recordedMs = Ms(recordedAt - start);
+        std::printf("%s (attempt %u): recorded after %.1f ms, %.1f ms before the device lock was released; landed %.1f ms after the release\n", what.c_str(), attempt, recordedMs, Ms(released - recordedAt), Ms(landedAt - released));
+        Expect(recordedMs < LabelLimitMs && recordedAt < released, what + ": recorded after " + std::to_string(recordedMs) + " ms, behind the device lock held by queue 0's recording");
+        Expect(landed, what + ": the label did not land within 10 s");
+        Expect(landedAt >= released && queue0Done, what + ": the label landed before queue 0's open batch was submitted and finished");
+        WaitIdle();
+        Settle();
+    }
+}
+
 void ThreeQueueLoad(PrivatePages& labels) {
     constexpr std::uint32_t Rounds = 40;
     constexpr std::array<std::uint32_t, 3> Queues{0x0u, WriterQueue, LabelQueue};
@@ -480,6 +525,7 @@ int main() {
         if (window->Attached()) PresenterWaitsUnlocked(*window, labels, labelValue);
         else std::printf("a presentation: skipped, no window could be created\n");
         LabelBesideOtherQueueRecording(labels, labelValue);
+        WaitFreeOrderBesideRecording(labels, labelValue);
         ThreeQueueLoad(labels);
         Locked([] { Residency().Manager().SetBudget(0); });
         window.reset();

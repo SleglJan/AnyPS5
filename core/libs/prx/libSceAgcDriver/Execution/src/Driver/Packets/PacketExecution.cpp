@@ -79,7 +79,7 @@ void Driver::execute(const Submission& submission) {
     }
     auto& queue = *state;
     if (submission.waitFree) {
-        if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->SeparateQueues()) {
+        if (const auto localDevice = device.Load(); localDevice != nullptr && localDevice->SeparateQueues() && !localDevice->OrderAfterQueueOnOwnStream(0)) {
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             localDevice->OrderAfterQueue(0);

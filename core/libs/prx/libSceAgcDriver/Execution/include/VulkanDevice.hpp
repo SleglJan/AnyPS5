@@ -107,6 +107,7 @@ public:
     void OrderAfterLabel(std::uint64_t address, std::size_t bytes);
     void OrderAfterValue(std::uint64_t address, std::size_t bytes);
     void OrderAfterQueue(std::uint32_t queue);
+    bool OrderAfterQueueOnOwnStream(std::uint32_t queue);
     void OrderAfterBatch(std::uint32_t stream, std::uint64_t value);
     bool StoresPendingOver(std::uint64_t address, std::size_t bytes) const;
     // Fills [address, address + bytes) of host-imported guest memory with a repeating 16-byte pattern,

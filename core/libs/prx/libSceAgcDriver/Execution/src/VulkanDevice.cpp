@@ -2115,6 +2115,10 @@ void VulkanDevice::OrderAfterQueue(std::uint32_t queue) {
     if (state->recorder) state->recorder->OrderAfterQueue(queue);
 }
 
+bool VulkanDevice::OrderAfterQueueOnOwnStream(std::uint32_t queue) {
+    return !state->recorder || state->recorder->OrderAfterQueueOnOwnStream(queue);
+}
+
 void VulkanDevice::OrderAfterBatch(std::uint32_t stream, std::uint64_t value) {
     if (state->recorder) state->recorder->OrderAfterBatch(stream, value);
 }
