@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstdio>
 #include <cstddef>
@@ -29,6 +30,10 @@ public:
     static WindowsMappings& Get() {
         static auto* mappings = new WindowsMappings;
         return *mappings;
+    }
+
+    static std::uint64_t MemoryQueries() {
+        return queries.load(std::memory_order_relaxed);
     }
 
     void* Reserve(void* address, std::size_t bytes) {
@@ -113,9 +118,14 @@ public:
             const auto shared = slot.page.lock();
             return resident && !sharedImports && !slot.stored && (!shared || shared->aliases.empty());
         };
+        const bool perPage = !resident || sharedImports;
+        if (perPage) commitSection(section, offset, bytes);
+        std::uintptr_t rest = 0;
+        std::uintptr_t restEnd = 0;
         for (std::size_t done = 0; done < bytes;) {
             const auto base = cursor + done;
             if (single(done)) {
+                rest = 0;
                 auto runBytes = pageBytes;
                 while (done + runBytes < bytes && (base + runBytes) % chunkBytes != 0 && single(done + runBytes)) runBytes += pageBytes;
                 split(base, runBytes);
@@ -142,10 +152,17 @@ public:
             const auto shared = pageOf(*slot, done);
             const auto aliases = shared->aliases;
             for (const auto alias : aliases) {
-                if (views.at(alias).resident) demote(alias);
+                if (!views.at(alias).resident) continue;
+                demote(alias);
+                rest = 0;
             }
-            split(base, pageBytes);
-            mapShared(base, section, offset + done, protection);
+            if (base == rest && base + pageBytes <= restEnd) {
+                if (base + pageBytes != restEnd && !VirtualFree(reinterpret_cast<void*>(base), pageBytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder suffix");
+            } else {
+                restEnd = split(base, pageBytes);
+            }
+            rest = base + pageBytes;
+            mapShared(base, section, offset + done, protection, perPage);
             slot->stored = true;
             shared->aliases.push_back(base);
             views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot});
@@ -1099,10 +1116,21 @@ private:
         if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(base), bytes, flags, PAGE_READWRITE, nullptr, 0)) fail("replace guest placeholder with resident direct memory");
     }
 
-    void mapShared(std::uintptr_t base, HANDLE section, std::uint64_t offset, DWORD protection) {
+    void commitSection(HANDLE section, std::uint64_t offset, std::size_t bytes) {
+        auto window = open(section, offset, bytes);
+        const auto memory = query(reinterpret_cast<std::uintptr_t>(window.bytes));
+        if ((memory.State != MEM_COMMIT || memory.RegionSize < bytes) && !VirtualAlloc(window.bytes, bytes, MEM_COMMIT, PAGE_READWRITE)) {
+            const auto error = GetLastError();
+            close(window);
+            throw std::system_error(static_cast<int>(error), std::system_category(), "commit direct memory pages");
+        }
+        close(window);
+    }
+
+    void mapShared(std::uintptr_t base, HANDLE section, std::uint64_t offset, DWORD protection, bool committed = false) {
         void* page = reinterpret_cast<void*>(base);
         if (!map(section, GetCurrentProcess(), page, offset, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_EXECUTE_READWRITE, nullptr, 0)) fail("map shared guest page");
-        if (query(base).State == MEM_RESERVE && !VirtualAlloc(page, pageBytes, MEM_COMMIT, PAGE_EXECUTE_READWRITE)) fail("commit shared guest page");
+        if (!committed && query(base).State == MEM_RESERVE && !VirtualAlloc(page, pageBytes, MEM_COMMIT, PAGE_EXECUTE_READWRITE)) fail("commit shared guest page");
         DWORD previous;
         if (!VirtualProtect(page, pageBytes, protection, &previous)) fail("protect shared guest page");
     }
@@ -1273,11 +1301,12 @@ private:
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
         MEMORY_BASIC_INFORMATION memory{};
+        queries.fetch_add(1, std::memory_order_relaxed);
         if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
         return memory;
     }
 
-    static void split(std::uintptr_t address, std::size_t bytes) {
+    static std::uintptr_t split(std::uintptr_t address, std::size_t bytes) {
         auto memory = query(address);
         memory = query(reinterpret_cast<std::uintptr_t>(memory.AllocationBase));
         if (memory.State != MEM_RESERVE) throw std::runtime_error("guest mapping requires a placeholder");
@@ -1288,6 +1317,7 @@ private:
         }
         if (memory.RegionSize < bytes) throw std::runtime_error("guest placeholder is too small");
         if (memory.RegionSize != bytes && !VirtualFree(reinterpret_cast<void*>(address), bytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder suffix");
+        return address + memory.RegionSize;
     }
 
     void reset(std::uintptr_t address, std::size_t bytes) {
@@ -1403,6 +1433,7 @@ private:
     std::size_t granularity = 0x10000;
     bool watchResident = false;
     bool sharedImports = false;
+    static inline std::atomic<std::uint64_t> queries{0};
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

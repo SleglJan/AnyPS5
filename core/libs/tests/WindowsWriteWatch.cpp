@@ -218,6 +218,25 @@ void CheckConcurrentWrites() {
 }
 }
 
+namespace {
+void CheckSharedMapQueriesPerMapping() {
+    constexpr std::size_t Pages = 256;
+    constexpr std::size_t Span = Pages * 16384;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Span, nullptr);
+    auto* memory = static_cast<unsigned char*>(Mappings::Get().Reserve(nullptr, Span));
+    Require(section && memory, "cannot allocate shared test memory");
+    const auto before = Mappings::MemoryQueries();
+    Mappings::Get().Map(memory, Span, section, 0, PAGE_READWRITE);
+    const auto queries = Mappings::MemoryQueries() - before;
+    for (std::size_t page = 0; page < Pages; ++page) memory[page * 16384 + 8] = static_cast<unsigned char>(page);
+    for (std::size_t page = 0; page < Pages; ++page) Require(memory[page * 16384 + 8] == static_cast<unsigned char>(page), "a shared page lost its store");
+    Mappings::Get().Reset(memory, Span);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    CloseHandle(section);
+    Require(queries < Pages, ("a shared mapping queried the address space for every page: " + std::to_string(queries) + " queries for " + std::to_string(Pages) + " pages").c_str());
+}
+}
+
 int main() {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
@@ -230,6 +249,7 @@ int main() {
         CheckPrivate();
         CheckConcurrentWrites();
         CheckForgottenSectionKeepsNoPages();
+        CheckSharedMapQueriesPerMapping();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
