@@ -120,7 +120,28 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
     if (!drainAll && !cpuStores && (opcode == 0x40 || opcode == 0x50 || opcode == 0x83)) {
         constexpr std::size_t gpuStoreLimit = 65536;
         bool drained = true;
-        if (const auto store = Pm4::ResolveStore(packet, queue, gpuStoreLimit)) {
+        bool copiedOnGpu = false;
+        if (opcode == 0x50) {
+            const auto copy = Pm4::DecodeMemoryCopy(packet);
+            if (copy.has_value() && copy->bytes <= gpuStoreLimit && Graphics::Recorder::SnapshotWriteOverlaps(copy->source, copy->bytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->source), copy->bytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(copy->destination), copy->bytes, true)) {
+                GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Copy);
+                std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                const auto localDevice = device.Load();
+                const auto* recorder = Graphics::Recorder::Active();
+                if (localDevice != nullptr && recorder != nullptr && recorder->PendingWriteOverlaps(copy->source, copy->bytes) && !recorder->PendingWriteSettled(copy->source, copy->bytes)) {
+                    recordDeferredLabels(localDevice.get(), submission.queue);
+                    const auto outcome = localDevice->CopyBuffer(copy->destination, copy->source, copy->bytes, 0, std::numeric_limits<std::size_t>::max(), 0, submission.queue);
+                    if (outcome.path == 1 || outcome.path == 3) {
+                        ++storesOnGpu;
+                        ++dmaCopiesOnGpu;
+                        wroteOnGpu = true;
+                        drained = false;
+                        copiedOnGpu = true;
+                    }
+                }
+            }
+        }
+        if (const auto store = !copiedOnGpu ? Pm4::ResolveStore(packet, queue, gpuStoreLimit) : std::nullopt) {
             const auto bytes = store->Bytes();
             if (bytes.empty()) {
 
