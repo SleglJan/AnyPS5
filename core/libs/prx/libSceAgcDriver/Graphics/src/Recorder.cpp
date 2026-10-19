@@ -1178,6 +1178,7 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
         streams.front().timeline = VK_NULL_HANDLE;
         return;
     }
+    getSemaphoreCounterValue = context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR");
     const auto queues = std::clamp<std::uint32_t>(context.streamQueueCount, 1, static_cast<std::uint32_t>(MaxRecorderStreams));
     for (std::uint32_t index = 1; index < queues; ++index) {
         Stream stream;
@@ -4532,6 +4533,17 @@ bool Recorder::Reap() {
     std::uint64_t retired = 0;
     std::array<bool, MaxRecorderStreams> blocked{};
     std::size_t blockedStreams = 0;
+    std::array<std::uint64_t, MaxRecorderStreams> reached{};
+    std::array<bool, MaxRecorderStreams> reachedRead{};
+    const auto signaled = [&](const Batch& batch) {
+        const auto& stream = streams[batch.stream];
+        if (stream.timeline == VK_NULL_HANDLE || getSemaphoreCounterValue == nullptr) return fenceStatus(batch.fence) == VK_SUCCESS;
+        if (!reachedRead[batch.stream]) {
+            reachedRead[batch.stream] = true;
+            if (getSemaphoreCounterValue(context.device, stream.timeline, &reached[batch.stream]) != VK_SUCCESS) reached[batch.stream] = 0;
+        }
+        return batch.value <= reached[batch.stream];
+    };
     for (auto it = inFlight.begin(); it != inFlight.end() && blockedStreams < streams.size();) {
         const auto& batch = **it;
         if (blocked[batch.stream]) {
@@ -4540,7 +4552,7 @@ bool Recorder::Reap() {
         }
         bool ready = true;
         for (std::uint32_t other = 0; other < streams.size() && ready; ++other) ready = other == batch.stream || batch.waits[other] <= streams[other].finished;
-        if (!ready || fenceStatus(batch.fence) != VK_SUCCESS) {
+        if (!ready || !signaled(batch)) {
             blocked[batch.stream] = true;
             ++blockedStreams;
             ++it;
