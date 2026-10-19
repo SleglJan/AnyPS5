@@ -103,6 +103,8 @@ DeviceImageKeys::Insertion DeviceImageKeys::Insert(const Key& key, const DeviceI
     };
     bool found = false;
     if (const auto bucket = place(words, key, found); bucket.has_value() && found) {
+        const auto* at = words.data() + static_cast<std::size_t>(*bucket) * Abi::BucketWords;
+        if (at[Abi::SlotWord] == value.slot && at[Abi::ModeWord] == value.mode && at[Abi::FaultWord] == value.fault && at[Abi::SamplerSlotWord] == value.samplerSlot) return Insertion::Updated;
         store(*bucket);
         return Insertion::Updated;
     }

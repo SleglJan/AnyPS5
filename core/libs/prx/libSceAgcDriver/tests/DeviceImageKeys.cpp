@@ -141,6 +141,8 @@ void testChanged() {
     std::ranges::sort(expected);
     Expect(changed == expected, "the changed buckets are reported once each, sorted");
     Expect(keys.TakeChanged().empty(), "the changes are taken once");
+    Expect(keys.Insert(first, {3u, 0u, 0u}) == DeviceImageKeys::Insertion::Updated && keys.TakeChanged().empty(), "rewriting a key with the value it holds changes no bucket");
+    Expect(keys.Insert(first, {3u, 0u, 0u, 1u}) == DeviceImageKeys::Insertion::Updated && keys.TakeChanged() == std::vector<std::uint32_t>{Home(first, 64u)}, "rewriting a key with another sampler slot changes its bucket");
 }
 
 void testRing() {
