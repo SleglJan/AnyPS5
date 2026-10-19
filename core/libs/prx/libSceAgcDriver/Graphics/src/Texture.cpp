@@ -2474,7 +2474,7 @@ DccKeys StorageTexture::ProvedKeys() const {
     if (keysDeferred) return DccKeys::Uncompressed;
     std::optional<DccKeys> keys;
     if (descriptor.dccAddress != 0 && uploadedKeys == DccKeys::Uncompressed) keys = WaitForKeyWriters(descriptor, guestBytes);
-    if (keys.has_value()) keyProof = {};
+    if (keys.has_value()) keyProof = PendingKeyProof(descriptor, guestBytes, *keys);
     else keys = ProvedClearKeys(descriptor, guestBytes, keyProof);
     if (IsDccClear(filledKeys) && *keys != filledKeys && !anyLayerPending()) filledKeys = DccKeys::Uncompressed;
     return *keys;
@@ -2526,7 +2526,7 @@ bool StorageTexture::refreshProved() {
     queries[used++] = {descriptor.baseAddress, bytes, generation};
     if (descriptor.dccAddress != 0) {
         const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
-        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys) return false;
+        if (keyCount == 0 || keyProof.generation != refreshProof.keyGeneration || keyProof.keys != uploadedKeys || !PendingKeyProofHolds(descriptor, guestBytes, keyProof)) return false;
         if (GuestMemory::CollectWrites(descriptor.dccAddress, keyCount) == 0) return false;
         queries[used++] = {descriptor.dccAddress, keyCount, keyProof.generation};
     }
