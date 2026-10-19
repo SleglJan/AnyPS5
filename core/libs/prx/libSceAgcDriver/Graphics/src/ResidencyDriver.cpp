@@ -42,7 +42,8 @@ ResidencyDriver::~ResidencyDriver() {
     std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
     if (context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device) != VK_SUCCESS) return;
-    sparse->Bind(binds);
+    sparse->Finish(sparse->Bind(binds));
+    bindWaits.fetch_add(1, std::memory_order_relaxed);
 }
 
 ResidencyDriver* ResidencyDriver::Active() {
@@ -314,13 +315,18 @@ ResidencyPublication ResidencyDriver::Publish() {
 }
 
 void ResidencyDriver::SyncBindings() {
-    if (manager.Serial() == bindSerial.load(std::memory_order_acquire)) return;
+    if (manager.Serial() == bindSerial.load(std::memory_order_acquire) && !bindsUnsettled.load(std::memory_order_acquire)) return;
     std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
     if (!GuestMemory::GpuMutex().HeldByThisThread()) gpu.lock();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> wanted;
-    std::uint64_t now = 0;
-    const bool partial = manager.ChangesSince(bindSerial.load(std::memory_order_relaxed), now, wanted);
-    if (!partial) wanted = manager.Mirrored(now);
+    const auto since = bindSerial.load(std::memory_order_relaxed);
+    std::uint64_t now = since;
+    bool partial = true;
+    if (manager.Serial() != since) {
+        partial = manager.ChangesSince(since, now, wanted);
+        if (!partial) wanted = manager.Mirrored(now);
+    }
+    const auto holders = Newest();
     const std::lock_guard lock(bindMutex);
     if (!partial) {
         std::set<std::uint64_t> held;
@@ -330,32 +336,63 @@ void ResidencyDriver::SyncBindings() {
         }
     }
     bindSerial.store(now, std::memory_order_release);
-    std::vector<VkSparseMemoryBind> binds;
-    bool releases = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> fresh;
     for (const auto& [page, mirror] : wanted) {
         if (((page + 1u) << ResidencyPageShift) > sparse->Bytes()) continue;
         const auto found = bound.find(page);
         const auto held = found != bound.end() ? found->second : 0u;
-        if (held == mirror) continue;
-        VkSparseMemoryBind bind{page << ResidencyPageShift, ResidencyPageBytes, VK_NULL_HANDLE, 0, 0};
+        if (held == mirror) {
+            deferred.erase(page);
+        } else if (held != 0) {
+            auto& entry = deferred[page];
+            entry.holders = MergeTokens(entry.holders, holders);
+            entry.mirror = mirror;
+            deferredUnbinds.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            fresh.emplace_back(page, mirror);
+        }
+    }
+    std::set<std::uint64_t> targets;
+    for (const auto& [page, mirror] : fresh) targets.insert(mirror);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> settled;
+    for (bool grown = true; grown;) {
+        grown = false;
+        for (auto entry = deferred.begin(); entry != deferred.end();) {
+            if (!Reached(entry->second.holders) && !targets.contains(bound.at(entry->first))) {
+                ++entry;
+                continue;
+            }
+            settled.emplace_back(entry->first, entry->second.mirror);
+            if (entry->second.mirror != 0) targets.insert(entry->second.mirror);
+            entry = deferred.erase(entry);
+            grown = true;
+        }
+    }
+    std::vector<VkSparseMemoryBind> binds;
+    bool releases = false;
+    const auto bind = [&](std::uint64_t page, std::uint64_t mirror) {
+        VkSparseMemoryBind entry{page << ResidencyPageShift, ResidencyPageBytes, VK_NULL_HANDLE, 0, 0};
         if (mirror != 0) {
             const auto [memory, offset] = mirrors.Locate(mirror);
-            bind.memory = memory;
-            bind.memoryOffset = offset;
+            entry.memory = memory;
+            entry.memoryOffset = offset;
             bound[page] = mirror;
         } else {
-            bound.erase(found);
+            bound.erase(page);
+            releases = true;
         }
-        releases = releases || held != 0;
-        binds.push_back(bind);
+        binds.push_back(entry);
+    };
+    for (const auto& [page, mirror] : settled) bind(page, mirror);
+    for (const auto& [page, mirror] : fresh) bind(page, mirror);
+    const auto value = sparse->Bind(binds);
+    if (releases) unbindValue = value;
+    if (!retired.empty() && sparse->Completed() >= unbindValue) {
+        std::erase_if(retired, [&](const std::shared_ptr<MirrorChunk>& chunk) {
+            return std::none_of(bound.begin(), bound.end(), [&](const auto& held) { return held.second >= chunk->address && held.second - chunk->address < chunk->bytes; });
+        });
     }
-    if (!binds.empty()) {
-        if (releases) Wait(Newest());
-        sparse->Bind(binds);
-    }
-    std::erase_if(retired, [&](const std::shared_ptr<MirrorChunk>& chunk) {
-        return std::none_of(bound.begin(), bound.end(), [&](const auto& held) { return held.second >= chunk->address && held.second - chunk->address < chunk->bytes; });
-    });
+    bindsUnsettled.store(!deferred.empty() || !retired.empty(), std::memory_order_release);
 }
 
 std::uint64_t ResidencyDriver::ResidentAddress(std::uint64_t page, std::uint64_t mirror) const {
@@ -380,7 +417,7 @@ void ResidencyDriver::KeepChunks() {
 }
 
 ResidencyDriverCounts ResidencyDriver::Counts() const {
-    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes};
+    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed)};
 }
 
 bool ResidencyDriver::Reached(const ResidencyToken& token) {
@@ -434,7 +471,10 @@ void ResidencyDriver::ReleaseChunk(std::uint32_t chunk) {
     {
         auto held = mirrors.Chunk(chunk);
         const std::lock_guard lock(bindMutex);
-        if (std::any_of(bound.begin(), bound.end(), [&](const auto& page) { return page.second >= held->address && page.second - held->address < held->bytes; })) retired.push_back(std::move(held));
+        if (std::any_of(bound.begin(), bound.end(), [&](const auto& page) { return page.second >= held->address && page.second - held->address < held->bytes; }) || sparse->Completed() < unbindValue) {
+            retired.push_back(std::move(held));
+            bindsUnsettled.store(true, std::memory_order_release);
+        }
     }
     mirrors.Release(chunk);
 }

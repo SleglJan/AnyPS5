@@ -3997,9 +3997,9 @@ void Recorder::submitStream(std::uint32_t stream) {
     const std::uint64_t serial = submissions + 1;
     CaptureTrace::Log("submit batch=%llu reads=%zu writes=%zu", static_cast<unsigned long long>(serial), batch->reads.size(), batch->writes.size());
     auto& target = streams[stream];
-    std::array<VkSemaphore, MaxRecorderStreams> waitSemaphores{};
-    std::array<std::uint64_t, MaxRecorderStreams> waitValues{};
-    std::array<VkPipelineStageFlags, MaxRecorderStreams> waitStages{};
+    std::array<VkSemaphore, MaxRecorderStreams + 1> waitSemaphores{};
+    std::array<std::uint64_t, MaxRecorderStreams + 1> waitValues{};
+    std::array<VkPipelineStageFlags, MaxRecorderStreams + 1> waitStages{};
     std::uint32_t waits = 0;
     for (std::uint32_t other = 0; other < streams.size(); ++other) {
         if (other == stream || batch->waits[other] <= streams[other].finished) continue;
@@ -4008,16 +4008,26 @@ void Recorder::submitStream(std::uint32_t stream) {
         waitStages[waits] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
         ++waits;
     }
+    const auto* residency = ResidencyDriver::Active();
+    const auto binds = residency != nullptr && residency->Device() == context.device ? residency->BindPoint() : std::pair<VkSemaphore, std::uint64_t>{VK_NULL_HANDLE, 0u};
+    if (binds.second > target.bindWaited) {
+        waitSemaphores[waits] = binds.first;
+        waitValues[waits] = binds.second;
+        waitStages[waits] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        ++waits;
+    }
     VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
     timelineInfo.waitSemaphoreValueCount = waits;
     timelineInfo.pWaitSemaphoreValues = waitValues.data();
-    timelineInfo.signalSemaphoreValueCount = 1;
+    timelineInfo.signalSemaphoreValueCount = target.timeline != VK_NULL_HANDLE ? 1u : 0u;
     timelineInfo.pSignalSemaphoreValues = &batch->value;
-    if (target.timeline != VK_NULL_HANDLE) {
+    if (target.timeline != VK_NULL_HANDLE || waits != 0) {
         submission.pNext = &timelineInfo;
         submission.waitSemaphoreCount = waits;
         submission.pWaitSemaphores = waitSemaphores.data();
         submission.pWaitDstStageMask = waitStages.data();
+    }
+    if (target.timeline != VK_NULL_HANDLE) {
         submission.signalSemaphoreCount = 1;
         submission.pSignalSemaphores = &target.timeline;
     }
@@ -4030,6 +4040,7 @@ void Recorder::submitStream(std::uint32_t stream) {
     }
     Check(result, "vkQueueSubmit recorder");
     batch->submitted = true;
+    target.bindWaited = std::max(target.bindWaited, binds.second);
     batch->serial = ++submissions;
     batch->submittedAt = std::chrono::steady_clock::now();
     target.submitted = batch->value;

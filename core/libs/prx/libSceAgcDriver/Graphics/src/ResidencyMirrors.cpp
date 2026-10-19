@@ -56,11 +56,16 @@ SparseResidency::SparseResidency(const Context& context) : context(context) {
     info.size = bytes;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkSemaphoreTypeCreateInfoKHR type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR};
+    type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
+    const VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+    Check(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &semaphoreInfo, nullptr, &timeline), "vkCreateSemaphore sparse residency");
     Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer sparse residency");
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (requirements.alignment > ResidencyPageBytes || ResidencyPageBytes % requirements.alignment != 0) {
         context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
         throw std::runtime_error("residency: the sparse residency buffer's block of " + std::to_string(requirements.alignment) + " bytes does not divide a residency page");
     }
     VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
@@ -68,6 +73,7 @@ SparseResidency::SparseResidency(const Context& context) : context(context) {
     address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
     if (address == 0) {
         context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
         throw std::runtime_error("vkGetBufferDeviceAddressKHR returned a null address for the sparse residency buffer");
     }
 }
@@ -85,26 +91,38 @@ std::shared_ptr<SparseResidency> SparseResidency::Of(const Context& context) {
 
 SparseResidency::~SparseResidency() {
     context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+    context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, timeline, nullptr);
 }
 
-void SparseResidency::Bind(std::span<const VkSparseMemoryBind> binds) const {
-    if (binds.empty()) return;
+std::uint64_t SparseResidency::Bind(std::span<const VkSparseMemoryBind> binds) {
+    if (binds.empty()) return Signalled();
+    const std::uint64_t value = signalled.load(std::memory_order_relaxed) + 1u;
     const VkSparseBufferMemoryBindInfo bufferBind{buffer, static_cast<std::uint32_t>(binds.size()), binds.data()};
-    VkBindSparseInfo info{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+    VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
+    timelineInfo.signalSemaphoreValueCount = 1;
+    timelineInfo.pSignalSemaphoreValues = &value;
+    VkBindSparseInfo info{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO, &timelineInfo};
     info.bufferBindCount = 1;
     info.pBufferBinds = &bufferBind;
-    const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    VkFence fence = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateFence>("vkCreateFence")(context.device, &fenceInfo, nullptr, &fence), "vkCreateFence sparse bind");
-    const auto destroy = [&] { context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr); };
-    try {
-        Check(context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(context.queue, 1, &info, fence), "vkQueueBindSparse residency");
-        Check(context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, ~std::uint64_t{0}), "vkWaitForFences sparse bind");
-    } catch (...) {
-        destroy();
-        throw;
-    }
-    destroy();
+    info.signalSemaphoreCount = 1;
+    info.pSignalSemaphores = &timeline;
+    Check(context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(context.queue, 1, &info, VK_NULL_HANDLE), "vkQueueBindSparse residency");
+    signalled.store(value, std::memory_order_release);
+    return value;
+}
+
+std::uint64_t SparseResidency::Completed() const {
+    std::uint64_t value = 0;
+    Check(context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR")(context.device, timeline, &value), "vkGetSemaphoreCounterValueKHR sparse residency");
+    return value;
+}
+
+void SparseResidency::Finish(std::uint64_t value) const {
+    VkSemaphoreWaitInfoKHR wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
+    wait.semaphoreCount = 1;
+    wait.pSemaphores = &timeline;
+    wait.pValues = &value;
+    Check(context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, ~std::uint64_t{0}), "vkWaitSemaphoresKHR sparse residency");
 }
 
 ResidencyMirrors::ResidencyMirrors(const Context& context, std::uint32_t chunkSlots)

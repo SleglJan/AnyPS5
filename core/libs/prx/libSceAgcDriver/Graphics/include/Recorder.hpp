@@ -842,6 +842,7 @@ private:
         std::uint64_t submitted = 0;
         std::uint64_t finished = 0;
         std::uint64_t barrier = 0;
+        std::uint64_t bindWaited = 0;
         Batch* newest = nullptr;
         std::shared_ptr<BatchFaultRecord> faultRecord;
         VkCommandPool pool = VK_NULL_HANDLE;

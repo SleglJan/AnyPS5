@@ -161,7 +161,10 @@ bool BoundAtGuestOffset(const SharedPages& pages, std::uint64_t page) {
 
 bool Unbound(const SharedPages& pages, std::uint64_t page) {
     bool unbound = false;
-    Locked([&] { unbound = !Residency().Bound(PageOf(pages.Address(page))); });
+    Locked([&] {
+        Residency().SyncBindings();
+        unbound = !Residency().Bound(PageOf(pages.Address(page)));
+    });
     return unbound;
 }
 
@@ -378,6 +381,57 @@ void EvictionUnderBudget(Harness& harness) {
 
 #endif
 
+void CopyThroughSparse(const SharedPages& pages, std::uint64_t from, std::uint64_t to, std::uint32_t subpage) {
+    using namespace AgcDriver::Graphics;
+    Locked([&] {
+        auto& residency = Residency();
+        const auto slot = residency.Manager().Slot(PageOf(pages.Address(to)));
+        Require(slot.has_value(), "unbind order: the copy target page is not resident");
+        const auto chunk = residency.Mirrors().Chunk(slot->chunk);
+        auto* recorder = Recorder::Active();
+        const std::array<Recorder::SectionObject, 1> objects{Recorder::SectionObject{chunk.get(), true}};
+        recorder->DeclareSection(objects);
+        const auto commands = recorder->Commands();
+        const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+        const VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+        const auto barrier = chunk->context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        const VkBufferCopy region{pages.Address(from, subpage), (VkDeviceSize{slot->slot} << 16u) + subpage * SubpageBytes, SubpageBytes};
+        barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+        chunk->context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, residency.SparseBuffer(), chunk->buffer, 1, &region);
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &after, 0, nullptr, 0, nullptr);
+        recorder->MarkCovered(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+        recorder->Keep(chunk);
+    });
+}
+
+void UnbindAfterHolders(Harness& harness) {
+    Locked([&] { Residency().Manager().SetBudget(TestBudget); });
+    SharedPages pages(ReadPages);
+    Model model(pages, 31);
+    model.Fill();
+    harness.Read(pages, 0);
+    Settle();
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {}, "unbind order: the read after admission");
+    Expect(BoundAtGuestOffset(pages, 1) && Resident(pages, 3), "unbind order: page 1 is not bound at its guest offset or page 3 is not resident before the demotion");
+    FillMirror(pages.Address(1, 2), MirrorMarker);
+    AgcDriver::Graphics::ResidencyDriverCounts before{};
+    Locked([&] { before = Residency().Counts(); });
+    CopyThroughSparse(pages, 1, 3, 2);
+    Locked([&] {
+        Residency().Manager().Demote(pages.Address(1), PageBytes);
+        Residency().SyncBindings();
+    });
+    AgcDriver::Graphics::ResidencyDriverCounts after{};
+    Locked([&] { after = Residency().Counts(); });
+    Expect(after.bindWaits == before.bindWaits, "unbind order: unbinding a demoted page waited on the CPU " + std::to_string(after.bindWaits - before.bindWaits) + " times");
+    Expect(after.deferredUnbinds == before.deferredUnbinds + 1, "unbind order: the unbind of a page mapped by a pending batch was not deferred");
+    Settle();
+    Expect(Unbound(pages, 1), "unbind order: the demoted page is still bound after the batch that held its mapping finished");
+    ExpectLanes(harness.Read(pages, 0), model, 0, ReadPages, {{3 * SubpagesPerPage + 2, MirrorMarker}}, "unbind order: a copy recorded through the sparse buffer before a demotion and submitted after it did not read the demoted page's mirror");
+    Settle();
+    Locked([&] { Residency().Manager().SetBudget(0); });
+}
+
 int main() {
 #ifdef _WIN32
     {
@@ -399,6 +453,7 @@ int main() {
         WriteBackOnCpuRead(harness, model);
         DropOnUnmap(harness);
         EvictionUnderBudget(harness);
+        UnbindAfterHolders(harness);
         AgcDriverShutdown_nid_postfix();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: exception: %s\n", error.what());

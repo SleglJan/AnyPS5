@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Residency.hpp"
 #include <vulkan/vulkan.h>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -42,12 +43,19 @@ public:
     static std::shared_ptr<SparseResidency> Of(const Context& context);
 
     VkDeviceAddress Address() const { return address; }
+    VkBuffer Handle() const { return buffer; }
     std::uint64_t Bytes() const { return bytes; }
-    void Bind(std::span<const VkSparseMemoryBind> binds) const;
+    std::uint64_t Bind(std::span<const VkSparseMemoryBind> binds);
+    VkSemaphore Timeline() const { return timeline; }
+    std::uint64_t Signalled() const { return signalled.load(std::memory_order_acquire); }
+    std::uint64_t Completed() const;
+    void Finish(std::uint64_t value) const;
 
 private:
     Context context;
     VkBuffer buffer = VK_NULL_HANDLE;
+    VkSemaphore timeline = VK_NULL_HANDLE;
+    std::atomic<std::uint64_t> signalled{0};
     VkDeviceAddress address = 0;
     std::uint64_t bytes = 0;
 };

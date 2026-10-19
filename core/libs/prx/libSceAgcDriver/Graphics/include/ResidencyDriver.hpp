@@ -83,6 +83,8 @@ struct ResidencyDriverCounts {
     std::uint64_t touchedPages = 0;
     std::uint64_t touchOverflows = 0;
     std::uint64_t budgetBytes = 0;
+    std::uint64_t bindWaits = 0;
+    std::uint64_t deferredUnbinds = 0;
 };
 
 class ResidencyDriver final : public IResidencyDevice {
@@ -122,6 +124,8 @@ public:
     std::uint64_t ResidentAddress(std::uint64_t page, std::uint64_t mirror) const;
     bool Bound(std::uint64_t page) const;
     VkDeviceAddress SparseAddress() const { return sparse->Address(); }
+    VkBuffer SparseBuffer() const { return sparse->Handle(); }
+    std::pair<VkSemaphore, std::uint64_t> BindPoint() const { return {sparse->Timeline(), sparse->Signalled()}; }
     std::vector<Recorder::SectionObject> ChunkObjects(bool written) const;
     Recorder::SectionObject SectionAccess(bool written) const { return {this, written}; }
     void KeepChunks();
@@ -182,7 +186,16 @@ private:
     mutable std::mutex bindMutex;
     std::map<std::uint64_t, std::uint64_t> bound;
     std::atomic<std::uint64_t> bindSerial{0};
+    struct DeferredUnbind {
+        ResidencyToken holders{};
+        std::uint64_t mirror = 0;
+    };
+    std::map<std::uint64_t, DeferredUnbind> deferred;
     std::vector<std::shared_ptr<MirrorChunk>> retired;
+    std::uint64_t unbindValue = 0;
+    std::atomic<bool> bindsUnsettled{false};
+    std::atomic<std::uint64_t> bindWaits{0};
+    std::atomic<std::uint64_t> deferredUnbinds{0};
     ResidencyManager manager;
     std::shared_ptr<Buffer> touchTable;
     std::atomic<VkDeviceAddress> touchAddress{0};

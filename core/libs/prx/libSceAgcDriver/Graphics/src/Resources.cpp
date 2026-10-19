@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -379,6 +380,13 @@ void CommandBatch::Submit() {
     for (const auto& point : queuePoints) {
         waitSemaphores.push_back(point.timeline);
         waitValues.push_back(point.value);
+    }
+    if (const auto* residency = ResidencyDriver::Active(); residency != nullptr && residency->Device() == context.device) {
+        const auto binds = residency->BindPoint();
+        if (binds.second != 0) {
+            waitSemaphores.push_back(binds.first);
+            waitValues.push_back(binds.second);
+        }
     }
     const std::vector<VkPipelineStageFlags> waitStages(waitSemaphores.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     VkTimelineSemaphoreSubmitInfoKHR timelineWaits{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
