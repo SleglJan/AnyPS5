@@ -201,6 +201,7 @@ public:
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool UsesAddressTable() const { return usesBda; }
     bool MemoryReadsUnknown() const { return usesBda && accessesUnbounded; }
+    bool SegmentsSettled() const { return segmentsSettled; }
     bool MemoryWritesUnknown() const { return pageTableStores && storesUnbounded; }
     bool MemoryAccessesUnknown() const { return MemoryReadsUnknown() || MemoryWritesUnknown(); }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> MemoryReads() const;
@@ -365,6 +366,7 @@ private:
     bool storesUnbounded = false;
     bool computeBuild = false;
     bool accessesUnbounded = false;
+    bool segmentsSettled = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> accessRanges;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> storeRanges;

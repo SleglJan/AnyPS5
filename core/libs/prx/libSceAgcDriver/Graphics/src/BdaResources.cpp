@@ -341,6 +341,7 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
         for (const auto& [named, address] : stageShaders) {
             if (named == report.stage) shader = address;
         }
+        if (auto* residency = ResidencyDriver::Active(); residency != nullptr) residency->NoteSegmentFault();
         message << "shader 0x" << std::hex << shader << " stage " << std::dec << report.stage << " pc 0x" << std::hex << report.instruction << " read " << std::dec << report.bytes << " bytes at address 0x" << std::hex << report.address << ", outside the settled range of its buffer descriptor";
         throw std::runtime_error(message.str());
     }

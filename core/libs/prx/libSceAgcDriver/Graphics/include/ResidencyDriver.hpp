@@ -88,6 +88,9 @@ struct ResidencyDriverCounts {
     std::uint64_t bindWaits = 0;
     std::uint64_t deferredUnbinds = 0;
     std::uint64_t mixedAtRecord = 0;
+    std::uint64_t settledDispatches = 0;
+    std::uint64_t unsettledDispatches = 0;
+    std::uint64_t segmentFaults = 0;
 };
 
 class ResidencyDriver final : public IResidencyDevice {
@@ -108,6 +111,8 @@ public:
     void Flip();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void CountMixedRanges(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    bool SettledWhole(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, bool unbounded);
+    void NoteSegmentFault() { segmentFaults.fetch_add(1, std::memory_order_relaxed); }
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
     void NoteRecordedWrites(std::uint64_t address, std::uint64_t bytes);
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
@@ -201,6 +206,9 @@ private:
     std::atomic<std::uint64_t> bindWaits{0};
     std::atomic<std::uint64_t> deferredUnbinds{0};
     std::atomic<std::uint64_t> mixedAtRecord{0};
+    std::atomic<std::uint64_t> settledDispatches{0};
+    std::atomic<std::uint64_t> unsettledDispatches{0};
+    std::atomic<std::uint64_t> segmentFaults{0};
     ResidencyManager manager;
     std::shared_ptr<Buffer> touchTable;
     std::atomic<VkDeviceAddress> touchAddress{0};

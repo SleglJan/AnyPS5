@@ -1,8 +1,10 @@
 #include "ResidencyRulesFixture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include <array>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <string>
 
 #ifdef _WIN32
@@ -68,6 +70,12 @@ void TouchingMirrorsFormOneSegment(MirrorReader& reader) {
         Expect(first.has_value() && inside.has_value() && edge.has_value() && inside->begin == first->begin && edge->begin == first->begin, "one segment: the addresses on both sides of page edge " + std::to_string(page) + " resolve to different entries: " + Describe(inside) + " and " + Describe(edge));
     }
     ExpectPattern(reader, pages.Address(), "one segment: the walk program's read across both page edges");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> whole{{{pages.Address(0), pages.Address(Pages)}}};
+    const auto settledBefore = Residency().Counts();
+    Expect(Residency().SettledWhole(*table, whole, false), "settled: a 192 KiB range over three touching bound mirror pages is not settled whole");
+    Expect(!Residency().SettledWhole(*table, whole, true), "settled: a dispatch with unbounded reads over the same range counts as settled");
+    const auto settledAfter = Residency().Counts();
+    Expect(settledAfter.settledDispatches == settledBefore.settledDispatches + 1u && settledAfter.unsettledDispatches == settledBefore.unsettledDispatches + 1u, "settled: the settled and unsettled dispatch counters did not move by one each");
 
     Locked([&] { Residency().Manager().Demote(pages.Address(1), PageBytes); });
     Expect(!Resident(pages.Address(1)), "broken run: the middle page kept its mirror after the demotion");
@@ -80,6 +88,7 @@ void TouchingMirrorsFormOneSegment(MirrorReader& reader) {
     Expect(MirroredAtGuestOffset(before) && before->end == pages.Address(1), "broken run: the mirror before the import-served page does not end at it: " + Describe(before));
     Expect(middle.has_value() && middle->reserved == 0u, "broken run: the import-served page is not served by its import: " + Describe(middle));
     Expect(MirroredAtGuestOffset(after) && after->begin == pages.Address(2), "broken run: the mirror after the import-served page does not start at it: " + Describe(after));
+    Expect(!Residency().SettledWhole(*broken, whole, false), "broken run: a range across the import-served page counts as settled whole");
     ExpectPattern(reader, pages.Address(), "broken run: the walk program's read across the import-served page");
     Settle();
 }

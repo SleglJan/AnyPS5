@@ -311,6 +311,16 @@ void ResidencyDriver::CountMixedRanges(const BdaPageTable& table, std::span<cons
     }
 }
 
+bool ResidencyDriver::SettledWhole(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, bool unbounded) {
+    const bool settled = !unbounded && std::ranges::all_of(ranges, [&](const auto& range) {
+        if (range.second <= range.first) return true;
+        const auto found = table.Find(range.first);
+        return found.has_value() && found->begin <= range.first && range.second <= found->end;
+    });
+    (settled ? settledDispatches : unsettledDispatches).fetch_add(1, std::memory_order_relaxed);
+    return settled;
+}
+
 void ResidencyDriver::DropMirrors(std::span<const ResidencyRange> ranges) {
     for (const auto& range : ranges) manager.Demote(range.address, range.bytes);
 }
@@ -436,7 +446,7 @@ void ResidencyDriver::KeepChunks() {
 }
 
 ResidencyDriverCounts ResidencyDriver::Counts() const {
-    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed), mixedAtRecord.load(std::memory_order_relaxed)};
+    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed), mixedAtRecord.load(std::memory_order_relaxed), settledDispatches.load(std::memory_order_relaxed), unsettledDispatches.load(std::memory_order_relaxed), segmentFaults.load(std::memory_order_relaxed)};
 }
 
 bool ResidencyDriver::Reached(const ResidencyToken& token) {
