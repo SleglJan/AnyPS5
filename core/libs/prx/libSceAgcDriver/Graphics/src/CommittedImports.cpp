@@ -348,12 +348,19 @@ void insert(Committed& state, HostImport view) {
 }
 
 bool importable(std::uint32_t protection) {
-#ifdef _WIN32
     const auto access = protection & 0xffu;
+#ifdef _WIN32
     return (protection & (PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE)) == 0 && (access == PAGE_READWRITE || access == PAGE_EXECUTE_READWRITE);
 #else
-    static_cast<void>(protection);
-    return true;
+    return access == 0x04u;
+#endif
+}
+
+bool importableMapping(GuestArena::MappingChange change, std::uint32_t protection) {
+#ifdef _WIN32
+    return change == GuestArena::MappingChange::Mapped || importable(protection);
+#else
+    return change != GuestArena::MappingChange::Released && importable(protection);
 #endif
 }
 
@@ -444,6 +451,9 @@ void importFresh(std::uint64_t address, std::size_t bytes) {
 }
 
 void importShared(std::uint64_t address, std::size_t bytes) {
+#ifndef _WIN32
+    importFresh(address, bytes);
+#else
     auto& state = CommittedState();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
     VkDevice device = VK_NULL_HANDLE;
@@ -476,6 +486,7 @@ void importShared(std::uint64_t address, std::size_t bytes) {
     }
     if (!state.worker.joinable()) state.worker = std::thread([&state] { runImports(state); });
     state.changed.notify_all();
+#endif
 }
 
 void releaseRange(std::uint64_t address, std::size_t bytes) {
@@ -536,7 +547,7 @@ CommittedImportStats CommittedImportCounters() {
 
 void NoteGuestMapping(std::uint64_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection) {
     if (bytes == 0 || !attached.load(std::memory_order_acquire)) return;
-    if (change == GuestArena::MappingChange::Committed && !importable(protection)) return;
+    if (change != GuestArena::MappingChange::Released && !importableMapping(change, protection)) return;
     if (change == GuestArena::MappingChange::Released) {
         auto& state = CommittedState();
         std::lock_guard lock(state.mutex);
@@ -581,6 +592,7 @@ void AttachCommittedImports(const Context& context, bool watched) {
     attached.store(true, std::memory_order_release);
 #ifdef _WIN32
     GuestArena::GuestArenaSetSharedImports_nid_postfix(true);
+#endif
     struct Walk {
         Committed& state;
         std::exception_ptr failure;
@@ -589,7 +601,7 @@ void AttachCommittedImports(const Context& context, bool watched) {
         auto& walk = *static_cast<Walk*>(context);
         if (walk.failure) return;
         try {
-            if (change == GuestArena::MappingChange::Mapped || importable(protection)) {
+            if (importableMapping(change, protection)) {
                 for (const auto& [begin, end] : uncovered(walk.state, address, address + bytes)) insert(walk.state, importRange(walk.state.context, begin, end - begin, change == GuestArena::MappingChange::Mapped));
             }
         } catch (...) {
@@ -597,7 +609,6 @@ void AttachCommittedImports(const Context& context, bool watched) {
         }
     }, &walk);
     if (walk.failure) std::rethrow_exception(walk.failure);
-#endif
 }
 
 void DetachCommittedImports(VkDevice device) {

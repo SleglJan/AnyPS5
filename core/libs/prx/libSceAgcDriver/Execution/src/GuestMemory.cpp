@@ -811,9 +811,7 @@ struct WindowCopy {
     }
 };
 
-#ifdef _WIN32
 void observeMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, GuestArena::MappingChange change, std::uint32_t protection);
-#endif
 
 struct WriteTracker {
     std::mutex mutex;
@@ -879,6 +877,7 @@ struct WriteTracker {
 #else
         watched = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
         if (watched) leaves.resize(LeafCount);
+        GuestArena::GuestArenaSetMappingObserver_nid_postfix(&observeMapping);
 #endif
     }
 
@@ -1164,11 +1163,16 @@ void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_
     unwatchSerial.fetch_add(1, std::memory_order_release);
 }
 
+#endif
+
 void observeMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, GuestArena::MappingChange change, std::uint32_t protection) {
+#ifdef _WIN32
     if (change == GuestArena::MappingChange::Committed) watchPrivateMapping(address, bytes, generation);
+#else
+    static_cast<void>(generation);
+#endif
     if (const auto listener = mappingListener.load(std::memory_order_acquire)) listener(address, bytes, change, protection);
 }
-#endif
 
 // Collect epochs are per thread and globally unique: every bump takes a fresh value from one counter,
 // so a memo entry (stamped with the epoch of its walk) can only match the thread that made it, and
@@ -1616,12 +1620,11 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
-    return StoreOwnBytes(address, source.size(), [&] {
 #ifndef _WIN32
-        if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return;
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size()))
+        return StoreOwnBytes(address, source.size(), [] {});
 #endif
-        std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
-    });
+    return StoreOwnBytes(address, source.size(), [&] { std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size()); });
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
