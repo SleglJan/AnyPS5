@@ -34,7 +34,7 @@ void Driver::dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> 
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         const auto direct = Pm4::ReadDispatchArguments(arguments, initiator);
-        countIndirect(path, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        if (!prePassDeferral().resumed) countIndirect(path, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
         dispatch(queue, direct, submission);
         return;
     }

@@ -271,6 +271,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         stagePrograms[i] = stageProgram(i, pushCursorBytes, drawParameters);
         phaseTiming.Phase(DrawRowRecompile);
         stageResults[i] = runTimeResult(*stagePrograms[i], program.userData, program.binary.codeAddress);
+        if (prePassDeferral().deferred) return DrawVerdict::Nothing;
         phaseTiming.Phase(DrawRowKeyLookupValidate);
         programResults[i] = stageResults[i].get();
         const auto& result = *programResults[i];
@@ -286,12 +287,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             if (stagePrograms[i] == nullptr) continue;
             const auto previous = programResults[i];
             stageResults[i] = runTimeResult(*stagePrograms[i], programs[i].userData, programs[i].binary.codeAddress);
+            if (prePassDeferral().deferred) return DrawVerdict::Nothing;
             programResults[i] = stageResults[i].get();
             for (auto& stage : stages) {
                 if (stage.program == previous) stage.program = programResults[i];
             }
         }
     }
+    prePassDeferral().allowed = false;
 
     bool rectListBuilt = false;
     std::size_t rectIndex = 0;

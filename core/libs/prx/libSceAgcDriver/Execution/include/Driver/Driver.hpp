@@ -154,6 +154,8 @@ private:
         bool allowed = false;
         bool deferred = false;
         bool retry = false;
+        bool resumed = false;
+        bool noted = false;
         std::shared_ptr<std::atomic<bool>> resume;
     };
     static PrePassDeferral& prePassDeferral();

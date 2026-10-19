@@ -59,6 +59,8 @@ TestGuest::Array<std::uint32_t, Width * Height * 4> Storage;
 TestGuest::Array<std::uint32_t, Stores.size() * RegionWords> Stored;
 TestGuest::Array<std::uint32_t, Stores.size() * LinkWords> BufferTables;
 TestGuest::Array<std::uint32_t, 64> CatchAllTarget;
+TestGuest::Array<std::uint32_t, 4> IndirectGroups;
+TestGuest::Array<std::uint32_t, 64> FillDestination;
 
 std::uint64_t AddressOf(const void* pointer) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
@@ -464,18 +466,17 @@ const Program& AddressWriterProgram() {
     return program;
 }
 
-void RegisterChainProgram() {
-    struct Header {
-        Shader shader{};
-        std::array<ShaderRegister, 7> registers{};
-        ShaderSpecialRegs specials{};
-    };
-    alignas(8) static Header header{};
-    const auto& program = ChainProgram();
+struct ComputeHeader {
+    Shader shader{};
+    std::array<ShaderRegister, 7> registers{};
+    ShaderSpecialRegs specials{};
+};
+
+void RegisterCompute(ComputeHeader& header, const Program& program) {
     const auto address = program.Address();
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18;
-    header.shader.header_size = sizeof(Header);
+    header.shader.header_size = sizeof(ComputeHeader);
     header.shader.shader_size = static_cast<std::uint32_t>(program.size * sizeof(std::uint32_t));
     header.shader.code = const_cast<std::uint32_t*>(program.words.data());
     header.shader.sh_registers = header.registers.data();
@@ -483,6 +484,11 @@ void RegisterChainProgram() {
     header.shader.specials = &header.specials;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Lanes}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, (8u << 1u) | (1u << 7u)}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void RegisterChainProgram() {
+    alignas(8) static ComputeHeader header{};
+    RegisterCompute(header, ChainProgram());
 }
 
 const Program& CatchAllValueWriterProgram() {
@@ -513,6 +519,14 @@ public:
         words.insert(words.end(), {0xc0031500u, groups, 1u, 1u, 0x41u});
     }
 
+    void DispatchIndirect(const Program& program, std::span<const std::uint32_t> userData, std::uint32_t threads, std::uint64_t arguments) {
+        Registers(0x207, {threads, 1u, 1u});
+        Registers(0x20c, {Low(program.Address() >> 8u), Low(program.Address() >> 40u)});
+        Registers(0x213, {(static_cast<std::uint32_t>(userData.size()) << 1u) | (1u << 7u)});
+        Registers(0x240, userData);
+        words.insert(words.end(), {0xc0021600u, Low(arguments), High(arguments), 0x41u});
+    }
+
     void Flip(std::uint32_t handle) {
         words.insert(words.end(), {AgcDriver::FlipPacketHeader, handle, 0xfffffffeu, 1u, 0u, 0u});
     }
@@ -537,7 +551,7 @@ private:
 
 class ParkedReader {
 public:
-    ParkedReader(std::uint32_t chain, std::uint32_t slot) : chain(chain), slot(slot) {
+    ParkedReader(std::uint32_t chain, std::uint32_t slot, bool indirect = false) : chain(chain), slot(slot), indirect(indirect) {
         RegisterChainProgram();
         FillImage(chain);
         LinkChain(chain, ChainDescriptor(chain));
@@ -597,11 +611,17 @@ private:
     void Append(ParkedSubmission& submission) const {
         submission.Dispatch(AddressWriterProgram(), addressData, 1);
         submission.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
-        submission.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+        if (!indirect) {
+            submission.Dispatch(ChainProgram(), ChainUserData(chain, slot), Lanes, Height);
+            return;
+        }
+        IndirectGroups = {Height, 1u, 1u, 0u};
+        submission.DispatchIndirect(ChainProgram(), ChainUserData(chain, slot), Lanes, AddressOf(IndirectGroups.data()));
     }
 
     std::uint32_t chain;
     std::uint32_t slot;
+    bool indirect;
     std::uint32_t* root = nullptr;
     std::uint32_t tableLow = 0;
     std::uint64_t target = 0;
@@ -619,6 +639,61 @@ void PrePassUnderCatchAllDeferred() {
     const auto recorded = reader.HitsSince();
     Expect(recorded == ParkedHits, "pre-pass under a catch-all writer: the idle wait returned with " + std::to_string(recorded) + " of " + std::to_string(ParkedHits) + " served dispatches recorded");
     reader.ExpectRecorded("pre-pass under a catch-all writer");
+}
+
+void IndirectUnderCatchAllDeferred() {
+    ParkedReader reader(1, StoredSlot + 8u, true);
+    reader.Submit();
+    NewPath::WaitIdle();
+    reader.ExpectRecorded("indirect dispatch under a catch-all writer");
+}
+
+const Program& MemoryValueFillProgram() {
+    static const Program program = [] {
+        Program built;
+        for (const auto word : {0xd7460000u, 0x04010c08u, 0xf4201a82u, 0xfa000000u, 0xbf8cc07fu, 0x7e02026au, 0xe0102000u, 0x80000100u, 0xbf810000u}) built << word;
+        return built;
+    }();
+    return program;
+}
+
+void MemoryValueFillDeferred() {
+    constexpr std::uint32_t written = 0x5a5a1234u;
+    constexpr std::uint32_t buffer = 0x31016facu;
+    alignas(8) static ComputeHeader header{};
+    RegisterCompute(header, MemoryValueFillProgram());
+    const auto destination = AddressOf(FillDestination.data());
+    auto* valueWord = Link(Roots, StorageRoot) + LinkWords - 1u;
+    const auto value = AddressOf(valueWord);
+    const auto resource = Buffer(CatchAllTarget.data(), 8u);
+    const std::array<std::uint32_t, 6> addressData{resource[0], resource[1], resource[2], resource[3], Low(value), High(value)};
+    const std::array<std::uint32_t, 5> writerData{resource[0], resource[1], resource[2], resource[3], written};
+    const std::array<std::uint32_t, 8> fillData{Low(destination), (High(destination) & 0xffffu) | (4u << 16u), static_cast<std::uint32_t>(FillDestination.size()), buffer, Low(value), High(value) & 0xffffu, 4u, buffer};
+    const auto submit = [&] {
+        FillDestination.fill(0u);
+        CatchAllTarget.fill(0u);
+        *valueWord = 0u;
+        Commands commands;
+        commands.Dispatch(AddressWriterProgram(), addressData, 1);
+        commands.Dispatch(CatchAllValueWriterProgram(), writerData, Lanes);
+        commands.Dispatch(MemoryValueFillProgram(), fillData, 64u);
+        commands.Submit(0);
+        NewPath::WaitIdle();
+    };
+    submit();
+    const auto waitsBefore = AgcDriver::GuestMemory::PendingReadWaitCounts().reads;
+    const auto deferredBefore = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches();
+    submit();
+    const auto waits = AgcDriver::GuestMemory::PendingReadWaitCounts().reads - waitsBefore;
+    const auto deferred = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches() - deferredBefore;
+    Expect(waits == 0u, "memory-value fill under a catch-all writer: the recording thread waited for the writer " + std::to_string(waits) + " times");
+    Expect(deferred != 0u, "memory-value fill under a catch-all writer: the fill was not deferred before its note");
+    AgcDriver::GuestMemory::FlushGpuWrites(destination, decltype(FillDestination)::ByteSize);
+    for (std::uint32_t word = 0; word < FillDestination.size(); ++word) {
+        if (FillDestination[word] == written) continue;
+        Expect(false, "memory-value fill under a catch-all writer: word " + std::to_string(word) + " is " + Hex(FillDestination[word]) + ", expected the written value " + Hex(written));
+        break;
+    }
 }
 
 constexpr std::uint32_t ParkedOutputHandle = 0x74bu;
@@ -761,7 +836,7 @@ void PrePassAfterCatchAll() {
 }
 
 void Run() {
-    const std::array<std::pair<const char*, void (*)()>, 10> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 12> cases{{
         {"chain per dispatch", ChainPerDispatch},
         {"rewritten table", RewrittenTable},
         {"V# from user data", UserDataBuffers},
@@ -769,6 +844,8 @@ void Run() {
         {"storage image", StoredThenSampled},
         {"pre-pass after a catch-all writer", PrePassAfterCatchAll},
         {"pre-pass under a catch-all writer is deferred", PrePassUnderCatchAllDeferred},
+        {"indirect dispatch under a catch-all writer is deferred", IndirectUnderCatchAllDeferred},
+        {"memory-value fill under a catch-all writer is deferred before its note", MemoryValueFillDeferred},
         {"flip behind a parked reader", FlipBehindParkedReader},
         {"suspend of a parked queue", SuspendOfParkedQueue},
         {"shutdown with a parked queue", ShutdownWithParkedQueue},

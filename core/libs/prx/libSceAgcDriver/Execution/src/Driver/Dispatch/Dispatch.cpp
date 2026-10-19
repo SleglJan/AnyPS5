@@ -168,7 +168,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recordQueuedLabelsBeforeRead(submission.queue);
         const auto readStart = std::chrono::steady_clock::now();
         resolved = Pm4::ReadDispatchArguments(indirectArguments, packet[4]);
-        countIndirect(IndirectFillKernel, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        if (!prePassDeferral().resumed) countIndirect(IndirectFillKernel, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
         packet = resolved;
         indirectArguments = 0;
     }
@@ -178,18 +178,22 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     const bool partialLastGroup = partialGroups != std::array<std::uint32_t, 3>{};
     {
-        if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
-            prePassDeferral().allowed = false;
+        auto& deferral = prePassDeferral();
+        std::optional<Graphics::MemoryValueFill> fill;
+        if (indirectArguments == 0 && (packet[4] & 0x20u) == 0 && !deferral.noted) fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]});
+        if (fill && deferral.allowed) {
+            bool waitForWrites = true;
+            std::uint32_t value = 0;
+            static_cast<void>(readPrePassWord(&waitForWrites, fill->valueAddress, &value));
+            if (deferral.deferred) return;
+        }
+        if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0 && !deferral.noted) {
             const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
             const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
             Graphics::NoteHtileDepthClear(htile, static_cast<std::size_t>(threads * 16u), nativeBytes);
         }
-        if (indirectArguments == 0 && (packet[4] & 0x20u) == 0) {
-            if (const auto fill = Graphics::MatchMemoryValueFill(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads, {packet[1], packet[2], packet[3]})) {
-                prePassDeferral().allowed = false;
-                Graphics::NoteMemoryValueFill(*fill);
-            }
-        }
+        if (fill) Graphics::NoteMemoryValueFill(*fill);
+        if (deferral.allowed) deferral.noted = true;
         if (!partialLastGroup && fillBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice)) {
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
             return;
@@ -261,6 +265,11 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         linked = true;
         program = (*candidate)->program;
     }
+    const auto deferred = [&] {
+        if (!hitCounted) return;
+        std::lock_guard cacheLock(runTimeProgramsMutex);
+        --dataIndependentHits;
+    };
     const auto rethrow = [&](const std::exception& error) {
         std::string reason = error.what();
         if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
@@ -344,11 +353,6 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         recompileMs += phaseTiming.Elapsed();
         phaseTiming.Phase(PhaseRecompile);
     }
-    const auto deferred = [&] {
-        if (!hitCounted) return;
-        std::lock_guard cacheLock(runTimeProgramsMutex);
-        --dataIndependentHits;
-    };
     prePassReads().clear();
     auto compiledResult = runTimeResult(*program, userData, request.shader.codeAddress);
     if (prePassDeferral().deferred) return deferred();

@@ -117,6 +117,39 @@ std::size_t Driver::execute(const Submission& submission, std::size_t from, bool
         ++packetProfile.submissions;
         bumpEpoch(&EpochBumps::submissions);
     }
+    struct Offered {
+        PrePassDeferral& deferral;
+        ~Offered() {
+            deferral.allowed = false;
+            deferral.resumed = false;
+            deferral.noted = false;
+        }
+    };
+    const auto offer = [&](std::size_t cursor) -> PrePassDeferral& {
+        auto& deferral = prePassDeferral();
+        const bool resumed = std::exchange(parked->resumed, false) && cursor == from;
+        const bool noted = std::exchange(parked->noted, false) && resumed;
+        deferral = PrePassDeferral{};
+        deferral.allowed = true;
+        deferral.resumed = resumed;
+        deferral.noted = noted;
+        return deferral;
+    };
+    const auto park = [&](std::size_t cursor) {
+        {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            const auto localDevice = device.Load();
+            recordDeferredLabels(localDevice.get(), submission.queue);
+            if (localDevice != nullptr) localDevice->SubmitCallerRecorded(submission.queue == 0);
+        }
+        deferredDispatches.fetch_add(1, std::memory_order_acq_rel);
+        *parked = prePassDeferral();
+        parked->resumed = true;
+        if (flipHeld != nullptr) *flipHeld = flipHold.held;
+        flipHold.held = false;
+        return cursor;
+    };
     for (std::size_t cursor = from; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
@@ -250,29 +283,11 @@ std::size_t Driver::execute(const Submission& submission, std::size_t from, bool
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
             landPendingWaits(submission.queue);
-            if (opcode == 0x15 && parked != nullptr) {
-                auto& deferral = prePassDeferral();
-                struct Offered {
-                    PrePassDeferral& deferral;
-                    ~Offered() { deferral.allowed = false; }
-                } offered{deferral};
-                deferral = PrePassDeferral{};
-                deferral.allowed = true;
-                timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
-                if (deferral.deferred) {
-                    {
-                        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
-                        std::lock_guard gpuLock(GuestMemory::GpuMutex());
-                        const auto localDevice = device.Load();
-                        recordDeferredLabels(localDevice.get(), submission.queue);
-                        if (localDevice != nullptr) localDevice->SubmitCallerRecorded(submission.queue == 0);
-                    }
-                    deferredDispatches.fetch_add(1, std::memory_order_acq_rel);
-                    *parked = deferral;
-                    if (flipHeld != nullptr) *flipHeld = flipHold.held;
-                    flipHold.held = false;
-                    return cursor;
-                }
+            if (parked != nullptr) {
+                Offered offered{offer(cursor)};
+                if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
+                else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
+                if (offered.deferral.deferred) return park(cursor);
             } else if (opcode == 0x15) {
                 timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             } else {
@@ -299,6 +314,8 @@ std::size_t Driver::execute(const Submission& submission, std::size_t from, bool
             }
         } else if (drawPacket) {
             landPendingWaits(submission.queue);
+            std::optional<Offered> offered;
+            if (parked != nullptr) offered.emplace(offer(cursor));
             bool drawn = false;
             timed(&WorkerProfile::drawMs, [&] {
                 static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
@@ -312,6 +329,7 @@ std::size_t Driver::execute(const Submission& submission, std::size_t from, bool
                 try {
                     std::string rejected;
                     const auto verdict = draw(queue, packet, submission, rejected);
+                    if (offered && offered->deferral.deferred) return;
                     drawn = verdict == DrawVerdict::Drawn;
                     CaptureTrace::Log("draw submission=%llu queue=%x offset=%zu target=%llx mask=%x verdict=%d reason=%.256s", static_cast<unsigned long long>(submission.serial), submission.queue, cursor, static_cast<unsigned long long>(color), readRegister(queue.context, 0x8e), static_cast<int>(verdict), rejected.c_str());
                     if (verdict == DrawVerdict::Rejected) {
@@ -328,6 +346,7 @@ std::size_t Driver::execute(const Submission& submission, std::size_t from, bool
                     throw;
                 }
             });
+            if (offered && offered->deferral.deferred) return park(cursor);
             finishDrawPacket(drawn);
         } else if (opcode == 0x22) {
             landPendingWaits(submission.queue);

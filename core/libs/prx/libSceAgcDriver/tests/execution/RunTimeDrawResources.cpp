@@ -1,5 +1,7 @@
 #include "DrawSubmitFixture.hpp"
 #include "WrittenImageFixture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 
 namespace {
 
@@ -335,6 +337,26 @@ void WrittenDescriptor() {
     ExpectBands([](std::uint32_t band) { return Band{WrittenTexture, Shuffled(band)}; }, "written descriptor: the next submission's draws through the stored T#");
 }
 
+void WrittenDescriptorDeferred() {
+    constexpr std::uint32_t root = WrittenTexture;
+    Link(root, TextureDescriptor(0));
+    Pixels.fill(DeviceTable::Untouched);
+    const auto waitsBefore = AgcDriver::GuestMemory::PendingReadWaitCounts().reads;
+    const auto deferredBefore = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches();
+    Commands commands;
+    commands.Dispatch(WrittenImages::WriterProgram(), WriterUserData(root, WrittenTexture), DeviceTable::Lanes, 1);
+    commands.Barrier();
+    Begin(commands, SamplePixel(), PixelUserWords);
+    for (std::uint32_t band = 0; band < Draws; ++band) DrawBand(commands, band, SampleUserData(root, band));
+    commands.Submit(0);
+    NewPath::WaitIdle();
+    const auto waits = AgcDriver::GuestMemory::PendingReadWaitCounts().reads - waitsBefore;
+    const auto deferred = AgcDriver::DriverDetail::Driver::Get().DeferredDispatches() - deferredBefore;
+    Expect(waits == 0u, "written descriptor, deferred: the recording thread waited for the writer " + std::to_string(waits) + " times");
+    Expect(deferred != 0u, "written descriptor, deferred: the first draw was not deferred");
+    ExpectBands([](std::uint32_t band) { return Band{WrittenTexture, band}; }, "written descriptor, deferred: draws recorded after the dispatch that stores their T# completed");
+}
+
 void Run() {
     for (std::uint32_t texture = 0; texture < TextureCount; ++texture) FillTexture(texture);
     for (std::uint32_t draw = 0; draw < Draws; ++draw) {
@@ -349,6 +371,7 @@ void Run() {
         {"textures per draw", TexturesPerDraw},
         {"constant buffers per draw", ConstantBuffersPerDraw},
         {"written descriptor", WrittenDescriptor},
+        {"written descriptor, deferred", WrittenDescriptorDeferred},
     });
 }
 
