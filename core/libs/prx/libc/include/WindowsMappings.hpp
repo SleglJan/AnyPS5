@@ -111,7 +111,7 @@ public:
         const auto single = [&](std::size_t done) {
             const auto& slot = *slotOf(done);
             const auto shared = slot.page.lock();
-            return resident && !slot.stored && (!shared || shared->aliases.empty());
+            return resident && !sharedImports && !slot.stored && (!shared || shared->aliases.empty());
         };
         for (std::size_t done = 0; done < bytes;) {
             const auto base = cursor + done;
@@ -577,6 +577,11 @@ public:
         }
         const auto open = std::find(privateHostWrites.begin(), privateHostWrites.end(), std::make_pair(address, end));
         if (open != privateHostWrites.end()) privateHostWrites.erase(open);
+    }
+
+    void SetSharedImports(bool imported) {
+        std::lock_guard lock(mutex);
+        sharedImports = imported;
     }
 
     void* MapAlias(std::uintptr_t address, std::size_t bytes) {
@@ -1397,6 +1402,7 @@ private:
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
+    bool sharedImports = false;
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

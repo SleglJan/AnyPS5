@@ -211,6 +211,34 @@ void CheckCpuWritable(AgcDriver::VulkanDevice& device) {
     std::printf("cpu-writable attribute: ok\n");
 }
 
+std::vector<std::pair<std::uintptr_t, std::uint32_t>> refusalClears;
+
+void noteRefusalClear(std::uintptr_t address, std::size_t, std::uint32_t cleared) {
+    refusalClears.emplace_back(address, cleared);
+}
+
+void CheckDirectMappingImportedWithoutResidentCopy(AgcDriver::VulkanDevice& device) {
+    const auto vk = device.Device();
+    constexpr std::size_t Bytes = 0x400000;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(Bytes), nullptr);
+    Require(section != nullptr, "cannot create a direct memory section");
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    auto* other = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    refusalClears.clear();
+    GuestArena::GuestArenaSetGuardRefusalObserver_nid_postfix(&noteRefusalClear);
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, section, 0, PAGE_READWRITE);
+    GuestArena::GuestArenaSetGuardRefusalObserver_nid_postfix(nullptr);
+    std::size_t demoted = 0;
+    for (const auto& [address, cleared] : refusalClears) {
+        if (address >= reinterpret_cast<std::uintptr_t>(memory) && address < reinterpret_cast<std::uintptr_t>(memory) + Bytes && (cleared & GuestArena::RefusalBit(GuestArena::GuardRefusal::ResidentView)) != 0) ++demoted;
+    }
+    Require(demoted == 0, "a direct mapping made while shared imports are attached was made resident and copied back into its section at its import (" + std::to_string(demoted) + " runs)");
+    Require(ImportOf(vk, pageOf(memory)).has_value() && ImportOf(vk, pageOf(memory + Bytes - Page)).has_value(), "a direct mapping was not imported at its mapping");
+    GuestArena::GuestArenaMap_nid_postfix(other, Bytes, section, 0, PAGE_READWRITE);
+    Require(fill(device, memory, Bytes, 0x0e0e0e0eu) && holds(other, Bytes, 0x0e0e0e0eu) && holds(memory, Bytes, 0x0e0e0e0eu), "a GPU fill through the direct mapping's import did not reach its section");
+    std::printf("direct mapping import without a resident copy: ok\n");
+}
+
 }
 #endif
 
@@ -231,6 +259,7 @@ int main() {
         CheckAttach(*device);
         CheckGuardOverImport(*device);
         CheckCpuWritable(*device);
+        CheckDirectMappingImportedWithoutResidentCopy(*device);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "committed import test failed: %s\n", error.what());
         return 1;

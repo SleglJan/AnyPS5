@@ -595,6 +595,10 @@ bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t byte
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
+
+void GuestArenaSetSharedImports_nid_postfix(bool imported) {
+    WindowsMappings::Get().SetSharedImports(imported);
+}
 #endif
 
 #if defined(__linux__)

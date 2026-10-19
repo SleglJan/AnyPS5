@@ -417,6 +417,7 @@ void AttachCommittedImports(const Context& context, bool watched) {
     state.watched = watched;
     attached.store(true, std::memory_order_release);
 #ifdef _WIN32
+    GuestArena::GuestArenaSetSharedImports_nid_postfix(true);
     struct Walk {
         Committed& state;
         std::exception_ptr failure;
@@ -448,6 +449,9 @@ void DetachCommittedImports(VkDevice device) {
     destroyViews(state.context, state.views, state.retired);
     state.viewBytes = 0;
     attached.store(false, std::memory_order_release);
+#ifdef _WIN32
+    GuestArena::GuestArenaSetSharedImports_nid_postfix(false);
+#endif
     state.device = VK_NULL_HANDLE;
     state.context = Context{};
     BumpHostImportsEpoch();
