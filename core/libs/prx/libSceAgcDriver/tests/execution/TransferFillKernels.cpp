@@ -5,6 +5,8 @@
 #include <optional>
 #include <vector>
 
+#ifdef _WIN32
+
 namespace {
 
 using namespace TransferKernels;
@@ -106,7 +108,10 @@ void Run(bool changed) {
 
 }
 
+#endif
+
 int main() {
+#ifdef _WIN32
     try {
         {
             const auto device = OpenVulkanTestDevice();
@@ -123,4 +128,8 @@ int main() {
     if (failures != 0) return 1;
     std::puts("transfer fill kernel tests passed");
     return 0;
+#else
+    std::puts("skipped, the new-path fixture's private pages are Windows-only here");
+    return VulkanTestSkipped;
+#endif
 }

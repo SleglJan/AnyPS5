@@ -379,8 +379,6 @@ void EvictionUnderBudget(Harness& harness) {
 
 }
 
-#endif
-
 void CopyThroughSparse(const SharedPages& pages, std::uint64_t from, std::uint64_t to, std::uint32_t subpage) {
     using namespace AgcDriver::Graphics;
     Locked([&] {
@@ -504,6 +502,7 @@ void RangeAboveBudgetFromImport(Harness& harness) {
     Locked([&] { Residency().Manager().SetBudget(0); });
     Settle();
 }
+#endif
 
 int main() {
 #ifdef _WIN32

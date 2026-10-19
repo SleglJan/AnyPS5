@@ -11,6 +11,10 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "VulkanTestDevice.hpp"
+#ifndef _WIN32
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <sys/mman.h>
+#endif
 #include <array>
 #include <bit>
 #include <cmath>
