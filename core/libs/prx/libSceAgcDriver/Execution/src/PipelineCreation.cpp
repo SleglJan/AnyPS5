@@ -70,7 +70,12 @@ void* RunAtUseCreations(void* argument) {
         pool.tasks.pop_front();
         ++(background ? pool.background : pool.onPool);
         lock.unlock();
-        task();
+        if (background) {
+            const CreationInBackground behind;
+            task();
+        } else {
+            task();
+        }
         task = {};
         lock.lock();
         if (background && --pool.backgroundOutstanding == 0) pool.backgroundDone.notify_all();
@@ -137,6 +142,11 @@ std::atomic<std::uint64_t>& RecordUse::Marks() {
 bool& CreationAhead::Flag() {
     thread_local bool ahead = false;
     return ahead;
+}
+
+bool& CreationInBackground::Flag() {
+    thread_local bool background = false;
+    return background;
 }
 
 std::size_t CreationThread::Words() {

@@ -278,6 +278,61 @@ void RamSide() {
     CreationGate::SetMemorySource(nullptr);
 }
 
+void BackgroundBehindFrames() {
+    using AgcDriver::CreationPool;
+    using AgcDriver::CreationThread;
+    const auto words = CreationThread::Words();
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(4u * words));
+    const auto budget = CreationGate::BudgetWords();
+    std::atomic<bool> release{false};
+    std::thread holder([&] {
+        const CreationGate gate(budget - words);
+        while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    Require(Within(std::chrono::seconds(5), [] { return CreationGate::Creations() == 1u; }), "the holding creation inside a frame was not admitted");
+    std::atomic<bool> frameAdmitted{false};
+    std::thread inFrame([&] {
+        const CreationGate gate(words + 1u);
+        frameAdmitted = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    constexpr std::size_t Variants = 4;
+    std::atomic<std::size_t> admitted{0};
+    std::atomic<std::size_t> running{0};
+    std::atomic<std::size_t> peak{0};
+    std::mutex mutex;
+    std::vector<std::thread::id> threads;
+    for (std::size_t index = 0; index < Variants; ++index) {
+        CreationPool::Later([&] {
+            const CreationGate gate(words);
+            ++admitted;
+            const auto where = CreationThread::Run(words, [&] {
+                const auto now = ++running;
+                auto seen = peak.load();
+                while (now > seen && !peak.compare_exchange_weak(seen, now)) {}
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                --running;
+                return std::this_thread::get_id();
+            });
+            std::lock_guard lock(mutex);
+            threads.push_back(where);
+        });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const auto besideWaitingFrame = admitted.load();
+    const bool frameWaited = !frameAdmitted;
+    release = true;
+    holder.join();
+    inFrame.join();
+    CreationPool::WaitBackground();
+    CreationGate::SetBudgetBytes(CreationGate::EstimateBytes(std::size_t{1} << 20u));
+    Require(frameWaited, "the creation inside a frame did not wait for the holding creation");
+    Require(besideWaitingFrame == 0u, std::to_string(besideWaitingFrame) + " background creations were admitted while a creation inside a frame waited");
+    Require(admitted == Variants && threads.size() == Variants, "the background creations did not all run");
+    Require(peak == 1u, std::to_string(peak.load()) + " large background creations compiled at once");
+    for (const auto& id : threads) Require(id == threads.front(), "large background creations compiled on more than one thread");
+}
+
 void LargeOnOneThread() {
     using AgcDriver::CreationThread;
     const auto words = CreationThread::Words();
@@ -323,6 +378,7 @@ int main() {
         InOrder();
         FramesFirst();
         MemoryHeadroom();
+        BackgroundBehindFrames();
         RamSide();
         LargeOnOneThread();
         std::puts("pipeline creation gate tests passed");

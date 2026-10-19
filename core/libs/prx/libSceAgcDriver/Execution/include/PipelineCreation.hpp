@@ -50,6 +50,21 @@ private:
     bool previous;
 };
 
+class CreationInBackground {
+public:
+    CreationInBackground() : previous(Flag()) { Flag() = true; }
+    ~CreationInBackground() { Flag() = previous; }
+    CreationInBackground(const CreationInBackground&) = delete;
+    CreationInBackground& operator=(const CreationInBackground&) = delete;
+    static bool Active() { return Flag(); }
+    static bool BehindFrames() { return Active() || CreationAhead::Active(); }
+
+private:
+    static bool& Flag();
+
+    bool previous;
+};
+
 class PipelineBudget {
 public:
     static constexpr std::size_t BytesPerWord = 40;
@@ -89,7 +104,7 @@ public:
 
     template<typename TCreate>
     static auto Run(std::size_t words, TCreate&& create) -> decltype(create()) {
-        if (!CreationAhead::Active() || words < Words() || Current()) return create();
+        if (!CreationInBackground::BehindFrames() || words < Words() || Current()) return create();
         using Result = decltype(create());
         std::promise<Result> done;
         auto result = done.get_future();
@@ -169,7 +184,7 @@ public:
             }
             return false;
         };
-        if (CreationAhead::Active()) {
+        if (CreationInBackground::BehindFrames()) {
             const auto ticket = gate.issued++;
             gate.changed.wait(lock, [&] { return ticket == gate.admitted && gate.framesWaiting == 0 && fits(); });
             ++gate.admitted;
