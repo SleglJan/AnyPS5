@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <exception>
 #include <map>
@@ -18,6 +20,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -96,8 +99,31 @@ struct Parked {
     std::vector<ViewNode> retired;
 };
 
+struct PendingImport {
+    std::uint64_t end = 0;
+    void* alias = nullptr;
+    bool started = false;
+};
+
 struct Committed {
+    ~Committed() {
+        std::unique_lock lock(mutex);
+        stopping = true;
+        changed.notify_all();
+        lock.unlock();
+        if (worker.joinable()) worker.join();
+    }
     std::mutex mutex;
+    std::condition_variable changed;
+    std::map<std::uint64_t, PendingImport> pending;
+    std::uint64_t pendingBytes = 0;
+    std::thread worker;
+    bool stopping = false;
+    std::exception_ptr failure;
+    std::uint64_t deferred = 0;
+    std::uint64_t pendingWaits = 0;
+    std::uint64_t pendingWaitNanoseconds = 0;
+    std::uint64_t cancelled = 0;
     VkDevice device = VK_NULL_HANDLE;
     Context context{};
     bool watched = true;
@@ -161,12 +187,25 @@ HostImport makeView(const Context& context, const std::shared_ptr<ImportMemory>&
     return view;
 }
 
-HostImport importRange(const Context& context, std::uint64_t base, std::uint64_t bytes, bool shared) {
-    if (pinnedBytes.load(std::memory_order_relaxed) + bytes > budgetOf(context)) refuse(context, base, bytes, nullptr, VK_SUCCESS);
-    void* alias = nullptr;
+void* mapAlias(std::uint64_t base, std::uint64_t bytes) {
 #ifdef _WIN32
-    if (shared) alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
+    return GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
+#else
+    static_cast<void>(base);
+    static_cast<void>(bytes);
+    return nullptr;
 #endif
+}
+
+void unmapAlias(void* alias) {
+#ifdef _WIN32
+    GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
+#else
+    static_cast<void>(alias);
+#endif
+}
+
+HostImport importHost(const Context& context, std::uint64_t base, std::uint64_t bytes, void* alias) {
     const auto unmapAlias = [&] {
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
@@ -203,6 +242,98 @@ HostImport importRange(const Context& context, std::uint64_t base, std::uint64_t
     if (const auto code = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory); code != VK_SUCCESS) fail("vkAllocateMemory", code);
     const auto owner = std::make_shared<ImportMemory>(context.device, context.Function<PFN_vkFreeMemory>("vkFreeMemory"), memory, base, bytes, alias);
     return makeView(context, owner, buffer, base, base + bytes);
+}
+
+HostImport importRange(const Context& context, std::uint64_t base, std::uint64_t bytes, bool shared) {
+    if (pinnedBytes.load(std::memory_order_relaxed) + bytes > budgetOf(context)) refuse(context, base, bytes, nullptr, VK_SUCCESS);
+    return importHost(context, base, bytes, shared ? mapAlias(base, bytes) : nullptr);
+}
+
+bool pendingOverlaps(const Committed& state, std::uint64_t begin, std::uint64_t end) {
+    auto it = state.pending.upper_bound(begin);
+    if (it != state.pending.begin()) --it;
+    for (; it != state.pending.end() && it->first < end; ++it) {
+        if (it->second.end > begin) return true;
+    }
+    return false;
+}
+
+void awaitImports(Committed& state, std::unique_lock<std::mutex>& lock, std::uint64_t begin, std::uint64_t end) {
+    if (pendingOverlaps(state, begin, end)) {
+        const auto start = std::chrono::steady_clock::now();
+        state.changed.wait(lock, [&] { return !pendingOverlaps(state, begin, end); });
+        ++state.pendingWaits;
+        state.pendingWaitNanoseconds += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    }
+    if (state.failure) std::rethrow_exception(state.failure);
+}
+
+void cancelImports(Committed& state, std::unique_lock<std::mutex>& lock, std::uint64_t begin, std::uint64_t end) {
+    for (auto it = state.pending.lower_bound(begin); it != state.pending.end() && it->first < end;) {
+        if (it->second.started || it->second.end > end) {
+            ++it;
+            continue;
+        }
+        unmapAlias(it->second.alias);
+        state.pendingBytes -= it->second.end - it->first;
+        ++state.cancelled;
+        ++state.generation;
+        it = state.pending.erase(it);
+    }
+    state.changed.wait(lock, [&] { return !pendingOverlaps(state, begin, end); });
+}
+
+void insert(Committed& state, HostImport view);
+void destroyView(const Context& context, HostImport& view);
+
+void runImports(Committed& state) {
+    std::unique_lock lock(state.mutex);
+    for (;;) {
+        auto next = state.pending.end();
+        state.changed.wait(lock, [&] {
+            if (state.stopping) return true;
+            next = std::find_if(state.pending.begin(), state.pending.end(), [](const auto& entry) { return !entry.second.started; });
+            return next != state.pending.end();
+        });
+        if (state.stopping) return;
+        next->second.started = true;
+        const auto base = next->first;
+        const auto end = next->second.end;
+        void* const alias = next->second.alias;
+        const auto context = state.context;
+        lock.unlock();
+        std::optional<HostImport> view;
+        std::exception_ptr failure;
+        try {
+            view = importHost(context, base, end - base, alias);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        lock.lock();
+        state.pending.erase(base);
+        state.pendingBytes -= end - base;
+        ++state.generation;
+        if (failure) {
+            if (!state.failure) state.failure = failure;
+        } else if (state.device == context.device) {
+            insert(state, std::move(*view));
+        } else {
+            destroyView(context, *view);
+        }
+        state.changed.notify_all();
+    }
+}
+
+void stopImports(Committed& state, std::unique_lock<std::mutex>& lock) {
+    cancelImports(state, lock, 0, ~std::uint64_t{0});
+    if (!state.worker.joinable()) return;
+    state.stopping = true;
+    state.changed.notify_all();
+    auto worker = std::move(state.worker);
+    lock.unlock();
+    worker.join();
+    lock.lock();
+    state.stopping = false;
 }
 
 void destroyView(const Context& context, HostImport& view) {
@@ -313,14 +444,45 @@ void importFresh(std::uint64_t address, std::size_t bytes) {
 }
 
 void importShared(std::uint64_t address, std::size_t bytes) {
-    bool watched = true;
-    static_cast<void>(importPieces(address, bytes, true, watched));
+    auto& state = CommittedState();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pieces;
+    VkDevice device = VK_NULL_HANDLE;
+    {
+        std::unique_lock lock(state.mutex);
+        if (state.device == VK_NULL_HANDLE) return;
+        awaitImports(state, lock, address, address + bytes);
+        pieces = uncovered(state, address, address + bytes);
+        device = state.device;
+        std::uint64_t total = 0;
+        for (const auto& [begin, end] : pieces) {
+            total += end - begin;
+            if (pinnedBytes.load(std::memory_order_relaxed) + state.pendingBytes + total > budgetOf(state.context)) refuse(state.context, begin, end - begin, nullptr, VK_SUCCESS);
+        }
+    }
+    std::vector<void*> aliases;
+    aliases.reserve(pieces.size());
+    for (const auto& [begin, end] : pieces) aliases.push_back(mapAlias(begin, end - begin));
+    std::unique_lock lock(state.mutex);
+    for (std::size_t index = 0; index < pieces.size(); ++index) {
+        const auto [begin, end] = pieces[index];
+        if (state.device != device || pendingOverlaps(state, begin, end) || uncovered(state, begin, end) != std::vector<std::pair<std::uint64_t, std::uint64_t>>{{begin, end}}) {
+            unmapAlias(aliases[index]);
+            continue;
+        }
+        state.pending.emplace(begin, PendingImport{end, aliases[index], false});
+        state.pendingBytes += end - begin;
+        ++state.deferred;
+        ++state.generation;
+    }
+    if (!state.worker.joinable()) state.worker = std::thread([&state] { runImports(state); });
+    state.changed.notify_all();
 }
 
 void releaseRange(std::uint64_t address, std::size_t bytes) {
     auto& state = CommittedState();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (state.device == VK_NULL_HANDLE) return;
+    cancelImports(state, lock, address, address + bytes);
     release(state, address, address + bytes);
 }
 
@@ -369,7 +531,7 @@ std::uint64_t CommittedImportPinnedBytes() {
 CommittedImportStats CommittedImportCounters() {
     auto& state = CommittedState();
     std::lock_guard lock(state.mutex);
-    return {state.views.size(), state.viewBytes, pinnedBytes.load(std::memory_order_relaxed), state.retired.size(), state.device != VK_NULL_HANDLE ? budgetOf(state.context) : 0};
+    return {state.views.size(), state.viewBytes, pinnedBytes.load(std::memory_order_relaxed), state.retired.size(), state.device != VK_NULL_HANDLE ? budgetOf(state.context) : 0, state.deferred, state.pendingWaits, state.pendingWaitNanoseconds, state.cancelled, state.pendingBytes};
 }
 
 void NoteGuestMapping(std::uint64_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection) {
@@ -378,7 +540,7 @@ void NoteGuestMapping(std::uint64_t address, std::size_t bytes, GuestArena::Mapp
     if (change == GuestArena::MappingChange::Released) {
         auto& state = CommittedState();
         std::lock_guard lock(state.mutex);
-        if (!overlapsLocked(state, address, address + bytes)) return;
+        if (!overlapsLocked(state, address, address + bytes) && !pendingOverlaps(state, address, address + bytes)) return;
     }
     GuestMemory::RunWithStack(ImportStackBytes, [&] {
         switch (change) {
@@ -399,9 +561,10 @@ void AttachCommittedImports(const Context& context, bool watched) {
     if (context.hostImportAlignment == 0) return;
     GuestMemory::SetMappingListener(&NoteGuestMapping);
     auto& state = CommittedState();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (state.device == context.device) return;
     if (state.device != VK_NULL_HANDLE) {
+        stopImports(state, lock);
         auto& parked = state.parked[state.device];
         parked.context = state.context;
         parked.views.merge(state.views);
@@ -439,8 +602,9 @@ void AttachCommittedImports(const Context& context, bool watched) {
 
 void DetachCommittedImports(VkDevice device) {
     auto& state = CommittedState();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (device == VK_NULL_HANDLE) return;
+    if (state.device == device) stopImports(state, lock);
     if (const auto parked = state.parked.find(device); parked != state.parked.end()) {
         destroyViews(parked->second.context, parked->second.views, parked->second.retired);
         state.parked.erase(parked);
@@ -459,15 +623,19 @@ void DetachCommittedImports(VkDevice device) {
 
 const HostImport* CommittedImportCovering(VkDevice device, std::uint64_t begin, std::uint64_t end) {
     auto& state = CommittedState();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (device == VK_NULL_HANDLE || state.device != device || end <= begin) return nullptr;
+    awaitImports(state, lock, begin, end);
+    if (state.device != device) return nullptr;
     return coveringLocked(state, begin, end);
 }
 
 bool CommittedImportsOverlap(VkDevice device, std::uint64_t begin, std::uint64_t end) {
     auto& state = CommittedState();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (device == VK_NULL_HANDLE || state.device != device || end <= begin) return false;
+    awaitImports(state, lock, begin, end);
+    if (state.device != device) return false;
     return overlapsLocked(state, begin, end);
 }
 
@@ -477,11 +645,17 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedImportRanges(VkDev
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     if (device == VK_NULL_HANDLE || state.device != device) return ranges;
     generation = state.generation;
-    ranges.reserve(state.views.size());
+    ranges.reserve(state.views.size() + state.pending.size());
+    const auto add = [&](std::uint64_t begin, std::uint64_t end) {
+        if (!ranges.empty() && ranges.back().second == begin) ranges.back().second = end;
+        else ranges.emplace_back(begin, end);
+    };
+    auto pending = state.pending.begin();
     for (const auto& [base, view] : state.views) {
-        if (!ranges.empty() && ranges.back().second == view.base) ranges.back().second = view.base + view.bytes;
-        else ranges.emplace_back(view.base, view.base + view.bytes);
+        for (; pending != state.pending.end() && pending->first < base; ++pending) add(pending->first, pending->second.end);
+        add(view.base, view.base + view.bytes);
     }
+    for (; pending != state.pending.end(); ++pending) add(pending->first, pending->second.end);
     return ranges;
 }
 
@@ -497,8 +671,10 @@ std::optional<ImportedPage> ImportOf(VkDevice device, std::uint64_t page) {
     ImportedPage result;
     {
         auto& state = CommittedState();
-        std::lock_guard lock(state.mutex);
+        std::unique_lock lock(state.mutex);
         if (device == VK_NULL_HANDLE || state.device != device) return std::nullopt;
+        awaitImports(state, lock, pageBegin, pageEnd);
+        if (state.device != device) return std::nullopt;
         const auto* view = coveringLocked(state, pageBegin, pageBegin + 1);
         if (view == nullptr) return std::nullopt;
         result.buffer = view->buffer;

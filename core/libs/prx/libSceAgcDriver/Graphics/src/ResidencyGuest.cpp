@@ -135,7 +135,8 @@ void ResidencyGuest::CollectWrites(std::uint64_t address, std::uint64_t bytes) {
 }
 
 std::uint64_t ResidencyGuest::GuestBytes() {
-    return CommittedImportCounters().viewBytes;
+    const auto counters = CommittedImportCounters();
+    return counters.viewBytes + counters.pendingBytes;
 }
 
 void ResidencyGuest::Unguard(std::span<const std::uint64_t> pages) {

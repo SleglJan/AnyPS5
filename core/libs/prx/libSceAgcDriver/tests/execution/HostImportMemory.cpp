@@ -74,10 +74,16 @@ void Touch(std::uint8_t* base, std::uint64_t bytes) {
     for (std::uint64_t offset = 0; offset < bytes; offset += 4096) base[offset] = static_cast<std::uint8_t>(offset >> 12u);
 }
 
-std::uint8_t* MapSection(HANDLE section, std::uint64_t bytes) {
+void AwaitImports(const Graphics::Context& context, const std::uint8_t* address, std::uint64_t bytes) {
+    const auto begin = reinterpret_cast<std::uint64_t>(address);
+    Require(Graphics::CommittedImportsOverlap(context.device, begin, begin + bytes), "host import memory: a mapped range has no committed import");
+}
+
+std::uint8_t* MapSection(const Graphics::Context& context, HANDLE section, std::uint64_t bytes) {
     auto* address = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, PageBytes));
     Require(address != nullptr, "host import memory: cannot reserve guest pages for a view");
     GuestArena::GuestArenaMap_nid_postfix(address, bytes, section, 0, PAGE_READWRITE);
+    AwaitImports(context, address, bytes);
     return address;
 }
 
@@ -126,13 +132,13 @@ void Run(const Graphics::Context& context) {
 
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(SectionBytes), nullptr);
     Require(section != nullptr, "host import memory: cannot create a section");
-    std::vector<std::uint8_t*> views{MapSection(section, SectionBytes)};
+    std::vector<std::uint8_t*> views{MapSection(context, section, SectionBytes)};
     GuestAllocations::Mutation().Add(views[0], SectionBytes, true, true, true);
     Touch(views[0], SectionBytes);
     const auto mapped = Take();
     Print("a 256 MiB section mapped once", runImported, mapped);
     Expect(mapped.committedImports - runImported.committedImports == SectionBytes, "a mapped section view is not imported exactly once");
-    views.push_back(MapSection(section, SectionBytes));
+    views.push_back(MapSection(context, section, SectionBytes));
     GuestAllocations::Mutation().Add(views[1], SectionBytes, true, true, true);
     const auto aliased = Take();
     Print("the same section mapped at a second address", mapped, aliased);
@@ -146,6 +152,7 @@ void Run(const Graphics::Context& context) {
     Require(pair != nullptr, "host import memory: cannot reserve guest pages for adjacent views");
     GuestArena::GuestArenaMap_nid_postfix(pair, SectionBytes / 2, low, 0, PAGE_READWRITE);
     GuestArena::GuestArenaMap_nid_postfix(pair + SectionBytes / 2, SectionBytes / 2, high, 0, PAGE_READWRITE);
+    AwaitImports(context, pair, SectionBytes);
     GuestAllocations::Mutation().Add(pair, SectionBytes, true, true, true);
     Touch(pair, SectionBytes);
     const auto paired = Take();

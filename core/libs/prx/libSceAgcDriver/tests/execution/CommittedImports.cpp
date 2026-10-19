@@ -301,6 +301,88 @@ void CheckFaultsProceedDuringSharedImport(AgcDriver::VulkanDevice& device) {
     std::printf("faults during a shared import: ok\n");
 }
 
+double milliseconds(long long ticks) {
+    LARGE_INTEGER frequency{};
+    QueryPerformanceFrequency(&frequency);
+    return static_cast<double>(ticks) * 1e3 / static_cast<double>(frequency.QuadPart);
+}
+
+long long ticksNow() {
+    LARGE_INTEGER counter{};
+    QueryPerformanceCounter(&counter);
+    return counter.QuadPart;
+}
+
+HANDLE directSection(std::size_t bytes) {
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, static_cast<DWORD>(static_cast<std::uint64_t>(bytes) >> 32u), static_cast<DWORD>(bytes), nullptr);
+    Require(section != nullptr, "cannot create a direct memory section");
+    return section;
+}
+
+void CheckSharedImportLeavesMappingCall(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t Bytes = std::size_t{1} << 30;
+    const auto mapOnce = [&](bool imported) {
+        HANDLE section = directSection(Bytes);
+        auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+        if (!imported) AgcDriver::GuestMemory::SetMappingListener(nullptr);
+        const auto start = ticksNow();
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, section, 0, PAGE_READWRITE);
+        const auto spent = milliseconds(ticksNow() - start);
+        if (!imported) AgcDriver::GuestMemory::SetMappingListener(&NoteGuestMapping);
+        return std::pair{memory, spent};
+    };
+    double loop = 1e9;
+    double call = 1e9;
+    double wait = 0.0;
+    for (int round = 0; round < 2; ++round) {
+        loop = std::min(loop, mapOnce(false).second);
+        const auto [memory, spent] = mapOnce(true);
+        call = std::min(call, spent);
+        const auto start = ticksNow();
+        Require(ImportOf(device.Device(), pageOf(memory + Bytes - Page)).has_value(), "a 1 GiB direct mapping was not imported");
+        wait = std::max(wait, milliseconds(ticksNow() - start));
+    }
+    std::printf("1 GiB direct mapping: page loop alone %.1f ms, mapping call with its shared import %.1f ms, import wait after it %.1f ms\n", loop, call, wait);
+    Require(call < loop + 50.0, "a 1 GiB direct mapping call took " + std::to_string(static_cast<long long>(call)) + " ms against " + std::to_string(static_cast<long long>(loop)) + " ms for the mapping alone: the shared import runs on the mapping thread");
+    std::printf("shared import off the mapping call: ok\n");
+}
+
+void CheckReadAfterMapWaitsForImport(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t Bytes = std::size_t{256} << 20;
+    HANDLE section = directSection(Bytes);
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    auto* other = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    const auto before = CommittedImportCounters();
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, section, 0, PAGE_READWRITE);
+    Require(fill(device, memory + Bytes - Page, Page, 0x1f1f1f1fu), "a GPU fill right after a shared mapping failed");
+    const auto after = CommittedImportCounters();
+    GuestArena::GuestArenaMap_nid_postfix(other, Bytes, section, 0, PAGE_READWRITE);
+    Require(holds(memory + Bytes - Page, Page, 0x1f1f1f1fu) && holds(other + Bytes - Page, Page, 0x1f1f1f1fu), "a GPU fill right after a shared mapping did not reach its section");
+    Require(after.deferredImports > before.deferredImports && after.pendingWaits > before.pendingWaits, "a GPU fill right after a shared mapping did not wait for its pending import (deferred " + std::to_string(after.deferredImports - before.deferredImports) + ", waits " + std::to_string(after.pendingWaits - before.pendingWaits) + ")");
+    std::printf("read after map waits for its import: ok (%.1f ms waited)\n", static_cast<double>(after.pendingWaitNanoseconds - before.pendingWaitNanoseconds) / 1e6);
+}
+
+void CheckRemapDuringPendingImport(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t Bytes = std::size_t{256} << 20;
+    HANDLE first = directSection(Bytes);
+    HANDLE second = directSection(Bytes);
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    auto* firstView = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    auto* secondView = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    for (int round = 0; round < 4; ++round) {
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, round % 2 == 0 ? first : second, 0, PAGE_READWRITE);
+        GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, round % 2 == 0 ? second : first, 0, PAGE_READWRITE);
+    }
+    GuestArena::GuestArenaMap_nid_postfix(firstView, Bytes, first, 0, PAGE_READWRITE);
+    GuestArena::GuestArenaMap_nid_postfix(secondView, Bytes, second, 0, PAGE_READWRITE);
+    std::memset(secondView, 0, Page);
+    Require(fill(device, memory, Page, 0x2e2e2e2eu), "a GPU fill after remapping a range with a pending import failed");
+    Require(holds(firstView, Page, 0x2e2e2e2eu) && holds(memory, Page, 0x2e2e2e2eu), "a GPU fill after remapping a range with a pending import did not reach the section mapped last");
+    Require(holds(secondView, Page, 0u), "a GPU fill after remapping a range with a pending import reached the section mapped before");
+    const auto counters = CommittedImportCounters();
+    std::printf("remap during a pending import: ok (%llu cancelled, %llu pinned MiB)\n", static_cast<unsigned long long>(counters.cancelledImports), static_cast<unsigned long long>(counters.pinnedBytes >> 20u));
+}
+
 }
 #endif
 
@@ -323,6 +405,9 @@ int main() {
         CheckCpuWritable(*device);
         CheckDirectMappingImportedWithoutResidentCopy(*device);
         CheckFaultsProceedDuringSharedImport(*device);
+        CheckSharedImportLeavesMappingCall(*device);
+        CheckReadAfterMapWaitsForImport(*device);
+        CheckRemapDuringPendingImport(*device);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "committed import test failed: %s\n", error.what());
         return 1;

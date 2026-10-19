@@ -24,6 +24,11 @@ struct CommittedImportStats {
     std::uint64_t pinnedBytes = 0;
     std::uint64_t retiredViews = 0;
     std::uint64_t budget = 0;
+    std::uint64_t deferredImports = 0;
+    std::uint64_t pendingWaits = 0;
+    std::uint64_t pendingWaitNanoseconds = 0;
+    std::uint64_t cancelledImports = 0;
+    std::uint64_t pendingBytes = 0;
 };
 
 std::uint64_t GuestImportBudget(const Context& context);
