@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <source_location>
 #include <stdexcept>
 #include <thread>
@@ -487,6 +488,22 @@ static void CheckFixedMappingReplacesPartialOverlap() {
     Require(static_cast<unsigned char*>(fixed)[page * 2 + 7] == 0x5c);
     Require(sceKernelMunmap(fixed, page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
+}
+
+static void CheckFixedRemapAcrossAdjacentAllocations() {
+    constexpr std::size_t page = 0x4000;
+    void* first = nullptr;
+    Require(sceKernelMapFlexibleMemory(&first, page * 2, 3, 0) == 0 && first != nullptr);
+    auto* second = static_cast<unsigned char*>(first) + page;
+    Require(sceKernelMunmap(second, page) == 0);
+    void* placed = second;
+    Require(sceKernelMapFlexibleMemory(&placed, page, 3, 0x10) == 0 && placed == second);
+    void* remapped = first;
+    Require(sceKernelMapFlexibleMemory(&remapped, page * 2, 3, 0x10) == 0 && remapped == first);
+    static_cast<unsigned char*>(first)[3] = 0x31;
+    second[page - 1] = 0x32;
+    Require(static_cast<unsigned char*>(first)[3] == 0x31 && second[page - 1] == 0x32);
+    Require(sceKernelMunmap(first, page * 2) == 0);
 }
 
 static void CheckFixedMappingOverHoleInsideAllocation() {
@@ -2208,6 +2225,190 @@ static void CheckDirectMemorySharedBacking() {
     Require(sceKernelReleaseDirectMemory(right, page) == 0);
 }
 
+namespace {
+
+struct ObservedMapping {
+    std::uintptr_t address;
+    std::size_t bytes;
+    GuestArena::MappingChange change;
+    std::uint32_t protection;
+    bool backingResolved;
+};
+
+std::mutex g_observedMappingsLock;
+std::vector<ObservedMapping> g_observedMappings;
+
+void RecordMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t, GuestArena::MappingChange change, std::uint32_t protection) {
+    bool resolved = false;
+    if (change == GuestArena::MappingChange::Mapped) {
+        int file = -1;
+        std::uint64_t offset = 0;
+        resolved = GuestArena::GuestArenaSharedBacking_nid_postfix(address, bytes, &file, &offset);
+        if (resolved) close(file);
+    }
+    const std::lock_guard lock(g_observedMappingsLock);
+    g_observedMappings.push_back({address, bytes, change, protection, resolved});
+}
+
+void ClearObservedMappings() {
+    const std::lock_guard lock(g_observedMappingsLock);
+    g_observedMappings.clear();
+}
+
+bool ObservedMappingCovers(const void* pointer, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection, bool* backingResolved = nullptr) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    const std::lock_guard lock(g_observedMappingsLock);
+    for (const auto& entry : g_observedMappings) {
+        if (entry.change != change || entry.protection != protection || entry.address > address || address + bytes > entry.address + entry.bytes) continue;
+        if (backingResolved != nullptr) *backingResolved = entry.backingResolved;
+        return true;
+    }
+    return false;
+}
+
+}
+
+static void CheckProtectionChangeOpensImport() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 1, 0) == 0 && memory != nullptr);
+    ClearObservedMappings();
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(&RecordMapping);
+    Require(sceKernelMprotect(memory, page, 3) == 0);
+    Require(ObservedMappingCovers(memory, page, GuestArena::MappingChange::Committed, 0x04));
+    void* remapped = memory;
+    Require(sceKernelMapFlexibleMemory(&remapped, page, 0, 0x10) == 0 && remapped == memory);
+    ClearObservedMappings();
+    Require(sceKernelMprotect(memory, page, 3) == 0);
+    Require(ObservedMappingCovers(memory, page, GuestArena::MappingChange::Committed, 0x04));
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), page));
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(nullptr);
+    Require(sceKernelMunmap(memory, page) == 0);
+}
+
+static void CheckNoAccessSharedViewStaysWatched() {
+    constexpr std::size_t page = 0x4000;
+    const int file = memfd_create("no-access shared view", MFD_CLOEXEC);
+    Require(file >= 0 && ftruncate(file, static_cast<off_t>(page)) == 0);
+    auto* view = GuestArena::GuestArenaAllocate_nid_postfix(page, page);
+    GuestArena::GuestArenaMap_nid_postfix(view, page, file, 0, 0x01);
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(view), page));
+    ClearObservedMappings();
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(&RecordMapping);
+    GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(view), page, 0x04);
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(nullptr);
+    Require(ObservedMappingCovers(view, page, GuestArena::MappingChange::Mapped, 0x04));
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(view), page));
+    GuestArena::GuestArenaReset_nid_postfix(view, page);
+    GuestArena::GuestArenaRelease_nid_postfix(view, page);
+    Require(close(file) == 0);
+}
+
+static void CheckAliasedDirectViewsStayUnwatched() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    void* first = nullptr;
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&first, page, 3, 0, phys, 0) == 0);
+    Require(sceKernelMapDirectMemory(&second, page, 0, 0, phys, 0) == 0);
+    const auto covered = [&] {
+        return GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(first), page) || GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(second), page);
+    };
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(!covered());
+    Require(sceKernelMprotect(second, page, 3) == 0);
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(!covered());
+    Require(sceKernelMunmap(second, page) == 0);
+    Require(sceKernelMunmap(first, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static void UnregisterOnMapped(std::uintptr_t address, std::size_t bytes, std::uint64_t, GuestArena::MappingChange change, std::uint32_t) {
+    if (change == GuestArena::MappingChange::Mapped) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes);
+}
+
+static void CheckUnwatchedDirectMappingStaysUnwatched() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(&UnregisterOnMapped);
+    void* view = nullptr;
+    const int mapped = sceKernelMapDirectMemory(&view, page, 3, 0, phys, 0);
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(nullptr);
+    Require(mapped == 0);
+    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(view), page));
+    Require(sceKernelMunmap(view, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static void CheckUnwatchedCommitStaysUnwatchedWhenReopened() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, page);
+    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), page));
+    Require(sceKernelMprotect(memory, page, 0) == 0);
+    Require(sceKernelMprotect(memory, page, 3) == 0);
+    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(memory), page));
+    Require(sceKernelMunmap(memory, page) == 0);
+}
+
+static void CheckMappingWalkReportsPlacedViewsOnly() {
+    constexpr std::size_t page = 0x4000;
+    struct Walk {
+        std::uintptr_t address;
+        std::size_t bytes;
+        bool seen;
+        GuestArena::MappingChange change;
+        std::uint32_t protection;
+    };
+    const auto walk = [](Walk& result) {
+        result.seen = false;
+        GuestArena::GuestArenaForEachMapping_nid_postfix([](void* context, std::uintptr_t address, std::size_t bytes, GuestArena::MappingChange change, std::uint32_t protection) {
+            auto& result = *static_cast<Walk*>(context);
+            if (address >= result.address + result.bytes || result.address >= address + bytes) return;
+            result.seen = true;
+            result.change = change;
+            result.protection = protection;
+        }, &result);
+    };
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    void* view = nullptr;
+    Require(sceKernelMapDirectMemory(&view, page, 3, 0, phys, 0) == 0);
+    Walk placed{reinterpret_cast<std::uintptr_t>(view), page, false, GuestArena::MappingChange::Released, 0};
+    walk(placed);
+    Require(placed.seen && placed.change == GuestArena::MappingChange::Mapped && placed.protection == 0x04);
+    const int file = memfd_create("guest file mapping", MFD_CLOEXEC);
+    Require(file >= 0 && ftruncate(file, static_cast<off_t>(page)) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMmap(nullptr, page, 3, 0x1, file, 0, &mapped) == 0 && mapped != nullptr);
+    Walk guestFile{reinterpret_cast<std::uintptr_t>(mapped), page, false, GuestArena::MappingChange::Released, 0};
+    walk(guestFile);
+    Require(!guestFile.seen);
+    Require(sceKernelMunmap(mapped, page) == 0);
+    Require(close(file) == 0);
+    Require(sceKernelMunmap(view, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
+static void CheckMappingObserverResolvesDirectBacking() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &phys) == 0);
+    ClearObservedMappings();
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(&RecordMapping);
+    void* view = nullptr;
+    Require(sceKernelMapDirectMemory(&view, page, 3, 0, phys, 0) == 0);
+    GuestArena::GuestArenaSetMappingObserver_nid_postfix(nullptr);
+    bool resolved = false;
+    Require(ObservedMappingCovers(view, page, GuestArena::MappingChange::Mapped, 0x04, &resolved) && resolved);
+    Require(sceKernelMunmap(view, page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+}
+
 static void CheckDirectMemoryWriteWatch() {
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         std::puts("write watch unavailable: direct memory not tested");
@@ -2614,6 +2815,7 @@ int main(int argc, char** argv) {
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();
     CheckFixedMappingOverHoleInsideAllocation();
+    CheckFixedRemapAcrossAdjacentAllocations();
     CheckDirectMemoryGpuProtBits();
     CheckSplitPrivateCollect();
     CheckGpuAccessFollowsProtection();
@@ -2665,6 +2867,13 @@ int main(int argc, char** argv) {
     CheckMappingCostFollowsTheMappingCount();
     CheckDirectMemoryBackingNeedsNoFilesystem();
     CheckDirectMemorySharedBacking();
+    CheckProtectionChangeOpensImport();
+    CheckNoAccessSharedViewStaysWatched();
+    CheckAliasedDirectViewsStayUnwatched();
+    CheckUnwatchedDirectMappingStaysUnwatched();
+    CheckUnwatchedCommitStaysUnwatchedWhenReopened();
+    CheckMappingWalkReportsPlacedViewsOnly();
+    CheckMappingObserverResolvesDirectBacking();
     CheckVirtualQueryFindsNeighbours();
     CheckReleaseFindsEveryDirectMapping();
     CheckRegularFileMapping();

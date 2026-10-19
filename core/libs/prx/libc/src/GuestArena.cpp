@@ -27,7 +27,6 @@
 namespace GuestArena {
 namespace {
 
-#ifdef _WIN32
 std::atomic<std::uint64_t> commitGeneration{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t, std::uint64_t, MappingChange, std::uint32_t)> mappingObserver{nullptr};
 
@@ -35,6 +34,7 @@ void notifyMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t gene
     if (const auto callback = mappingObserver.load(std::memory_order_acquire)) callback(address, bytes, generation, change, protection);
 }
 
+#ifdef _WIN32
 void notifyRefusalClears();
 
 void notifyDemoted() {
@@ -132,9 +132,19 @@ public:
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
         const auto end = start + bytes;
-        const auto exact = _used.find(start);
-        if (exact != _used.end() && exact->second >= end) return false;
+        if (OverlapsHostRegion(start, bytes)) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "guest arena commit 0x%llx+0x%zx overlaps a host region", static_cast<unsigned long long>(start), bytes);
+            throw std::runtime_error(message);
+        }
         const auto next = _used.lower_bound(start);
+        auto covering = _used.upper_bound(start);
+        if (covering != _used.begin()) {
+            --covering;
+            auto reach = covering->second;
+            for (auto chain = std::next(covering); reach < end && chain != _used.end() && chain->first == reach; ++chain) reach = chain->second;
+            if (reach >= end) return false;
+        }
         if ((next != _used.end() && next->first < end) || (next != _used.begin() && std::prev(next)->second > start)) {
             char message[160];
             std::snprintf(message, sizeof(message), "guest arena commit 0x%llx+0x%zx overlaps a used range", static_cast<unsigned long long>(start), bytes);
@@ -502,14 +512,6 @@ bool GuestArenaHostRegionOverlaps_nid_postfix(std::uintptr_t address, std::size_
     return Arena::Get().OverlapsHostRegion(address, bytes);
 }
 
-std::uint64_t GuestArenaCommitGeneration_nid_postfix() {
-    return commitGeneration.load(std::memory_order_acquire);
-}
-
-void GuestArenaSetMappingObserver_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, std::uint64_t, MappingChange, std::uint32_t)) {
-    mappingObserver.store(callback, std::memory_order_release);
-}
-
 void GuestArenaForEachMapping_nid_postfix(void (*callback)(void*, std::uintptr_t, std::size_t, MappingChange, std::uint32_t), void* context) {
     auto& arena = Arena::Get();
     const auto end = arena.Base() + arena.Size();
@@ -560,7 +562,7 @@ void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     notifyDemoted();
 }
 
-void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
+void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, MappingHandle section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
@@ -619,23 +621,109 @@ int PosixProtection(std::uint32_t windowsProtection) {
 void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
     return mmap(pointer, bytes, PosixProtection(protection), MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 }
+
+enum class PlacementKind : std::uint8_t { Anonymous, Shared };
+
+struct Placement {
+    std::uintptr_t end;
+    PlacementKind kind;
+    std::uint32_t protection;
+};
+
+struct Placements {
+    std::mutex mutex;
+    std::map<std::uintptr_t, Placement> ranges;
+};
+
+Placements& PlacementTable() {
+    static auto& placements = *new Placements;
+    return placements;
+}
+
+void cutPlacements(std::map<std::uintptr_t, Placement>& ranges, std::uintptr_t begin, std::uintptr_t end) {
+    auto it = ranges.upper_bound(begin);
+    if (it != ranges.begin()) --it;
+    while (it != ranges.end() && it->first < end) {
+        const auto rangeBegin = it->first;
+        const auto range = it->second;
+        if (range.end <= begin) {
+            ++it;
+            continue;
+        }
+        it = ranges.erase(it);
+        if (rangeBegin < begin) ranges.emplace(rangeBegin, Placement{begin, range.kind, range.protection});
+        if (range.end > end) it = ranges.emplace(end, Placement{range.end, range.kind, range.protection}).first;
+    }
+}
+
+void RecordPlacement(std::uintptr_t begin, std::size_t bytes, PlacementKind kind, std::uint32_t protection) {
+    auto& table = PlacementTable();
+    std::lock_guard lock(table.mutex);
+    cutPlacements(table.ranges, begin, begin + bytes);
+    table.ranges.emplace(begin, Placement{begin + bytes, kind, protection});
+}
+
+void ErasePlacements(std::uintptr_t begin, std::size_t bytes) {
+    auto& table = PlacementTable();
+    std::lock_guard lock(table.mutex);
+    cutPlacements(table.ranges, begin, begin + bytes);
+}
+
+std::vector<std::pair<std::uintptr_t, Placement>> PlacementsWithin(std::uintptr_t begin, std::uintptr_t end) {
+    std::vector<std::pair<std::uintptr_t, Placement>> within;
+    auto& table = PlacementTable();
+    std::lock_guard lock(table.mutex);
+    auto it = table.ranges.upper_bound(begin);
+    if (it != table.ranges.begin()) --it;
+    for (; it != table.ranges.end() && it->first < end; ++it) {
+        if (it->second.end <= begin) continue;
+        within.emplace_back(std::max(begin, it->first), Placement{std::min(end, it->second.end), it->second.kind, it->second.protection});
+    }
+    return within;
+}
+
+bool OpensForImport(const Placement& placement, std::uint32_t protection) {
+    return placement.protection != 0x04 && protection == 0x04;
+}
 }
 #endif
 
 #if defined(__linux__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
-    if (mprotect(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)) != 0)
+    const auto native = PosixProtection(protection);
+    const auto placed = PlacementsWithin(address, address + bytes);
+    if (mprotect(reinterpret_cast<void*>(address), bytes, native) != 0)
         throw std::system_error(errno, std::generic_category(), "guest arena protection failed");
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    try {
+        for (const auto& [begin, placement] : placed) {
+            if (!OpensForImport(placement, protection)) continue;
+            notifyMapping(begin, static_cast<std::size_t>(placement.end - begin), generation, placement.kind == PlacementKind::Anonymous ? MappingChange::Committed : MappingChange::Mapped, protection);
+        }
+    } catch (...) {
+        for (const auto& [begin, placement] : placed) mprotect(reinterpret_cast<void*>(begin), placement.end - begin, PosixProtection(placement.protection));
+        throw;
+    }
+    for (const auto& [begin, placement] : placed) RecordPlacement(begin, placement.end - begin, placement.kind, protection);
 }
 
 void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
     (void)granule;
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
+    static_cast<void>(PosixProtection(protection));
     const bool marked = Arena::Get().MarkUsedForCommit(pointer, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     try {
         if (PlaceAt(pointer, bytes, protection) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena commit failed");
+        RecordPlacement(address, bytes, PlacementKind::Anonymous, protection);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pointer, bytes);
+        notifyMapping(address, bytes, generation, MappingChange::Committed, protection);
     } catch (...) {
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pointer, bytes);
+        ErasePlacements(address, bytes);
+        PlaceAt(pointer, bytes, 0x01);
         if (marked) Arena::Get().Release(pointer, bytes);
         throw;
     }
@@ -643,13 +731,117 @@ void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_
 
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pointer, bytes);
+    ErasePlacements(reinterpret_cast<std::uintptr_t>(pointer), bytes);
     if (PlaceAt(pointer, bytes, 0x01) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena reset failed");
+    notifyMapping(reinterpret_cast<std::uintptr_t>(pointer), bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
+}
+
+void GuestArenaDetach_nid_postfix(void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("detach", pointer, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pointer, bytes);
+    ErasePlacements(address, bytes);
+    notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
+}
+
+void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, MappingHandle section, std::uint64_t offset, std::uint32_t protection) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("shared mapping", pointer, bytes);
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Released, 0);
+    if (mmap(pointer, bytes, PosixProtection(protection), MAP_SHARED | MAP_FIXED, section, static_cast<off_t>(offset)) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena shared mapping failed");
+    RecordPlacement(address, bytes, PlacementKind::Shared, protection);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pointer, bytes);
+    if (protection != 0x01) notifyMapping(address, bytes, commitGeneration.load(std::memory_order_acquire), MappingChange::Mapped, protection);
+}
+
+namespace {
+
+std::uint32_t WindowsProtection(const std::string& permissions) {
+    const bool read = permissions.size() > 0 && permissions[0] == 'r';
+    const bool write = permissions.size() > 1 && permissions[1] == 'w';
+    const bool execute = permissions.size() > 2 && permissions[2] == 'x';
+    if (execute) return write ? 0x40u : read ? 0x20u : 0x10u;
+    if (write) return 0x04u;
+    return read ? 0x02u : 0x01u;
+}
+
+}
+
+void GuestArenaForEachMapping_nid_postfix(void (*callback)(void*, std::uintptr_t, std::size_t, MappingChange, std::uint32_t), void* context) {
+    auto& arena = Arena::Get();
+    const auto arenaEnd = arena.Base() + arena.Size();
+    std::ifstream maps("/proc/self/maps");
+    if (!maps.is_open()) throw std::system_error(errno, std::generic_category(), "query the guest arena mappings");
+    std::uintptr_t runBegin = 0;
+    std::uintptr_t runEnd = 0;
+    MappingChange runChange = MappingChange::Committed;
+    std::uint32_t runProtection = 0;
+    const auto flush = [&] {
+        if (runEnd > runBegin) callback(context, runBegin, runEnd - runBegin, runChange, runProtection);
+        runBegin = runEnd = 0;
+    };
+    const auto report = [&](std::uintptr_t pieceBegin, std::uintptr_t pieceEnd, MappingChange change, std::uint32_t protection) {
+        if (runEnd != pieceBegin || change != runChange || protection != runProtection) {
+            flush();
+            runBegin = pieceBegin;
+            runChange = change;
+            runProtection = protection;
+        }
+        runEnd = pieceEnd;
+    };
+    std::string line;
+    while (std::getline(maps, line)) {
+        std::istringstream fields(line);
+        std::uintptr_t begin = 0, end = 0, offset = 0;
+        char dash = 0;
+        std::string permissions, device, path;
+        std::uint64_t inode = 0;
+        if (!(fields >> std::hex >> begin >> dash >> end >> permissions >> offset >> device >> std::dec >> inode) || dash != '-' || end <= begin)
+            throw std::runtime_error("guest arena: malformed /proc/self/maps line");
+        fields >> path;
+        if (end <= arena.Base() || begin >= arenaEnd) continue;
+        begin = std::max(begin, arena.Base());
+        end = std::min(end, arenaEnd);
+        const bool shared = permissions.size() > 3 && permissions[3] == 's';
+        const auto protection = WindowsProtection(permissions);
+        if (protection == 0x01u || arena.OverlapsHostRegion(begin, end - begin)) {
+            flush();
+            continue;
+        }
+        if (shared) {
+            auto cursor = begin;
+            for (const auto& [placedBegin, placement] : PlacementsWithin(begin, end)) {
+                if (placement.kind != PlacementKind::Shared) continue;
+                if (placedBegin > cursor) flush();
+                report(placedBegin, placement.end, MappingChange::Mapped, protection);
+                cursor = placement.end;
+            }
+            if (cursor < end) flush();
+            continue;
+        }
+        if (inode != 0 || !path.empty()) {
+            flush();
+            continue;
+        }
+        report(begin, end, MappingChange::Committed, protection);
+    }
+    flush();
 }
 #endif
 
 bool GuestArenaWriteWatched_nid_postfix() {
     return Arena::Get().WriteWatched();
 }
+
+std::uint64_t GuestArenaCommitGeneration_nid_postfix() {
+    return commitGeneration.load(std::memory_order_acquire);
+}
+
+void GuestArenaSetMappingObserver_nid_postfix(void (*callback)(std::uintptr_t, std::size_t, std::uint64_t, MappingChange, std::uint32_t)) {
+    mappingObserver.store(callback, std::memory_order_release);
+}
+
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32
