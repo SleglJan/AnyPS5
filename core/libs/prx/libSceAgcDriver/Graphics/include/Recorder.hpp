@@ -237,6 +237,7 @@ public:
     using Token = std::array<std::uint64_t, MaxRecorderStreams>;
     Token CallerToken();
     Token AllToken() const;
+    std::uint64_t CallerOpenValue() const;
     bool Reached(const Token& token) const;
     void WaitToken(const Token& token);
     bool WaitTokenUnlocked(const Token& token);

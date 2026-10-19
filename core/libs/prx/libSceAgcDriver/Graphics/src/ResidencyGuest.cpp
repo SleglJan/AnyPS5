@@ -74,6 +74,12 @@ std::uint64_t ResidencyGuest::ImportStamp() {
     return GuestMemory::HostImportStamp();
 }
 
+std::optional<ResidencyReuseStamp> ResidencyGuest::ReuseStamp() {
+    const auto collect = GuestMemory::ThreadCollectEpoch();
+    if (collect == 0) return std::nullopt;
+    return ResidencyReuseStamp{GuestMemory::TrackerGeneration(), collect, Graphics::CommittedImportGeneration(device), GuestMemory::HostImportStamp()};
+}
+
 void ResidencyGuest::SettleImport(std::uint64_t page, std::uint64_t stamp) {
     GuestMemory::SettleHostImports(page << ResidencyPageShift, static_cast<std::size_t>(ResidencyPageBytes), stamp);
 }

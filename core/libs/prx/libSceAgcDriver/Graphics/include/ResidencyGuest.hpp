@@ -28,6 +28,7 @@ public:
     void SettleImport(std::uint64_t page, std::uint64_t stamp) override;
     std::vector<ResidencyRange> WholeImports(std::uint64_t& generation) override;
     std::uint64_t GuestBytes() override;
+    std::optional<ResidencyReuseStamp> ReuseStamp() override;
     void CollectWrites(std::uint64_t address, std::uint64_t bytes) override;
     ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;
 

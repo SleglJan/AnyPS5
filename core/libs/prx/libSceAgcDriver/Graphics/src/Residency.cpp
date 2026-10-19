@@ -800,6 +800,7 @@ void ResidencyManager::linkNewest(std::uint32_t id) {
 }
 
 void ResidencyManager::changed(std::uint64_t page) {
+    ++reuseVersion;
     changes.insert(page);
     if (changeLog.empty()) changeLog.resize(ChangeLogPages);
     changeLog[serial % ChangeLogPages] = static_cast<std::uint32_t>(page);
@@ -1176,6 +1177,7 @@ void ResidencyManager::applyDrops() {
         eraseUnsettledIf(writingBack, UnsettledWriteBack, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         std::erase_if(hot, [&](const auto& entry) { return entry.first >= span.first && entry.first <= span.last; });
         refused.erase(refused.lower_bound(span.first), refused.upper_bound(span.last));
+        ++reuseVersion;
         for (auto it = accessGuards.begin(); it != accessGuards.end();) {
             if (*it < span.first || *it > span.last) {
                 ++it;
@@ -1212,6 +1214,7 @@ void ResidencyManager::applyQueued() {
         gpuWritten.swap(gpuQueue);
     }
     for (const auto& range : gpuWritten) applyRecorded(range.address, range.bytes);
+    if (!gpuWritten.empty() || applied != unboundedApplied) ++reuseVersion;
     unboundedApplied = std::max(unboundedApplied, applied);
     liftUnboundedGuards();
     std::vector<std::uint64_t> written;
@@ -1222,6 +1225,7 @@ void ResidencyManager::applyQueued() {
         clears.swap(refusalQueue);
         queued.store(!dropQueue.empty() || !gpuQueue.empty(), std::memory_order_release);
     }
+    if (!clears.empty() || !written.empty()) ++reuseVersion;
     if (!clears.empty()) applyRefusalClears(clears);
     if (!written.empty()) applyFaults(std::move(written));
 }
@@ -1415,6 +1419,7 @@ void ResidencyManager::coolHot(std::uint64_t first, std::span<const std::uint8_t
         }
         if (now - entry->second.frame < quietFrames) continue;
         hot.erase(entry);
+        ++reuseVersion;
         ++counts.cooled;
     }
 }
@@ -1558,6 +1563,7 @@ void ResidencyManager::Pin(std::uint64_t address, std::uint64_t bytes, Residency
         page.used = true;
         page.pin = MergeTokens(page.pin, token);
         if (access == ResidencyAccess::Write) {
+            ++reuseVersion;
             addUnsettled(writers, page.index, token, UnsettledWriter);
         }
     }
@@ -1606,9 +1612,15 @@ void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, Residency
 }
 
 ResidencyRangeState ResidencyManager::UseRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest) {
+    bool stable = false;
+    return useRange(address, bytes, largest, stable);
+}
+
+ResidencyRangeState ResidencyManager::useRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest, bool& stable) {
     const std::lock_guard structureLock(structure);
     applyQueued();
     const auto span = PagesOf(address, bytes);
+    stable = true;
     if (span.empty) return ResidencyRangeState::Uniform;
     std::vector<std::uint64_t> served;
     bool admissible = true;
@@ -1635,6 +1647,7 @@ ResidencyRangeState ResidencyManager::UseRange(std::uint64_t address, std::uint6
             ++counts.completedRanges;
             return ResidencyRangeState::Completed;
         }
+        stable = false;
         if (!mixed) ++counts.mixedRanges;
     } else if (!mixed) {
         return ResidencyRangeState::Uniform;
@@ -1648,6 +1661,7 @@ ResidencyRangeState ResidencyManager::UseRange(std::uint64_t address, std::uint6
         else kept = true;
     }
     demote(clean);
+    stable = false;
     if (kept) {
         Pin(address, bytes, ResidencyAccess::Read, device.Current());
         ++counts.rangeConflicts;
@@ -1655,6 +1669,40 @@ ResidencyRangeState ResidencyManager::UseRange(std::uint64_t address, std::uint6
     }
     ++counts.demotedRanges;
     return ResidencyRangeState::Demoted;
+}
+
+void ResidencyManager::UseRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t largest) {
+    const std::lock_guard structureLock(structure);
+    const auto stamp = device.ReuseStamp();
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    for (const auto& [begin, end] : ranges) key = ((key ^ begin) * 0x100000001b3ull ^ end) * 0x100000001b3ull;
+    const auto keyed = [&] { return stamp && !queued.load(std::memory_order_acquire); };
+    if (keyed()) {
+        if (reuseKeyVersion != reuseVersion || reuseFrame != Frame() || reuseEpoch != Epoch() || !(reuseStamp == *stamp)) {
+            reused.clear();
+            reuseKeyVersion = reuseVersion;
+            reuseFrame = Frame();
+            reuseEpoch = Epoch();
+            reuseStamp = *stamp;
+        } else if (const auto found = reused.find(key); found != reused.end() && std::ranges::equal(found->second, ranges)) {
+            ++counts.rangeSetsReused;
+            return;
+        }
+    }
+    const auto before = reuseVersion;
+    bool stable = true;
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        bool rangeStable = false;
+        useRange(begin, end - begin, largest, rangeStable);
+        stable = stable && rangeStable;
+    }
+    ++counts.rangeSetsUsed;
+    if (!stable || !keyed() || reuseVersion != before || reuseKeyVersion != before || reuseFrame != Frame() || reuseEpoch != Epoch()) return;
+    const auto after = device.ReuseStamp();
+    if (!after || !(*after == *stamp)) return;
+    if (reused.size() >= 256) reused.clear();
+    reused.insert_or_assign(key, std::vector<std::pair<std::uint64_t, std::uint64_t>>(ranges.begin(), ranges.end()));
 }
 
 void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
@@ -1961,6 +2009,7 @@ void ResidencyManager::QueueCpuWritten(std::span<const std::uint64_t> written) {
 
 void ResidencyManager::NoteGpuWritten(std::uint64_t address, std::uint64_t bytes, bool written) {
     const std::lock_guard structureLock(structure);
+    ++reuseVersion;
     const auto span = PagesOf(address, bytes);
     if (span.empty) return;
     std::vector<std::uint32_t> unguardable;
@@ -2218,6 +2267,7 @@ void ResidencyManager::markHot(std::uint64_t page, std::uint64_t at) {
     const auto [entry, inserted] = hotResident.insert_or_assign(page, at);
     static_cast<void>(entry);
     if (!inserted) return;
+    ++reuseVersion;
     auto next = hotRuns.upper_bound(page);
     auto first = page;
     auto last = page;
@@ -2237,6 +2287,7 @@ void ResidencyManager::markHot(std::uint64_t page, std::uint64_t at) {
 
 void ResidencyManager::unmarkHot(std::uint64_t page) {
     if (hotResident.erase(page) == 0) return;
+    ++reuseVersion;
     auto run = std::prev(hotRuns.upper_bound(page));
     const auto first = run->first;
     const auto last = run->second;
@@ -2271,6 +2322,7 @@ void ResidencyManager::leaveForImport(std::uint64_t page, std::uint64_t at) {
 void ResidencyManager::noteRefused(std::uint64_t page, ResidencyRefusal refusal) {
     ++counts.refusals[static_cast<std::size_t>(refusal)];
     refused.insert_or_assign(page, refusal);
+    ++reuseVersion;
 }
 
 void ResidencyManager::QueueRefusalCleared(std::uint64_t address, std::uint64_t bytes, std::uint32_t cleared) {
@@ -2300,6 +2352,7 @@ void ResidencyManager::applyRefusalClears(std::span<const std::tuple<std::uint64
             ++counts.refusalRetries;
             if (const auto id = find(it->first); id && !pages[*id].guarded) retry.push_back(*id);
             it = refused.erase(it);
+            ++reuseVersion;
         }
     }
     for (const auto id : retry) {
@@ -2333,6 +2386,7 @@ void ResidencyManager::serveHotFromImports() {
     const auto now = Frame();
     for (const auto index : served) {
         if (!refused.contains(index)) hot.insert_or_assign(index, Cooling{generation, now});
+        ++reuseVersion;
     }
 }
 

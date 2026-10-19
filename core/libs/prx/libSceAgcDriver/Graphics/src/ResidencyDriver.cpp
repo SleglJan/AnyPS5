@@ -287,9 +287,7 @@ void ResidencyDriver::UseForRead(std::span<const std::pair<std::uint64_t, std::u
     constexpr std::uint64_t largest = std::uint64_t{8u} << 20u;
     const std::lock_guard lock(GuestMemory::GpuMutex());
     const std::lock_guard structureLock(manager.Mutex());
-    for (const auto& [begin, end] : ranges) {
-        if (end > begin) manager.UseRange(begin, end - begin, largest);
-    }
+    manager.UseRanges(ranges, largest);
 }
 
 void ResidencyDriver::CountMixedRanges(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
@@ -542,6 +540,14 @@ bool ResidencyDriver::ImportSettled(std::uint64_t page) {
 
 std::uint64_t ResidencyDriver::ImportStamp() {
     return guest.ImportStamp();
+}
+
+std::optional<ResidencyReuseStamp> ResidencyDriver::ReuseStamp() {
+    auto stamp = guest.ReuseStamp();
+    if (!stamp) return std::nullopt;
+    stamp->batch = recorder.CallerOpenValue();
+    if (stamp->batch == 0) return std::nullopt;
+    return stamp;
 }
 
 void ResidencyDriver::SettleImport(std::uint64_t page, std::uint64_t stamp) {

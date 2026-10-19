@@ -154,6 +154,8 @@ public:
     std::uint64_t guestBytes = 0;
     std::vector<ResidencyRange> wholeImports;
     std::uint64_t importsGeneration = 1;
+    std::uint64_t collectEpoch = 0;
+    std::uint64_t importQueries = 0;
     std::map<std::uint64_t, ResidencyToken> modelPins;
     std::uint64_t hostImports = 0;
     std::map<std::uint64_t, std::uint64_t> hostImported;
@@ -185,6 +187,7 @@ public:
     ResidencyToken Current() override { return CallerToken(caller); }
 
     ResidencyImport Import(std::uint64_t page) override {
+        ++importQueries;
         const auto found = imports.find(page);
         if (found == imports.end()) return {};
         return found->second.attributes;
@@ -344,6 +347,12 @@ public:
     }
 
     std::uint64_t GuestBytes() override { return guestBytes; }
+
+    std::optional<ResidencyReuseStamp> ReuseStamp() override {
+        const auto& batches = streams[caller].batches;
+        if (collectEpoch == 0 || batches.empty() || batches.back().submitted) return std::nullopt;
+        return ResidencyReuseStamp{generation, collectEpoch, importsGeneration, hostImports, batches.back().value};
+    }
 
     static ResidencyMask MaskOf(const ResidencyCopy& copy) {
         return SubpageMask(copy.page, Address(copy.page) + copy.offset, copy.bytes);
@@ -1695,6 +1704,83 @@ void EvictedAliasKeepsSharedGuard() {
     fixture.gpu.Drain();
 }
 
+void UnchangedRangesReused() {
+    scope = "unchanged ranges reused";
+    constexpr std::uint64_t largest = std::uint64_t{8} << 20;
+    Fixture fixture(8, 2);
+    fixture.Share(BasePage + 4);
+    fixture.gpu.collectEpoch = 1;
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges{{Address(BasePage + 0), Address(BasePage + 2)}, {Address(BasePage + 4), Address(BasePage + 5)}};
+    const auto draw = [&] {
+        fixture.gpu.caller = 0;
+        fixture.manager->UseRanges(ranges, largest);
+    };
+    draw();
+    draw();
+    const auto queries = fixture.gpu.importQueries;
+    const auto before = fixture.manager->Counts();
+    for (int index = 0; index < 8; ++index) draw();
+    auto counts = fixture.manager->Counts();
+    Expect(counts.rangeSetsReused - before.rangeSetsReused == 8 && counts.rangeSetsUsed == before.rangeSetsUsed, "8 draws with unchanged ranges and residency reuse the previous use");
+    Expect(fixture.gpu.importQueries == queries, "and do no per-page work");
+    Expect(fixture.manager->Slot(BasePage + 0) && fixture.manager->Slot(BasePage + 1) && fixture.manager->Slot(BasePage + 4), "the ranges are resident");
+
+    const auto rebuilds = [&](const char* what) {
+        const auto used = fixture.manager->Counts().rangeSetsUsed;
+        draw();
+        Expect(fixture.manager->Counts().rangeSetsUsed == used + 1, std::string("a draw after ") + what + " rebuilds");
+    };
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> other{{Address(BasePage + 0), Address(BasePage + 1)}};
+    fixture.manager->UseRanges(other, largest);
+    fixture.manager->UseRanges(other, largest);
+    {
+        const auto used = fixture.manager->Counts().rangeSetsUsed;
+        draw();
+        Expect(fixture.manager->Counts().rangeSetsUsed == used, "another draw's ranges in between do not invalidate the first");
+    }
+
+    fixture.manager->Demote(Address(BasePage + 1), ResidencyPageBytes);
+    Expect(!fixture.manager->Slot(BasePage + 1), "the demote took page 1 out");
+    rebuilds("a demote");
+    Expect(fixture.manager->Slot(BasePage + 1).has_value(), "the rebuild admits page 1 again");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 1, 0x0001, (std::uint64_t{1} << 8) | 0);
+    fixture.gpu.Drain();
+    draw();
+    draw();
+
+    fixture.manager->AdmitTouched(std::vector<std::uint64_t>{BasePage + 6});
+    Expect(fixture.manager->Slot(BasePage + 6).has_value(), "page 6 admitted by a touch");
+    rebuilds("an admission");
+    draw();
+
+    fixture.gpu.CpuWrite(BasePage + 0, 0x0001, 77);
+    rebuilds("a CPU write to a page in the range");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 0, 0x0001, 77);
+    fixture.gpu.Drain();
+    draw();
+    draw();
+
+    fixture.manager->Prepare();
+    fixture.gpu.CpuWrite(BasePage + 4, 0x0002, 81);
+    fixture.manager->Prepare();
+    fixture.gpu.Drain();
+    fixture.manager->NextFrame();
+    fixture.gpu.CpuWrite(BasePage + 4, 0x0002, 82);
+    fixture.manager->Prepare();
+    fixture.gpu.Drain();
+    fixture.manager->Prepare();
+    Expect(fixture.manager->Hot(BasePage + 4), "page 4 marked hot by its faults");
+    rebuilds("a hot mark");
+    fixture.gpu.RecordTitle(FakeGpu::Kind::Read, BasePage + 4, 0x0002, 82);
+    fixture.gpu.Drain();
+
+    fixture.gpu.collectEpoch = 0;
+    draw();
+    const auto used = fixture.manager->Counts().rangeSetsUsed;
+    draw();
+    Expect(fixture.manager->Counts().rangeSetsUsed == used + 1, "without a reuse stamp every draw does the per-page work");
+}
+
 void PublicationAndRanges() {
     scope = "publication and ranges";
     Fixture fixture(8, 2);
@@ -2126,6 +2212,7 @@ int main() {
         CanonicalAliases();
         EvictedAliasKeepsSharedGuard();
         PublicationAndRanges();
+        UnchangedRangesReused();
         ConcurrentHooks();
         HostOverhead();
         RandomSequences();

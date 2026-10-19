@@ -55,6 +55,7 @@ public:
         static_cast<void>(stamp);
     }
     virtual std::uint64_t GuestBytes() = 0;
+    virtual std::optional<ResidencyReuseStamp> ReuseStamp() { return std::nullopt; }
     virtual void CollectWrites(std::uint64_t address, std::uint64_t bytes) {
         static_cast<void>(address);
         static_cast<void>(bytes);
@@ -172,6 +173,7 @@ public:
     std::uint64_t Budget() override;
     std::uint64_t OtherDeviceBytes() override;
     std::uint64_t GuestBytes() override;
+    std::optional<ResidencyReuseStamp> ReuseStamp() override;
     void CollectWrites(std::uint64_t firstPage, std::uint64_t pages) override;
     ResidencyWrites PageWrites(std::uint64_t page, std::uint64_t generation) override;
 

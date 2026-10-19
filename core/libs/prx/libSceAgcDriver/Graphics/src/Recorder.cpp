@@ -1673,6 +1673,12 @@ Recorder::Token Recorder::CallerToken() {
     return token;
 }
 
+std::uint64_t Recorder::CallerOpenValue() const {
+    const std::lock_guard recordingGuard(recording);
+    const auto stream = streamOfCaller();
+    return opens[stream] != nullptr ? opens[stream]->value : 0;
+}
+
 Recorder::Token Recorder::AllToken() const {
     const std::lock_guard recordingGuard(recording);
     Token token{};

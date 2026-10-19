@@ -481,6 +481,12 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> CommittedImportRanges(VkDev
     return ranges;
 }
 
+std::uint64_t CommittedImportGeneration(VkDevice device) {
+    auto& state = CommittedState();
+    std::lock_guard lock(state.mutex);
+    return device == VK_NULL_HANDLE || state.device != device ? 0 : state.generation;
+}
+
 std::optional<ImportedPage> ImportOf(VkDevice device, std::uint64_t page) {
     const auto pageBegin = page << GuestMemory::ResidencyPageShift;
     const auto pageEnd = pageBegin + PageBytes;

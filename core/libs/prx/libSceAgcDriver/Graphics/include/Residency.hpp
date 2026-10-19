@@ -16,6 +16,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -66,6 +67,15 @@ struct ResidencyWrites {
 struct ResidencyRange {
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
+};
+
+struct ResidencyReuseStamp {
+    std::uint64_t writes = 0;
+    std::uint64_t collect = 0;
+    std::uint64_t imports = 0;
+    std::uint64_t hostImports = 0;
+    std::uint64_t batch = 0;
+    bool operator==(const ResidencyReuseStamp&) const = default;
 };
 
 struct ResidencyPolicy {
@@ -158,6 +168,7 @@ public:
         static_cast<void>(generation);
         return {};
     }
+    virtual std::optional<ResidencyReuseStamp> ReuseStamp() { return std::nullopt; }
 };
 
 struct ResidencyCounts {
@@ -213,6 +224,8 @@ struct ResidencyCounts {
     std::uint64_t completedRanges = 0;
     std::uint64_t demotedRanges = 0;
     std::uint64_t rangeConflicts = 0;
+    std::uint64_t rangeSetsUsed = 0;
+    std::uint64_t rangeSetsReused = 0;
 };
 
 enum class ResidencyRangeState : std::uint8_t { Uniform, Completed, Demoted, Conflict };
@@ -260,6 +273,7 @@ public:
     void Prepare();
     void Use(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access);
     ResidencyRangeState UseRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest);
+    void UseRanges(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t largest);
     void Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token);
     void Demote(std::uint64_t address, std::uint64_t bytes);
     void DemoteWritable();
@@ -434,6 +448,7 @@ private:
     bool fullResidency();
     std::optional<std::uint32_t> victim(std::uint64_t protectFirst, std::uint64_t protectLast);
     void admit(std::uint64_t first, std::uint64_t last);
+    ResidencyRangeState useRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest, bool& stable);
     std::uint64_t admitPages(std::uint64_t first, std::uint64_t last, std::uint64_t* quota, bool evict = true, bool sharedOnly = false, std::vector<std::uint64_t>* reserved = nullptr);
     void writeBackDirty(std::span<const std::uint32_t> ids, bool keepPendingWrites = false);
     bool writePending(std::uint64_t page);
@@ -569,6 +584,12 @@ private:
     std::unique_ptr<std::atomic<DirtyLeaf*>[]> dirtyLeaves;
     std::uint64_t touchFrame = 0;
     std::atomic<std::uint64_t> frame{1};
+    std::uint64_t reuseVersion = 0;
+    std::uint64_t reuseKeyVersion = ~std::uint64_t{0};
+    std::uint64_t reuseFrame = 0;
+    std::uint64_t reuseEpoch = 0;
+    ResidencyReuseStamp reuseStamp;
+    std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::uint64_t>>> reused;
     ResidencyCounts counts;
     mutable std::mutex residentMutex;
     std::mutex queueMutex;
