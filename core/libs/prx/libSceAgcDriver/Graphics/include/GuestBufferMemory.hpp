@@ -63,6 +63,7 @@ void SetImportWatch(const Context& context, ImportWatch watch);
 // the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
 const HostImport* HostImportSpanning(const Context& context, std::uint64_t address, std::size_t bytes);
+std::string HostImportRefusal(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);

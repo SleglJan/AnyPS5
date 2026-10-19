@@ -1095,8 +1095,8 @@ public:
                     copy(commands, toGuest ? tiled : piece.buffer, toGuest ? piece.buffer : tiled, 1, &part);
                     continue;
                 }
-                const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
-                Require(import != nullptr, "depth surface write-back: the plane has no host import");
+                const auto* import = HostImportSpanning(context, piece.begin, static_cast<std::size_t>(length));
+                if (import == nullptr) Require(false, "depth surface write-back: the plane: " + HostImportRefusal(context, piece.begin, static_cast<std::size_t>(length)));
                 const VkBufferCopy part = toGuest ? VkBufferCopy{piece.begin - base, piece.begin - import->base, length} : VkBufferCopy{piece.begin - import->base, piece.begin - base, length};
                 copy(commands, toGuest ? tiled : import->buffer, toGuest ? import->buffer : tiled, 1, &part);
             }
@@ -1148,8 +1148,8 @@ public:
                         fill(commands, piece.buffer, piece.offset, length, ExpandedHtileWord());
                         continue;
                     }
-                    const auto* import = HostImportFor(context, piece.begin, static_cast<std::size_t>(length));
-                    Require(import != nullptr, "depth surface write-back: the HTILE has no host import");
+                    const auto* import = HostImportSpanning(context, piece.begin, static_cast<std::size_t>(length));
+                    if (import == nullptr) Require(false, "depth surface write-back: the HTILE: " + HostImportRefusal(context, piece.begin, static_cast<std::size_t>(length)));
                     fill(commands, import->buffer, piece.begin - import->base, length, ExpandedHtileWord());
                 }
                 moved += to - from;

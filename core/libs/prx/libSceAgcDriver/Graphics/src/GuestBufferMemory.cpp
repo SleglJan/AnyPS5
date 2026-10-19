@@ -1928,6 +1928,33 @@ const HostImport* HostImportSpanning(const Context& context, std::uint64_t addre
     return joined != nullptr && findImport(state, address, address + bytes) == joined ? joined : nullptr;
 }
 
+std::string HostImportRefusal(const Context& context, std::uint64_t address, std::size_t bytes) {
+    char text[320];
+    const auto describe = [&](const char* why) {
+        std::snprintf(text, sizeof(text), "guest memory 0x%llx+0x%llx has no host import: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), why);
+        return std::string(text);
+    };
+    if (context.hostImportAlignment == 0) return describe("the device imports no host memory");
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return describe("an empty or overflowing range");
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    if (leasedIndexContaining(lease, address) == lease.size()) return describe("no registered range contains its start");
+    const auto run = crossedRun(lease, address, address + bytes);
+    if (run.ranges.empty()) return describe("no run of contiguous registered ranges with the same access covers it");
+    const auto alignment = context.hostImportAlignment;
+    if (run.base % alignment != 0 || run.bytes % alignment != 0) return describe("its registered ranges are not aligned to the host import alignment");
+    if (const auto failed = state.failedJoins.find(run.base); failed != state.failedJoins.end() && sameRun(failed->second, run)) return describe("the joined import of its registered ranges was refused by the device");
+    const auto budget = importBudget(context);
+    const auto live = state.liveBytes + CommittedImportPinnedBytes();
+    if (live + run.bytes > budget) {
+        char why[160];
+        std::snprintf(why, sizeof(why), "the import budget (0x%llx bytes live, 0x%llx more needed, budget 0x%llx)", static_cast<unsigned long long>(live), static_cast<unsigned long long>(run.bytes), static_cast<unsigned long long>(budget));
+        return describe(why);
+    }
+    return describe("the import window keeps a run inside one window and no joined import of its registered ranges was made");
+}
+
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (context.hostImportAlignment == 0) return true;
     ensurePinWaiter();

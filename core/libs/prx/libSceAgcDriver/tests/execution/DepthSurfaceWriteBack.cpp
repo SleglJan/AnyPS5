@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSampleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HtileEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -571,6 +572,81 @@ void ConvertedDepth(AgcDriver::VulkanDevice& device, const Shaders& sloped) {
 
 }
 
+std::byte* RegisterAdjacent(std::size_t low, std::size_t high) {
+    const auto bytes = low + high;
+    std::byte* base = nullptr;
+#ifdef _WIN32
+    base = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+    if (base != nullptr) {
+        GuestArena::GuestArenaCommit_nid_postfix(base, low, TestGuest::PageReadWrite, low);
+        GuestArena::GuestArenaCommit_nid_postfix(base + low, high, TestGuest::PageReadWrite, high);
+    }
+#else
+    constexpr std::uintptr_t align = 65536;
+    void* mapped = mmap(nullptr, bytes + align, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapped != MAP_FAILED) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
+        const auto aligned = (begin + align - 1) & ~(align - 1);
+        if (aligned != begin) munmap(mapped, aligned - begin);
+        if (aligned + bytes != begin + bytes + align) munmap(reinterpret_cast<void*>(aligned + bytes), begin + align - aligned);
+        base = reinterpret_cast<std::byte*>(aligned);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, bytes);
+    }
+#endif
+    Require(base != nullptr, "depth write-back: the adjacent guest ranges cannot be allocated");
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(base);
+    for (std::size_t word = 0; word < bytes / 4u; ++word) words[word] = Untouched;
+    GuestAllocations::Mutation().Add(base, low, true, true, true);
+    GuestAllocations::Mutation().Add(base + low, high, true, true, true);
+    return base;
+}
+
+void PlaneAcrossAdjacentRanges(AgcDriver::VulkanDevice& device, const Shaders& flat) {
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    constexpr VkExtent2D extent{1536u, 1408u};
+    const auto planeBytes = Graphics::DepthSliceBytes(extent, 4u);
+    auto* base = RegisterAdjacent(12u * MiB, 10u * MiB);
+    const auto boundary = reinterpret_cast<std::uint64_t>(base) + 12u * MiB;
+    const auto address = boundary - 4u * MiB;
+    Require(planeBytes > 8u * MiB && address + planeBytes > boundary && address + planeBytes <= boundary + 10u * MiB, "depth write-back: the plane does not cross the two registered ranges");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Require(Graphics::HostImportFor(context, address, static_cast<std::size_t>(planeBytes)) == nullptr, "depth write-back: a plane across two registered ranges has a windowed import");
+    Planes planes{address, 0, VK_FORMAT_D32_SFLOAT, 1u};
+    planes.extent = extent;
+    DrawPlanes(device, flat, planes, true, false);
+    Require(Owned(address) && Stale(address) != 0u, "depth write-back: the draw across two registered ranges left no stale subpage");
+    std::vector<std::byte> read(static_cast<std::size_t>(planeBytes));
+    AgcDriver::GuestMemory::Read(address, std::span(read));
+    std::size_t wrong = 0;
+    for (std::uint32_t y = 0; y < extent.height; ++y) {
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            float value = 0.0f;
+            std::memcpy(&value, &read[GuestOffset(x, y, 0u, 4u, 1u, static_cast<std::uint32_t>(Graphics::ColorTileMode::Z64KBX), extent.width)], sizeof(value));
+            if (value != 0.5f) ++wrong;
+        }
+    }
+    Require(wrong == 0u, "depth write-back: a CPU read of a plane across two registered ranges misses the drawn depth in " + std::to_string(wrong) + " texels");
+    const auto* joined = Graphics::HostImportFor(context, address, static_cast<std::size_t>(planeBytes));
+    Require(joined != nullptr && joined->base == reinterpret_cast<std::uint64_t>(base) && joined->bytes == 22u * MiB, "depth write-back: the plane across two registered ranges was not written back through one joined import");
+    Require(Stale(address) == 0u, "depth write-back: the CPU read left the plane across two registered ranges stale");
+    std::printf("a depth plane across two adjacent registered ranges is written back through one joined import\n");
+}
+
+void PairOfAdjacentRangesJoins(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    auto* base = RegisterAdjacent(2u * MiB, 4u * MiB);
+    const auto address = reinterpret_cast<std::uint64_t>(base);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto* joined = Graphics::HostImportSpanning(context, address + MiB, 2u * MiB);
+    Require(joined != nullptr && joined->base == address && joined->bytes == 6u * MiB, "depth write-back: a range across a 2 MiB and a 4 MiB registered range was not imported as one");
+    Require(Graphics::HostImportFor(context, address, 6u * MiB) == joined, "depth write-back: the 2 MiB and 4 MiB pair is not served by its joined import");
+    char named[64];
+    std::snprintf(named, sizeof(named), "0x%llx+0x%llx", static_cast<unsigned long long>(address + 7u * MiB), static_cast<unsigned long long>(MiB));
+    const auto refusal = Graphics::HostImportRefusal(context, address + 7u * MiB, MiB);
+    Require(refusal.find(named) != std::string::npos && refusal.find(": ") != std::string::npos, "depth write-back: the import refusal does not name the range: " + refusal);
+    std::printf("a 2 MiB and a 4 MiB adjacent registered range join into one import\n");
+}
+
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
@@ -589,6 +665,8 @@ int main() {
         HtileFillStoresNothing(*device, flat);
         StencilSwizzle(*device, sloped);
         ConvertedDepth(*device, sloped);
+        PlaneAcrossAdjacentRanges(*device, flat);
+        PairOfAdjacentRangesJoins(*device);
         LibcRunShutdown_nid_postfix();
         std::puts("depth surface write-back tests passed");
         return 0;
