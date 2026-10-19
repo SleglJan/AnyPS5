@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,6 +19,9 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <pthread.h>
 #endif
 
 namespace AgcDriver {
@@ -304,6 +308,19 @@ RealtimePlan PlanRealtime(std::uint32_t priority, const std::optional<RtkitLimit
 void RaiseWorkerThreadPriority(const char* role) {
     if (RequestedMode() == ThreadPriorityMode::Off) return;
     Raise(role);
+}
+
+void LowerCompileThreadPriority() {
+#ifdef _WIN32
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) throw std::runtime_error("AGC driver: a shader compile worker's priority could not be lowered (error " + std::to_string(GetLastError()) + ")");
+#elif defined(__linux__)
+    const auto thread = static_cast<id_t>(syscall(SYS_gettid));
+    errno = 0;
+    const int nice = getpriority(PRIO_PROCESS, thread);
+    if (errno != 0 || setpriority(PRIO_PROCESS, thread, std::min(nice + 5, 19)) != 0) throw std::runtime_error(std::string("AGC driver: a shader compile worker's priority could not be lowered: ") + std::strerror(errno));
+#elif defined(__APPLE__)
+    if (const int error = pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); error != 0) throw std::runtime_error(std::string("AGC driver: a shader compile worker's priority could not be lowered: ") + std::strerror(error));
+#endif
 }
 
 }
