@@ -1704,6 +1704,27 @@ void EvictedAliasKeepsSharedGuard() {
     fixture.gpu.Drain();
 }
 
+void OversizedRangeWithoutMirrorsQueriesNoImports() {
+    scope = "a read range over the admission limit without resident pages";
+    constexpr std::uint64_t largest = 2 * ResidencyPageBytes;
+    Fixture fixture(8, 2);
+    for (std::uint32_t page = 0; page < 8; ++page) fixture.Share(BasePage + page);
+    const std::vector<std::pair<std::uint64_t, std::uint64_t>> wide{{Address(BasePage + 0), Address(BasePage + 6)}};
+    const auto queries = fixture.gpu.importQueries;
+    const auto before = fixture.manager->Counts();
+    fixture.gpu.caller = 0;
+    fixture.manager->UseRanges(wide, largest);
+    const auto after = fixture.manager->Counts();
+    Expect(fixture.gpu.importQueries == queries, "a build reading 6 import-served pages over a 2-page limit queried " + std::to_string(fixture.gpu.importQueries - queries) + " page imports under the device lock, expected none");
+    Expect(after.resident == 0 && after.mixedRanges == before.mixedRanges && after.demotedRanges == before.demotedRanges, "and admitted, demoted or counted nothing");
+    fixture.Use(0, BasePage + 2);
+    Expect(fixture.manager->Slot(BasePage + 2).has_value(), "page 2 admitted");
+    const auto mixed = fixture.manager->Counts().mixedRanges;
+    fixture.manager->UseRanges(wide, largest);
+    Expect(fixture.manager->Counts().mixedRanges == mixed + 1, "the same range with a resident page is still decided page by page");
+    fixture.gpu.Drain();
+}
+
 void UnchangedRangesReused() {
     scope = "unchanged ranges reused";
     constexpr std::uint64_t largest = std::uint64_t{8} << 20;
@@ -2213,6 +2234,7 @@ int main() {
         EvictedAliasKeepsSharedGuard();
         PublicationAndRanges();
         UnchangedRangesReused();
+        OversizedRangeWithoutMirrorsQueriesNoImports();
         ConcurrentHooks();
         HostOverhead();
         RandomSequences();

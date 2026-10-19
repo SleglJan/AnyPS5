@@ -428,6 +428,7 @@ private:
     void applyDrops();
     void applyQueued();
     std::vector<std::uint32_t> residentIn(std::uint64_t address, std::uint64_t bytes) const;
+    bool anyResident(std::uint64_t first, std::uint64_t last) const;
     std::vector<Fill> withAliases(std::uint64_t address, std::uint64_t bytes);
     std::optional<std::uint32_t> find(std::uint64_t page) const;
     std::vector<std::uint64_t> indicesOf(std::span<const std::uint32_t> ids) const;

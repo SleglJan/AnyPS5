@@ -758,6 +758,14 @@ std::vector<std::uint32_t> ResidencyManager::residentIn(std::uint64_t address, s
     return ids;
 }
 
+bool ResidencyManager::anyResident(std::uint64_t first, std::uint64_t last) const {
+    if (last - first >= resident.size()) return std::ranges::any_of(resident, [&](const auto& entry) { return entry.first >= first && entry.first <= last; });
+    for (auto page = first; page <= last; ++page) {
+        if (resident.contains(page)) return true;
+    }
+    return false;
+}
+
 std::vector<ResidencyManager::Fill> ResidencyManager::withAliases(std::uint64_t address, std::uint64_t bytes) {
     std::vector<Fill> fills;
     if (bytes == 0) return fills;
@@ -1622,6 +1630,7 @@ ResidencyRangeState ResidencyManager::useRange(std::uint64_t address, std::uint6
     const auto span = PagesOf(address, bytes);
     stable = true;
     if (span.empty) return ResidencyRangeState::Uniform;
+    if (bytes > largest && !anyResident(span.first, span.last)) return ResidencyRangeState::Uniform;
     std::vector<std::uint64_t> served;
     bool admissible = true;
     bool mixed = false;
