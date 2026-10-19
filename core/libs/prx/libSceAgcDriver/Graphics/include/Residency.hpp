@@ -227,6 +227,17 @@ private:
 
 class ResidencyManager {
 public:
+    class CpuReadExemption {
+    public:
+        explicit CpuReadExemption(const IResidencyOwner* owner);
+        ~CpuReadExemption();
+        CpuReadExemption(const CpuReadExemption&) = delete;
+        CpuReadExemption& operator=(const CpuReadExemption&) = delete;
+
+    private:
+        const IResidencyOwner* previous;
+    };
+
     ResidencyManager(IResidencyDevice& device, const ResidencyPolicy& policy);
     ResidencyManager(const ResidencyManager&) = delete;
     ResidencyManager& operator=(const ResidencyManager&) = delete;

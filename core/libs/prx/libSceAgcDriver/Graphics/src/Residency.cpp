@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Residency.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <limits>
 #include <map>
@@ -10,6 +11,8 @@
 namespace AgcDriver::Graphics {
 
 namespace {
+
+thread_local const IResidencyOwner* cpuReadExempt = nullptr;
 
 const void* ResidencyThreadToken() {
     thread_local const char token = 0;
@@ -267,6 +270,12 @@ std::vector<std::uint64_t> ResidencyManager::staleIn(std::uint64_t address, std:
         if (staleOwned.contains(page)) stale.push_back(page);
     }
     return stale;
+}
+
+ResidencyManager::CpuReadExemption::CpuReadExemption(const IResidencyOwner* owner) : previous(std::exchange(cpuReadExempt, owner)) {}
+
+ResidencyManager::CpuReadExemption::~CpuReadExemption() {
+    cpuReadExempt = previous;
 }
 
 bool ResidencyManager::retileStale(std::span<const std::uint64_t> stalePages, std::span<const IResidencyOwner* const> except) {
@@ -1961,7 +1970,8 @@ bool ResidencyManager::flushForCpuRead(std::uint64_t address, std::uint64_t byte
     };
     for (;;) {
         applyQueued();
-        const bool retiled = retileStale(staleIn(address, bytes));
+        const std::array<const IResidencyOwner*, 1> exempt{cpuReadExempt};
+        const bool retiled = retileStale(staleIn(address, bytes), exempt);
         ResidencyToken pending = retiled ? device.Current() : ResidencyToken{};
         for (const auto& [page, token] : writers) {
             if (inSpan(page) && !settled(token)) pending = MergeTokens(pending, token);

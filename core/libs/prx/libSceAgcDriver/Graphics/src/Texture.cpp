@@ -2213,6 +2213,7 @@ bool StorageTexture::Refresh() {
     // This image's own pending results stay on the GPU, where the next dispatch wants them (the
     // flush below and the compare through the hook skip it).
     refreshing = this;
+    const ResidencyManager::CpuReadExemption keepOwnStale(this);
     NoteProved();
     // Results of other images pending in this memory must reach it first, except an alias's: its
     // units are taken on the device below (borrowUnits), so it stays pending. The keys read for
@@ -2618,6 +2619,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
         ~Exempt() { refreshing = previous; }
     } exempt{refreshing};
     refreshing = this;
+    const ResidencyManager::CpuReadExemption keepOwnStale(this);
     Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
     Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
     GuestMemory::FlushGpuWrites(address, bytes);
