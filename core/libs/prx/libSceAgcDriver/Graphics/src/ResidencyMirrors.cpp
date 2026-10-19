@@ -49,7 +49,8 @@ MirrorChunk::~MirrorChunk() {
 
 SparseResidency::SparseResidency(const Context& context) : context(context) {
     constexpr std::uint64_t MostBytes = std::uint64_t{512} << 30;
-    bytes = std::min<std::uint64_t>(MostBytes, context.limits.sparseAddressSpaceSize) & ~(ResidencyPageBytes - 1u);
+    constexpr std::uint64_t SpaceShares = 4;
+    bytes = std::min<std::uint64_t>(MostBytes, context.limits.sparseAddressSpaceSize / SpaceShares) & ~(ResidencyPageBytes - 1u);
     Require(bytes != 0, "residency: the device has no sparse address space");
     VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT | VK_BUFFER_CREATE_SPARSE_RESIDENCY_BIT;
