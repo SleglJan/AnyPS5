@@ -194,6 +194,7 @@ std::uint32_t DefineBdaTouch(SpirvEmitterState& state) {
 }
 
 void NoteBdaTouch(SpirvEmitterState& state, std::uint32_t touch, std::uint32_t address) {
+    if (state.bdaSegments) return;
     state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), touch, address);
 }
 
@@ -480,7 +481,7 @@ std::uint32_t DefineBdaSegment(SpirvEmitterState& state, std::uint32_t touch) {
     const auto readable = [&](std::uint32_t permissions) { return binary(spv::OpINotEqual, boolean, binary(spv::OpBitwiseAnd, u32, permissions, constant(BdaAbi::Read)), constant(0u)); };
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "bda_segment");
-    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64, boolean));
+    state.module.AddFunction(spv::OpFunction, result, function, state.bdaSegments ? spv::FunctionControlInlineMask : spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, u64, boolean));
     const auto address = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, u64, address);
     const auto translate = state.module.AllocateId();
@@ -926,6 +927,15 @@ bool RawDwordBufferRead(IrOpcode opcode) {
 }
 
 const IrValue* ResolvedBufferHandle(const SpirvEmitterState& state, const IrValue& inst) {
+    if (state.bdaSegments && inst.ArgumentCount() != 0u && inst.Argument(0) != nullptr) {
+        const auto* pair = inst.Argument(0)->Resolve();
+        if (pair != nullptr && pair->Opcode() == IrOpcode::GetAddressResource && pair->ArgumentCount() == 2u) {
+            const auto& infos = state.program.Resources().memoryInfo;
+            const auto index = inst.Flags<MemoryFlags>().index;
+            if (index < infos.size() && infos[index].kind == ResourceKind::ScalarAddress && !infos[index].addressIsFull && !infos[index].planningOnly) return pair;
+            return nullptr;
+        }
+    }
     const bool raw = RawDwordBufferRead(inst.Opcode());
     if ((!raw && inst.Opcode() != IrOpcode::ReadConstBuffer) || inst.ArgumentCount() == 0u) return nullptr;
     const auto* handle = inst.Argument(0)->Resolve();
@@ -1041,7 +1051,7 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     state.bdaTranslateFunction = DefineBdaTranslate(state, state.program.Info().bdaWrites, touch);
     state.bdaNotePagesFunction = 0;
     if (!BdaByteReadsForced()) state.bdaSegmentFunction = DefineBdaSegment(state, touch);
-    if (state.bdaSegmentFunction != 0u) state.bdaNotePagesFunction = DefineBdaNotePages(state, touch);
+    if (state.bdaSegmentFunction != 0u && !state.bdaSegments) state.bdaNotePagesFunction = DefineBdaNotePages(state, touch);
     DeclareBdaVectorCache(state);
     DeclareBdaReadCache(state);
     state.bdaPointerFunction = DefineBdaLookup(state, "get_bda_pointer", true);

@@ -336,6 +336,14 @@ void BdaResources::throwFault(const ShaderRecompiler::BdaAbi::Fault& report) con
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << std::dec << ", and the call ran past the " << report.bytes << " continuation rounds its dispatch allows";
         throw std::runtime_error(message.str());
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::OutsideSegment) {
+        std::uint64_t shader = 0;
+        for (const auto& [named, address] : stageShaders) {
+            if (named == report.stage) shader = address;
+        }
+        message << "shader 0x" << std::hex << shader << " stage " << std::dec << report.stage << " pc 0x" << std::hex << report.instruction << " read " << std::dec << report.bytes << " bytes at address 0x" << std::hex << report.address << ", outside the settled range of its buffer descriptor";
+        throw std::runtime_error(message.str());
+    }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall) {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
         throw std::runtime_error(message.str());

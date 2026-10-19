@@ -278,6 +278,7 @@ private:
         append(key, value.vertexSubgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.bdaRangeList);
+        append(key, value.bdaSegments);
     }
 };
 

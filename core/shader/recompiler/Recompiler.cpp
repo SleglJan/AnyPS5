@@ -764,6 +764,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.bdaRangeList = request.target.bdaRangeList;
+    targetOptions.bdaSegments = request.target.bdaSegments;
 
     ShaderStageInputInfo emitInputInfo = inputInfo;
     ShaderComputeInputInfo oneLaneCompute{};

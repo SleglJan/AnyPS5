@@ -152,6 +152,7 @@ struct SpirvEmitterState {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool bdaRangeList = true;
+    bool bdaSegments = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;
@@ -190,6 +191,8 @@ struct SpirvEmitterState {
     std::map<std::uint32_t, std::uint32_t> formatDecoders;
     std::map<std::uint32_t, std::uint32_t> formatEncoders;
     std::uint32_t bdaFaultFunction = 0;
+    std::uint32_t bdaFaultFlushFunction = 0;
+    std::array<std::uint32_t, 7> bdaFaultPending {};
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;
     std::uint32_t dot2F32F16Function = 0;

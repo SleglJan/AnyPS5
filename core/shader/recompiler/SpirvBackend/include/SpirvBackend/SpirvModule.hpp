@@ -77,6 +77,8 @@ public:
     void EndHelperFunction();
     void ReturnSharedResultsThroughPointers();
     void LocalizePrivateVariables(std::span<const std::uint32_t> variables);
+    void CallBeforeInvocationExits(std::uint32_t entry, std::uint32_t callee);
+    void InlineAllFunctions();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 

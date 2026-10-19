@@ -257,6 +257,15 @@ std::vector<std::pair<const IrValue*, std::uint32_t>> AdjacentBdaLoads(SpirvValu
 
 std::uint32_t LoadBda(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& mem, std::uint32_t bits) {
     auto& state = ctx.state;
+    struct Segment {
+        SpirvEmitterState& state;
+        std::array<std::uint32_t, 3> saved;
+        ~Segment() { state.bdaAccessSegment = saved; }
+    };
+    const Segment segmentScope{state, state.bdaAccessSegment};
+    if (state.bdaSegments && mem.kind == ResourceKind::ScalarAddress) {
+        if (const auto resolved = ResolvedBufferSegment(ctx, inst)) state.bdaAccessSegment = {resolved->begin, resolved->end, resolved->delta};
+    }
     if (bits == 32u) {
         if (const auto grouped = state.bdaGroupedLoads.find(&inst); grouped != state.bdaGroupedLoads.end()) {
             const auto value = state.module.AllocateId();
@@ -631,10 +640,20 @@ void LoadAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t 
     case ResourceKind::Scratch:
         ctx.Define(inst, bits == 32u ? LoadWord(ctx, inst, mem) : LoadSubword(ctx, inst, mem, bits));
         return;
-    case ResourceKind::ScalarAddress:
+    case ResourceKind::ScalarAddress: {
+        struct Segment {
+            SpirvEmitterState& state;
+            std::array<std::uint32_t, 3> saved;
+            ~Segment() { state.bdaAccessSegment = saved; }
+        };
+        const Segment segmentScope{ctx.state, ctx.state.bdaAccessSegment};
+        if (ctx.state.bdaSegments) {
+            if (const auto resolved = ResolvedBufferSegment(ctx, inst)) ctx.state.bdaAccessSegment = {resolved->begin, resolved->end, resolved->delta};
+        }
         if (bits == 32u && EmitGroupedScalarLoad(ctx, inst, mem)) return;
         ctx.Define(inst, LoadBda(ctx, inst, mem, bits));
         return;
+    }
     case ResourceKind::Flat:
     case ResourceKind::Global:
         ctx.Define(inst, LoadBda(ctx, inst, mem, bits));

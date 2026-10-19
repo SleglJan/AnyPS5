@@ -401,6 +401,38 @@ void SpirvModule::LocalizePrivateVariables(std::span<const std::uint32_t> variab
     }
 }
 
+void SpirvModule::CallBeforeInvocationExits(std::uint32_t entry, std::uint32_t callee) {
+    if (inHelperFunction) throw std::runtime_error("SpirvModule::CallBeforeInvocationExits called inside a helper function");
+    const auto voidType = Type(spv::OpTypeVoid);
+    for (auto* section : {&functionInstructions, &helperFunctionInstructions}) {
+        std::vector<std::uint32_t> rewritten;
+        rewritten.reserve(section->size());
+        std::uint32_t function = 0;
+        for (std::size_t offset = 0; offset < section->size(); offset += (*section)[offset] >> spv::WordCountShift) {
+            const auto count = (*section)[offset] >> spv::WordCountShift;
+            if (count == 0u) throw std::runtime_error("SpirvModule::CallBeforeInvocationExits found an empty instruction");
+            const auto opcode = (*section)[offset] & spv::OpCodeMask;
+            if (opcode == spv::OpFunction) function = (*section)[offset + 2u];
+            const bool exits = (opcode == spv::OpReturn && function == entry) || opcode == spv::OpKill || opcode == spv::OpTerminateInvocation;
+            if (exits && function != callee) appendInstruction(rewritten, spv::OpFunctionCall, voidType, AllocateId(), callee);
+            rewritten.insert(rewritten.end(), section->begin() + static_cast<std::ptrdiff_t>(offset), section->begin() + static_cast<std::ptrdiff_t>(offset + count));
+        }
+        *section = std::move(rewritten);
+    }
+}
+
+void SpirvModule::InlineAllFunctions() {
+    for (auto* section : {&functionInstructions, &helperFunctionInstructions}) {
+        for (std::size_t offset = 0; offset < section->size(); offset += (*section)[offset] >> spv::WordCountShift) {
+            const auto count = (*section)[offset] >> spv::WordCountShift;
+            if (count == 0u) throw std::runtime_error("SpirvModule::InlineAllFunctions found an empty instruction");
+            if (((*section)[offset] & spv::OpCodeMask) != spv::OpFunction) continue;
+            auto& control = (*section)[offset + 3u];
+            if ((control & spv::FunctionControlDontInlineMask) != 0u) control = (control & ~static_cast<std::uint32_t>(spv::FunctionControlDontInlineMask)) | spv::FunctionControlInlineMask;
+        }
+    }
+}
+
 void SpirvModule::ReturnSharedResultsThroughPointers() {
     if (inHelperFunction) throw std::runtime_error("SpirvModule::ReturnSharedResultsThroughPointers called inside a helper function");
     if (unpatchedPhiIncomings != 0) throw std::runtime_error("SpirvModule::ReturnSharedResultsThroughPointers called with unpatched OpPhi incoming pairs");

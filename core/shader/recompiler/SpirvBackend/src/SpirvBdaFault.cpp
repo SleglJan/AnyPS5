@@ -2,9 +2,38 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
+
+namespace {
+
+void EmitBdaFaultRecordBody(SpirvEmitterState& state, bool words, const std::array<std::uint32_t, 7>& fields) {
+    const auto [reason, address, addressHigh, bytes, instruction, stage, reserved] = fields;
+    const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
+    const auto previous = state.module.AllocateId();
+    const auto scope = ConstantU32(state, spv::ScopeDevice);
+    const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+    state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
+    const auto won = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
+    EmitIfCondition(state, won, [&] {
+        const auto store = [&](std::uint32_t index, std::uint32_t value) {
+            state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
+        };
+        store(1, reason);
+        store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
+        store(3, words ? addressHigh : Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
+        store(4, bytes);
+        store(5, stage);
+        store(6, instruction);
+        store(7, reserved);
+        const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask);
+        state.module.AddFunction(spv::OpAtomicStore, pointer, scope, release, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
+    });
+}
+
+}
 
 std::uint32_t BdaConstant(SpirvEmitterState& state, std::uint64_t value) {
     return state.module.Constant(spv::OpConstant, TypeScalarU64(state), static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u));
@@ -35,7 +64,7 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     state.bdaFaultFunction = state.module.AllocateId();
     state.module.AddName(state.bdaFaultFunction, "record_bda_fault");
     const auto type = words ? state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, addressType, u32, u32, u32, u32, u32) : state.module.Type(spv::OpTypeFunction, TypeVoid(state), u32, addressType, u32, u32, u32, u32);
-    state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFunction, spv::FunctionControlDontInlineMask, type);
+    state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFunction, state.bdaSegments ? spv::FunctionControlInlineMask : spv::FunctionControlDontInlineMask, type);
     const auto reason = state.module.AllocateId();
     const auto address = state.module.AllocateId();
     const auto addressHigh = words ? state.module.AllocateId() : 0u;
@@ -51,26 +80,41 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunctionParameter, u32, stage);
     state.module.AddFunction(spv::OpFunctionParameter, u32, reserved);
     EmitLabel(state, state.module.AllocateId());
-    const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
-    const auto previous = state.module.AllocateId();
-    const auto scope = ConstantU32(state, spv::ScopeDevice);
-    const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
-    state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
-    const auto won = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
-    EmitIfCondition(state, won, [&] {
-        const auto store = [&](std::uint32_t index, std::uint32_t value) {
-            state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
+    if (state.bdaSegments) {
+        const std::array<std::uint32_t, 7> types{u32, addressType, u32, u32, u32, u32, u32};
+        const std::array<std::uint32_t, 7> values{reason, address, addressHigh, bytes, instruction, stage, reserved};
+        for (std::size_t index = 0; index < types.size(); ++index) {
+            if (index == 2u && !words) continue;
+            state.bdaFaultPending[index] = state.module.AllocateId();
+            const auto zero = types[index] == u32 ? ConstantU32(state, 0u) : BdaConstant(state, 0u);
+            state.module.EmitGlobalVariable({spv::OpVariable, TypePointer(state, spv::StorageClassPrivate, types[index]), state.bdaFaultPending[index], spv::StorageClassPrivate, zero});
+        }
+        const auto load = [&](std::size_t index) {
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, types[index], value, state.bdaFaultPending[index]);
+            return value;
         };
-        store(1, reason);
-        store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
-        store(3, words ? addressHigh : Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
-        store(4, bytes);
-        store(5, stage);
-        store(6, instruction);
-        store(7, reserved);
-        const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask);
-        state.module.AddFunction(spv::OpAtomicStore, pointer, scope, release, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
-    });
+        const auto first = Binary(state, spv::OpIEqual, TypeBool(state), load(0u), ConstantU32(state, 0u));
+        EmitIfCondition(state, first, [&] {
+            for (std::size_t index = 0; index < types.size(); ++index) {
+                if (state.bdaFaultPending[index] != 0u) state.module.AddFunction(spv::OpStore, state.bdaFaultPending[index], values[index]);
+            }
+        });
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.bdaFaultFlushFunction = state.module.AllocateId();
+        state.module.AddName(state.bdaFaultFlushFunction, "flush_bda_fault");
+        state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.bdaFaultFlushFunction, spv::FunctionControlInlineMask, state.module.Type(spv::OpTypeFunction, TypeVoid(state)));
+        EmitLabel(state, state.module.AllocateId());
+        std::array<std::uint32_t, 7> pending{};
+        for (std::size_t index = 0; index < types.size(); ++index) pending[index] = state.bdaFaultPending[index] != 0u ? load(index) : 0u;
+        const auto any = Binary(state, spv::OpINotEqual, TypeBool(state), pending[0], ConstantU32(state, 0u));
+        EmitIfCondition(state, any, [&] { EmitBdaFaultRecordBody(state, words, pending); });
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        return;
+    }
+    EmitBdaFaultRecordBody(state, words, {reason, address, addressHigh, bytes, instruction, stage, reserved});
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
 }

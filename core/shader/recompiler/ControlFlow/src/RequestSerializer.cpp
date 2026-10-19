@@ -794,7 +794,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(34u);
+    writer.WriteU32(35u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -839,6 +839,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
         writer.WriteU32(continuation.entrySite);
     }
     writer.WriteBool(request.target.bdaRangeList);
+    writer.WriteBool(request.target.bdaSegments);
     return base64Encode(buffer);
 }
 
@@ -847,7 +848,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text, Collid
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 34u) throw std::runtime_error("unsupported recompile request serialization version " + std::to_string(version));
+    if (version < 1u || version > 35u) throw std::runtime_error("unsupported recompile request serialization version " + std::to_string(version));
     if (version >= 24u && version <= 26u && colliding == CollidingVersions::Refuse) throw std::runtime_error("request version " + std::to_string(version) + " has two layouts; re-record it");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
@@ -916,6 +917,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text, Collid
         result.request.context.continuation = continuation;
     }
     if (version >= 34u) result.request.target.bdaRangeList = reader.ReadBool();
+    if (version >= 35u) result.request.target.bdaSegments = reader.ReadBool();
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

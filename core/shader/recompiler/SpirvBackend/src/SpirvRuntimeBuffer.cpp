@@ -1569,12 +1569,17 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
             const auto u32 = TypeU32(state);
             const auto type = state.module.Type(spv::OpTypeArray, u32, ConstantU32(state, count));
             const auto span = scalarAccess(context, instruction, instructionValues(context, instruction, true), count * 4u);
+            const auto savedSegment = state.bdaAccessSegment;
+            if (state.bdaSegments) {
+                if (const auto resolved = ResolvedBufferSegment(context, instruction)) state.bdaAccessSegment = {resolved->begin, resolved->end, resolved->delta};
+            }
             const auto values = EmitBdaCachedDwords(context, instruction, scalarGuestAddress(state, span), span.inBounds, count, type, [&] {
                 std::vector<std::uint32_t> construct{spv::OpCompositeConstruct, type, state.module.AllocateId()};
                 for (const auto* member : members) construct.push_back(scalarBufferLoad(context, *member, true));
                 state.module.AddFunction(construct);
                 return construct[2];
             });
+            state.bdaAccessSegment = savedSegment;
             std::uint32_t result = 0;
             for (std::uint32_t index = 0; index < count; ++index) {
                 const auto value = state.module.AllocateId();

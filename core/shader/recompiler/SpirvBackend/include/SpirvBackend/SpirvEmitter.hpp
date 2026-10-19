@@ -25,6 +25,7 @@ struct SpirvTargetOptions {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool bdaRangeList = true;
+    bool bdaSegments = false;
 };
 
 class SpirvEmitter {

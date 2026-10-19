@@ -295,6 +295,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.bdaRangeList = target.bdaRangeList;
+    state.bdaSegments = target.bdaSegments;
     state.hostSubgroupSize = target.subgroupSize;
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
@@ -324,6 +325,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     PlanDeviceImageAnchors(state);
     EmitProgram(state);
     DefineFormatCodecs(state);
+    if (state.bdaFaultFlushFunction != 0u) state.module.CallBeforeInvocationExits(state.mainFunc, state.bdaFaultFlushFunction);
+    if (state.bdaSegments) state.module.InlineAllFunctions();
     state.module.ReturnSharedResultsThroughPointers();
     LocalizeBdaCaches(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);

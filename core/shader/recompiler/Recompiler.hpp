@@ -271,6 +271,7 @@ struct SpirvTarget {
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
     bool bdaRangeList = true;
+    bool bdaSegments = false;
 };
 
 struct BindingLayout {
