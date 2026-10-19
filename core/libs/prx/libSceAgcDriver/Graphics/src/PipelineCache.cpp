@@ -10,6 +10,7 @@
 #include <cstring>
 #include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <span>
 #include <string>
 #include <system_error>
@@ -104,21 +105,32 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
 }
 
 PipelineCache::~PipelineCache() {
-    if (saver.joinable()) {
+    const bool saving = saver.joinable();
+    if (saving) {
         {
             std::lock_guard lock(mutex);
             stopping = true;
         }
         wake.notify_all();
         saver.join();
-        save(true);
     }
+    mergeCompiled(true);
+    if (saving) save(true);
     const auto destroy = context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache");
     if (session != VK_NULL_HANDLE) destroy(context.device, session, nullptr);
     destroy(context.device, base, nullptr);
 }
 
 VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
+    const auto result = [&] {
+        std::shared_lock use(access);
+        return createCompute(caller, info, pipeline, words);
+    }();
+    mergeCompiled(false);
+    return result;
+}
+
+VkResult PipelineCache::createCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
     const auto create = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     std::optional<CreationGate> gate;
     if (session == VK_NULL_HANDLE) {
@@ -134,6 +146,15 @@ VkResult PipelineCache::CreateCompute(const Context& caller, const VkComputePipe
 }
 
 VkResult PipelineCache::CreateGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
+    const auto result = [&] {
+        std::shared_lock use(access);
+        return createGraphics(caller, info, pipeline, words);
+    }();
+    mergeCompiled(false);
+    return result;
+}
+
+VkResult PipelineCache::createGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const {
     const auto create = caller.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
     std::optional<CreationGate> gate;
     if (session == VK_NULL_HANDLE) {
@@ -153,6 +174,7 @@ VkResult PipelineCache::LookupCompute(const Context& caller, const VkComputePipe
     const auto create = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
+    std::shared_lock use(access);
     for (const auto cache : {base, session}) {
         if (cache == VK_NULL_HANDLE) continue;
         const auto found = create(caller.device, cache, 1, &lookup, nullptr, pipeline);
@@ -168,9 +190,35 @@ VkResult PipelineCache::CreateComputeFrom(const Context& caller, const VkCompute
     auto lookup = info;
     lookup.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT_EXT;
     const auto created = caller.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(caller.device, compiled, 1, &lookup, nullptr, pipeline);
-    if (created == VK_SUCCESS) Check(context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, session != VK_NULL_HANDLE ? session : base, 1, &compiled), "vkMergePipelineCaches compiled");
-    context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, compiled, nullptr);
+    if (created != VK_SUCCESS) {
+        context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, compiled, nullptr);
+        return created;
+    }
+    {
+        std::lock_guard lock(compiledMutex);
+        this->compiled.push_back(compiled);
+        compiledWaiting.store(true, std::memory_order_release);
+    }
+    mergeCompiled(false);
     return created;
+}
+
+void PipelineCache::mergeCompiled(bool wait) const {
+    if (!wait && !compiledWaiting.load(std::memory_order_acquire)) return;
+    std::unique_lock exclusive(access, std::defer_lock);
+    if (wait) exclusive.lock();
+    else if (!exclusive.try_lock()) return;
+    std::vector<VkPipelineCache> sources;
+    {
+        std::lock_guard lock(compiledMutex);
+        sources.swap(compiled);
+        compiledWaiting.store(false, std::memory_order_relaxed);
+    }
+    if (sources.empty()) return;
+    const auto merged = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, session != VK_NULL_HANDLE ? session : base, static_cast<std::uint32_t>(sources.size()), sources.data());
+    const auto destroy = context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache");
+    for (const auto source : sources) destroy(context.device, source, nullptr);
+    Check(merged, "vkMergePipelineCaches compiled");
 }
 
 void PipelineCache::Save() {
@@ -239,6 +287,11 @@ bool PipelineCache::write(VkPipelineCache source, const std::filesystem::path& f
 
 void PipelineCache::save(bool final) {
     std::lock_guard lock(saveMutex);
+    mergeCompiled(final);
+    std::unique_lock exclusive(access, std::defer_lock);
+    std::shared_lock use(access, std::defer_lock);
+    if (final) exclusive.lock();
+    else use.lock();
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     std::size_t size = 0;
     if (getData(context.device, session, &size, nullptr) != VK_SUCCESS) return;

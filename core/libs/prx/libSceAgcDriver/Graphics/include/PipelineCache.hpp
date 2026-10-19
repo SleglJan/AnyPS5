@@ -3,11 +3,13 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstddef>
 #include <filesystem>
 #include <mutex>
+#include <shared_mutex>
 #include <span>
 #include <string>
 #include <thread>
@@ -40,6 +42,9 @@ private:
     bool write(VkPipelineCache source, const std::filesystem::path& file, std::size_t& bytes, std::uint64_t* hash = nullptr) const;
     void save(bool final);
     void run();
+    void mergeCompiled(bool wait) const;
+    VkResult createCompute(const Context& caller, const VkComputePipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const;
+    VkResult createGraphics(const Context& caller, const VkGraphicsPipelineCreateInfo& info, VkPipeline* pipeline, std::size_t words) const;
 
     Context context;
     VkPhysicalDeviceProperties properties{};
@@ -54,6 +59,10 @@ private:
     std::size_t savedSessionBytes = 0;
     std::size_t initialSessionBytes = 0;
     std::mutex saveMutex;
+    mutable std::shared_mutex access;
+    mutable std::mutex compiledMutex;
+    mutable std::vector<VkPipelineCache> compiled;
+    mutable std::atomic<bool> compiledWaiting{false};
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;
