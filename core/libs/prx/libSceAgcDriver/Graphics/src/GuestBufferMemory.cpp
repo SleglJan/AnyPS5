@@ -2518,8 +2518,30 @@ std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const Shade
     std::vector<ShaderRecompiler::BdaAbi::Range> pieces;
     const auto* residency = ResidencyDriver::Active();
     const auto sparse = residency != nullptr ? residency->SparseAddress() : 0u;
+    const auto bound = [&](std::uint64_t page) {
+        const auto found = mirrors.find(page);
+        return sparse != 0 && found != mirrors.end() && found->second == sparse + (page << ResidencyPageShift);
+    };
+    const auto window = std::pair{begin, end};
+    if (begin < end) {
+        auto first = begin >> ResidencyPageShift;
+        while (first > 0 && bound(first) && bound(first - 1u)) --first;
+        begin = std::min(begin, first << ResidencyPageShift);
+        auto last = (end - 1u) >> ResidencyPageShift;
+        while (bound(last) && bound(last + 1u)) ++last;
+        if (bound(last)) end = std::max(end, (last + 1u) << ResidencyPageShift);
+    }
     const auto emit = [&](const ShaderRecompiler::BdaAbi::Range& range, std::uint64_t low, std::uint64_t high, std::uint64_t device, std::uint32_t flags = 0u) {
-        if (low < high && low < end && begin < high) pieces.push_back({low, high, device, range.permissions, range.reserved | flags});
+        if (low >= high || low >= end || high <= begin) return;
+        const ShaderRecompiler::BdaAbi::Range piece{low, high, device, range.permissions, range.reserved | flags};
+        if (!pieces.empty()) {
+            auto& last = pieces.back();
+            if ((flags & ShaderRecompiler::BdaAbi::RangeMirrored) != 0 && last.end == low && last.reserved == piece.reserved && last.permissions == piece.permissions && last.deviceAddress + (low - last.begin) == device) {
+                last.end = high;
+                return;
+            }
+        }
+        pieces.push_back(piece);
     };
     auto range = std::upper_bound(ranges.begin(), ranges.end(), begin, [](std::uint64_t value, const ShaderRecompiler::BdaAbi::Range& held) { return value < held.end; });
     for (; range != ranges.end() && range->begin < end; ++range) {
@@ -2541,6 +2563,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> SpliceMirrors(std::span<const Shade
         }
         emit(*range, cursor, range->end, range->deviceAddress + (cursor - range->begin));
     }
+    std::erase_if(pieces, [&](const ShaderRecompiler::BdaAbi::Range& piece) { return piece.end <= window.first || window.second <= piece.begin; });
     return pieces;
 }
 
