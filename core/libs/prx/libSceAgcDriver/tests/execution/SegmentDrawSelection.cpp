@@ -1,5 +1,6 @@
 #include "ResidencyRulesFixture.hpp"
 #include "DrawSubmitFixture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -144,7 +145,7 @@ public:
         Use(vertices.Address());
     }
 
-    std::vector<std::uint32_t> Read(const GuestProgram& pixel, std::span<const std::uint32_t> pixelUserData) {
+    std::vector<std::uint32_t> Read(const GuestProgram& pixel, std::span<const std::uint32_t> pixelUserData, std::uint32_t modeControl = 0x240u) {
         std::fill_n(reinterpret_cast<std::uint32_t*>(target.Data()), Width * Height, 0xdeadbeefu);
         AgcDriver::GuestMemory::CollectWritesUncached(target.Address(), Width * Height * 4u);
         Commands commands;
@@ -152,6 +153,7 @@ public:
         DrawSubmit::Context(commands, 0x31c, ColorUint32);
         DrawSubmit::Context(commands, 0x3b8, LinearAttrib3);
         DrawSubmit::Context(commands, 0x31b, 0u);
+        DrawSubmit::Context(commands, 0x205, modeControl);
         commands.Registers(0x0c8, {Low(BoundedVertex().Address() >> 8u), Low(BoundedVertex().Address() >> 40u)});
         commands.Registers(0x08b, {VertexUserWords << 1u});
         commands.Registers(0x008, {Low(pixel.Address() >> 8u), Low(pixel.Address() >> 40u)});
@@ -223,6 +225,42 @@ void SettledDrawsBindTheSegmentStages() {
     Settle();
 }
 
+void NewStateCreatesNoSegmentPipelineInFrame() {
+    constexpr std::uint32_t ClockwiseFront = 0x244u;
+    DrawReader reader;
+    SharedPages pages(Pages);
+    Fill(pages.Words(), Pages, Tag);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+    for (std::uint32_t page = 0; page < Pages; ++page) Use(pages.Address(page));
+    Settle();
+    const auto user = Buffer(pages);
+
+    const auto first = DriverCounts();
+    const auto created = AgcDriver::Graphics::StorePipelineCreationTotals();
+    ExpectPattern(reader.Read(BoundedPixel(), user, ClockwiseFront), "new state: the first settled draw with a new front face");
+    const auto pending = DriverCounts();
+    const auto inFrame = AgcDriver::Graphics::StorePipelineCreationTotals();
+    Expect(pending.settledDispatches == first.settledDispatches + 1u, "new state: the draw over three touching mirror pages was not judged settled");
+    Expect(inFrame.inFrames <= created.inFrames + 1u, "new state: the first settled draw of programs whose segment stages exist, with a new front face, created " + std::to_string(inFrame.inFrames - created.inFrames) + " graphics pipelines inside its frame, expected at most its walk stages' one");
+    Expect(pending.segmentPending == first.segmentPending + 1u && pending.segmentDispatches == first.segmentDispatches, "new state: the first settled draw with a new front face did not keep the walk stages counted as segment pending (pending +" + std::to_string(pending.segmentPending - first.segmentPending) + ", segment +" + std::to_string(pending.segmentDispatches - first.segmentDispatches) + ")");
+
+    auto before = pending;
+    auto after = pending;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    do {
+        before = DriverCounts();
+        const auto pixels = reader.Read(BoundedPixel(), user, ClockwiseFront);
+        after = DriverCounts();
+        ExpectPattern(pixels, "new state: a settled draw with a new front face");
+        if (after.segmentDispatches != before.segmentDispatches) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    } while (std::chrono::steady_clock::now() < deadline);
+    const auto behind = AgcDriver::Graphics::StorePipelineCreationTotals();
+    Expect(after.segmentDispatches == before.segmentDispatches + 1u, "new state: a settled draw with a new front face never bound its segment pipeline within 60 s");
+    Expect(behind.inFrames == inFrame.inFrames && behind.behindFrames > created.behindFrames, "new state: the segment pipeline of the new front face was not created behind frames (inside frames +" + std::to_string(behind.inFrames - inFrame.inFrames) + ", behind frames +" + std::to_string(behind.behindFrames - created.behindFrames) + ")");
+    Settle();
+}
+
 void UnsettledDrawsKeepTheWalk() {
     DrawReader reader;
     SharedPages pages(Pages);
@@ -276,6 +314,7 @@ void ManyReadsRefusedByInlinedSize() {
 void Run(MirrorReader&) {
     Registered();
     SettledDrawsBindTheSegmentStages();
+    NewStateCreatesNoSegmentPipelineInFrame();
     ManyReadsRefusedByInlinedSize();
     UnsettledDrawsKeepTheWalk();
 }

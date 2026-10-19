@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
+#include <functional>
 #include <set>
 
 namespace AgcDriver::Graphics {
@@ -119,6 +120,13 @@ struct PipelineStoreCounters {
     std::uint64_t bound = 0;
 };
 PipelineStoreCounters PipelineStoreTotals();
+struct StorePipelineCreations {
+    std::uint64_t inFrames = 0;
+    std::uint64_t behindFrames = 0;
+};
+StorePipelineCreations StorePipelineCreationTotals();
+using PipelineCreationLater = std::function<void(std::function<void()>)>;
+std::shared_ptr<Pipeline> CachedPipelineOrLater(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, const PipelineCreationLater& later, std::shared_ptr<const void> keep);
 // The pipeline store's key of a configuration (empty when the configuration gets a private pipeline).
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout);
 struct DescribedSetLayouts {

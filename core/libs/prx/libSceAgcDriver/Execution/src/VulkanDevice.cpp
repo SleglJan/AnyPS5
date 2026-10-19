@@ -468,6 +468,7 @@ struct VulkanDevice::State {
     std::mutex segmentProgramsMutex;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::shared_future<std::shared_ptr<const ShaderRecompiler::RecompileResult>>> segmentPrograms;
     std::map<std::vector<std::uint64_t>, std::shared_future<std::shared_ptr<const Graphics::SegmentStages>>> segmentDrawGroups;
+    std::vector<std::shared_future<void>> segmentDrawPipelines;
     std::mutex compileDeviceMutex;
     std::shared_ptr<VulkanDevice> compileDevice;
     std::size_t compileDeviceUsers = 0;
@@ -2038,6 +2039,12 @@ void VulkanDevice::WaitSegmentPrograms() {
         for (const auto& [key, group] : state->segmentDrawGroups) groups.push_back(group);
     }
     for (const auto& group : groups) group.wait();
+    std::vector<std::shared_future<void>> pipelines;
+    {
+        std::lock_guard lock(state->segmentProgramsMutex);
+        pipelines = state->segmentDrawPipelines;
+    }
+    for (const auto& pipeline : pipelines) pipeline.wait();
 }
 
 bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
@@ -3791,7 +3798,11 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     const auto& context = readyContext();
     Graphics::SegmentStageSelector segments;
     if (std::ranges::any_of(segmentPrograms, [](const SegmentProgram& make) { return static_cast<bool>(make); })) {
-        segments = [this, segmentPrograms](const Graphics::State& state, std::span<const Graphics::CompiledShader> walk) { return segmentStagesFor(state, walk, segmentPrograms); };
+        segments.select = [this, segmentPrograms](const Graphics::State& state, std::span<const Graphics::CompiledShader> walk) { return segmentStagesFor(state, walk, segmentPrograms); };
+        segments.later = [this](std::function<void()> task) { segmentDrawPipelineLater(std::move(task)); };
+        segments.bound = [](bool bound) {
+            if (auto* residency = Graphics::ResidencyDriver::Active()) residency->NoteSegmentDispatch(bound);
+        };
     }
     Graphics::Draw(context, graphics, draw, shaders, segments);
     if (trace) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
@@ -4672,6 +4683,12 @@ std::shared_ptr<const Graphics::SegmentStages> VulkanDevice::segmentStagesFor(co
         } else {
             auto building = std::make_shared<std::promise<std::shared_ptr<const Graphics::SegmentStages>>>();
             state->segmentDrawGroups.emplace(key, building->get_future().share());
+            for (auto& stage : stages->stages) {
+                if (std::ranges::any_of(stages->programs, [&](const auto& program) { return program.get() == stage.program; })) continue;
+                auto kept = std::make_shared<const ShaderRecompiler::RecompileResult>(*stage.program);
+                stage.program = kept.get();
+                stages->kept.push_back(std::move(kept));
+            }
             CreationPool::Later([this, building, stages, graphics] {
                 const SegmentProgramCreation creation;
                 try {
@@ -4684,8 +4701,26 @@ std::shared_ptr<const Graphics::SegmentStages> VulkanDevice::segmentStagesFor(co
         }
     }
     const bool ready = group.valid() && group.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
-    if (residency != nullptr) residency->NoteSegmentDispatch(ready);
+    if (!ready && residency != nullptr) residency->NoteSegmentDispatch(false);
     return ready ? group.get() : nullptr;
+}
+
+void VulkanDevice::segmentDrawPipelineLater(std::function<void()> task) {
+    auto building = std::make_shared<std::promise<void>>();
+    {
+        std::lock_guard lock(state->segmentProgramsMutex);
+        std::erase_if(state->segmentDrawPipelines, [](const std::shared_future<void>& pipeline) { return pipeline.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
+        state->segmentDrawPipelines.push_back(building->get_future().share());
+    }
+    try {
+        CreationPool::Later([building, task = std::move(task)] {
+            task();
+            building->set_value();
+        });
+    } catch (...) {
+        building->set_value();
+        throw;
+    }
 }
 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created, std::shared_ptr<RecordUse> use) {

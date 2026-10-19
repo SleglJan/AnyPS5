@@ -13,6 +13,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -946,6 +947,7 @@ struct PipelineStore {
     std::list<Entry> entries;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
     std::unordered_map<std::uint64_t, Building> building;
+    std::unordered_map<std::uint64_t, bool> later;
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
@@ -956,6 +958,14 @@ struct PipelineStore {
 
 // Never destroyed: the pipelines belong to a device that may already be gone when statics die, and
 // the device's teardown (ClearCachedPipelines) is the place to destroy them.
+std::array<std::atomic<std::uint64_t>, 2> storeCreations{};
+
+std::shared_ptr<Pipeline> createdPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    storeCreations[CreationInBackground::BehindFrames() ? 1u : 0u].fetch_add(1, std::memory_order_relaxed);
+    return pipeline;
+}
+
 PipelineStore& Pipelines() {
     static auto* store = new PipelineStore();
     return *store;
@@ -997,7 +1007,7 @@ namespace {
 
 std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> replayed) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
-    if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    if (disabled) return createdPipeline(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
     struct PipelineKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
@@ -1043,7 +1053,7 @@ std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& st
         ++store.misses;
         ++store.totals.misses;
     }
-    if (!shared) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+    if (!shared) return createdPipeline(context, state, vertexInput, resources, shaders, attachmentLayout);
     if (other.valid()) {
         auto pipeline = other.get();
         if (replayed == nullptr) {
@@ -1056,7 +1066,7 @@ std::shared_ptr<Pipeline> cachedPipeline(const Context& context, const State& st
     std::shared_ptr<Pipeline> pipeline;
     auto use = replayed;
     try {
-        pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        pipeline = createdPipeline(context, state, vertexInput, resources, shaders, attachmentLayout);
         if (use == nullptr && !CreationAhead::Active() && context.pipelineRecorder != nullptr) use = context.pipelineRecorder->Created(context, state, vertexInput, resources, shaders, attachmentLayout);
     } catch (...) {
         {
@@ -1094,6 +1104,64 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 std::shared_ptr<Pipeline> PrepareCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::shared_ptr<RecordUse> use) {
     Require(use != nullptr, "a pipeline prepared ahead needs its manifest record");
     return cachedPipeline(context, state, vertexInput, resources, shaders, attachmentLayout, std::move(use));
+}
+
+StorePipelineCreations StorePipelineCreationTotals() {
+    return {storeCreations[0].load(std::memory_order_relaxed), storeCreations[1].load(std::memory_order_relaxed)};
+}
+
+std::shared_ptr<Pipeline> CachedPipelineOrLater(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, const PipelineCreationLater& later, std::shared_ptr<const void> keep) {
+    auto& store = Pipelines();
+    std::vector<std::byte> key;
+    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+    Require(!key.empty(), "a pipeline created behind frames needs a store key");
+    const auto hash = hashKey(key);
+    {
+        std::lock_guard lock(store.mutex);
+        if (const auto found = store.index.find(hash); found != store.index.end() && found->second->key == key && alive(*found->second, context)) {
+            ++store.hits;
+            store.entries.splice(store.entries.end(), store.entries, found->second);
+            if (found->second->use != nullptr) found->second->use->Mark();
+            return found->second->pipeline;
+        }
+        if (store.building.contains(hash) || !store.later.emplace(hash, false).second) return nullptr;
+    }
+    struct Owned {
+        Context context;
+        State state;
+        VertexInputLayout vertexInput;
+        VkDescriptorSetLayout main;
+        VkDescriptorSetLayout fragment;
+        bool split;
+        std::vector<std::uint32_t> mainKey;
+        std::vector<std::uint32_t> fragmentKey;
+        std::vector<CompiledShader> shaders;
+        VkImageLayout attachmentLayout;
+        std::shared_ptr<const void> keep;
+    };
+    auto owned = std::make_shared<Owned>(Owned{context, state, vertexInput, resources.main, resources.fragment, resources.split, {resources.mainKey.begin(), resources.mainKey.end()}, {resources.fragmentKey.begin(), resources.fragmentKey.end()}, {shaders.begin(), shaders.end()}, attachmentLayout, std::move(keep)});
+    const auto forget = [hash](bool failed) {
+        auto& pipelines = Pipelines();
+        std::lock_guard lock(pipelines.mutex);
+        if (failed) pipelines.later[hash] = true;
+        else pipelines.later.erase(hash);
+    };
+    try {
+        later([owned, forget] {
+            try {
+                const PipelineSetLayouts layouts{owned->main, owned->fragment, owned->split, owned->mainKey, owned->fragmentKey};
+                static_cast<void>(cachedPipeline(owned->context, owned->state, owned->vertexInput, layouts, owned->shaders, owned->attachmentLayout, nullptr));
+                forget(false);
+            } catch (const std::exception& error) {
+                forget(true);
+                std::fprintf(stderr, "[pipeline] a graphics pipeline created behind frames failed: %s\n", error.what());
+            }
+        });
+    } catch (...) {
+        forget(false);
+        throw;
+    }
+    return nullptr;
 }
 
 void ClearCachedPipelines(VkDevice device) {

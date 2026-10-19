@@ -323,6 +323,7 @@ private:
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
     IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::optional<std::array<std::uint32_t, 3>> threadGroup = std::nullopt);
     std::shared_ptr<const ShaderRecompiler::RecompileResult> segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make, bool& refused, bool compute = true);
+    void segmentDrawPipelineLater(std::function<void()> task);
     std::shared_ptr<const Graphics::SegmentStages> segmentStagesFor(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> walk, std::span<const SegmentProgram> segmentPrograms);
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
     std::vector<std::byte> compileOnDisposableDevice(const ComputePipelineCapture& capture);

@@ -18,8 +18,14 @@ struct HostImport;
 struct SegmentStages {
     std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> programs;
     std::vector<CompiledShader> stages;
+    std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> kept;
 };
-using SegmentStageSelector = std::function<std::shared_ptr<const SegmentStages>(const State&, std::span<const CompiledShader>)>;
+struct SegmentStageSelector {
+    std::function<std::shared_ptr<const SegmentStages>(const State&, std::span<const CompiledShader>)> select;
+    PipelineCreationLater later;
+    std::function<void(bool)> bound;
+    explicit operator bool() const { return static_cast<bool>(select); }
+};
 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const SegmentStageSelector& segments = {});
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);

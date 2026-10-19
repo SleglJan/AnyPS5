@@ -2057,10 +2057,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
-    std::shared_ptr<const SegmentStages> segmentStages;
-    if (segments && stencilReplay.empty() && resources->SegmentsSettled()) segmentStages = segments(pipelineState, shaders);
-    const std::span<const CompiledShader> pipelineShaders = segmentStages != nullptr ? std::span<const CompiledShader>(segmentStages->stages) : shaders;
-    auto pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.vertexInput, *resources, pipelineShaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+    const auto attachmentLayout = lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    std::shared_ptr<Pipeline> segmentPipeline;
+    if (segments && stencilReplay.empty() && resources->SegmentsSettled()) {
+        if (auto segmentStages = segments.select(pipelineState, shaders)) {
+            segmentPipeline = CachedPipelineOrLater(context, pipelineState, inputs.vertexInput, resources->SetLayouts(), segmentStages->stages, attachmentLayout, segments.later, segmentStages);
+            segments.bound(segmentPipeline != nullptr);
+        }
+    }
+    auto pipeline = segmentPipeline != nullptr ? segmentPipeline : stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.vertexInput, *resources, shaders, attachmentLayout) : stencilReplay.front().second;
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     std::vector<std::shared_ptr<StorageTexture>> owners;
