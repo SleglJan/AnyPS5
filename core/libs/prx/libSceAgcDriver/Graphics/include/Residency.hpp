@@ -209,7 +209,13 @@ struct ResidencyCounts {
     std::uint32_t dirty = 0;
     std::uint32_t retiring = 0;
     std::uint32_t free = 0;
+    std::uint64_t mixedRanges = 0;
+    std::uint64_t completedRanges = 0;
+    std::uint64_t demotedRanges = 0;
+    std::uint64_t rangeConflicts = 0;
 };
+
+enum class ResidencyRangeState : std::uint8_t { Uniform, Completed, Demoted, Conflict };
 
 class ResidencyMutex {
 public:
@@ -253,6 +259,7 @@ public:
     void AdmitEager();
     void Prepare();
     void Use(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access);
+    ResidencyRangeState UseRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest);
     void Pin(std::uint64_t address, std::uint64_t bytes, ResidencyAccess access, const ResidencyToken& token);
     void Demote(std::uint64_t address, std::uint64_t bytes);
     void DemoteWritable();

@@ -91,6 +91,7 @@ public:
     void FinishUse(const Context& context, VkCommandBuffer commands) const;
     void SetImageTables(std::vector<std::uint32_t> stages) { imageTableStages = std::move(stages); }
     void NameStages(std::vector<std::pair<std::uint32_t, std::uint64_t>> stages) { stageShaders = std::move(stages); }
+    const BdaPageTable* PageTable() const { return pages.get(); }
 
 private:
     friend class BatchFaultRecord;

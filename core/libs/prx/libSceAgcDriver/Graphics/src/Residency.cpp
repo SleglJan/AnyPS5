@@ -1593,6 +1593,58 @@ void ResidencyManager::Use(std::uint64_t address, std::uint64_t bytes, Residency
     Pin(address, bytes, access, device.Current());
 }
 
+ResidencyRangeState ResidencyManager::UseRange(std::uint64_t address, std::uint64_t bytes, std::uint64_t largest) {
+    const std::lock_guard structureLock(structure);
+    applyQueued();
+    const auto span = PagesOf(address, bytes);
+    if (span.empty) return ResidencyRangeState::Uniform;
+    std::vector<std::uint64_t> served;
+    bool admissible = true;
+    bool mixed = false;
+    for (auto page = span.first; page <= span.last; ++page) {
+        if (find(page)) {
+            mixed = true;
+            continue;
+        }
+        const auto import = device.Import(page);
+        if (!import.whole && !import.resident && import.serial == 0) continue;
+        served.push_back(page);
+        if (!import.whole || import.resident || hot.contains(page) || refused.contains(page) || (import.aliased && canonical.contains({import.section, import.offset}))) admissible = false;
+    }
+    if (served.empty()) {
+        if (mixed) Use(address, bytes, ResidencyAccess::Read);
+        return ResidencyRangeState::Uniform;
+    }
+    if (mixed) ++counts.mixedRanges;
+    if (admissible && bytes <= budgetBytes() && (mixed || bytes <= largest)) {
+        Use(address, bytes, ResidencyAccess::Read);
+        if (std::all_of(served.begin(), served.end(), [&](std::uint64_t page) { return find(page).has_value(); })) {
+            if (!mixed) return ResidencyRangeState::Uniform;
+            ++counts.completedRanges;
+            return ResidencyRangeState::Completed;
+        }
+        if (!mixed) ++counts.mixedRanges;
+    } else if (!mixed) {
+        return ResidencyRangeState::Uniform;
+    }
+    std::vector<std::uint32_t> clean;
+    bool kept = false;
+    for (auto page = span.first; page <= span.last; ++page) {
+        const auto id = find(page);
+        if (!id) continue;
+        if (pages[*id].dirtyRuns.empty()) clean.push_back(*id);
+        else kept = true;
+    }
+    demote(clean);
+    if (kept) {
+        Pin(address, bytes, ResidencyAccess::Read, device.Current());
+        ++counts.rangeConflicts;
+        return ResidencyRangeState::Conflict;
+    }
+    ++counts.demotedRanges;
+    return ResidencyRangeState::Demoted;
+}
+
 void ResidencyManager::AdmitTouched(std::span<const std::uint64_t> touched) {
     const std::lock_guard structureLock(structure);
     applyQueued();

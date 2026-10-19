@@ -2003,6 +2003,7 @@ void ShaderResources::buildComplete() {
                 residency->BeforeWritingDispatch(grants, storesUnbounded);
             }
             bda = std::make_unique<BdaResources>(context, guestMemory, std::span<const ShaderRecompiler::BdaAbi::Range>{}, batchFaultRecord());
+            if (residency != nullptr && bda->PageTable() != nullptr) residency->CountMixedRanges(*bda->PageTable(), readRanges);
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }

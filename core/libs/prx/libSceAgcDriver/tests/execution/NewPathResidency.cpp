@@ -432,6 +432,79 @@ void UnbindAfterHolders(Harness& harness) {
     Locked([&] { Residency().Manager().SetBudget(0); });
 }
 
+std::uint64_t MixedAtRecord() {
+    std::uint64_t mixed = 0;
+    Locked([&] { mixed = Residency().Counts().mixedAtRecord; });
+    return mixed;
+}
+
+std::uint64_t ResidentIn(const SharedPages& pages, std::uint64_t count) {
+    std::uint64_t resident = 0;
+    for (std::uint64_t page = 0; page < count; ++page) resident += Resident(pages, page) ? 1u : 0u;
+    return resident;
+}
+
+void MixedRangeCompleted(Harness& harness) {
+    constexpr std::uint32_t WidePages = 160;
+    Settle();
+    Locked([] { Residency().SyncBindings(); });
+    Locked([&] { Residency().Manager().SetBudget(TestBudget); });
+    SharedPages wide(WidePages);
+    Model model(wide, 6);
+    model.Fill();
+    Use(wide, 0, WidePages);
+    Settle();
+    Locked([&] { Residency().Manager().Demote(wide.Address(4), (WidePages - 4) * PageBytes); });
+    Settle();
+    Expect(ResidentIn(wide, WidePages) == 4, "mixed range: the setup left " + std::to_string(ResidentIn(wide, WidePages)) + " of " + std::to_string(WidePages) + " pages resident, expected 4");
+    FillMirror(wide.Address(1, 2), MirrorMarker);
+    const auto before = Counts();
+    const auto mixed = MixedAtRecord();
+    ExpectLanes(harness.Read(wide, 0, WidePages), model, 0, WidePages, {{1 * SubpagesPerPage + 2, MirrorMarker}}, "mixed range: a dispatch over a range that fits the budget did not read the mirror of its resident page");
+    const auto after = Counts();
+    Expect(MixedAtRecord() == mixed, "mixed range: a dispatch was recorded with " + std::to_string(MixedAtRecord() - mixed) + " V# ranges part mirrored and part import-served");
+    Expect(ResidentIn(wide, WidePages) == WidePages, "mixed range: a range that fits the budget was not admitted whole: " + std::to_string(ResidentIn(wide, WidePages)) + " of " + std::to_string(WidePages) + " pages resident");
+    Expect(after.mixedRanges == before.mixedRanges + 1 && after.completedRanges == before.completedRanges + 1, "mixed range: the range was not counted as mixed and completed");
+    for (std::uint64_t page = 0; page < WidePages; ++page) {
+        if (!BoundAtGuestOffset(wide, page)) {
+            Expect(false, "mixed range: completed page " + std::to_string(page) + " is not bound at its guest offset");
+            break;
+        }
+    }
+    Settle();
+    Locked([&] { Residency().Manager().SetBudget(0); });
+    Settle();
+}
+
+void RangeAboveBudgetFromImport(Harness& harness) {
+    Settle();
+    std::uint32_t chunkSlots = 0;
+    Locked([&] {
+        Residency().Manager().SetBudget(0);
+        chunkSlots = Residency().Manager().ChunkSlots();
+    });
+    Settle();
+    Locked([&] { Residency().Manager().SetBudget(std::uint64_t{chunkSlots} * PageBytes); });
+    const auto rangePages = chunkSlots + ReadPages;
+    SharedPages big(rangePages);
+    Model model(big, 7);
+    model.Fill();
+    Use(big, 0, 4);
+    Settle();
+    Expect(Resident(big, 1), "range above the budget: the setup did not admit page 1");
+    FillMirror(big.Address(1, 2), MirrorMarker);
+    const auto before = Counts();
+    const auto mixed = MixedAtRecord();
+    ExpectLanes(harness.Read(big, 0, rangePages), model, 0, rangePages, {}, "range above the budget: a dispatch did not read the range's guest memory through the import");
+    const auto after = Counts();
+    Expect(MixedAtRecord() == mixed, "range above the budget: a dispatch was recorded with " + std::to_string(MixedAtRecord() - mixed) + " V# ranges part mirrored and part import-served");
+    Expect(ResidentIn(big, rangePages) == 0, "range above the budget: " + std::to_string(ResidentIn(big, rangePages)) + " of its pages stayed resident, expected it import-served whole");
+    Expect(after.mixedRanges == before.mixedRanges + 1 && after.demotedRanges == before.demotedRanges + 1 && after.rangeConflicts == before.rangeConflicts, "range above the budget: the range was not counted as mixed and demoted without conflict");
+    Settle();
+    Locked([&] { Residency().Manager().SetBudget(0); });
+    Settle();
+}
+
 int main() {
 #ifdef _WIN32
     {
@@ -454,6 +527,8 @@ int main() {
         DropOnUnmap(harness);
         EvictionUnderBudget(harness);
         UnbindAfterHolders(harness);
+        MixedRangeCompleted(harness);
+        RangeAboveBudgetFromImport(harness);
         AgcDriverShutdown_nid_postfix();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: exception: %s\n", error.what());

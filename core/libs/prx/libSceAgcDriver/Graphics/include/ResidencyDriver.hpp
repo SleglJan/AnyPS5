@@ -19,6 +19,8 @@
 
 namespace AgcDriver::Graphics {
 
+class BdaPageTable;
+
 static_assert(ResidencyStreams == MaxRecorderStreams);
 
 struct ResidencyGuestImport {
@@ -85,6 +87,7 @@ struct ResidencyDriverCounts {
     std::uint64_t budgetBytes = 0;
     std::uint64_t bindWaits = 0;
     std::uint64_t deferredUnbinds = 0;
+    std::uint64_t mixedAtRecord = 0;
 };
 
 class ResidencyDriver final : public IResidencyDevice {
@@ -104,6 +107,7 @@ public:
     void BeforeCompletionSignal();
     void Flip();
     void UseForRead(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void CountMixedRanges(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     void BeforeWritingDispatch(std::span<const ResidencyRange> grants, bool writableImports);
     void NoteRecordedWrites(std::uint64_t address, std::uint64_t bytes);
     void PrepareImportWrite(std::uint64_t address, std::uint64_t bytes);
@@ -196,6 +200,7 @@ private:
     std::atomic<bool> bindsUnsettled{false};
     std::atomic<std::uint64_t> bindWaits{0};
     std::atomic<std::uint64_t> deferredUnbinds{0};
+    std::atomic<std::uint64_t> mixedAtRecord{0};
     ResidencyManager manager;
     std::shared_ptr<Buffer> touchTable;
     std::atomic<VkDeviceAddress> touchAddress{0};

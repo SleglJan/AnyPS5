@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyDriver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaPageTable.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeviceMemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -287,8 +288,26 @@ void ResidencyDriver::UseForRead(std::span<const std::pair<std::uint64_t, std::u
     const std::lock_guard lock(GuestMemory::GpuMutex());
     const std::lock_guard structureLock(manager.Mutex());
     for (const auto& [begin, end] : ranges) {
-        if (end <= begin || end - begin > largest) continue;
-        manager.Use(begin, end - begin, ResidencyAccess::Read);
+        if (end > begin) manager.UseRange(begin, end - begin, largest);
+    }
+}
+
+void ResidencyDriver::CountMixedRanges(const BdaPageTable& table, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    constexpr std::uint64_t pageBytes = ResidencyPageBytes;
+    for (const auto& [begin, end] : ranges) {
+        bool mirrored = false;
+        bool served = false;
+        for (auto address = begin; address < end && !(mirrored && served);) {
+            const auto range = table.Find(address);
+            const auto pageEnd = (address & ~(pageBytes - 1)) + pageBytes;
+            if (!range) {
+                address = pageEnd;
+                continue;
+            }
+            ((range->reserved & ShaderRecompiler::BdaAbi::RangeMirrored) != 0 ? mirrored : served) = true;
+            address = std::max(pageEnd, range->end);
+        }
+        if (mirrored && served) mixedAtRecord.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -417,7 +436,7 @@ void ResidencyDriver::KeepChunks() {
 }
 
 ResidencyDriverCounts ResidencyDriver::Counts() const {
-    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed)};
+    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed), mixedAtRecord.load(std::memory_order_relaxed)};
 }
 
 bool ResidencyDriver::Reached(const ResidencyToken& token) {
