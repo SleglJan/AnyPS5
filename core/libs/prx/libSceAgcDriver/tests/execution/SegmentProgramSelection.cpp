@@ -1,10 +1,13 @@
 #include "ResidencyRulesFixture.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
 #include <string>
+#include <span>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 
@@ -20,6 +23,7 @@ AgcDriver::Graphics::ResidencyDriverCounts DriverCounts() {
 }
 
 constexpr std::uint32_t StrideShift = 11;
+constexpr std::uint32_t VXorB32 = 0x1du;
 
 const Program& SegmentReadProgram() {
     static const Program program = [] {
@@ -37,9 +41,55 @@ const Program& SegmentReadProgram() {
     return program;
 }
 
+constexpr std::uint32_t OversizedPadding = 60000;
+constexpr std::uint32_t PadRegisters = 8;
+
+class OversizedProgram {
+public:
+    OversizedProgram() {
+        using namespace Isa;
+        *this << Vop2(VLshlRevB32, 1, InlineInteger(StrideShift), 0)
+              << Mubuf(BufferLoadDword, 20, 1, 0)
+              << WaitAll
+              << Vop1(VMovB32, 30, Vgpr(0))
+              << Vop1(VMovB32, 31, InlineInteger(0))
+              << Vop1(VMovB32, 40, Vgpr(20));
+        for (std::uint32_t pad = 0; pad < PadRegisters; ++pad) *this << Vop2(VAddNcU32, 41 + pad, InlineInteger(pad + 1u), 20);
+        for (std::uint32_t index = 0; index < OversizedPadding; ++index) *this << Vop2(VXorB32, 40, Vgpr(40), 41 + index % PadRegisters);
+        *this << ImageStoreX(40, 30, 4) << EndProgram;
+        storage.assign(code.size() + 64u, 0u);
+        std::memcpy(reinterpret_cast<void*>(Address()), code.data(), code.size() * 4u);
+    }
+
+    std::uint64_t Address() const { return (reinterpret_cast<std::uintptr_t>(storage.data()) + 255u) & ~std::uintptr_t{255u}; }
+
+private:
+    OversizedProgram& operator<<(std::uint32_t word) {
+        code.push_back(word);
+        return *this;
+    }
+    OversizedProgram& operator<<(const std::array<std::uint32_t, 2>& pair) { return *this << pair[0] << pair[1]; }
+
+    std::vector<std::uint32_t> code;
+    std::vector<std::uint32_t> storage;
+};
+
+const OversizedProgram& OversizedReadProgram() {
+    static const OversizedProgram program;
+    return program;
+}
+
+void DispatchAt(Commands& commands, std::uint64_t program, std::span<const std::uint32_t> userData, std::uint32_t threads) {
+    commands.Registers(0x207, {threads, 1u, 1u});
+    commands.Registers(0x20c, {Low(program >> 8u), Low(program >> 40u)});
+    commands.Registers(0x213, {(static_cast<std::uint32_t>(userData.size()) << 1u) | (1u << 7u)});
+    commands.Registers(0x240, userData);
+    commands.Append(0x15u, {1u, 1u, 1u, 0x41u});
+}
+
 class SegmentReader {
 public:
-    std::vector<std::uint32_t> Read(std::uint64_t address) {
+    std::vector<std::uint32_t> Read(std::uint64_t address, std::uint64_t program = SegmentReadProgram().Address()) {
         for (std::uint32_t lane = 0; lane < MirrorReader::Lanes; ++lane) texels.Words()[lane] = MirrorReader::Sentinel;
         std::array<std::uint32_t, 12> user{};
         const auto buffer = BufferResource(address, static_cast<std::uint32_t>(std::uint64_t{Pages} * PageBytes));
@@ -47,7 +97,7 @@ public:
         std::copy(buffer.begin(), buffer.end(), user.begin());
         std::copy(image.begin(), image.end(), user.begin() + 4);
         Commands commands;
-        commands.Dispatch(SegmentReadProgram(), user, MirrorReader::Lanes);
+        DispatchAt(commands, program, user, MirrorReader::Lanes);
         commands.Submit(0);
         WaitIdle();
         AgcDriver::Graphics::StorageTexture::FlushPending(texels.Address(), MirrorReader::Lanes * 4u, nullptr, "segment program selection reader");
@@ -135,8 +185,27 @@ void UnsettledDispatchesKeepTheWalk() {
     Settle();
 }
 
+void OversizedProgramsKeepTheWalk() {
+    SegmentReader reader;
+    SharedPages pages(Pages);
+    Fill(pages.Words(), Pages, Tag);
+    AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
+    for (std::uint32_t page = 0; page < Pages; ++page) Use(pages.Address(page));
+    Settle();
+    for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+        const auto before = DriverCounts();
+        ExpectPattern(reader.Read(pages.Address(), OversizedReadProgram().Address()), "oversized: the walk program's read across both page edges (attempt " + std::to_string(attempt) + ")");
+        const auto after = DriverCounts();
+        Expect(after.settledDispatches == before.settledDispatches + 1u, "oversized: the dispatch over three touching mirror pages was not judged settled (attempt " + std::to_string(attempt) + ")");
+        Expect(after.segmentRefused == before.segmentRefused + 1u && after.segmentPending == before.segmentPending && after.segmentDispatches == before.segmentDispatches, "oversized: a settled dispatch of a program over " + std::to_string(AgcDriver::VulkanDevice::SegmentProgramWords) + " SPIR-V words was not kept on the walk program counted as segment refused: size (refused +" + std::to_string(after.segmentRefused - before.segmentRefused) + ", pending +" + std::to_string(after.segmentPending - before.segmentPending) + ", segment +" + std::to_string(after.segmentDispatches - before.segmentDispatches) + ", attempt " + std::to_string(attempt) + ")");
+        if (attempt == 0u) std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+    Settle();
+}
+
 void Run(MirrorReader&) {
     SettledDispatchesBindTheSegmentProgram();
+    OversizedProgramsKeepTheWalk();
     UnsettledDispatchesKeepTheWalk();
 }
 

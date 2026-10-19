@@ -4795,9 +4795,14 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     timing.Mark("shader_resources");
     timer.phase(PhaseResources);
     if (resources->SegmentsSettled() && prepared != nullptr && prepared->segmentProgram) {
-        const auto segment = segmentProgramFor(shader, programAddress, prepared->segmentProgram);
-        if (auto* residency = Graphics::ResidencyDriver::Active(); residency != nullptr) residency->NoteSegmentDispatch(segment != nullptr);
-        if (segment != nullptr) objects = computePipeline(*segment, programAddress);
+        auto* residency = Graphics::ResidencyDriver::Active();
+        if (shader.spirv.size() > SegmentProgramWords) {
+            if (residency != nullptr) residency->NoteSegmentRefused();
+        } else {
+            const auto segment = segmentProgramFor(shader, programAddress, prepared->segmentProgram);
+            if (residency != nullptr) residency->NoteSegmentDispatch(segment != nullptr);
+            if (segment != nullptr) objects = computePipeline(*segment, programAddress);
+        }
     }
     if (objects == nullptr) {
         objects = computePipeline(shader, programAddress);

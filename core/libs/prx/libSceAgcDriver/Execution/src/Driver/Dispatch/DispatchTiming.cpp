@@ -31,7 +31,7 @@ void Driver::addDriverPhases(DispatchClass which, const std::array<double, Drive
     if (const auto* residency = Graphics::ResidencyDriver::Active(); residency != nullptr) {
         static Graphics::ResidencyDriverCounts previous;
         const auto counts = residency->Counts();
-        AgcDriver::ProfilePrint_nid_no_patch("[dispatch] segment programs (10 s): %llu settled, %llu unsettled on the walk program, %llu on the segment program, %llu segment pending on the walk program, %llu out-of-segment errors\n", static_cast<unsigned long long>(counts.settledDispatches - previous.settledDispatches), static_cast<unsigned long long>(counts.unsettledDispatches - previous.unsettledDispatches), static_cast<unsigned long long>(counts.segmentDispatches - previous.segmentDispatches), static_cast<unsigned long long>(counts.segmentPending - previous.segmentPending), static_cast<unsigned long long>(counts.segmentFaults - previous.segmentFaults));
+        AgcDriver::ProfilePrint_nid_no_patch("[dispatch] segment programs (10 s): %llu settled, %llu unsettled on the walk program, %llu on the segment program, %llu segment pending on the walk program, %llu segment refused: size, %llu out-of-segment errors\n",static_cast<unsigned long long>(counts.settledDispatches - previous.settledDispatches), static_cast<unsigned long long>(counts.unsettledDispatches - previous.unsettledDispatches), static_cast<unsigned long long>(counts.segmentDispatches - previous.segmentDispatches), static_cast<unsigned long long>(counts.segmentPending - previous.segmentPending), static_cast<unsigned long long>(counts.segmentRefused - previous.segmentRefused), static_cast<unsigned long long>(counts.segmentFaults - previous.segmentFaults));
         previous = counts;
     }
 }

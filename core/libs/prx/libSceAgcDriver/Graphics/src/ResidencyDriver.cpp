@@ -446,7 +446,7 @@ void ResidencyDriver::KeepChunks() {
 }
 
 ResidencyDriverCounts ResidencyDriver::Counts() const {
-    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed), mixedAtRecord.load(std::memory_order_relaxed), settledDispatches.load(std::memory_order_relaxed), unsettledDispatches.load(std::memory_order_relaxed), segmentFaults.load(std::memory_order_relaxed), segmentDispatches.load(std::memory_order_relaxed), segmentPending.load(std::memory_order_relaxed)};
+    return {orderingPoints.load(std::memory_order_relaxed), appliedAtOrderingPoints.load(std::memory_order_relaxed), vanishedCopies, frames, touchHarvests, touchedPages, touchOverflows, budgetBytes, bindWaits.load(std::memory_order_relaxed), deferredUnbinds.load(std::memory_order_relaxed), mixedAtRecord.load(std::memory_order_relaxed), settledDispatches.load(std::memory_order_relaxed), unsettledDispatches.load(std::memory_order_relaxed), segmentFaults.load(std::memory_order_relaxed), segmentDispatches.load(std::memory_order_relaxed), segmentPending.load(std::memory_order_relaxed), segmentRefused.load(std::memory_order_relaxed)};
 }
 
 bool ResidencyDriver::Reached(const ResidencyToken& token) {

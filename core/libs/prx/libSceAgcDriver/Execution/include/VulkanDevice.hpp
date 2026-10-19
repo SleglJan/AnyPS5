@@ -248,6 +248,7 @@ public:
     static PresentStatistics PresentCounts();
     Graphics::DeviceImageTable::Counts DeviceImageCounts() const;
     using SegmentProgram = std::function<std::shared_ptr<const ShaderRecompiler::RecompileResult>()>;
+    static constexpr std::size_t SegmentProgramWords = 172000;
     std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads = 0, std::uint64_t linearThreads = 0, SegmentProgram segmentProgram = {});
     void WaitSegmentPrograms();
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
