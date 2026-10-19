@@ -74,6 +74,7 @@
 #include <deque>
 #include <limits>
 #include <list>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -140,6 +141,40 @@ void check(VkResult result, const char* operation) {
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
+}
+
+std::uint64_t InlinedWords(std::span<const std::uint32_t> words) {
+    struct Function {
+        std::uint64_t words = 0;
+        std::vector<std::uint32_t> callees;
+    };
+    std::unordered_map<std::uint32_t, Function> functions;
+    std::uint32_t entry = 0;
+    Function* current = nullptr;
+    for (std::size_t index = 5; index < words.size();) {
+        const auto count = words[index] >> 16u;
+        const auto op = words[index] & 0xffffu;
+        if (count == 0 || index + count > words.size()) break;
+        if (op == spv::OpEntryPoint && count > 2 && entry == 0) entry = words[index + 2];
+        if (op == spv::OpFunction && count > 2) current = &functions[words[index + 2]];
+        if (current != nullptr) {
+            current->words += count;
+            if (op == spv::OpFunctionCall && count > 3) current->callees.push_back(words[index + 3]);
+            if (op == spv::OpFunctionEnd) current = nullptr;
+        }
+        index += count;
+    }
+    std::unordered_map<std::uint32_t, std::uint64_t> inlined;
+    std::function<std::uint64_t(std::uint32_t, std::size_t)> total = [&](std::uint32_t id, std::size_t depth) -> std::uint64_t {
+        if (const auto found = inlined.find(id); found != inlined.end()) return found->second;
+        const auto function = functions.find(id);
+        if (function == functions.end() || depth > functions.size()) return 0;
+        auto sum = function->second.words;
+        for (const auto callee : function->second.callees) sum += total(callee, depth + 1);
+        inlined.emplace(id, sum);
+        return sum;
+    };
+    return total(entry, 0);
 }
 
 bool CoreVulkanCapability(std::uint32_t capability) {
@@ -4542,7 +4577,7 @@ std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler
     return records.size();
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make) {
+std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make, bool& refused) {
     using Program = std::shared_ptr<const ShaderRecompiler::RecompileResult>;
     const auto hash = walk.spirv.ContentHash();
     const std::pair<std::uint64_t, std::uint64_t> key{hash.low, hash.high};
@@ -4560,6 +4595,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentPr
                 try {
                     auto compiled = make();
                     require(compiled != nullptr, "the segment program of a settled dispatch's program did not compile");
+                    if (InlinedWords(compiled->spirv.Words()) > SegmentProgramInlinedWords) {
+                        building->set_value(nullptr);
+                        return;
+                    }
                     const auto segment = ShaderRecompiler::SegmentRunTimeResult(*walkCopy, *compiled);
                     bool created = false;
                     static_cast<void>(computePipeline(*segment, programAddress, &created));
@@ -4573,7 +4612,10 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentPr
         }
     }
     if (program.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
-    return ShaderRecompiler::SegmentRunTimeResult(walk, *program.get());
+    const auto& compiled = program.get();
+    refused = compiled == nullptr;
+    if (refused) return nullptr;
+    return ShaderRecompiler::SegmentRunTimeResult(walk, *compiled);
 }
 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created, std::shared_ptr<RecordUse> use) {
@@ -4815,13 +4857,11 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     timer.phase(PhaseResources);
     if (resources->SegmentsSettled() && prepared != nullptr && prepared->segmentProgram) {
         auto* residency = Graphics::ResidencyDriver::Active();
-        if (shader.spirv.size() > SegmentProgramWords) {
-            if (residency != nullptr) residency->NoteSegmentRefused();
-        } else {
-            const auto segment = segmentProgramFor(shader, programAddress, prepared->segmentProgram);
-            if (residency != nullptr) residency->NoteSegmentDispatch(segment != nullptr);
-            if (segment != nullptr) objects = computePipeline(*segment, programAddress);
-        }
+        bool refused = false;
+        const auto segment = segmentProgramFor(shader, programAddress, prepared->segmentProgram, refused);
+        if (residency != nullptr && refused) residency->NoteSegmentRefused();
+        else if (residency != nullptr) residency->NoteSegmentDispatch(segment != nullptr);
+        if (segment != nullptr) objects = computePipeline(*segment, programAddress);
     }
     if (objects == nullptr) {
         objects = computePipeline(shader, programAddress);

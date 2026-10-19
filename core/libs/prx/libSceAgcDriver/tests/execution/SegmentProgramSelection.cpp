@@ -41,12 +41,13 @@ const Program& SegmentReadProgram() {
     return program;
 }
 
-constexpr std::uint32_t OversizedPadding = 60000;
+constexpr std::uint32_t LongPadding = 60000;
+constexpr std::uint32_t ManyReads = 1000;
 constexpr std::uint32_t PadRegisters = 8;
 
-class OversizedProgram {
+class LargeProgram {
 public:
-    OversizedProgram() {
+    LargeProgram(std::uint32_t reads, std::uint32_t padding) {
         using namespace Isa;
         *this << Vop2(VLshlRevB32, 1, InlineInteger(StrideShift), 0)
               << Mubuf(BufferLoadDword, 20, 1, 0)
@@ -54,8 +55,9 @@ public:
               << Vop1(VMovB32, 30, Vgpr(0))
               << Vop1(VMovB32, 31, InlineInteger(0))
               << Vop1(VMovB32, 40, Vgpr(20));
+        for (std::uint32_t read = 0; read < reads; ++read) *this << Mubuf(BufferLoadDword, 21, 1, 0) << WaitAll << Vop2(VXorB32, 40, Vgpr(40), 21);
         for (std::uint32_t pad = 0; pad < PadRegisters; ++pad) *this << Vop2(VAddNcU32, 41 + pad, InlineInteger(pad + 1u), 20);
-        for (std::uint32_t index = 0; index < OversizedPadding; ++index) *this << Vop2(VXorB32, 40, Vgpr(40), 41 + index % PadRegisters);
+        for (std::uint32_t index = 0; index < padding; ++index) *this << Vop2(VXorB32, 40, Vgpr(40), 41 + index % PadRegisters);
         *this << ImageStoreX(40, 30, 4) << EndProgram;
         storage.assign(code.size() + 64u, 0u);
         std::memcpy(reinterpret_cast<void*>(Address()), code.data(), code.size() * 4u);
@@ -64,18 +66,23 @@ public:
     std::uint64_t Address() const { return (reinterpret_cast<std::uintptr_t>(storage.data()) + 255u) & ~std::uintptr_t{255u}; }
 
 private:
-    OversizedProgram& operator<<(std::uint32_t word) {
+    LargeProgram& operator<<(std::uint32_t word) {
         code.push_back(word);
         return *this;
     }
-    OversizedProgram& operator<<(const std::array<std::uint32_t, 2>& pair) { return *this << pair[0] << pair[1]; }
+    LargeProgram& operator<<(const std::array<std::uint32_t, 2>& pair) { return *this << pair[0] << pair[1]; }
 
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> storage;
 };
 
-const OversizedProgram& OversizedReadProgram() {
-    static const OversizedProgram program;
+const LargeProgram& LongStraightProgram() {
+    static const LargeProgram program(0, LongPadding);
+    return program;
+}
+
+const LargeProgram& ManyReadsProgram() {
+    static const LargeProgram program(ManyReads, 0);
     return program;
 }
 
@@ -185,27 +192,43 @@ void UnsettledDispatchesKeepTheWalk() {
     Settle();
 }
 
-void OversizedProgramsKeepTheWalk() {
+enum class Admission { Segment, Refused };
+
+void ExpectAdmission(const LargeProgram& program, Admission wanted, const std::string& what) {
     SegmentReader reader;
     SharedPages pages(Pages);
     Fill(pages.Words(), Pages, Tag);
     AgcDriver::GuestMemory::CollectWritesUncached(pages.Address(), pages.Bytes());
     for (std::uint32_t page = 0; page < Pages; ++page) Use(pages.Address(page));
     Settle();
-    for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
-        const auto before = DriverCounts();
-        ExpectPattern(reader.Read(pages.Address(), OversizedReadProgram().Address()), "oversized: the walk program's read across both page edges (attempt " + std::to_string(attempt) + ")");
-        const auto after = DriverCounts();
-        Expect(after.settledDispatches == before.settledDispatches + 1u, "oversized: the dispatch over three touching mirror pages was not judged settled (attempt " + std::to_string(attempt) + ")");
-        Expect(after.segmentRefused == before.segmentRefused + 1u && after.segmentPending == before.segmentPending && after.segmentDispatches == before.segmentDispatches, "oversized: a settled dispatch of a program over " + std::to_string(AgcDriver::VulkanDevice::SegmentProgramWords) + " SPIR-V words was not kept on the walk program counted as segment refused: size (refused +" + std::to_string(after.segmentRefused - before.segmentRefused) + ", pending +" + std::to_string(after.segmentPending - before.segmentPending) + ", segment +" + std::to_string(after.segmentDispatches - before.segmentDispatches) + ", attempt " + std::to_string(attempt) + ")");
-        if (attempt == 0u) std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
+    const auto first = DriverCounts();
+    auto before = first;
+    auto after = first;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    do {
+        before = DriverCounts();
+        ExpectPattern(reader.Read(pages.Address(), program.Address()), what + ": the read across both page edges");
+        after = DriverCounts();
+        Expect(after.settledDispatches == before.settledDispatches + 1u, what + ": the dispatch over three touching mirror pages was not judged settled");
+        if (after.segmentDispatches != before.segmentDispatches || after.segmentRefused != before.segmentRefused) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    } while (std::chrono::steady_clock::now() < deadline);
+    const auto segment = after.segmentDispatches - first.segmentDispatches;
+    const auto refused = after.segmentRefused - first.segmentRefused;
+    const auto counts = " (segment +" + std::to_string(segment) + ", refused +" + std::to_string(refused) + ", pending +" + std::to_string(after.segmentPending - first.segmentPending) + ")";
+    if (wanted == Admission::Segment) Expect(segment == 1u && refused == 0u, what + ": a settled dispatch never bound the segment program within 60 s" + counts);
+    else Expect(refused == 1u && segment == 0u, what + ": a settled dispatch was not kept on the walk program counted as segment refused: size within 60 s" + counts);
     Settle();
+}
+
+void LargeProgramsAdmittedByInlinedSize() {
+    ExpectAdmission(LongStraightProgram(), Admission::Segment, "long straight program");
+    ExpectAdmission(ManyReadsProgram(), Admission::Refused, "program with many segment reads");
 }
 
 void Run(MirrorReader&) {
     SettledDispatchesBindTheSegmentProgram();
-    OversizedProgramsKeepTheWalk();
+    LargeProgramsAdmittedByInlinedSize();
     UnsettledDispatchesKeepTheWalk();
 }
 

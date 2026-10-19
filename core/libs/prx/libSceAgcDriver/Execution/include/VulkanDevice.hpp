@@ -248,7 +248,7 @@ public:
     static PresentStatistics PresentCounts();
     Graphics::DeviceImageTable::Counts DeviceImageCounts() const;
     using SegmentProgram = std::function<std::shared_ptr<const ShaderRecompiler::RecompileResult>()>;
-    static constexpr std::size_t SegmentProgramWords = 172000;
+    static constexpr std::uint64_t SegmentProgramInlinedWords = 670000;
     std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads = 0, std::uint64_t linearThreads = 0, SegmentProgram segmentProgram = {});
     void WaitSegmentPrograms();
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
@@ -322,7 +322,7 @@ private:
     Graphics::Context buildContext() const;
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
     IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::optional<std::array<std::uint32_t, 3>> threadGroup = std::nullopt);
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make);
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make, bool& refused);
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
     std::vector<std::byte> compileOnDisposableDevice(const ComputePipelineCapture& capture);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
