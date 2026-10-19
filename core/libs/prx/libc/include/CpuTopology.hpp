@@ -176,6 +176,7 @@ struct GuestPlacement {
     std::uint64_t guestCpu[GUEST_CPU_COUNT] = {};
     std::uint64_t reserved = 0;
     std::uint64_t own = 0;
+    std::uint64_t background = 0;
 };
 
 inline std::vector<std::uint64_t> CoreMasks(std::uint64_t process) {
@@ -235,6 +236,9 @@ inline GuestPlacement PlaceGuestCpus(std::uint64_t process, const std::vector<st
         for (const auto bit : placement.guestCpu) placement.reserved |= bit;
     }
     placement.own = process & ~placement.reserved;
+    for (const auto core : cores)
+        if ((core & placement.reserved) == 0) placement.background |= core;
+    if (placement.background == 0) placement.background = placement.own;
     return placement;
 }
 
@@ -286,6 +290,22 @@ inline bool PlaceThreadAsGuest(void* handle, std::uint64_t guestMask, int guestP
     (void)handle;
     (void)guestMask;
     (void)guestPriority;
+    return false;
+#endif
+}
+
+inline bool PlaceThreadAsBackground() {
+    const auto& placement = Placement();
+    if (placement.reserved == 0 || placement.background == 0) return true;
+#ifdef _WIN32
+    return SetThreadAffinityMask(GetCurrentThread(), static_cast<DWORD_PTR>(placement.background)) != 0;
+#elif defined(__linux__)
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (unsigned cpu = 0; cpu < 64; ++cpu)
+        if ((placement.background >> cpu) & 1u) CPU_SET(cpu, &set);
+    return pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
+#else
     return false;
 #endif
 }

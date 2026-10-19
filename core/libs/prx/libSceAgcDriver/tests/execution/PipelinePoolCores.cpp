@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libc/include/CpuTopology.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -26,17 +27,22 @@ std::uint64_t Spin(std::uint64_t rounds) {
 
 std::atomic<std::uint64_t> sink{0};
 
+constexpr int GUEST_DEFAULT_PRIORITY = 700;
+
 double GuestThreadsMilliseconds(unsigned threads, std::uint64_t rounds) {
     std::vector<double> spent(threads);
+    std::vector<char> placed(threads);
     std::vector<std::thread> running;
     for (unsigned index = 0; index < threads; ++index) {
         running.emplace_back([&, index] {
+            placed[index] = CpuTopology::PlaceThreadAsGuest(nullptr, std::uint64_t{1} << (index % CpuTopology::GUEST_CPU_COUNT), GUEST_DEFAULT_PRIORITY);
             const auto start = std::chrono::steady_clock::now();
             sink.fetch_add(Spin(rounds), std::memory_order_relaxed);
             spent[index] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         });
     }
     for (auto& thread : running) thread.join();
+    Require(std::all_of(placed.begin(), placed.end(), [](char value) { return value != 0; }), "a guest thread could not be placed on its guest CPU");
     return *std::max_element(spent.begin(), spent.end());
 }
 
@@ -69,7 +75,7 @@ void CheckPoolRunsTogether() {
 
 void CheckGuestThreadsKeepTheirCores() {
     const auto cores = std::max(2u, std::thread::hardware_concurrency());
-    const auto guests = std::max(1u, cores / 2u);
+    const auto guests = CpuTopology::GUEST_CPU_COUNT;
     std::uint64_t rounds = 1u << 20u;
     while (GuestThreadsMilliseconds(1, rounds) < 40.0) rounds *= 2;
     std::vector<double> idle;
