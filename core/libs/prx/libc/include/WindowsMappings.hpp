@@ -90,7 +90,7 @@ public:
     }
 
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false) {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
         collectableRanges.clear();
         auto cursor = reinterpret_cast<std::uintptr_t>(address);
         reset(cursor, bytes);
@@ -119,11 +119,16 @@ public:
             return resident && !sharedImports && !slot.stored && (!shared || shared->aliases.empty());
         };
         const bool perPage = !resident || sharedImports;
-        if (perPage) commitSection(section, offset, bytes);
+        if (perPage) {
+            lock.unlock();
+            commitSection(section, offset, bytes);
+            lock.lock();
+        }
         std::uintptr_t rest = 0;
         std::uintptr_t restEnd = 0;
         for (std::size_t done = 0; done < bytes;) {
             const auto base = cursor + done;
+            yieldToFaults(lock);
             if (single(done)) {
                 rest = 0;
                 auto runBytes = pageBytes;
@@ -156,6 +161,7 @@ public:
                 demote(alias);
                 rest = 0;
             }
+            lock.unlock();
             if (base == rest && base + pageBytes <= restEnd) {
                 if (base + pageBytes != restEnd && !VirtualFree(reinterpret_cast<void*>(base), pageBytes, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail("split guest placeholder suffix");
             } else {
@@ -163,6 +169,8 @@ public:
             }
             rest = base + pageBytes;
             mapShared(base, section, offset + done, protection, perPage);
+            lock.lock();
+            collectableRanges.clear();
             slot->stored = true;
             shared->aliases.push_back(base);
             views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot});
@@ -319,7 +327,7 @@ public:
     }
 
     bool AccessGuarded(std::uintptr_t address) {
-        std::lock_guard lock(mutex);
+        const auto lock = faultLock();
         const auto base = address & ~(pageBytes - 1);
         const auto view = views.find(base);
         if (view != views.end()) return (view->second.page->accessGuarded & subpagesOf(base, address, address + 1)) != 0;
@@ -363,7 +371,7 @@ public:
     }
 
     Guarded TakeGuardReports() {
-        std::lock_guard lock(mutex);
+        const auto lock = faultLock();
         Guarded reports;
         reports.swap(guardReports);
         return reports;
@@ -481,7 +489,7 @@ public:
     }
 
     bool HandleWrite(std::uintptr_t address) {
-        std::lock_guard lock(mutex);
+        const auto lock = faultLock();
         const auto base = address & ~(pageBytes - 1);
         const auto found = views.find(base);
         if (found == views.end()) return handlePrivateWrite(base, address);
@@ -500,7 +508,7 @@ public:
     }
 
     bool HandleRead(std::uintptr_t address) {
-        std::lock_guard lock(mutex);
+        const auto lock = faultLock();
         if (!views.contains(address & ~(pageBytes - 1))) return false;
         const auto memory = query(address);
         return memory.State == MEM_COMMIT && (memory.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0;
@@ -602,35 +610,46 @@ public:
     }
 
     void* MapAlias(std::uintptr_t address, std::size_t bytes) {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
         const auto refuse = [&](const char* reason) {
             char text[192];
             std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
             return std::runtime_error(text);
         };
         if (address % pageBytes != 0 || bytes % pageBytes != 0 || bytes == 0) throw refuse("the range is not made of whole shared pages");
-        for (std::size_t done = 0; done < bytes; done += pageBytes) {
-            const auto found = views.find(address + done);
-            if (found == views.end() || !found->second.resident) continue;
-            const auto run = std::prev(residentRuns.upper_bound(address + done));
-            if (run->first < address || run->second.end > address + bytes) throw refuse("a resident run of direct memory extends outside the range");
+        const auto contiguity = [&] {
+            auto page = views.find(address);
+            if (page == views.end()) throw refuse("the range does not start at a shared view");
+            const auto section = page->second.section;
+            const auto offset = page->second.offset;
+            bool contiguous = true;
+            bool resident = false;
+            for (std::size_t done = 0; done < bytes; done += pageBytes, ++page) {
+                if (done % faultYieldBytes == 0 && yieldToFaults(lock)) page = views.find(address + done);
+                if (page == views.end() || page->first != address + done) throw refuse("the range is not a run of shared views");
+                if (page->second.resident) {
+                    resident = true;
+                    const auto run = std::prev(residentRuns.upper_bound(address + done));
+                    if (run->first < address || run->second.end > address + bytes) throw refuse("a resident run of direct memory extends outside the range");
+                }
+                if (page->second.offset != offset + done || (page->second.section != section && !sameSection(page->second.section->handle, section->handle))) contiguous = false;
+            }
+            return std::make_pair(contiguous, resident);
+        };
+        auto [contiguous, resident] = contiguity();
+        if (resident) {
+            for (std::size_t done = 0; done < bytes; done += pageBytes) {
+                const auto found = views.find(address + done);
+                if (found != views.end() && found->second.resident) demote(address + done);
+            }
+            contiguous = contiguity().first;
         }
-        for (std::size_t done = 0; done < bytes; done += pageBytes) {
-            const auto found = views.find(address + done);
-            if (found != views.end() && found->second.resident) demote(address + done);
-        }
-        auto view = views.find(address);
+        const auto view = views.find(address);
         if (view == views.end()) throw refuse("the range does not start at a shared view");
         const auto section = view->second.section;
         const auto offset = view->second.offset;
         SYSTEM_INFO system{};
         GetSystemInfo(&system);
-        bool contiguous = true;
-        for (std::size_t done = 0; done < bytes; done += pageBytes) {
-            const auto page = views.find(address + done);
-            if (page == views.end()) throw refuse("the range is not a run of shared views");
-            if (page->second.offset != offset + done || (page->second.section != section && !sameSection(page->second.section->handle, section->handle))) contiguous = false;
-        }
         if (!contiguous) return mapAliasRuns(address, bytes);
         const auto lead = offset % system.dwAllocationGranularity;
         void* alias = map(section->handle, GetCurrentProcess(), nullptr, offset - lead, lead + bytes, 0, PAGE_READWRITE, nullptr, 0);
@@ -837,6 +856,23 @@ public:
     }
 
 private:
+    std::unique_lock<std::mutex> faultLock() {
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (lock.owns_lock()) return lock;
+        faultWaiters.fetch_add(1, std::memory_order_relaxed);
+        lock.lock();
+        faultWaiters.fetch_sub(1, std::memory_order_relaxed);
+        return lock;
+    }
+
+    bool yieldToFaults(std::unique_lock<std::mutex>& lock) {
+        if (faultWaiters.load(std::memory_order_relaxed) == 0) return false;
+        lock.unlock();
+        for (std::uint32_t spin = 0; spin < faultYieldSpins && faultWaiters.load(std::memory_order_relaxed) != 0; ++spin) SwitchToThread();
+        lock.lock();
+        return true;
+    }
+
     bool collectable(std::uintptr_t address, std::uintptr_t end) {
         const auto proven = collectableRanges.upper_bound(address);
         if (proven != collectableRanges.begin() && std::prev(proven)->second >= end) return true;
@@ -1430,6 +1466,9 @@ private:
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> privateHostWrites;
     std::vector<Demoted> demotedRuns;
     std::map<std::uintptr_t, std::size_t> splitAliases;
+    static constexpr std::size_t faultYieldBytes = 0x1000000;
+    static constexpr std::uint32_t faultYieldSpins = 4096;
+    std::atomic<std::uint32_t> faultWaiters{0};
     std::size_t granularity = 0x10000;
     bool watchResident = false;
     bool sharedImports = false;

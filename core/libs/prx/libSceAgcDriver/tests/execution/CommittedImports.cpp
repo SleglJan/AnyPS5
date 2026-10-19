@@ -12,6 +12,7 @@
 #include <windows.h>
 #endif
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +20,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace AgcDriver {
@@ -239,6 +241,66 @@ void CheckDirectMappingImportedWithoutResidentCopy(AgcDriver::VulkanDevice& devi
     std::printf("direct mapping import without a resident copy: ok\n");
 }
 
+std::atomic<std::uint64_t> faultReports{0};
+
+void countFaultReport(std::span<const std::uint64_t> pages) {
+    faultReports.fetch_add(pages.size(), std::memory_order_relaxed);
+}
+
+void CheckFaultsProceedDuringSharedImport(AgcDriver::VulkanDevice& device) {
+    static const AgcDriver::GuestMemory::ResidencyHooks hooks{[](std::uint64_t, std::size_t) { return false; }, &countFaultReport, nullptr, nullptr};
+    AgcDriver::GuestMemory::SetResidencyHooks(&hooks);
+    constexpr std::size_t FaultBytes = std::size_t{256} << 20;
+    HANDLE guarded = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, static_cast<DWORD>(FaultBytes), nullptr);
+    Require(guarded != nullptr, "cannot create a section");
+    auto* faulting = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(FaultBytes, Page));
+    GuestArena::GuestArenaMap_nid_postfix(faulting, FaultBytes, guarded, 0, PAGE_READWRITE);
+    Require(AgcDriver::GuestMemory::GuardWrites(reinterpret_cast<std::uint64_t>(faulting), FaultBytes) == GuestArena::GuardRefusal::None, "the faulting thread's pages could not be write-guarded");
+    constexpr std::size_t Bytes = std::size_t{1} << 30;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, static_cast<DWORD>(Bytes), nullptr);
+    Require(section != nullptr, "cannot create a 1 GiB direct memory section");
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, 0x200000));
+    LARGE_INTEGER frequency{};
+    QueryPerformanceFrequency(&frequency);
+    const auto now = [] {
+        LARGE_INTEGER counter{};
+        QueryPerformanceCounter(&counter);
+        return counter.QuadPart;
+    };
+    std::atomic<int> phase{0};
+    std::atomic<long long> longest{0};
+    std::atomic<std::uint64_t> faults{0};
+    faultReports.store(0);
+    std::thread faulter([&] {
+        const auto spacing = frequency.QuadPart / 4000;
+        auto next = now();
+        for (std::size_t page = 0; page < FaultBytes / Page && phase.load() < 2; ++page) {
+            while (now() < next) {}
+            next += spacing;
+            const bool mapping = phase.load() == 1;
+            const auto start = now();
+            faulting[page * Page + 8] = 1;
+            const auto spent = now() - start;
+            if (!mapping || phase.load() != 1) continue;
+            faults.fetch_add(1);
+            for (auto seen = longest.load(); spent > seen && !longest.compare_exchange_weak(seen, spent);) {}
+        }
+    });
+    phase.store(1);
+    const auto mapStart = now();
+    GuestArena::GuestArenaMapDirect_nid_postfix(memory, Bytes, section, 0, PAGE_READWRITE);
+    const auto mapSpent = now() - mapStart;
+    phase.store(2);
+    faulter.join();
+    AgcDriver::GuestMemory::SetResidencyHooks(nullptr);
+    const auto microseconds = [&](long long ticks) { return static_cast<double>(ticks) * 1e6 / static_cast<double>(frequency.QuadPart); };
+    std::printf("1 GiB shared map and import: %.0f us on the mapping thread, %llu faults on another thread, longest %.0f us\n", microseconds(mapSpent), static_cast<unsigned long long>(faults.load()), microseconds(longest.load()));
+    Require(ImportOf(device.Device(), pageOf(memory)).has_value() && ImportOf(device.Device(), pageOf(memory + Bytes - Page)).has_value(), "the 1 GiB direct mapping was not imported");
+    Require(faults.load() >= 16 && faultReports.load() >= faults.load(), "the faulting thread made too few write-tracking faults during the 1 GiB import to measure their wait");
+    Require(microseconds(longest.load()) < 1000.0, "a write-tracking fault on another thread waited " + std::to_string(static_cast<long long>(microseconds(longest.load()))) + " us behind a 1 GiB shared map and import");
+    std::printf("faults during a shared import: ok\n");
+}
+
 }
 #endif
 
@@ -260,6 +322,7 @@ int main() {
         CheckGuardOverImport(*device);
         CheckCpuWritable(*device);
         CheckDirectMappingImportedWithoutResidentCopy(*device);
+        CheckFaultsProceedDuringSharedImport(*device);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "committed import test failed: %s\n", error.what());
         return 1;
