@@ -2782,6 +2782,50 @@ static void CheckMunmapOverUnmappedPages() {
     Require(sceKernelMunmap(memory, 0) == SCE_KERNEL_ERROR_EINVAL);
 }
 
+static void CheckDirectMemoryAliasBacking() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t block = 0x10000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, block, block, 0, &phys) == 0);
+    void* first = nullptr;
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&first, block, 3, 0, phys, block) == 0);
+    Require(sceKernelMapDirectMemory(&second, block, 3, 0, phys, block) == 0 && second != first);
+    static_cast<unsigned char*>(first)[page] = 0x5a;
+    Require(static_cast<unsigned char*>(second)[page] == 0x5a);
+    std::uint64_t section = 0, offset = 0, otherSection = 0, otherOffset = 0;
+    bool uniform = false, aliased = false, otherUniform = false, otherAliased = false;
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(first), &section, &offset, &uniform, &aliased));
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(second), &otherSection, &otherOffset, &otherUniform, &otherAliased));
+    Require(section != 0 && section == otherSection && offset == otherOffset && uniform && otherUniform && aliased && otherAliased);
+    std::vector<std::pair<std::uintptr_t, std::size_t>> aliases;
+    const auto collect = [](void* context, std::uintptr_t alias, std::size_t bytes) { static_cast<std::vector<std::pair<std::uintptr_t, std::size_t>>*>(context)->emplace_back(alias, bytes); };
+    GuestArena::GuestArenaAliases_nid_postfix(reinterpret_cast<std::uintptr_t>(first), block, collect, &aliases);
+    Require(aliases == std::vector<std::pair<std::uintptr_t, std::size_t>>{{reinterpret_cast<std::uintptr_t>(second), block}});
+    aliases.clear();
+    GuestArena::GuestArenaAliases_nid_postfix(reinterpret_cast<std::uintptr_t>(first) + page, page, collect, &aliases);
+    Require(aliases == std::vector<std::pair<std::uintptr_t, std::size_t>>{{reinterpret_cast<std::uintptr_t>(second) + page, page}});
+    aliases.clear();
+    GuestArena::GuestArenaAliases_nid_postfix(reinterpret_cast<std::uintptr_t>(second), block, collect, &aliases);
+    Require(aliases == std::vector<std::pair<std::uintptr_t, std::size_t>>{{reinterpret_cast<std::uintptr_t>(first), block}});
+    Require(sceKernelMunmap(static_cast<unsigned char*>(second) + page, page) == 0);
+    aliases.clear();
+    GuestArena::GuestArenaAliases_nid_postfix(reinterpret_cast<std::uintptr_t>(first), block, collect, &aliases);
+    Require(aliases == std::vector<std::pair<std::uintptr_t, std::size_t>>{{reinterpret_cast<std::uintptr_t>(second), page}, {reinterpret_cast<std::uintptr_t>(second) + 2 * page, 2 * page}});
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(second), &otherSection, &otherOffset, &otherUniform, &otherAliased));
+    Require(otherSection == section && otherOffset == offset && !otherUniform && otherAliased);
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(first), &section, &offset, &uniform, &aliased) && uniform && aliased);
+    Require(sceKernelMunmap(second, page) == 0);
+    Require(sceKernelMunmap(static_cast<unsigned char*>(second) + 2 * page, 2 * page) == 0);
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(first), &section, &offset, &uniform, &aliased) && uniform && !aliased);
+    aliases.clear();
+    GuestArena::GuestArenaAliases_nid_postfix(reinterpret_cast<std::uintptr_t>(first), block, collect, &aliases);
+    Require(aliases.empty());
+    Require(sceKernelMunmap(first, block) == 0);
+    Require(GuestArena::GuestArenaBacking_nid_postfix(reinterpret_cast<std::uintptr_t>(first), &section, &offset, &uniform, &aliased) == false && uniform);
+    Require(sceKernelReleaseDirectMemory(phys, block) == 0);
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "1000");
@@ -2810,6 +2854,7 @@ int main(int argc, char** argv) {
     CheckAudioCoprocessorProtection();
     CheckMprotectIgnoresUndefinedBits();
     CheckDirectMemoryFollowsPhysicalPages();
+    CheckDirectMemoryAliasBacking();
     CheckSparseDirectMemoryBacking();
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();

@@ -144,6 +144,15 @@ void CheckSharedMapping(AgcDriver::VulkanDevice& device) {
     const auto import = ImportOf(vk, pageOf(first));
     Require(import && import->bytes == Page && ImportOf(vk, pageOf(second)), "a shared mapping was not imported at its mapping");
     Require(fill(device, first + Page, Page, 0x0c0c0c0cu) && holds(second + Page, Page, 0x0c0c0c0cu), "a GPU fill through the shared import did not reach the section");
+    const auto backing = AgcDriver::GuestMemory::Backing(pageOf(first));
+    const auto other = AgcDriver::GuestMemory::Backing(pageOf(second + Page));
+    Require(backing.shared && other.shared && backing.section != 0 && backing.section == other.section && backing.offset == 0 && other.offset == Page && backing.uniform && other.uniform && backing.aliased && other.aliased, "two views of one section do not describe the same backing");
+    const auto aliases = AgcDriver::GuestMemory::Aliases(reinterpret_cast<std::uint64_t>(first) + Page, Page);
+    Require(aliases == std::vector<std::pair<std::uint64_t, std::size_t>>{{reinterpret_cast<std::uint64_t>(second) + Page, Page}}, "the alias of a shared page was not reported");
+    const auto reverse = AgcDriver::GuestMemory::Aliases(reinterpret_cast<std::uint64_t>(second), 2 * Page);
+    Require(reverse == std::vector<std::pair<std::uint64_t, std::size_t>>{{reinterpret_cast<std::uint64_t>(first), 2 * Page}}, "the alias of a shared view was not reported from the other view");
+    const auto own = AgcDriver::GuestMemory::Backing(pageOf(commit(Page)));
+    Require(!own.shared && own.uniform && !own.aliased, "a private commit was described as shared or aliased");
     std::printf("shared mapping import: ok\n");
 }
 

@@ -44,6 +44,8 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, MappingHandle s
 std::uint64_t GuestArenaCommitGeneration_nid_postfix();
 void GuestArenaSetMappingObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, std::uint64_t generation, MappingChange change, std::uint32_t protection));
 void GuestArenaForEachMapping_nid_postfix(void (*callback)(void* context, std::uintptr_t address, std::size_t bytes, MappingChange change, std::uint32_t protection), void* context);
+void GuestArenaAliases_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*callback)(void* context, std::uintptr_t address, std::size_t bytes), void* context);
+bool GuestArenaBacking_nid_postfix(std::uintptr_t page, std::uint64_t* section, std::uint64_t* offset, bool* uniform, bool* aliased);
 #ifdef _WIN32
 bool GuestArenaHandleWrite_nid_postfix(std::uintptr_t address);
 bool GuestArenaHandleRead_nid_postfix(std::uintptr_t address);
@@ -69,8 +71,6 @@ void GuestArenaSetAccessGuardObserver_nid_postfix(void (*callback)(std::uintptr_
 bool GuestArenaWriteGuarded_nid_postfix(std::uintptr_t page);
 void GuestArenaSetWriteGuardObserver_nid_postfix(void (*callback)(const std::uintptr_t* pages, std::size_t count));
 void GuestArenaSetGuardRefusalObserver_nid_postfix(void (*callback)(std::uintptr_t address, std::size_t bytes, std::uint32_t cleared));
-void GuestArenaAliases_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*callback)(void* context, std::uintptr_t address, std::size_t bytes), void* context);
-bool GuestArenaBacking_nid_postfix(std::uintptr_t page, std::uint64_t* section, std::uint64_t* offset, bool* uniform, bool* aliased);
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection);
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);

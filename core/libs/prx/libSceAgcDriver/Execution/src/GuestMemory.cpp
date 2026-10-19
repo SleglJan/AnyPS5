@@ -2379,12 +2379,7 @@ bool WriteGuarded(std::uint64_t page) {
 
 std::vector<std::pair<std::uint64_t, std::size_t>> Aliases(std::uint64_t address, std::size_t bytes) {
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
-#ifdef _WIN32
     GuestArena::GuestArenaAliases_nid_postfix(static_cast<std::uintptr_t>(address), bytes, [](void* context, std::uintptr_t alias, std::size_t size) { static_cast<std::vector<std::pair<std::uint64_t, std::size_t>>*>(context)->emplace_back(alias, size); }, &ranges);
-#else
-    static_cast<void>(address);
-    static_cast<void>(bytes);
-#endif
     return ranges;
 }
 
@@ -2424,8 +2419,8 @@ PageWrites ResidencyPageWrites(std::uint64_t page, std::uint64_t generation) {
 PageBacking Backing(std::uint64_t page) {
     PageBacking backing;
     backing.offset = page << ResidencyPageShift;
-#ifdef _WIN32
     backing.shared = GuestArena::GuestArenaBacking_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift), &backing.section, &backing.offset, &backing.uniform, &backing.aliased);
+#ifdef _WIN32
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
     backing.resident = GuestArena::GuestArenaResidentSpan_nid_postfix(static_cast<std::uintptr_t>(page << ResidencyPageShift), std::size_t{1} << ResidencyPageShift, &start, &end);
