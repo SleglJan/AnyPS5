@@ -4408,10 +4408,13 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     }
     if (containing != nullptr) return containing->weak_from_this().lock();
     lock.unlock();
-    for (auto& texture : ownedImages(address, 1)) {
-        if (texture->ownedPending.load(std::memory_order_acquire) && texture->descriptor.baseAddress == address && texture->guestBytes >= bytes) return texture;
+    std::shared_ptr<StorageTexture> containingOwned;
+    for (auto& texture : ownedImages(address, std::max<std::uint64_t>(bytes, 1))) {
+        if (!texture->ownedPending.load(std::memory_order_acquire) || texture->descriptor.baseAddress != address || texture->guestBytes < bytes) continue;
+        if (texture->guestBytes == bytes) return texture;
+        if (containingOwned == nullptr) containingOwned = texture;
     }
-    return nullptr;
+    return containingOwned;
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t address, std::uint64_t bytes) {
