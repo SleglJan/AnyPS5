@@ -413,12 +413,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         segmentRequest.target.bdaSegments = true;
         segmentRequest.context.userData = {};
         segmentRequest.context.memory = {};
-        auto segmentProgram = [registeredShader, codeOffset, segmentRequest, words = std::vector<std::uint32_t>(userData.begin(), userData.end()), regions = memory]() -> std::shared_ptr<const ShaderRecompiler::RecompileResult> {
+        auto segmentProgram = [device = localDevice.get(), registeredShader, codeOffset, segmentRequest, words = std::vector<std::uint32_t>(userData.begin(), userData.end()), regions = memory]() -> std::shared_ptr<const ShaderRecompiler::RecompileResult> {
             auto source = segmentRequest;
             source.context.userData = words;
             source.context.memory = regions;
             bool preparedAtUse = false;
-            return InvocationFor(*registeredShader, codeOffset, source, &preparedAtUse, nullptr).MaterializeAtRunTime();
+            auto invocation = InvocationFor(*registeredShader, codeOffset, source, &preparedAtUse, nullptr);
+            if (preparedAtUse) RecordPreparedProgram(*device, *registeredShader, codeOffset, invocation.Request());
+            return invocation.MaterializeAtRunTime();
         };
         prepared = localDevice->PrepareDispatch(compiled, dispatchThreads, linearThreads, std::move(segmentProgram));
     } catch (const std::exception& error) {

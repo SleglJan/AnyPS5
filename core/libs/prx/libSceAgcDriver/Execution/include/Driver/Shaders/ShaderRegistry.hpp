@@ -154,6 +154,7 @@ struct LinkedCallees {
 
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool* preparedAtUse = nullptr, ShaderRecompiler::LinkedCode* linkedCallees = nullptr);
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
+void RecordPreparedProgram(VulkanDevice& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
 std::optional<ShaderRecompiler::TableCallSplit> SplitTableCallProgram(const ShaderRecompiler::RecompileRequest& request);
 std::vector<ShaderRecompiler::TableCallTarget> TableCallTargets(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::TableCallSplit& split, std::vector<GuestMemory::UnchangedQuery>* reads);
 std::uint64_t TableCallContinuationsPreparedAtUse();

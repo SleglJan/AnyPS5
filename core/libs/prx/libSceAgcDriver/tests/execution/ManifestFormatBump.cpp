@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineManifest.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineReplay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "SceShaders.hpp"
@@ -184,10 +185,12 @@ void Record() {
     const auto before = AgcDriver::PipelineReplay::Totals();
     Dispatch();
     Draw();
+    AgcDriver::CreationPool::WaitBackground();
     const auto after = AgcDriver::PipelineReplay::Totals();
     const auto compute = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(after.programsAtUse == before.programsAtUse + 3u && after.programsRecorded == before.programsRecorded + 3u, "the recording run prepared " + std::to_string(after.programsAtUse - before.programsAtUse) + " programs at use and recorded " + std::to_string(after.programsRecorded - before.programsRecorded) + ", expected the linked compute program and both graphics stages");
     Require(compute.inFrames == 1u && after.inFrames == before.inFrames + 1u && after.recorded == before.recorded + 1u, "the recording run did not create and record one compute and one graphics pipeline inside frames");
+    Require(after.segmentProgramsAtUse == before.segmentProgramsAtUse + 1u && after.segmentProgramsRecorded == before.segmentProgramsRecorded + 1u && compute.segmentsInFrames == 1u, "the recording run prepared " + std::to_string(after.segmentProgramsAtUse - before.segmentProgramsAtUse) + " segment programs, recorded " + std::to_string(after.segmentProgramsRecorded - before.segmentProgramsRecorded) + " and created " + std::to_string(compute.segmentsInFrames) + " segment program pipelines, expected the compute program's one");
     AgcDriverShutdown_nid_postfix();
 }
 
@@ -220,7 +223,7 @@ void AgeCache(const std::filesystem::path& directory) {
     Require(ShaderRecompiler::ReadWholeFile(manifestPath, bytes), "the pipeline manifest cannot be read");
     std::uint64_t source = 0;
     auto records = AgcDriver::PipelineManifest::Decode(bytes, source);
-    Require(records.has_value() && records->prepared.size() == 3u && records->compute.size() == 1u && records->graphics.size() == 1u, "the recording run did not leave three programs and two pipelines in its manifest");
+    Require(records.has_value() && records->prepared.size() == 4u && records->compute.size() == 2u && records->graphics.size() == 1u, "the recording run did not leave three programs, one segment program, their two compute pipelines and one graphics pipeline in its manifest");
     for (auto& entry : records->compute) {
         entry.record.program = Older(entry.record.program);
         entry.record.bindings.emplace_back(99u, 1u);
@@ -247,15 +250,19 @@ void Replay() {
     AgcDriver::DriverDetail::CloseRegistrationPreparation();
     const auto registered = AgcDriver::PipelineReplay::Totals();
     const auto ahead = AgcDriver::VulkanDevice::ComputePipelineCreations();
-    Require(registered.programsLoaded == 4u && registered.programsRecompiled == 3u && registered.programsReplayed == 0u && registered.programsStale == 0u && registered.programsFailed == 0u, "the registrations prepared again " + std::to_string(registered.programsRecompiled) + " of the three programs an earlier build prepared at use (" + std::to_string(registered.programsReplayed) + " replayed, " + std::to_string(registered.programsStale) + " stale, " + std::to_string(registered.programsFailed) + " failed)");
+    Require(registered.segmentProgramsRecompiled == 1u && registered.segmentProgramsReplayed == 0u, "the registrations prepared again " + std::to_string(registered.segmentProgramsRecompiled) + " of the one segment program an earlier build prepared at use (" + std::to_string(registered.segmentProgramsReplayed) + " replayed)");
+    Require(registered.programsLoaded == 5u && registered.programsRecompiled == 3u && registered.programsReplayed == 0u && registered.programsStale == 0u && registered.programsFailed == 0u, "the registrations prepared again " + std::to_string(registered.programsRecompiled) + " of the three programs an earlier build prepared at use (" + std::to_string(registered.programsReplayed) + " replayed, " + std::to_string(registered.programsStale) + " stale, " + std::to_string(registered.programsFailed) + " failed)");
     Require(registered.programsDropped == 1u, "the program whose request version is refused was not dropped");
     Require(ahead.ahead == start.ahead + 1u && registered.replayed == 1u, "the programs prepared at registration did not create their compute and graphics pipelines ahead");
+    Require(ahead.segmentsAhead == start.segmentsAhead + 1u, "registration created " + std::to_string(ahead.segmentsAhead - start.segmentsAhead) + " segment program pipelines ahead, expected the compute program's one");
     Dispatch();
     Draw();
+    AgcDriver::CreationPool::WaitBackground();
     const auto used = AgcDriver::PipelineReplay::Totals();
     const auto compute = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(used.programsAtUse == registered.programsAtUse, "the dispatch and the draw prepared " + std::to_string(used.programsAtUse - registered.programsAtUse) + " programs at use that registration had prepared");
     Require(compute.inFrames == ahead.inFrames && used.inFrames == registered.inFrames, "the dispatch and the draw created pipelines that registration had created");
+    Require(used.segmentProgramsAtUse == registered.segmentProgramsAtUse && compute.segmentsInFrames == ahead.segmentsInFrames, "the dispatch prepared " + std::to_string(used.segmentProgramsAtUse - registered.segmentProgramsAtUse) + " segment programs and created " + std::to_string(compute.segmentsInFrames - ahead.segmentsInFrames) + " segment program pipelines that registration had prepared and created");
     AgcDriverShutdown_nid_postfix();
 }
 

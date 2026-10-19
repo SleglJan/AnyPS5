@@ -183,6 +183,11 @@ void FirstDispatch() {
     Require(created.inFrames == creations.inFrames + 1u, "the first dispatch of a program created " + std::to_string(created.inFrames - creations.inFrames) + " compute pipelines inside frames, expected one");
     Require(after.onPool > before.onPool && after.waits > before.waits, "the first dispatch of a program created its pipeline on the recording thread: " + Change(before, after));
     Require(after.onPool - before.onPool == after.waits - before.waits, "the first dispatch of a program: " + Change(before, after) + ", expected one wait per creation");
+    AgcDriver::CreationPool::WaitBackground();
+    const auto background = AgcDriver::CreationPool::Totals();
+    const auto segments = AgcDriver::VulkanDevice::ComputePipelineCreations();
+    Require(background.onPool == after.onPool && background.waits == after.waits, "the first dispatch of a program: its background work created " + Change(after, background) + " at use");
+    Require(segments.segmentsInFrames - creations.segmentsInFrames == background.background - before.background, "the first dispatch of a program: " + std::to_string(background.background - before.background) + " background creations on the pool, " + std::to_string(segments.segmentsInFrames - creations.segmentsInFrames) + " segment program pipelines created inside frames");
 }
 
 void FirstDraw() {

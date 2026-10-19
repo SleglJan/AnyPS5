@@ -292,6 +292,9 @@ public:
         double aheadMs = 0;
         double inFramesMs = 0;
         double underLockMs = 0;
+        std::uint64_t segmentsInFrames = 0;
+        std::uint64_t segmentsAhead = 0;
+        double segmentsInFramesMs = 0;
     };
     static PipelineCreations ComputePipelineCreations();
     struct DisposableCompileCounts {

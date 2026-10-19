@@ -117,6 +117,7 @@ public:
         std::uint64_t waits = 0;
         std::uint64_t waitNanoseconds = 0;
         std::size_t threads = 0;
+        std::uint64_t background = 0;
     };
 
     template<typename TCreate>
@@ -140,10 +141,11 @@ public:
 
     static bool Current();
     static Counts Totals();
-    static void Later(std::function<void()> task) { Submit(std::move(task)); }
+    static void Later(std::function<void()> task);
+    static void WaitBackground();
 
 private:
-    static void Submit(std::function<void()> task);
+    static void Submit(std::function<void()> task, bool background = false);
     static void NoteWait(std::uint64_t nanoseconds);
 };
 

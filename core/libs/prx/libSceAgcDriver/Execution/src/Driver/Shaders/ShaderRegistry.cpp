@@ -514,6 +514,10 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return;
     }
+    if (request.target.bdaSegments) {
+        APS5_LOG_OUT_DEBUG("Shader 0x%llx: preparing its segment program in the background", static_cast<unsigned long long>(snapshot.codeAddress));
+        return;
+    }
     if (request.context.vertex && (request.context.vertex->paClVsOutCntl & (1u << 18u)) != 0) {
         APS5_LOG_OUT_DEBUG("Shader 0x%llx is drawn into a layered target; preparing its layered variant at draw", static_cast<unsigned long long>(snapshot.codeAddress));
         return;
@@ -725,7 +729,11 @@ std::uint64_t TableCallContinuationsPreparedAtUse() {
 }
 
 void RecordPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
-    auto* replay = device != nullptr ? device->Replay() : nullptr;
+    if (device != nullptr) RecordPreparedProgram(*device, snapshot, codeOffset, request);
+}
+
+void RecordPreparedProgram(VulkanDevice& device, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+    auto* replay = device.Replay();
     if (replay == nullptr || snapshot.header.empty()) return;
     const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> own{{{snapshot.codeAddress, snapshot.codeAddress + snapshot.code.size() * sizeof(std::uint32_t)}, {snapshot.headerAddress, snapshot.headerAddress + snapshot.header.size()}}};
     replay->RecordPreparedProgram(snapshot.code, codeOffset, own, request);
@@ -1201,7 +1209,7 @@ void ReplayPreparedProgram(const std::shared_ptr<VulkanDevice>& device, const Sh
         }
         if (request.shader.stage == ShaderRecompiler::ShaderStage::Compute) static_cast<void>(device->PrepareRecordedComputePipelines(request, *handle));
         OfferPreparedArtifacts(device, std::span(&entry, 1));
-        PipelineReplay::CountProgramReplay(recompiled ? PipelineReplay::ProgramReplay::Recompiled : PipelineReplay::ProgramReplay::Replayed);
+        PipelineReplay::CountProgramReplay(recompiled ? PipelineReplay::ProgramReplay::Recompiled : PipelineReplay::ProgramReplay::Replayed, request.target.bdaSegments);
     } catch (const std::exception& error) {
         PipelineReplay::CountProgramReplay(PipelineReplay::ProgramReplay::Failed);
         APS5_LOG_ERR("Shader 0x%llx: a program an earlier run prepared at use could not be prepared at registration: %s", static_cast<unsigned long long>(snapshot.codeAddress), error.what());

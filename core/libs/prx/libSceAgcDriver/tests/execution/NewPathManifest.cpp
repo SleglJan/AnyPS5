@@ -1,5 +1,6 @@
 #include "NewPathFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
@@ -94,6 +95,7 @@ public:
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
         AgcDriver::Submit(&packet, 0);
         WaitIdle();
+        AgcDriver::CreationPool::WaitBackground();
         AgcDriver::GuestMemory::FlushGpuWrites(memory.Address(offset + 0x8000u), Threads * 4u);
         for (std::uint32_t lane = 0; lane < Threads; ++lane) Require(Output()[lane] == Input()[lane] + 3u + index, what + ": lane " + std::to_string(lane) + " is " + Hex(Output()[lane]) + ", expected " + Hex(Input()[lane] + 3u + index));
     }
@@ -121,6 +123,7 @@ void Record() {
     for (std::uint32_t index = 0; index < Programs; ++index) buffers.Dispatch(index, "the recording run, program " + std::to_string(index));
     const auto creations = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(creations.inFrames == Programs, "the recording run created " + std::to_string(creations.inFrames) + " compute pipelines inside frames, expected " + std::to_string(Programs));
+    Require(creations.segmentsInFrames == Programs, "the recording run created " + std::to_string(creations.segmentsInFrames) + " segment program pipelines inside frames, expected " + std::to_string(Programs));
     AgcDriverShutdown_nid_postfix();
 }
 
@@ -144,6 +147,7 @@ void Check() {
     const auto before = AgcDriver::VulkanDevice::ComputePipelineCreations();
     RegisterAll();
     const auto registered = AgcDriver::VulkanDevice::ComputePipelineCreations();
+    Expect(registered.segmentsAhead == before.segmentsAhead + 3u && registered.segmentsInFrames == before.segmentsInFrames, "registration after three runs created " + std::to_string(registered.segmentsAhead - before.segmentsAhead) + " segment program pipelines ahead, expected 3 (program 1's expired with its walk program's record, program 3's kept)");
     Expect(registered.ahead == before.ahead + 3u && registered.inFrames == before.inFrames, "registration after three runs that used programs 0 and 2 and reached past program 1's first use created " + std::to_string(registered.ahead - before.ahead) + " pipelines ahead, expected 3 (program 1's record expired, program 3's kept: the runs ended before its first use)");
     Buffers first(0x300u);
     Buffers second(0x1000u);
@@ -151,9 +155,11 @@ void Check() {
     second.Dispatch(0, "program 0 through other buffers than the recording run's");
     first.Dispatch(0, "program 0 through a second set of buffers");
     const auto kept = AgcDriver::VulkanDevice::ComputePipelineCreations();
+    Expect(kept.segmentsInFrames == registered.segmentsInFrames, "dispatches of programs whose segment program pipelines were created ahead created " + std::to_string(kept.segmentsInFrames - registered.segmentsInFrames) + " inside frames");
     Expect(kept.inFrames == registered.inFrames, "dispatches of programs whose pipelines were created ahead created " + std::to_string(kept.inFrames - registered.inFrames) + " inside frames: a pipeline depended on the buffers it was dispatched with");
     first.Dispatch(1, "program 1, whose record expired");
     const auto expired = AgcDriver::VulkanDevice::ComputePipelineCreations();
+    Expect(expired.segmentsInFrames == kept.segmentsInFrames + 1u, "the dispatch of program 1, whose record expired, created " + std::to_string(expired.segmentsInFrames - kept.segmentsInFrames) + " segment program pipelines inside its frame, expected one");
     Expect(expired.inFrames == kept.inFrames + 1u, "the dispatch of program 1, whose record expired, created " + std::to_string(expired.inFrames - kept.inFrames) + " pipelines inside its frame, expected one");
     AgcDriverShutdown_nid_postfix();
 }

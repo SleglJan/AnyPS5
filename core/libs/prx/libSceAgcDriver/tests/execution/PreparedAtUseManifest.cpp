@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineReplay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PipelineCreation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "SceShaders.hpp"
@@ -181,10 +182,12 @@ void Record() {
     const auto before = AgcDriver::PipelineReplay::Totals();
     Dispatch();
     Draw();
+    AgcDriver::CreationPool::WaitBackground();
     const auto after = AgcDriver::PipelineReplay::Totals();
     const auto compute = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(after.programsAtUse == before.programsAtUse + 3u && after.programsRecorded == before.programsRecorded + 3u, "the recording run prepared " + std::to_string(after.programsAtUse - before.programsAtUse) + " programs at use and recorded " + std::to_string(after.programsRecorded - before.programsRecorded) + ", expected the linked compute program and both graphics stages");
     Require(compute.inFrames == 1u && after.inFrames == before.inFrames + 1u && after.recorded == before.recorded + 1u, "the recording run did not create and record one compute and one graphics pipeline inside frames");
+    Require(after.segmentProgramsAtUse == before.segmentProgramsAtUse + 1u && after.segmentProgramsRecorded == before.segmentProgramsRecorded + 1u && compute.segmentsInFrames == 1u, "the recording run prepared " + std::to_string(after.segmentProgramsAtUse - before.segmentProgramsAtUse) + " segment programs, recorded " + std::to_string(after.segmentProgramsRecorded - before.segmentProgramsRecorded) + " and created " + std::to_string(compute.segmentsInFrames) + " segment program pipelines, expected the compute program's one");
     AgcDriverShutdown_nid_postfix();
 }
 
@@ -194,14 +197,17 @@ void Replay() {
     AgcDriver::DriverDetail::CloseRegistrationPreparation();
     const auto registered = AgcDriver::PipelineReplay::Totals();
     const auto ahead = AgcDriver::VulkanDevice::ComputePipelineCreations();
-    Require(registered.programsLoaded == 3u && registered.programsReplayed == 3u && registered.programsStale == 0u && registered.programsFailed == 0u, "the registrations prepared " + std::to_string(registered.programsReplayed) + " of " + std::to_string(registered.programsLoaded) + " programs an earlier run prepared at use, expected three of three");
+    Require(registered.programsLoaded == 4u && registered.programsReplayed == 3u && registered.segmentProgramsReplayed == 1u && registered.programsStale == 0u && registered.programsFailed == 0u, "the registrations prepared " + std::to_string(registered.programsReplayed) + " programs and " + std::to_string(registered.segmentProgramsReplayed) + " segment programs of " + std::to_string(registered.programsLoaded) + " an earlier run prepared at use, expected three and one of four");
     Require(ahead.ahead == start.ahead + 1u && registered.replayed == 1u, "the programs prepared at registration did not create their compute and graphics pipelines ahead");
+    Require(ahead.segmentsAhead == start.segmentsAhead + 1u, "registration created " + std::to_string(ahead.segmentsAhead - start.segmentsAhead) + " segment program pipelines ahead, expected the compute program's one");
     Dispatch();
     Draw();
+    AgcDriver::CreationPool::WaitBackground();
     const auto used = AgcDriver::PipelineReplay::Totals();
     const auto compute = AgcDriver::VulkanDevice::ComputePipelineCreations();
     Require(used.programsAtUse == registered.programsAtUse, "the dispatch and the draw prepared " + std::to_string(used.programsAtUse - registered.programsAtUse) + " programs at use that registration had prepared");
     Require(compute.inFrames == ahead.inFrames && used.inFrames == registered.inFrames, "the dispatch and the draw created pipelines that registration had created");
+    Require(used.segmentProgramsAtUse == registered.segmentProgramsAtUse && compute.segmentsInFrames == ahead.segmentsInFrames, "the dispatch prepared " + std::to_string(used.segmentProgramsAtUse - registered.segmentProgramsAtUse) + " segment programs and created " + std::to_string(compute.segmentsInFrames - ahead.segmentsInFrames) + " segment program pipelines that registration had prepared and created");
     AgcDriverShutdown_nid_postfix();
 }
 

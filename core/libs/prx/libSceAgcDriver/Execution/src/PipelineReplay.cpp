@@ -30,6 +30,10 @@ struct ReplayTotals {
     std::atomic<std::uint64_t> programsRecompiled{0};
     std::atomic<std::uint64_t> programsDropped{0};
     std::atomic<std::uint64_t> dropped{0};
+    std::atomic<std::uint64_t> segmentProgramsAtUse{0};
+    std::atomic<std::uint64_t> segmentProgramsRecorded{0};
+    std::atomic<std::uint64_t> segmentProgramsReplayed{0};
+    std::atomic<std::uint64_t> segmentProgramsRecompiled{0};
 };
 
 ReplayTotals& ReplayCounters() {
@@ -211,7 +215,8 @@ std::array<std::uint64_t, 2> PipelineReplay::ProgramKey(std::span<const std::uin
 }
 
 void PipelineReplay::RecordPreparedProgram(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, std::span<const std::pair<std::uint64_t, std::uint64_t>> ownRegions, const ShaderRecompiler::RecompileRequest& request) {
-    ReplayCounters().programsAtUse.fetch_add(1, std::memory_order_relaxed);
+    const bool segment = request.target.bdaSegments;
+    (segment ? ReplayCounters().segmentProgramsAtUse : ReplayCounters().programsAtUse).fetch_add(1, std::memory_order_relaxed);
     auto own = request;
     std::vector<ShaderRecompiler::MemoryRegion> memory;
     for (const auto& region : request.context.memory) {
@@ -220,7 +225,7 @@ void PipelineReplay::RecordPreparedProgram(std::span<const std::uint32_t> regist
     }
     own.context.memory = memory;
     PreparedProgramRecord record{ProgramKey(registeredCode), codeOffset, ShaderRecompiler::ArtifactIdentity(request), ShaderRecompiler::RequestSerializer{}.Serialize(own)};
-    if (manifest.Record(std::move(record))) ReplayCounters().programsRecorded.fetch_add(1, std::memory_order_relaxed);
+    if (manifest.Record(std::move(record))) (segment ? ReplayCounters().segmentProgramsRecorded : ReplayCounters().programsRecorded).fetch_add(1, std::memory_order_relaxed);
 }
 
 std::vector<PreparedProgramRecord> PipelineReplay::PreparedPrograms(std::span<const std::uint32_t> registeredCode) const {
@@ -235,20 +240,20 @@ std::vector<BranchSplitRecord> PipelineReplay::BranchSplits(std::span<const std:
     return manifest.BranchSplits(ProgramKey(registeredCode));
 }
 
-void PipelineReplay::CountProgramReplay(ProgramReplay outcome) {
+void PipelineReplay::CountProgramReplay(ProgramReplay outcome, bool segment) {
     auto& counters = ReplayCounters();
     switch (outcome) {
-        case ProgramReplay::Replayed: counters.programsReplayed.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Replayed: (segment ? counters.segmentProgramsReplayed : counters.programsReplayed).fetch_add(1, std::memory_order_relaxed); break;
         case ProgramReplay::Stale: counters.programsStale.fetch_add(1, std::memory_order_relaxed); break;
         case ProgramReplay::Failed: counters.programsFailed.fetch_add(1, std::memory_order_relaxed); break;
-        case ProgramReplay::Recompiled: counters.programsRecompiled.fetch_add(1, std::memory_order_relaxed); break;
+        case ProgramReplay::Recompiled: (segment ? counters.segmentProgramsRecompiled : counters.programsRecompiled).fetch_add(1, std::memory_order_relaxed); break;
         case ProgramReplay::Dropped: counters.programsDropped.fetch_add(1, std::memory_order_relaxed); break;
     }
 }
 
 PipelineReplay::Counters PipelineReplay::Totals() {
     auto& totals = ReplayCounters();
-    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed), totals.programsRecompiled.load(std::memory_order_relaxed), totals.programsDropped.load(std::memory_order_relaxed), totals.dropped.load(std::memory_order_relaxed)};
+    return {totals.loaded.load(std::memory_order_relaxed), totals.replayed.load(std::memory_order_relaxed), totals.recorded.load(std::memory_order_relaxed), totals.notRecordable.load(std::memory_order_relaxed), totals.failed.load(std::memory_order_relaxed), totals.inFrames.load(std::memory_order_relaxed), totals.programsLoaded.load(std::memory_order_relaxed), totals.programsAtUse.load(std::memory_order_relaxed), totals.programsRecorded.load(std::memory_order_relaxed), totals.programsReplayed.load(std::memory_order_relaxed), totals.programsStale.load(std::memory_order_relaxed), totals.programsFailed.load(std::memory_order_relaxed), RecordUse::Marks().load(std::memory_order_relaxed), totals.programsRecompiled.load(std::memory_order_relaxed), totals.programsDropped.load(std::memory_order_relaxed), totals.dropped.load(std::memory_order_relaxed), totals.segmentProgramsAtUse.load(std::memory_order_relaxed), totals.segmentProgramsRecorded.load(std::memory_order_relaxed), totals.segmentProgramsReplayed.load(std::memory_order_relaxed), totals.segmentProgramsRecompiled.load(std::memory_order_relaxed)};
 }
 
 }

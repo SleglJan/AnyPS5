@@ -4367,8 +4367,21 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
 namespace {
 
 struct ComputeCreations {
-    std::array<std::atomic<std::uint64_t>, 3> count{};
-    std::array<std::atomic<std::uint64_t>, 3> nanoseconds{};
+    std::array<std::atomic<std::uint64_t>, 5> count{};
+    std::array<std::atomic<std::uint64_t>, 5> nanoseconds{};
+};
+
+thread_local bool creatingSegmentProgram = false;
+
+class SegmentProgramCreation {
+public:
+    SegmentProgramCreation() : previous(creatingSegmentProgram) { creatingSegmentProgram = true; }
+    ~SegmentProgramCreation() { creatingSegmentProgram = previous; }
+    SegmentProgramCreation(const SegmentProgramCreation&) = delete;
+    SegmentProgramCreation& operator=(const SegmentProgramCreation&) = delete;
+
+private:
+    bool previous;
 };
 
 ComputeCreations& computeCreations() {
@@ -4485,7 +4498,7 @@ std::vector<std::byte> VulkanDevice::compileOnDisposableDevice(const ComputePipe
 VulkanDevice::PipelineCreations VulkanDevice::ComputePipelineCreations() {
     const auto& creations = computeCreations();
     const auto milliseconds = [&](std::size_t origin) { return static_cast<double>(creations.nanoseconds[origin].load()) / 1e6; };
-    return {creations.count[1].load(), creations.count[0].load() + creations.count[2].load(), creations.count[2].load(), milliseconds(1), milliseconds(0) + milliseconds(2), milliseconds(2)};
+    return {creations.count[1].load(), creations.count[0].load() + creations.count[2].load(), creations.count[2].load(), milliseconds(1), milliseconds(0) + milliseconds(2), milliseconds(2), creations.count[3].load(), creations.count[4].load(), milliseconds(3)};
 }
 
 bool VulkanDevice::PrepareComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
@@ -4519,6 +4532,8 @@ PipelineReplay* VulkanDevice::Replay() const {
 std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) {
     if (state->pipelineManifest == nullptr || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return 0;
     const auto records = state->pipelineManifest->Records(ShaderRecompiler::GetPreparedArtifact(handle).identity);
+    std::optional<SegmentProgramCreation> segment;
+    if (request.target.bdaSegments) segment.emplace();
     for (const auto& [record, use] : records) {
         auto result = ShaderRecompiler::SpecializedComputeResult(request, handle, record.constants);
         for (const auto& [binding, count] : record.bindings) result->bindings.push_back({ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::ShaderData, ShaderRecompiler::RuntimeAbi::DescriptorSet, binding, count, {}});
@@ -4541,10 +4556,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentPr
             state->segmentPrograms.emplace(key, building->get_future().share());
             auto walkCopy = std::make_shared<const ShaderRecompiler::RecompileResult>(walk);
             CreationPool::Later([this, building, walkCopy, make, programAddress] {
+                const SegmentProgramCreation creation;
                 try {
                     auto compiled = make();
                     require(compiled != nullptr, "the segment program of a settled dispatch's program did not compile");
-                    static_cast<void>(computePipeline(*ShaderRecompiler::SegmentRunTimeResult(*walkCopy, *compiled), programAddress));
+                    const auto segment = ShaderRecompiler::SegmentRunTimeResult(*walkCopy, *compiled);
+                    bool created = false;
+                    static_cast<void>(computePipeline(*segment, programAddress, &created));
+                    if (created) RecordComputePipeline(*segment);
                     building->set_value(std::move(compiled));
                 } catch (...) {
                     building->set_exception(std::current_exception());
@@ -4670,7 +4689,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Shad
         objects->module = VK_NULL_HANDLE;
         objects->charge = PipelineBudget::Charge(PipelineBudget::PipelineBytes(shader.spirv.size()));
         Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);
-        const auto origin = CreationAhead::Active() ? 1u : GuestMemory::GpuMutex().HeldByThisThread() ? 2u : 0u;
+        const auto origin = creatingSegmentProgram ? (CreationAhead::Active() ? 4u : 3u) : CreationAhead::Active() ? 1u : GuestMemory::GpuMutex().HeldByThisThread() ? 2u : 0u;
         auto& creations = computeCreations();
         creations.count[origin].fetch_add(1, std::memory_order_relaxed);
         creations.nanoseconds[origin].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);

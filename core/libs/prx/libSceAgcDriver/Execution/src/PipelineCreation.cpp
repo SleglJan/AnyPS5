@@ -42,10 +42,13 @@ thread_local bool creationPoolThread = false;
 struct AtUsePool {
     std::mutex mutex;
     std::condition_variable ready;
-    std::deque<std::function<void()>> tasks;
+    std::deque<std::pair<std::function<void()>, bool>> tasks;
     std::size_t threads = 0;
     std::size_t idle = 0;
     std::uint64_t onPool = 0;
+    std::uint64_t background = 0;
+    std::uint64_t backgroundOutstanding = 0;
+    std::condition_variable backgroundDone;
     std::uint64_t waits = 0;
     std::uint64_t waitNanoseconds = 0;
 };
@@ -63,13 +66,14 @@ void* RunAtUseCreations(void* argument) {
         ++pool.idle;
         pool.ready.wait(lock, [&] { return !pool.tasks.empty(); });
         --pool.idle;
-        auto task = std::move(pool.tasks.front());
+        auto [task, background] = std::move(pool.tasks.front());
         pool.tasks.pop_front();
-        ++pool.onPool;
+        ++(background ? pool.background : pool.onPool);
         lock.unlock();
         task();
         task = {};
         lock.lock();
+        if (background && --pool.backgroundOutstanding == 0) pool.backgroundDone.notify_all();
     }
     return nullptr;
 }
@@ -265,10 +269,20 @@ bool CreationPool::Current() {
 CreationPool::Counts CreationPool::Totals() {
     auto& pool = Pool();
     std::lock_guard lock(pool.mutex);
-    return {pool.onPool, pool.waits, pool.waitNanoseconds, pool.threads};
+    return {pool.onPool, pool.waits, pool.waitNanoseconds, pool.threads, pool.background};
 }
 
-void CreationPool::Submit(std::function<void()> task) {
+void CreationPool::Later(std::function<void()> task) {
+    Submit(std::move(task), true);
+}
+
+void CreationPool::WaitBackground() {
+    auto& pool = Pool();
+    std::unique_lock lock(pool.mutex);
+    pool.backgroundDone.wait(lock, [&] { return pool.backgroundOutstanding == 0; });
+}
+
+void CreationPool::Submit(std::function<void()> task, bool background) {
     auto& pool = Pool();
     {
         std::lock_guard lock(pool.mutex);
@@ -276,7 +290,8 @@ void CreationPool::Submit(std::function<void()> task) {
             if (!HostThread::StartDetached(std::size_t{64} << 20u, &RunAtUseCreations, &pool)) throw std::runtime_error("AGC driver: a pipeline creation pool thread did not start");
             ++pool.threads;
         }
-        pool.tasks.push_back(std::move(task));
+        pool.tasks.emplace_back(std::move(task), background);
+        if (background) ++pool.backgroundOutstanding;
     }
     pool.ready.notify_one();
 }

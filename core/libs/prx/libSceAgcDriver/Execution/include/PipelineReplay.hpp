@@ -38,6 +38,10 @@ public:
         std::uint64_t programsRecompiled = 0;
         std::uint64_t programsDropped = 0;
         std::uint64_t dropped = 0;
+        std::uint64_t segmentProgramsAtUse = 0;
+        std::uint64_t segmentProgramsRecorded = 0;
+        std::uint64_t segmentProgramsReplayed = 0;
+        std::uint64_t segmentProgramsRecompiled = 0;
     };
     enum class ProgramReplay { Replayed, Stale, Failed, Recompiled, Dropped };
 
@@ -53,7 +57,7 @@ public:
     std::vector<PreparedProgramRecord> PreparedPrograms(std::span<const std::uint32_t> registeredCode) const;
     void RecordBranchSplit(std::span<const std::uint32_t> registeredCode, std::uint64_t codeOffset, const std::array<std::uint64_t, 2>& identity, const std::array<std::uint64_t, 2>& head, std::span<const std::uint32_t> sites);
     std::vector<BranchSplitRecord> BranchSplits(std::span<const std::uint32_t> registeredCode) const;
-    static void CountProgramReplay(ProgramReplay outcome);
+    static void CountProgramReplay(ProgramReplay outcome, bool segment = false);
     static std::array<std::uint64_t, 2> ProgramKey(std::span<const std::uint32_t> registeredCode);
     static Counters Totals();
 
