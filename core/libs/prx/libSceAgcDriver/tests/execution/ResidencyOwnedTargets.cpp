@@ -233,6 +233,32 @@ void SharedTarget() {
     Expect(Graphics::StorageTexture::RegistryStores() == registry, what + ": " + std::to_string(Graphics::StorageTexture::RegistryStores() - registry) + " images were stored from the pending registry");
 }
 
+void PageReadThenDraw() {
+    Prepare();
+    const std::string what = "a render target in a shared view read on one page between two draws";
+    const auto bytes = TargetBytes();
+    const auto pages = static_cast<std::uint32_t>((bytes + PageBytes - 1u) / PageBytes);
+    Require(pages >= 2u, what + ": the target needs at least two pages");
+    SharedPages image(pages);
+    const VertexBuffer vertices;
+    const auto base = image.Address();
+    for (std::uint64_t word = 0; word < bytes / 4u; ++word) image.Words()[word] = Background(word, 5);
+    const Rect whole{0, 0, Width, Height};
+    const auto before = Counts();
+    Draw(base, whole, vertices, what);
+    const auto drawn = Counts();
+    Expect(drawn.stalePages - before.stalePages == pages, what + ": after the first draw " + std::to_string(drawn.stalePages - before.stalePages) + " of " + std::to_string(pages) + " pages are stale");
+    const volatile std::uint32_t* words = image.Words();
+    Expect(words[0] == Red, what + ": the CPU read of the first page saw " + Hex(words[0]));
+    const auto read = Counts();
+    Expect(read.stalePages > before.stalePages && read.stalePages < drawn.stalePages, what + ": the CPU read of one page left " + std::to_string(read.stalePages - before.stalePages) + " of " + std::to_string(pages) + " pages stale");
+    Draw(base, whole, vertices, what + ", second draw");
+    const auto redrawn = Counts();
+    Expect(redrawn.retiles == read.retiles, what + ": the second draw retiled " + std::to_string(redrawn.retiles - read.retiles) + " times; only its own write-back changed the target's memory");
+    Expect(redrawn.stalePages - before.stalePages == pages, what + ": after the second draw " + std::to_string(redrawn.stalePages - before.stalePages) + " of " + std::to_string(pages) + " pages are stale");
+    Verify(RawRead(image.Words(), bytes), whole, 5, what + ", read by the CPU after the second draw");
+}
+
 void PrivateTarget() {
     Prepare();
     const std::string what = "a render target in private memory";
@@ -271,6 +297,7 @@ int main() {
         DrawSubmit::Cases({
             {"shared view", SharedTarget},
             {"private memory", PrivateTarget},
+            {"one page read between draws", PageReadThenDraw},
         });
     });
 #else

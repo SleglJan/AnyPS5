@@ -3991,7 +3991,10 @@ std::uint64_t StorageTexture::RegistryStores() {
 
 void StorageTexture::retileSelf() {
     auto* residency = ResidencyDriver::Active();
-    if (!residencyOwned || residency == nullptr || !residency->Manager().GuardedStaleIn(descriptor.baseAddress, guestBytes, this)) return;
+    if (!residencyOwned || residency == nullptr) return;
+    bool unitChanged = false;
+    for (std::uint32_t unit = 0; unit < trackedLayers && !unitChanged; ++unit) unitChanged = !GuestMemory::UnchangedSince(layerBegin(unit), static_cast<std::size_t>(layerBytes(unit)), layerGeneration[unit]);
+    if (!unitChanged || !residency->Manager().GuardedStaleIn(descriptor.baseAddress, guestBytes, this)) return;
     const auto previous = std::exchange(flushReason, "storage refresh");
     struct Restore {
         const char* previous;
