@@ -364,7 +364,6 @@ private:
     bool usesBda = false;
     bool pageTableStores = false;
     bool storesUnbounded = false;
-    bool computeBuild = false;
     bool accessesUnbounded = false;
     bool segmentsSettled = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readRanges;

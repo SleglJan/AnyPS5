@@ -82,6 +82,43 @@ std::shared_ptr<const DrawDecode> Driver::drawDecode(const QueueState& queue, co
     return decode;
 }
 
+namespace {
+
+struct OwnedStageRequest {
+    ShaderRecompiler::RecompileRequest request;
+    std::vector<std::uint32_t> userData;
+    std::vector<ShaderRecompiler::MemoryRegion> memory;
+    std::vector<ShaderRecompiler::LinkedProgram> linked;
+    std::vector<std::vector<std::uint32_t>> linkedUserData;
+};
+
+VulkanDevice::SegmentProgram SegmentStageProgram(const std::shared_ptr<VulkanDevice>& device, const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request) {
+    if (program.tailContinuation != nullptr) return {};
+    auto owned = std::make_shared<OwnedStageRequest>(OwnedStageRequest{request, {}, {}, {}, {}});
+    owned->request.target.bdaSegments = true;
+    owned->userData.assign(request.context.userData.begin(), request.context.userData.end());
+    owned->memory.assign(request.context.memory.begin(), request.context.memory.end());
+    owned->request.context.userData = owned->userData;
+    owned->request.context.memory = owned->memory;
+    if (request.graphics) {
+        owned->linked.assign(request.graphics->linkedPrograms.begin(), request.graphics->linkedPrograms.end());
+        owned->linkedUserData.reserve(owned->linked.size());
+        for (auto& linked : owned->linked) {
+            owned->linkedUserData.emplace_back(linked.userData.begin(), linked.userData.end());
+            linked.userData = owned->linkedUserData.back();
+        }
+        owned->request.graphics->linkedPrograms = owned->linked;
+    }
+    return [device, snapshot = program.snapshot, codeOffset = program.codeOffset, owned]() -> std::shared_ptr<const ShaderRecompiler::RecompileResult> {
+        bool preparedAtUse = false;
+        auto invocation = InvocationFor(*snapshot, codeOffset, owned->request, &preparedAtUse);
+        if (preparedAtUse) RecordPreparedProgram(device, *snapshot, codeOffset, invocation.Request());
+        return invocation.MaterializeAtRunTime();
+    };
+}
+
+}
+
 std::shared_ptr<const Driver::RunTimeProgram> Driver::runTimeDrawStage(const DrawProgram& program, const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<VulkanDevice>& device, std::uint64_t key) {
     {
         std::lock_guard cacheLock(drawCacheMutex);
@@ -212,6 +249,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     stages.reserve(programs.size() + 2u);
     std::vector<const ShaderRecompiler::RecompileResult*> programResults(programs.size(), nullptr);
     std::uint32_t pushCursorBytes = 0;
+    std::vector<VulkanDevice::SegmentProgram> segmentPrograms(programs.size());
 
     const auto stageProgram = [&](std::size_t i, std::uint32_t pushOffset, const Pm4::DrawParameters& parameters) {
         const auto& program = programs[i];
@@ -242,6 +280,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         mix(request.layout.pushConstantOffsetBytes);
         mix(request.layout.pushConstantSizeBytes);
         mix(localDevice->Serial());
+        segmentPrograms[i] = SegmentStageProgram(localDevice, program, request);
         try {
             return runTimeDrawStage(program, request, localDevice, key);
         } catch (const std::exception& error) {
@@ -323,6 +362,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
     }
     timing.Mark("post_compile_prepare");
+    const auto stageSegments = [&] {
+        std::vector<VulkanDevice::SegmentProgram> aligned(stages.size());
+        for (std::size_t stage = 0; stage < stages.size(); ++stage) {
+            for (std::size_t i = 0; i < programs.size(); ++i) {
+                if (programResults[i] != nullptr && stages[stage].program == programResults[i]) aligned[stage] = segmentPrograms[i];
+            }
+        }
+        return aligned;
+    };
     const auto lockForDraw = [&] {
         if (gpuLock.owns_lock()) return;
         static_cast<void>(localDevice->PrepareDrawPipelines(graphics, stages));
@@ -409,7 +457,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
             lockForDraw();
             phaseTiming.Phase(DrawRowVectors);
-            localDevice->Draw(graphics, direct, stages);
+            localDevice->Draw(graphics, direct, stages, stageSegments());
             phaseTiming.Phase(DrawRowGraphics);
         }
         timing.Mark("draw_and_resource_release");
@@ -422,7 +470,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     lockForDraw();
     phaseTiming.Phase(DrawRowVectors);
-    localDevice->Draw(graphics, drawParameters, stages);
+    localDevice->Draw(graphics, drawParameters, stages, stageSegments());
     phaseTiming.Phase(DrawRowGraphics);
     timing.Mark("draw_and_resource_release");
     return drawn();

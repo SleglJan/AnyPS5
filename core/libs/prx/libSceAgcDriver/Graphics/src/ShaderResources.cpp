@@ -1202,7 +1202,6 @@ bool UsesAddressTables(const CompiledShader& compute) {
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, bool deferred, std::uint64_t dispatchThreads, std::uint64_t linearThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute) {
     Require(compute.stage == ShaderRecompiler::ShaderStage::Compute, "compute resources require a compute shader");
-    computeBuild = true;
     imageStoresRecorded = compute.program != nullptr && compute.program->imageStoresRecorded;
     this->linearThreads = linearThreads;
     if (compute.program != nullptr) linearStore = compute.program->linearStore;
@@ -2004,7 +2003,7 @@ void ShaderResources::buildComplete() {
             }
             bda = std::make_unique<BdaResources>(context, guestMemory, std::span<const ShaderRecompiler::BdaAbi::Range>{}, batchFaultRecord());
             if (residency != nullptr && bda->PageTable() != nullptr) residency->CountMixedRanges(*bda->PageTable(), readRanges);
-            if (residency != nullptr && bda->PageTable() != nullptr && computeBuild) segmentsSettled = residency->SettledWhole(*bda->PageTable(), readRanges, accessesUnbounded);
+            if (residency != nullptr && bda->PageTable() != nullptr) segmentsSettled = residency->SettledWhole(*bda->PageTable(), readRanges, accessesUnbounded);
         } else if (usesFaultBuffer) {
             bda = std::make_unique<BdaResources>(context);
         }

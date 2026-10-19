@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidencyMirrors.hpp"
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -14,7 +15,13 @@ namespace AgcDriver::Graphics {
 
 struct HostImport;
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
+struct SegmentStages {
+    std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> programs;
+    std::vector<CompiledShader> stages;
+};
+using SegmentStageSelector = std::function<std::shared_ptr<const SegmentStages>(const State&, std::span<const CompiledShader>)>;
+
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const SegmentStageSelector& segments = {});
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 

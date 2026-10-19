@@ -269,7 +269,7 @@ public:
         std::uint32_t bin = 0;
     };
     void DispatchContinuationRounds(const std::shared_ptr<Graphics::Buffer>& block, std::span<ContinuationPart> parts, std::uint32_t bins, std::span<const std::uint64_t> roundBins, std::uint32_t slots, std::uint64_t programAddress);
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const SegmentProgram> segmentPrograms = {});
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
     // The indirect draw features the device enabled, for the driver's decision whether an indirect
@@ -322,7 +322,8 @@ private:
     Graphics::Context buildContext() const;
     // Body of Dispatch and DispatchIndirect: `arguments` 0 dispatches x, y, z groups.
     IndirectOutcome dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::optional<std::array<std::uint32_t, 3>> threadGroup = std::nullopt);
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make, bool& refused);
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make, bool& refused, bool compute = true);
+    std::shared_ptr<const Graphics::SegmentStages> segmentStagesFor(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> walk, std::span<const SegmentProgram> segmentPrograms);
     std::shared_ptr<ComputePipelineObjects> computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created = nullptr, std::shared_ptr<RecordUse> use = nullptr);
     std::vector<std::byte> compileOnDisposableDevice(const ComputePipelineCapture& capture);
     // The stage-A pre-sync over `surfaces` (see PrepareDispatch): the serial waited for, 0 none.
