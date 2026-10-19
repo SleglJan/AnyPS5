@@ -63,6 +63,7 @@ struct RunTimeProgram {
 };
 [[nodiscard]] std::optional<RunTimeProgram> CompileAtRunTime(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<RecompileResult> RunTimeResult(const RunTimeProgram& program, const SrtRuntime& runtime, const SrtRuntime& settled);
+[[nodiscard]] std::shared_ptr<RecompileResult> SegmentRunTimeResult(const RecompileResult& walk, const RecompileResult& segmentProgram);
 [[nodiscard]] std::shared_ptr<const RecompileResult> DeviceImageProbeResult(const RecompileResult& result);
 class PreparedShaderInvocation {
 public:

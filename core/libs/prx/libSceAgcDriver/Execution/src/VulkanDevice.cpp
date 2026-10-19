@@ -430,6 +430,8 @@ struct VulkanDevice::State {
     std::mutex computePipelinesMutex;
     std::map<std::uint64_t, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     std::map<std::uint64_t, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
+    std::mutex segmentProgramsMutex;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::shared_future<std::shared_ptr<const ShaderRecompiler::RecompileResult>>> segmentPrograms;
     std::mutex compileDeviceMutex;
     std::shared_ptr<VulkanDevice> compileDevice;
     std::size_t compileDeviceUsers = 0;
@@ -1983,7 +1985,18 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
 }
 
-VulkanDevice::~VulkanDevice() = default;
+VulkanDevice::~VulkanDevice() {
+    WaitSegmentPrograms();
+}
+
+void VulkanDevice::WaitSegmentPrograms() {
+    std::vector<std::shared_future<std::shared_ptr<const ShaderRecompiler::RecompileResult>>> building;
+    {
+        std::lock_guard lock(state->segmentProgramsMutex);
+        for (const auto& [key, program] : state->segmentPrograms) building.push_back(program);
+    }
+    for (const auto& program : building) program.wait();
+}
 
 bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (adoptDevice) GuestMemory::AssertGpuLockHeld("VulkanDevice::ImportGuestMemory");
@@ -3770,6 +3783,7 @@ struct PreparedDispatch {
     // The stage-A pre-sync (see PrepareDispatch): the newest recorder serial waited for without the
     // mutex, whose batches the dispatch reaps under it before stage B (0: nothing waited for).
     std::uint64_t presyncSerial = 0;
+    VulkanDevice::SegmentProgram segmentProgram;
 };
 
 namespace {
@@ -4063,7 +4077,7 @@ std::uint64_t VulkanDevice::PresyncDraw(const Graphics::State& graphics) {
     return surfaces.empty() ? 0 : presync(surfaces);
 }
 
-std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads, std::uint64_t linearThreads) {
+std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint64_t dispatchThreads, std::uint64_t linearThreads, SegmentProgram segmentProgram) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4073,6 +4087,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
     auto prepared = std::make_shared<PreparedDispatch>();
     prepared->dispatchThreads = dispatchThreads;
     prepared->linearThreads = linearThreads;
+    prepared->segmentProgram = std::move(segmentProgram);
     auto phaseStart = start;
     const auto phase = [&](PreparedDispatch::PreparePhase which) {
         if (!profile) return;
@@ -4512,6 +4527,36 @@ std::size_t VulkanDevice::PrepareRecordedComputePipelines(const ShaderRecompiler
     return records.size();
 }
 
+std::shared_ptr<const ShaderRecompiler::RecompileResult> VulkanDevice::segmentProgramFor(const ShaderRecompiler::RecompileResult& walk, std::uint64_t programAddress, const SegmentProgram& make) {
+    using Program = std::shared_ptr<const ShaderRecompiler::RecompileResult>;
+    const auto hash = walk.spirv.ContentHash();
+    const std::pair<std::uint64_t, std::uint64_t> key{hash.low, hash.high};
+    std::shared_future<Program> program;
+    {
+        std::lock_guard lock(state->segmentProgramsMutex);
+        if (const auto found = state->segmentPrograms.find(key); found != state->segmentPrograms.end()) {
+            program = found->second;
+        } else {
+            auto building = std::make_shared<std::promise<Program>>();
+            state->segmentPrograms.emplace(key, building->get_future().share());
+            auto walkCopy = std::make_shared<const ShaderRecompiler::RecompileResult>(walk);
+            CreationPool::Later([this, building, walkCopy, make, programAddress] {
+                try {
+                    auto compiled = make();
+                    require(compiled != nullptr, "the segment program of a settled dispatch's program did not compile");
+                    static_cast<void>(computePipeline(*ShaderRecompiler::SegmentRunTimeResult(*walkCopy, *compiled), programAddress));
+                    building->set_value(std::move(compiled));
+                } catch (...) {
+                    building->set_exception(std::current_exception());
+                }
+            });
+            return nullptr;
+        }
+    }
+    if (program.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
+    return ShaderRecompiler::SegmentRunTimeResult(walk, *program.get());
+}
+
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress, bool* created, std::shared_ptr<RecordUse> use) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
@@ -4749,6 +4794,11 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     }
     timing.Mark("shader_resources");
     timer.phase(PhaseResources);
+    if (resources->SegmentsSettled() && prepared != nullptr && prepared->segmentProgram) {
+        const auto segment = segmentProgramFor(shader, programAddress, prepared->segmentProgram);
+        if (auto* residency = Graphics::ResidencyDriver::Active(); residency != nullptr) residency->NoteSegmentDispatch(segment != nullptr);
+        if (segment != nullptr) objects = computePipeline(*segment, programAddress);
+    }
     if (objects == nullptr) {
         objects = computePipeline(shader, programAddress);
         timing.Mark("pipeline_create");

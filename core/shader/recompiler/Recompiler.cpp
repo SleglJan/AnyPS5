@@ -1879,6 +1879,34 @@ std::shared_ptr<RecompileResult> RunTimeResult(const RunTimeProgram& program, co
     return result;
 }
 
+std::shared_ptr<RecompileResult> SegmentRunTimeResult(const RecompileResult& walk, const RecompileResult& segmentProgram) {
+    const auto sameBinding = [](const DescriptorBinding& left, const DescriptorBinding& right) { return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count; };
+    const std::array<std::pair<const char*, bool>, 13> fields{{
+        {"bindings", std::ranges::equal(walk.bindings, segmentProgram.bindings, sameBinding)},
+        {"user data slots", walk.userDataSlots == segmentProgram.userDataSlots},
+        {"push data size", walk.pushConstants.size() == segmentProgram.pushConstants.size()},
+        {"memory offset dword", walk.memoryOffsetDword == segmentProgram.memoryOffsetDword},
+        {"buffer address dword", walk.bufferAddressDword == segmentProgram.bufferAddressDword},
+        {"sampler slot dword", walk.samplerSlotDword == segmentProgram.samplerSlotDword},
+        {"thread limit dword", walk.dispatchThreadLimitDword == segmentProgram.dispatchThreadLimitDword},
+        {"shader data dwords", walk.shaderDataDwords == segmentProgram.shaderDataDwords},
+        {"page table ABI version", walk.bdaAbiVersion == segmentProgram.bdaAbiVersion},
+        {"page table writes", walk.bdaWrites == segmentProgram.bdaWrites},
+        {"shader base", walk.usesShaderBase == segmentProgram.usesShaderBase},
+        {"subgroup size", walk.hostSubgroupSize == segmentProgram.hostSubgroupSize},
+        {"workgroup memory", walk.workgroupMemoryDwords == segmentProgram.workgroupMemoryDwords},
+    }};
+    for (const auto& [name, same] : fields) {
+        if (!same) throw std::runtime_error(std::string("ShaderRecompiler: the segment program of a compute program differs from its walk program in its ") + name);
+    }
+    auto result = std::make_shared<RecompileResult>(walk);
+    static_cast<CompiledShaderArtifact&>(*result) = segmentProgram;
+    result->specialization = segmentProgram.specialization;
+    result->specializationId = segmentProgram.specializationId;
+    result->moduleConstants = segmentProgram.moduleConstants;
+    return result;
+}
+
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {
     if (handle.artifact == nullptr) throw std::runtime_error("ShaderRecompiler: prepared artifact is missing");
     return handle.artifact->artifact;

@@ -260,6 +260,7 @@ function(add_shader_recompiler target runtimeTarget)
             PreparedShaderInvocation::MaterializeAtRunTime
             CompileAtRunTime
             RunTimeResult
+            SegmentRunTimeResult
             MatchesPreparedShader
             GetPreparedArtifact
             MaterializeShader

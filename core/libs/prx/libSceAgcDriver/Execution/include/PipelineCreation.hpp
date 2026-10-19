@@ -140,6 +140,7 @@ public:
 
     static bool Current();
     static Counts Totals();
+    static void Later(std::function<void()> task) { Submit(std::move(task)); }
 
 private:
     static void Submit(std::function<void()> task);
