@@ -846,7 +846,7 @@ private:
         Batch* newest = nullptr;
         std::shared_ptr<BatchFaultRecord> faultRecord;
         VkCommandPool pool = VK_NULL_HANDLE;
-        std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
+        std::vector<VkFence> spare;
     };
     struct ObjectUse {
         std::array<std::uint64_t, MaxRecorderStreams> read{};
