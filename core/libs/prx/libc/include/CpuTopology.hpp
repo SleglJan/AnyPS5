@@ -167,6 +167,141 @@ inline void PinHelperThread(const char* role) {
     if (mask != 0) PinTraced(role, nullptr, mask);
 }
 
+inline constexpr unsigned GUEST_CPU_COUNT = 14;
+inline constexpr unsigned OWN_CPU_MINIMUM = 2;
+inline constexpr int GUEST_PRIORITY_HIGHEST = 256;
+inline constexpr int GUEST_PRIORITY_LOWEST = 767;
+
+struct GuestPlacement {
+    std::uint64_t guestCpu[GUEST_CPU_COUNT] = {};
+    std::uint64_t reserved = 0;
+    std::uint64_t own = 0;
+};
+
+inline std::vector<std::uint64_t> CoreMasks(std::uint64_t process) {
+    std::vector<std::uint64_t> cores;
+#ifdef _WIN32
+    DWORD length = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || length == 0) return cores;
+    std::vector<unsigned char> buffer(length);
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data()), &length)) return cores;
+    for (DWORD offset = 0; offset + 8 <= length;) {
+        const auto* entry = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + offset);
+        if (entry->Size == 0 || offset + entry->Size > length) break;
+        if (entry->Relationship == RelationProcessorCore && entry->Processor.GroupCount >= 1 && entry->Processor.GroupMask[0].Group == 0) {
+            const auto mask = static_cast<std::uint64_t>(entry->Processor.GroupMask[0].Mask) & process;
+            if (mask != 0) cores.push_back(mask);
+        }
+        offset += entry->Size;
+    }
+#elif defined(__linux__)
+    std::uint64_t seen = 0;
+    for (unsigned cpu = 0; cpu < 64; ++cpu) {
+        const std::uint64_t bit = std::uint64_t{1} << cpu;
+        if ((process & bit) == 0 || (seen & bit) != 0) continue;
+        const std::string path = "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/thread_siblings_list";
+        std::uint64_t mask = MaskFromCpuList(path.c_str()) & process;
+        if ((mask & bit) == 0) mask = bit;
+        seen |= mask;
+        cores.push_back(mask);
+    }
+#endif
+    return cores;
+}
+
+inline GuestPlacement PlaceGuestCpus(std::uint64_t process, const std::vector<std::uint64_t>& cores) {
+    GuestPlacement placement{};
+    std::vector<std::uint64_t> order;
+    for (unsigned rank = 0; rank < 64; ++rank) {
+        bool any = false;
+        for (const auto core : cores) {
+            std::uint64_t rest = core;
+            for (unsigned skip = 0; skip < rank && rest != 0; ++skip) rest &= rest - 1;
+            if (rest == 0) continue;
+            any = true;
+            order.push_back(rest & (~rest + 1));
+        }
+        if (!any) break;
+    }
+    if (order.empty()) {
+        for (unsigned cpu = 0; cpu < 64; ++cpu)
+            if ((process >> cpu) & 1u) order.push_back(std::uint64_t{1} << cpu);
+    }
+    if (order.empty()) return placement;
+    const bool reserve = order.size() >= GUEST_CPU_COUNT + OWN_CPU_MINIMUM;
+    for (unsigned cpu = 0; cpu < GUEST_CPU_COUNT; ++cpu) placement.guestCpu[cpu] = order[cpu % order.size()];
+    if (reserve) {
+        for (const auto bit : placement.guestCpu) placement.reserved |= bit;
+    }
+    placement.own = process & ~placement.reserved;
+    return placement;
+}
+
+inline const GuestPlacement& Placement() {
+    static const GuestPlacement placement = [] {
+        const auto process = Get().process;
+        return PlaceGuestCpus(process, CoreMasks(process));
+    }();
+    return placement;
+}
+
+inline std::uint64_t HostMaskForGuest(std::uint64_t guestMask) {
+    const auto& placement = Placement();
+    std::uint64_t host = 0;
+    for (unsigned cpu = 0; cpu < GUEST_CPU_COUNT; ++cpu)
+        if ((guestMask >> cpu) & 1u) host |= placement.guestCpu[cpu];
+    if (host == 0)
+        for (const auto bit : placement.guestCpu) host |= bit;
+    return host;
+}
+
+#ifdef _WIN32
+inline int HostPriorityForGuest(int guestPriority) {
+    if (guestPriority < GUEST_PRIORITY_HIGHEST) guestPriority = GUEST_PRIORITY_HIGHEST;
+    if (guestPriority > GUEST_PRIORITY_LOWEST) guestPriority = GUEST_PRIORITY_LOWEST;
+    if (guestPriority < 448) return THREAD_PRIORITY_HIGHEST;
+    if (guestPriority < 576) return THREAD_PRIORITY_ABOVE_NORMAL;
+    if (guestPriority < 704) return THREAD_PRIORITY_NORMAL;
+    if (guestPriority < 736) return THREAD_PRIORITY_BELOW_NORMAL;
+    return THREAD_PRIORITY_LOWEST;
+}
+#endif
+
+inline bool PlaceThreadAsGuest(void* handle, std::uint64_t guestMask, int guestPriority) {
+#ifdef _WIN32
+    HANDLE thread = handle != nullptr ? static_cast<HANDLE>(handle) : GetCurrentThread();
+    const bool pinned = SetThreadAffinityMask(thread, static_cast<DWORD_PTR>(HostMaskForGuest(guestMask))) != 0;
+    return SetThreadPriority(thread, HostPriorityForGuest(guestPriority)) != 0 && pinned;
+#elif defined(__linux__)
+    (void)guestPriority;
+    const std::uint64_t mask = HostMaskForGuest(guestMask);
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (unsigned cpu = 0; cpu < 64; ++cpu)
+        if ((mask >> cpu) & 1u) CPU_SET(cpu, &set);
+    const pthread_t thread = handle != nullptr ? *static_cast<const pthread_t*>(handle) : pthread_self();
+    return pthread_setaffinity_np(thread, sizeof(set), &set) == 0;
+#else
+    (void)handle;
+    (void)guestMask;
+    (void)guestPriority;
+    return false;
+#endif
+}
+
+inline bool PlaceThreadAsOwn(void* handle) {
+    const auto& placement = Placement();
+    if (placement.reserved == 0 || placement.own == 0) return true;
+#ifdef _WIN32
+    HANDLE thread = handle != nullptr ? static_cast<HANDLE>(handle) : GetCurrentThread();
+    return SetThreadAffinityMask(thread, static_cast<DWORD_PTR>(placement.own)) != 0;
+#else
+    (void)handle;
+    return false;
+#endif
+}
+
 }
 
 #endif

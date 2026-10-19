@@ -41,6 +41,7 @@ static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+#include <tlhelp32.h>
 #endif
 
 struct ThreadArgs {
@@ -342,6 +343,20 @@ static void BindHostCpuClock(PthreadPrivate* self) {
 #endif
 }
 
+static void PlaceGuestThread(PthreadPrivate& thread, bool self) {
+#ifdef _WIN32
+    void* handle = self ? nullptr : thread.nativeHandle;
+#else
+    void* handle = self ? nullptr : static_cast<void*>(&thread.hostThread);
+#endif
+#if defined(_WIN32) || defined(__linux__)
+    if (!CpuTopology::PlaceThreadAsGuest(handle, thread.affinity.load(std::memory_order_relaxed), thread.priority.load(std::memory_order_relaxed)))
+        throw std::runtime_error("Placing a guest thread on its host processors");
+#else
+    (void)handle;
+#endif
+}
+
 int GuestThreadCpuClockId(const PthreadPrivate* thread) {
     return static_cast<int>(CPU_CLOCK_BIT | static_cast<std::uint32_t>(thread->cpuClockThread));
 }
@@ -351,7 +366,9 @@ void SetLiveGuestThreadsAffinity(KernelCpumask mask) {
     std::lock_guard lock(registry.lock);
     registry.processAffinity = mask;
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire)) thread->affinity.store(mask, std::memory_order_relaxed);
+        if (thread->_finished.load(std::memory_order_acquire)) continue;
+        thread->affinity.store(mask, std::memory_order_relaxed);
+        if (thread->threadId != std::thread::id{}) PlaceGuestThread(*thread, thread->threadId == std::this_thread::get_id());
     }
 }
 
@@ -587,6 +604,33 @@ static void ApplyJobAffinity(PthreadPrivate& thread, void* handle) {
     });
     CpuTopology::PinTraced(thread.name.c_str(), handle, mask);
 }
+
+static bool PlaceExistingThreadsAsOwn() {
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    const DWORD process = GetCurrentProcessId();
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+        if (entry.th32OwnerProcessID != process) continue;
+        const HANDLE thread = OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+        if (thread == nullptr) continue;
+        const bool placed = CpuTopology::PlaceThreadAsOwn(thread);
+        CloseHandle(thread);
+        if (!placed) {
+            CloseHandle(snapshot);
+            return false;
+        }
+    }
+    CloseHandle(snapshot);
+    return true;
+}
+
+extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) return PlaceExistingThreadsAsOwn() ? TRUE : FALSE;
+    if (reason == DLL_THREAD_ATTACH) CpuTopology::PlaceThreadAsOwn(nullptr);
+    return TRUE;
+}
 #endif
 
 struct NativeThreadArgs {
@@ -633,6 +677,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
         self->stackAddress = reinterpret_cast<void*>(high - self->stackSize);
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
+        PlaceGuestThread(*self, true);
         if (!self->name.empty()) {
             const std::wstring description(self->name.begin(), self->name.end());
             SetThreadDescription(GetCurrentThread(), description.c_str());
@@ -668,6 +713,7 @@ static void* StartNativeThread(void* opaque) {
         self->hostTid = static_cast<int>(gettid());
         RegisterGuestStackMapping(self);
 #endif
+        PlaceGuestThread(*self, true);
         args->initialized.set_value();
     } catch (...) {
         args->initialized.set_exception(std::current_exception());
@@ -872,6 +918,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->references.store(1, std::memory_order_relaxed);
         TimedWait::BindThreadWaitState(&adopted->waitCount);
         SetStackFromHost(adopted.get());
+        PlaceGuestThread(*adopted, true);
         CurrentGuestState().current = adopted.release();
     }
 #else
@@ -883,6 +930,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread->threadId = std::this_thread::get_id();
         adoptedThread->hostThread = pthread_self();
         SetStackFromHost(adoptedThread.get());
+        PlaceGuestThread(*adoptedThread, true);
         CurrentGuestState().current = adoptedThread.get();
     }
 #endif
@@ -970,6 +1018,7 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
     if (!thread || mask == 0) return SCE_KERNEL_ERROR_EINVAL;
     thread->affinity.store(mask, std::memory_order_relaxed);
+    if (!thread->_finished.load(std::memory_order_acquire)) PlaceGuestThread(*thread, thread == CurrentGuestState().current);
     return SCE_OK;
 }
 
@@ -996,6 +1045,7 @@ void APS5_VABI scePthreadTestcancel() {
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
     thread->priority.store(prio, std::memory_order_relaxed);
+    if (!thread->_finished.load(std::memory_order_acquire)) PlaceGuestThread(*thread, thread == CurrentGuestState().current);
     return SCE_OK;
 }
 
