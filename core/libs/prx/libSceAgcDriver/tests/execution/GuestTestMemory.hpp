@@ -4,10 +4,6 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
-#include "prx/libc/include/GuestWriteWatch.hpp"
-#ifndef _WIN32
-#include <sys/mman.h>
-#endif
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -21,30 +17,15 @@
 namespace TestGuest {
 
 inline constexpr std::size_t PoolBytes = std::size_t{256} << 20;
-#ifdef _WIN32
 inline constexpr std::uint32_t PageReadWrite = 0x04u;
-#endif
 
 inline std::byte* Allocate(std::size_t bytes, std::size_t alignment) {
     struct Pool {
         std::byte* base = nullptr;
         std::size_t used = 0;
         Pool() {
-#ifdef _WIN32
             base = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(PoolBytes, 65536));
             if (base != nullptr) GuestArena::GuestArenaCommit_nid_postfix(base, PoolBytes, PageReadWrite, PoolBytes);
-#else
-            constexpr std::uintptr_t align = 65536;
-            void* mapped = mmap(nullptr, PoolBytes + align, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            if (mapped != MAP_FAILED) {
-                const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-                const auto aligned = (begin + align - 1) & ~(align - 1);
-                if (aligned != begin) munmap(mapped, aligned - begin);
-                if (aligned + PoolBytes != begin + PoolBytes + align) munmap(reinterpret_cast<void*>(aligned + PoolBytes), begin + align - aligned);
-                base = reinterpret_cast<std::byte*>(aligned);
-                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, PoolBytes);
-            }
-#endif
             if (base == nullptr) throw std::runtime_error("test guest memory: the guest pool cannot be allocated");
             GuestAllocations::Mutation().Add(base, PoolBytes, true, true, true);
         }

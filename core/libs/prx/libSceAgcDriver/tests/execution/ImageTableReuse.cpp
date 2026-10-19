@@ -6,18 +6,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
-#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -90,34 +81,16 @@ std::array<std::uint32_t, 4> Buffer(const void* base, std::uint32_t bytes) {
 class GuestBlock {
 public:
     explicit GuestBlock(std::size_t registered = BlockBytes) {
-#ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
-#else
-        constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped != MAP_FAILED) {
-            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
-            if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
-            block = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
-        }
-#endif
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, TestGuest::PageReadWrite, BlockBytes);
         Require(block != nullptr, "image table reuse: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, registered, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
         GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
-#else
-        munmap(block, BlockBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
-#endif
     }
 
     std::uint32_t* Table() const { return reinterpret_cast<std::uint32_t*>(block); }

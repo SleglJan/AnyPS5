@@ -4,18 +4,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
-#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include "GuestTestMemory.hpp"
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -65,34 +56,16 @@ std::string Hex(std::uint32_t value) {
 class GuestBlock {
 public:
     GuestBlock() {
-#ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, 65536));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
-#else
-        constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, SurfaceBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped != MAP_FAILED) {
-            const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
-            const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
-            if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + SurfaceBytes != begin + SurfaceBytes + alignment) munmap(reinterpret_cast<void*>(aligned + SurfaceBytes), begin + alignment - aligned);
-            block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, SurfaceBytes);
-        }
-#endif
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, SurfaceBytes, TestGuest::PageReadWrite, SurfaceBytes);
         Require(block != nullptr, "array slice views: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, SurfaceBytes, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
-#ifdef _WIN32
         GuestArena::GuestArenaReset_nid_postfix(block, SurfaceBytes);
         GuestArena::GuestArenaRelease_nid_postfix(block, SurfaceBytes);
-#else
-        munmap(block, SurfaceBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, SurfaceBytes);
-#endif
     }
 
     GuestBlock(const GuestBlock&) = delete;
