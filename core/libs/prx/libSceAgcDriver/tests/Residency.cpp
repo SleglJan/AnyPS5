@@ -133,6 +133,8 @@ public:
     std::map<std::uint64_t, bool> armed;
     std::map<std::uint64_t, ResidencyRefusal> guardRefused;
     std::map<std::uint64_t, std::uint64_t> guardCalls;
+    bool sampleStaleAtGuard = false;
+    std::vector<bool> staleAtGuard;
     std::set<std::uint64_t> reported;
     std::set<std::uint64_t> accessUnguarded;
     std::uint64_t protections = 0;
@@ -308,6 +310,7 @@ public:
     }
 
     ResidencyRefusal GuardAccess(std::uint64_t page, ResidencyMask) override {
+        if (sampleStaleAtGuard) staleAtGuard.push_back(manager->AnyStaleOwned());
         Expect(imports[page].attributes.section != 0 || (manager != nullptr && manager->ImportSettled(page)), "an access guard armed on private " + Name(page) + " before its import settled");
         Expect(imports[page].attributes.section != 0 || ImportSettled(page), "an access guard armed on private " + Name(page) + " before its newest host import settled");
         ++protections;
@@ -1452,6 +1455,22 @@ void OwnedPagesRetiledBeforeReaders() {
     Expect(fixture.Stored(BasePage + 0, 2) == 901 && fixture.Stored(BasePage + 0, 3) == 901 && fixture.Stored(BasePage + 0, 4) == 4, "a CPU read writes the rendered subpages back");
 }
 
+void OwnedRangeMarkedStaleInOneUpdate() {
+    scope = "an owned range marked stale in one update";
+    Fixture fixture(8, 1);
+    fixture.Share(BasePage + 3);
+    fixture.Share(BasePage + 4);
+    FakeOwner owner(fixture, 904);
+    fixture.manager->Own(Address(BasePage + 3), 2 * ResidencyPageBytes, &owner);
+    fixture.gpu.Drain();
+    fixture.gpu.sampleStaleAtGuard = true;
+    fixture.manager->MarkStale(Address(BasePage + 3, 8), ResidencyPageBytes, &owner);
+    fixture.gpu.sampleStaleAtGuard = false;
+    Expect(fixture.gpu.staleAtGuard.size() == 2, "both pages of the range are access-guarded");
+    Expect(std::none_of(fixture.gpu.staleAtGuard.begin(), fixture.gpu.staleAtGuard.end(), [](bool stale) { return stale; }), "no page of the range is published stale before the whole range is guarded");
+    Expect(fixture.manager->Stale(BasePage + 3) == 0xff00 && fixture.manager->Stale(BasePage + 4) == 0x00ff && owner.retiled.empty(), "the range's subpages of both pages are stale in the owner");
+}
+
 void CpuReadRetilesStalePages() {
     scope = "a CPU read retiles stale owned pages";
     Fixture fixture(8, 1);
@@ -2094,6 +2113,7 @@ int main() {
         FullResidencyWhenTheGuestFits();
         EagerAdmissionFillsTheBudget();
         OwnedPagesRetiledBeforeReaders();
+        OwnedRangeMarkedStaleInOneUpdate();
         CpuReadRetilesStalePages();
         PrivateOwnedPagesHeldForReaders();
         OwnedPagesExemptAndForgotten();

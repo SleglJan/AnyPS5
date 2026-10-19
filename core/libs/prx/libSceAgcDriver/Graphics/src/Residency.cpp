@@ -358,22 +358,25 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
         if (!eager.empty() && eager.back().address + eager.back().bytes == begin) eager.back().bytes += end - begin;
         else eager.push_back({begin, end - begin});
     };
+    std::vector<bool> mine(span.last - span.first + 1, false);
+    {
+        const std::shared_lock lock(ownedMutex);
+        for (auto page = span.first; page <= span.last; ++page) {
+            const auto entry = owned.find(page);
+            mine[page - span.first] = entry != owned.end() && entry->second.owner == owner;
+        }
+    }
+    std::vector<ResidencyMask> guards(mine.size(), 0);
     for (auto page = span.first; page <= span.last; ++page) {
         const auto base = page << ResidencyPageShift;
         const auto begin = std::max(address, base);
         const auto end = std::min(address + bytes, base + ResidencyPageBytes);
         const auto mask = SubpageMask(page, address, bytes);
-        const auto id = find(page);
-        bool mine = false;
-        {
-            const std::shared_lock lock(ownedMutex);
-            const auto entry = owned.find(page);
-            mine = entry != owned.end() && entry->second.owner == owner;
-        }
-        if (!mine) {
+        if (!mine[page - span.first]) {
             addEager(begin, end);
             continue;
         }
+        const auto id = find(page);
         ResidencyMask guarded = 0;
         if (id && dirtyable(pages[*id]) && !aliasKeys.contains(page)) {
             auto& record = pages[*id];
@@ -390,12 +393,21 @@ void ResidencyManager::MarkStale(std::uint64_t address, std::uint64_t bytes, IRe
             }
             guarded = static_cast<ResidencyMask>(mask & record.accessMask);
         }
+        guards[page - span.first] = guarded;
+    }
+    {
         const std::unique_lock lock(ownedMutex);
-        auto& entry = owned[page];
-        if (entry.stale == 0 && staleOwned.insert(page).second) ++staleCount;
-        entry.stale = static_cast<ResidencyMask>(entry.stale | mask);
-        entry.guarded = static_cast<ResidencyMask>((entry.guarded & ~mask) | guarded);
-        publishStale(page, entry.stale);
+        for (auto page = span.first; page <= span.last; ++page) {
+            if (!mine[page - span.first]) continue;
+            const auto found = owned.find(page);
+            if (found == owned.end() || found->second.owner != owner) continue;
+            const auto mask = SubpageMask(page, address, bytes);
+            auto& entry = found->second;
+            if (entry.stale == 0 && staleOwned.insert(page).second) ++staleCount;
+            entry.stale = static_cast<ResidencyMask>(entry.stale | mask);
+            entry.guarded = static_cast<ResidencyMask>((entry.guarded & ~mask) | guards[page - span.first]);
+            publishStale(page, entry.stale);
+        }
     }
     if (eager.empty()) return;
     ++counts.eagerRetiles;
