@@ -76,6 +76,7 @@ public:
     static std::uint64_t TransferCopies();
     std::uint64_t DataIndependentDispatchHits();
     std::uint64_t RunTimeDispatchCompiles();
+    static std::uint64_t RunTimeEvaluations();
     std::uint64_t DeferredDispatches() const;
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
 

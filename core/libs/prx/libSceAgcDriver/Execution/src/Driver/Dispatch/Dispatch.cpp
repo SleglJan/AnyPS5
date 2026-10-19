@@ -11,6 +11,8 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <atomic>
+#include <deque>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -45,6 +47,32 @@ std::array<std::uint32_t, 3> DispatchGroups(std::span<const std::uint32_t> packe
     }
     return groups;
 }
+
+struct RunTimeRead {
+    std::uint64_t address = 0;
+    std::uint32_t value = 0;
+    bool waits = false;
+    bool read = false;
+};
+
+struct RunTimeReadLog {
+    bool waits = false;
+    std::vector<RunTimeRead>* reads = nullptr;
+};
+
+struct RunTimeMemo {
+    decltype(ShaderRecompiler::RunTimeProgram::plan) plan;
+    decltype(ShaderRecompiler::RunTimeProgram::compiled) compiled;
+    std::vector<std::uint32_t> userData;
+    std::uint64_t shaderBase = 0;
+    std::vector<RunTimeRead> reads;
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+};
+
+constexpr std::size_t RunTimeMemosPerProgram = 4;
+constexpr std::size_t RunTimeMemoPrograms = 256;
+
+std::atomic<std::uint64_t> runTimeEvaluations{0};
 
 }
 
@@ -127,15 +155,56 @@ Driver::DispatchProgram Driver::runTimeDispatch(const ShaderSnapshot& snapshot, 
     return {std::move(entry), true};
 }
 
+std::uint64_t Driver::RunTimeEvaluations() {
+    return runTimeEvaluations.load(std::memory_order_relaxed);
+}
+
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::runTimeResult(const RunTimeProgram& entry, std::span<const std::uint32_t> userData, std::uint64_t shaderBase) {
+    struct RunTimeMemosTag {};
+    auto& memos = HostThreadLocal<std::unordered_map<const ShaderRecompiler::RecompileResult*, std::deque<RunTimeMemo>>, RunTimeMemosTag>();
+    auto& held = memos[entry.compiled.get()];
+    for (auto memo = held.begin(); memo != held.end(); ++memo) {
+        if (memo->plan != entry.plan || memo->shaderBase != shaderBase || !std::ranges::equal(memo->userData, userData)) continue;
+        const bool unchanged = std::ranges::all_of(memo->reads, [](const RunTimeRead& logged) {
+            bool waitForWrites = true;
+            std::uint32_t value = 0;
+            const bool read = readPrePassWord(logged.waits ? &waitForWrites : nullptr, logged.address, &value);
+            return read == logged.read && (!read || value == logged.value);
+        });
+        if (!unchanged) {
+            held.erase(memo);
+            break;
+        }
+        if (memo != held.begin()) std::rotate(held.begin(), memo, std::next(memo));
+        return held.front().result;
+    }
+    RunTimeMemo memo{entry.plan, entry.compiled, {userData.begin(), userData.end()}, shaderBase, {}, nullptr};
+    const auto logged = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+        auto& log = *static_cast<RunTimeReadLog*>(context);
+        bool waitForWrites = true;
+        const bool read = readPrePassWord(log.waits ? &waitForWrites : nullptr, address, value);
+        log.reads->push_back({address, read ? *value : 0u, log.waits, read});
+        return read;
+    };
+    RunTimeReadLog now{false, &memo.reads};
+    RunTimeReadLog afterWrites{true, &memo.reads};
     ShaderRecompiler::SrtRuntime runtime;
     runtime.userData = userData;
     runtime.shaderBase = shaderBase;
-    runtime.readMemory = &readPrePassWord;
-    bool waitForWrites = true;
+    runtime.readMemory = logged;
+    runtime.userContext = &now;
     auto settled = runtime;
-    settled.userContext = &waitForWrites;
-    return ShaderRecompiler::RunTimeResult(entry, runtime, settled);
+    settled.userContext = &afterWrites;
+    runTimeEvaluations.fetch_add(1, std::memory_order_relaxed);
+    memo.result = ShaderRecompiler::RunTimeResult(entry, runtime, settled);
+    if (prePassDeferral().deferred) return memo.result;
+    if (held.empty() && memos.size() > RunTimeMemoPrograms) {
+        memos.clear();
+        return memos[entry.compiled.get()].emplace_front(std::move(memo)).result;
+    }
+    held.push_front(std::move(memo));
+    if (held.size() > RunTimeMemosPerProgram) held.pop_back();
+    return held.front().result;
 }
 
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments, bool threadDimensions) {
