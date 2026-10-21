@@ -96,6 +96,8 @@ struct SpirvEmitterState {
     ShaderStageInputInfo inputInfo;
     std::array<std::uint32_t, 10> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
+    std::uint32_t diagMergedConsumeVariable = 0;
+    std::uint32_t diagMergedLevelVariable = 0;
 
     SpirvRequirements requirements;
     std::uint32_t laneCount = 1;

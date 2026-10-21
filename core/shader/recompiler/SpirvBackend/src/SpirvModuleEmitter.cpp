@@ -1,4 +1,6 @@
 #include "SpirvBackend/SpirvModuleEmitter.hpp"
+#include <cstdlib>
+#include <cstring>
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
@@ -826,6 +828,76 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
 
 }
 
+// Diag branch: APS5_DIAG_MERGED_CONSUME=1 makes the domain stage of a merged-hull draw declare the
+// hull's ControlShared location as an input and fold one record into its position, so the hull's
+// shared records are an output the next stage consumes.
+static bool DiagMergedConsume() {
+    static const bool on = std::getenv("APS5_DIAG_MERGED_CONSUME") != nullptr;
+    return on;
+}
+
+// Diag branch: APS5_DIAG_MERGED_CONSUME=place keeps only the hull side of the switch (the shared records' new
+// location) and leaves the domain stage as it is, to tell the placement apart from the consumption.
+static bool DiagMergedPlacementOnly() {
+    static const bool on = [] {
+        const char* value = std::getenv("APS5_DIAG_MERGED_CONSUME");
+        return value != nullptr && std::strcmp(value, "place") == 0;
+    }();
+    return on;
+}
+
+// Diag branch: under APS5_DIAG_MERGED_CONSUME=1 both stages place the shared records at this fixed per-vertex
+// location, and under APS5_DIAG_MERGED_READBACK=1 the level source travels at this fixed per-patch location; both
+// lie past every span the tessellation tests use (locations 1..13) whichever stage uses patch constants.
+constexpr std::uint32_t DiagMergedSharedLocation = 16u;
+constexpr std::uint32_t DiagMergedLevelLocation = 20u;
+
+// Diag branch: APS5_DIAG_MERGED_READBACK=1 makes the hull store its first outer level's source value, before any
+// clamp, to a per-patch output and raise every outer level to at least 1, and makes the domain stage put
+// clamp(source / 8 + 0.25, 0, 1) into component 2 (blue) of its first parameter export.
+static bool DiagMergedReadback() {
+    static const bool on = std::getenv("APS5_DIAG_MERGED_READBACK") != nullptr;
+    return on;
+}
+
+static std::uint32_t DiagLevelToBlue(SpirvEmitterState& state, std::uint32_t value) {
+    const auto level = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeF32(state), level, state.diagMergedLevelVariable);
+    const auto scaled = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFMul, TypeF32(state), scaled, level, ConstantF32Value(state, 0.125f));
+    const auto shifted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFAdd, TypeF32(state), shifted, scaled, ConstantF32Value(state, 0.25f));
+    const auto blue = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeF32(state), blue, GlslStd450(state), GLSLstd450NClamp, shifted, ConstantF32Value(state, 0.0f), ConstantF32Value(state, 1.0f));
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeInsert, TypeF32Vector(state, 4u), result, blue, value, 2u);
+    return result;
+}
+
+static std::uint32_t DiagConsumeMergedRecords(SpirvEmitterState& state, std::uint32_t value) {
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeU32Vector(state, 4u)), pointer, state.diagMergedConsumeVariable, ConstantU32(state, 0u));
+    const auto record = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32Vector(state, 4u), record, pointer);
+    const auto x = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), x, record, 0u);
+    const auto y = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), y, record, 1u);
+    const auto xMatches = state.module.AllocateId();
+    state.module.AddFunction(spv::OpIEqual, TypeBool(state), xMatches, x, ConstantU32(state, 0x12345678u));
+    const auto yMatches = state.module.AllocateId();
+    state.module.AddFunction(spv::OpIEqual, TypeBool(state), yMatches, y, ConstantU32(state, 0x9abcdef0u));
+    const auto matches = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), matches, xMatches, yMatches);
+    const auto w = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), w, value, 3u);
+    const auto selected = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelect, TypeF32(state), selected, matches, ConstantF32Value(state, 0.0f), w);
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeInsert, TypeF32Vector(state, 4u), result, selected, value, 3u);
+    return result;
+}
+
 void DefineTessellationInterfaces(SpirvEmitterState& state) {
     std::array<bool, 10> used {};
     for (const IrBlock* block : state.program.BlockOrder()) {
@@ -880,12 +952,23 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             const auto controlLocations = (state.program.Metadata().tessellationControlStride + 15u) / 16u;
             const bool patchUsed = used[static_cast<std::uint32_t>(TessellationAttribute::PatchOutput)] || used[static_cast<std::uint32_t>(TessellationAttribute::PatchInput)];
             const auto patchLocations = patchUsed ? (state.program.Metadata().tessellationPatchStride + 15u) / 16u : 0u;
-            const auto location = patch ? controlLocations : kind == TessellationAttribute::ControlShared ? controlLocations + patchLocations : 0u;
+            const auto sharedLocation = DiagMergedConsume() && tess.mergedHull ? DiagMergedSharedLocation : controlLocations + patchLocations;
+            const auto location = patch ? controlLocations : kind == TessellationAttribute::ControlShared ? sharedLocation : 0u;
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationLocation, location);
         }
         if (kind == TessellationAttribute::Factor || patch) {
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationPatch);
         }
+    }
+    if (DiagMergedConsume() && !DiagMergedPlacementOnly() && state.program.Resources().stage == IrShaderStage::TessellationEvaluation && tess.mergedHull) {
+        state.diagMergedConsumeVariable = DefineInterfaceVariable(state, array(TypeU32Vector(state, 4u), tess.outputControlPoints), spv::StorageClassInput, "diag_merged_consume");
+        state.module.AddAnnotation(spv::OpDecorate, state.diagMergedConsumeVariable, spv::DecorationLocation, DiagMergedSharedLocation);
+    }
+    const bool control = state.program.Resources().stage == IrShaderStage::TessellationControl;
+    if (DiagMergedReadback() && (control || state.program.Resources().stage == IrShaderStage::TessellationEvaluation)) {
+        state.diagMergedLevelVariable = DefineInterfaceVariable(state, TypeF32(state), control ? spv::StorageClassOutput : spv::StorageClassInput, "diag_merged_level");
+        state.module.AddAnnotation(spv::OpDecorate, state.diagMergedLevelVariable, spv::DecorationLocation, DiagMergedLevelLocation);
+        state.module.AddAnnotation(spv::OpDecorate, state.diagMergedLevelVariable, spv::DecorationPatch);
     }
 }
 
@@ -1731,6 +1814,7 @@ void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& ins
             const auto lowest = outer ? minimum : TessellationLevelBound(state, minimum, GLSLstd450FMax, 1.0f);
             const auto floating = state.module.AllocateId();
             state.module.AddFunction(spv::OpBitcast, TypeF32(state), floating, value);
+            if (state.diagMergedLevelVariable != 0u && inst.Argument(1)->HasImmediate() && inst.Argument(1)->ImmediateU32() / 4u == 0u) state.module.AddFunction(spv::OpStore, state.diagMergedLevelVariable, floating);
             const auto inside = state.module.AllocateId();
             state.module.AddFunction(spv::OpFOrdGreaterThan, TypeBool(state), inside, floating, ConstantF32Value(state, outer ? 0.0f : 1.0f));
             const auto raised = state.module.AllocateId();
@@ -1739,6 +1823,11 @@ void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& ins
             state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450FMin, raised, TessellationLevelBound(state, TessellationLevel(state, 1u), GLSLstd450FMin, state.inputInfo.vertex->tess.partitioning == 2u ? 63.0f : 64.0f));
             value = state.module.AllocateId();
             state.module.AddFunction(spv::OpSelect, TypeF32(state), value, inside, clamped, outer ? floating : lowest);
+            if (DiagMergedReadback() && outer) {
+                const auto atLeastOne = state.module.AllocateId();
+                state.module.AddFunction(spv::OpExtInst, TypeF32(state), atLeastOne, GlslStd450(state), GLSLstd450NMax, value, ConstantF32Value(state, 1.0f));
+                value = atLeastOne;
+            }
         }
         ctx.state.module.AddFunction(spv::OpStore, TessellationPointer(ctx, inst), value);
     });
@@ -1866,10 +1955,12 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto kind = exp.kind == ExportTargetKind::Position ? StageOutputKind::Position : StageOutputKind::Parameter;
             state.module.AddFunction(spv::OpStore, MeshOutputPointer(state, kind, exp.index), value);
         } else if (exp.kind == ExportTargetKind::Position) {
+            if (state.diagMergedConsumeVariable != 0u) value = DiagConsumeMergedRecords(state, value);
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeF32Vector(state, 4u)), pointer, variable, ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpStore, pointer, value);
         } else {
+            if (state.diagMergedLevelVariable != 0u && !uintOutput && exp.kind == ExportTargetKind::Parameter && exp.index == 0u && state.program.Resources().stage == IrShaderStage::TessellationEvaluation) value = DiagLevelToBlue(state, value);
             state.module.AddFunction(spv::OpStore, variable, value);
         }
     });

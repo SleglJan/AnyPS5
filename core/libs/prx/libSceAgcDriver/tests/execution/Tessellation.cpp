@@ -20,6 +20,7 @@
 #include <iostream>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -585,13 +586,19 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags
     device.WaitIdle();
 }
 
+// Diag branch: APS5_DIAG_MERGED_READBACK=1 prints every patch's centre and coverage before the checks of each patch
+// draw, and the hull's level source arrives in the blue channel, so the pixel check below lets blue through.
+const bool diagReadback = std::getenv("APS5_DIAG_MERGED_READBACK") != nullptr;
+std::uint32_t diagFailures = 0;
+std::uint32_t diagExpectedFailures = 0;
+
 std::uint32_t CoveredPixels(std::uint32_t patch, bool interior) {
     std::uint32_t count = 0;
     for (std::uint32_t y = Row(0.5f); y <= Row(-0.5f) && y < Height; ++y) {
         for (std::uint32_t x = Column(patch, 0.0f); x <= Column(patch, 0.5f) && x < Width; ++x) {
             const auto pixel = PixelAt(x, y);
             if (pixel == Background) continue;
-            Require(pixel[0] == 255 && pixel[2] == 0 && pixel[3] == 255, "patch " + std::to_string(patch) + " pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(pixel));
+            Require(pixel[0] == 255 && (diagReadback || pixel[2] == 0) && pixel[3] == 255, "patch " + std::to_string(patch) + " pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(pixel));
             if (!interior || pixel[1] > 32) ++count;
         }
     }
@@ -607,16 +614,42 @@ void RequirePatches(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spi
         Compile(target, ShaderStage::Fragment, PixelCode, cursor, patches),
     };
     const auto center = Row(-0.5f + 1.0f / 3.0f);
+    // Diag branch: under APS5_DIAG_MERGED_READBACK=1 each failed check is printed and counted instead of ending the run.
+    const auto check = [&](const std::string& label, const auto& require) {
+        if (!diagReadback) {
+            require();
+            return;
+        }
+        try {
+            require();
+        } catch (const std::exception& error) {
+            ++diagFailures;
+            if (std::string(error.what()).find("the patch with level 0 was not culled") != std::string::npos) ++diagExpectedFailures;
+            std::puts(("diag " + label + ": check failed: " + error.what()).c_str());
+            std::fflush(stdout);
+        }
+    };
     for (const auto cull : {VK_CULL_MODE_NONE, VK_CULL_MODE_BACK_BIT}) {
         Draw(device, stages, cull, VK_FRONT_FACE_COUNTER_CLOCKWISE, patches);
         const std::string name = program + (cull == VK_CULL_MODE_NONE ? ", unculled" : ", back-face culled");
-        Require(CoveredPixels(0, false) > 100 && CoveredPixels(0, true) == 0, name + ": the level-1 patch was not drawn as one flat triangle, centre " + PixelText(PixelAt(Column(0, 0.25f), center)));
-        Require(CoveredPixels(1, false) == 0, name + ": the patch with level 0 was not culled");
-        Require(CoveredPixels(2, false) > 100 && PixelAt(Column(2, 0.25f), center)[1] > 32, name + ": the level-5 patch has no interior domain points at its centre, " + PixelText(PixelAt(Column(2, 0.25f), center)));
-        Require(PixelAt(0, 0) == Background && PixelAt(Width - 1, Height - 1) == Background, name + ": the corners changed");
+        if (diagReadback) {
+            std::string line = "diag " + name + ":";
+            for (std::uint32_t patch = 0; patch < 3; ++patch) line += " patch " + std::to_string(patch) + " centre " + PixelText(PixelAt(Column(patch, 0.25f), center));
+            try {
+                for (std::uint32_t patch = 0; patch < 3; ++patch) line += " patch " + std::to_string(patch) + " covered " + std::to_string(CoveredPixels(patch, false)) + " interior " + std::to_string(CoveredPixels(patch, true));
+            } catch (const std::exception& error) {
+                line += std::string(" (coverage count stopped: ") + error.what() + ")";
+            }
+            std::puts(line.c_str());
+            std::fflush(stdout);
+        }
+        check(name, [&] { Require(CoveredPixels(0, false) > 100 && CoveredPixels(0, true) == 0, name + ": the level-1 patch was not drawn as one flat triangle, centre " + PixelText(PixelAt(Column(0, 0.25f), center))); });
+        check(name, [&] { Require(CoveredPixels(1, false) == 0, name + ": the patch with level 0 was not culled"); });
+        check(name, [&] { Require(CoveredPixels(2, false) > 100 && PixelAt(Column(2, 0.25f), center)[1] > 32, name + ": the level-5 patch has no interior domain points at its centre, " + PixelText(PixelAt(Column(2, 0.25f), center))); });
+        check(name, [&] { Require(PixelAt(0, 0) == Background && PixelAt(Width - 1, Height - 1) == Background, name + ": the corners changed"); });
     }
     Draw(device, stages, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_CLOCKWISE, patches);
-    Require(CoveredPixels(0, false) == 0 && CoveredPixels(2, false) == 0, program + ": tessellated triangles did not keep the control points' winding");
+    check(program, [&] { Require(CoveredPixels(0, false) == 0 && CoveredPixels(2, false) == 0, program + ": tessellated triangles did not keep the control points' winding"); });
 }
 
 Stages CompileTriangles(const ShaderRecompiler::SpirvTarget& target, const PatchDraw& patches) {
@@ -1005,6 +1038,11 @@ int main() {
         RequireMergedHullWithoutSubgroups(target);
         RequirePatches(*device, target, MergedHullCode, "merged hull program", MergedTriangles, MergedHullCode);
         RequirePatches(*device, target, MergedHullRegisters, "merged hull program storing its local part's registers", MergedTriangles, MergedHullRegisters);
+        if (diagReadback) {
+            // Diag branch: the later checks expect the level-0 patch culled, which the raised level defeats, so the run ends here.
+            std::puts(("diag readback complete after the patch draws: " + std::to_string(diagFailures) + " checks failed, " + std::to_string(diagExpectedFailures) + " of them the level-0 patch drawn by design").c_str());
+            return diagFailures == diagExpectedFailures ? 0 : 1;
+        }
         RequireCounterClockwise(*device, target);
         RequireLevelClamps(*device, target);
         RequireIntegerPartitioning(*device, target);

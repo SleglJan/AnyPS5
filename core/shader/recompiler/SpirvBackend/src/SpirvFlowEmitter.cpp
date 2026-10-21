@@ -894,8 +894,12 @@ void EmitBarrier(SpirvValueEmitContext& ctx, const IrValue& inst) {
         return;
     }
     const bool tessellation = state.program.Resources().stage == IrShaderStage::TessellationControl;
-    const auto memoryScope = tessellation ? spv::ScopeInvocation : spv::ScopeWorkgroup;
-    const std::uint32_t semantics = tessellation ? static_cast<std::uint32_t>(spv::MemorySemanticsMaskNone) : spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
+    // Diag branch: APS5_DIAG_MERGED_BARRIER=1 gives a merged hull's barrier Device memory scope and
+    // AcquireRelease | WorkgroupMemory semantics instead of Invocation scope and none.
+    static const bool diagBarrier = std::getenv("APS5_DIAG_MERGED_BARRIER") != nullptr;
+    const bool diagMerged = diagBarrier && tessellation && state.inputInfo.vertex != nullptr && state.inputInfo.vertex->tess.mergedHull;
+    const auto memoryScope = tessellation ? (diagMerged ? spv::ScopeDevice : spv::ScopeInvocation) : spv::ScopeWorkgroup;
+    const std::uint32_t semantics = tessellation ? (diagMerged ? static_cast<std::uint32_t>(spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask) : static_cast<std::uint32_t>(spv::MemorySemanticsMaskNone)) : spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
     state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, memoryScope), ConstantU32(state, semantics));
 }
 

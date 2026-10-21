@@ -12,6 +12,12 @@ namespace ShaderRecompiler {
 
 class RecompileCacheKey {
 public:
+    // Diag branch: with APS5_DIAG_MERGED_CONSUME=1 the domain stage's module depends on mergedHull too.
+    static bool DiagMergedConsume() {
+        static const bool on = std::getenv("APS5_DIAG_MERGED_CONSUME") != nullptr;
+        return on;
+    }
+
     static void Build(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
         key.clear();
         append(key, RuntimeAbi::Version);
@@ -131,7 +137,7 @@ private:
         append(key, tessellation != nullptr);
         if (tessellation == nullptr) return;
         for (const auto value : {tessellation->inputControlPoints, tessellation->outputControlPoints, tessellation->domain, tessellation->partitioning, tessellation->outputTopology}) append(key, value);
-        if (request.shader.stage != ShaderStage::TessellationEvaluation) append(key, tessellation->mergedHull);
+        if (request.shader.stage != ShaderStage::TessellationEvaluation || DiagMergedConsume()) append(key, tessellation->mergedHull);
         if (request.shader.stage == ShaderStage::Local) return;
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
