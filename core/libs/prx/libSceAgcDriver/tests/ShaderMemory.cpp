@@ -2941,6 +2941,130 @@ void verifyImageTableScratchReuse() {
     require(warm.allocations < Entries / 4u, "image table scratch: snapshotting and resolving a table allocated per record");
 }
 
+void verifyTableColumnMemo() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::uint32_t Entries = 3000;
+    static TableTexture textures[4];
+    alignas(4096) static TableGuest guests[2];
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, Entries> heaps[2];
+    for (std::uint32_t entry = 0; entry < Entries; entry++) {
+        heaps[0][entry] = entry % 97u == 0u ? std::array<std::uint32_t, 8>{} : TableT(textures[entry % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, 1u + entry % 5u);
+    }
+    heaps[0][11][3] = (heaps[0][11][3] & 0x0fffffffu) | (1u << 28u);
+    heaps[1] = heaps[0];
+    const bool enabled = std::getenv("APS5_NO_TABLE_COLUMN_MEMO") == nullptr;
+    const bool verified = enabled && std::getenv("APS5_VERIFY_TABLE_COLUMN_MEMO") != nullptr;
+    const bool diagnosed = enabled && std::getenv("APS5_TABLE_COLUMN_MEMO_DIAG") != nullptr;
+    const auto same = [](const ResolvedImageTables& left, const ResolvedImageTables& right) {
+        return left.map == right.map && left.elements == right.elements && left.samplers == right.samplers && left.poison == right.poison && left.faults == right.faults;
+    };
+    std::array<std::array<std::uint32_t, 2>, 2> userData{};
+    std::vector<RecompileRequest> requests;
+    for (std::size_t side = 0; side < 2u; side++) {
+        FillTableSrt(guests[side], heaps[side].data(), 32u, Entries);
+        userData[side] = TableUserData(guests[side]);
+        requests.push_back(TableRequest(TableWholeCode, userData[side]));
+    }
+    auto staticRequest = requests[0];
+    const std::array<std::uint32_t, 2> absentResources{};
+    staticRequest.context.userData = absentResources;
+    staticRequest.context.memory = {};
+    auto staticProgram = PrepareResourceProgram(staticRequest);
+    ResourceMaterializer{}.ApplyStaticInterface(staticProgram);
+    const auto& info = staticProgram.Resources().info;
+    const auto capture = [&](const RecompileRequest& request) {
+        CountingMemory memory;
+        SrtRuntime runtime;
+        runtime.userData = request.context.userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        runtime.userContext = &memory;
+        runtime.readMemory = &CountingRead;
+        runtime.readSpecializationMemory = &CountingRead;
+        runtime.accessible = &CountingAccessible;
+        runtime.readWords = &CountingReadWords;
+        return CaptureResources(request, runtime);
+    };
+    constexpr std::uint64_t MemoKey = 0x7ab1ec01u;
+    constexpr std::uint64_t OtherKey = 0x7ab1ec02u;
+    constexpr std::uint64_t ModesKey = 0x7ab1ec03u;
+    constexpr std::uint64_t ImageKey = 0x7ab1ec04u;
+    constexpr std::uint64_t SourceKey = 0x7ab1ec05u;
+    constexpr std::uint64_t DecodeKey = 0x7ab1ec06u;
+    const auto resolveWith = [&](const ShaderInfo& used, std::uint64_t memoKey, const RecompileRequest& request, const std::string& what) {
+        const auto captured = capture(request);
+        require(captured->snapshot.tables.tables.size() == 1u && captured->snapshot.tables.tables.at(0).keys == Entries, ("image table column memo: " + what + ": the snapshot does not hold the whole table").c_str());
+        auto memoized = ResourceMaterializer::ResolveImageTables(used, captured->snapshot, memoKey);
+        const auto plain = ResourceMaterializer::ResolveImageTables(used, captured->snapshot, memoKey, false);
+        require(same(memoized, plain), ("image table column memo: " + what + ": the memoized resolution differs from the plain one").c_str());
+        return memoized;
+    };
+    const auto resolveBoth = [&](const RecompileRequest& request, const std::string& what) { return resolveWith(info, MemoKey, request, what); };
+    const auto before = ResourceMaterializer::TableReuse();
+    const auto first = resolveBoth(requests[0], "the first table");
+    const auto afterFirst = ResourceMaterializer::TableReuse();
+    require(afterFirst.columnHits == before.columnHits && afterFirst.columnMisses - before.columnMisses == (enabled ? 1u : 0u), "image table column memo: the first table did not miss exactly once");
+    require(first.map[Abi::HeaderElementCount] == 20u && first.poison.size() == 3u && first.poison.at(2).reason == Abi::PoisonReason::NotImage, "image table column memo: the first table did not index its twenty distinct records and poison its invalid one");
+    const auto moved = resolveBoth(requests[1], "a moved table with the same records");
+    const auto afterMoved = ResourceMaterializer::TableReuse();
+    require(afterMoved.columnHits - afterFirst.columnHits == (enabled ? 1u : 0u) && afterMoved.columnMisses == afterFirst.columnMisses, "image table column memo: a moved table with the same records was not replayed");
+    const auto header = Abi::TableHeader(0);
+    require(first.map.at(header + Abi::TableBaseLow) == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(heaps[0].data())) && moved.map.at(header + Abi::TableBaseLow) == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(heaps[1].data())), "image table column memo: a resolution does not carry its own table base");
+    require(moved.elements == first.elements && moved.map.size() == first.map.size() && moved.poison == first.poison, "image table column memo: a moved table resolved to other elements");
+    heaps[1][5] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D, 2u);
+    const auto changed = resolveBoth(requests[1], "a table with a changed record");
+    const auto afterChanged = ResourceMaterializer::TableReuse();
+    require(afterChanged.columnHits == afterMoved.columnHits && afterChanged.columnMisses - afterMoved.columnMisses == (enabled ? 1u : 0u), "image table column memo: a table with a changed record was replayed");
+    require(changed.elements.size() == first.elements.size() + 1u, "image table column memo: the changed record did not add one element");
+    static_cast<void>(resolveBoth(requests[1], "the changed table again"));
+    const auto afterAgain = ResourceMaterializer::TableReuse();
+    require(afterAgain.columnHits - afterChanged.columnHits == (enabled ? 1u : 0u) && afterAgain.columnMisses == afterChanged.columnMisses, "image table column memo: the changed table was not replayed the second time");
+    require(afterAgain.columnVerified - before.columnVerified == (verified ? 2u : 0u), "image table column memo: the replayed snapshots were not verified exactly when asked");
+    require(afterAgain.columnMismatches == before.columnMismatches, "image table column memo: the verification found a resolution that differs");
+    const auto shared = resolveWith(info, OtherKey, requests[1], "the changed table under a second variant");
+    const auto afterShared = ResourceMaterializer::TableReuse();
+    require(afterShared.columnHits - afterAgain.columnHits == (enabled ? 1u : 0u) && afterShared.columnMisses == afterAgain.columnMisses, "image table column memo: a second variant did not replay the column the first variant resolved");
+    require(shared.map == changed.map && shared.elements == changed.elements && shared.poison == changed.poison, "image table column memo: the second variant's resolution differs from the first variant's");
+    const auto codes = TableCodes(changed.map, 0);
+    const auto mode = changed.map.at(codes.at(1) + Abi::ImageRecordFlags) >> Abi::ModeShift;
+    auto alteredModes = info;
+    auto& altered = alteredModes.runtimeImageModes.at(0).at(mode);
+    altered.depthCompare = !altered.depthCompare;
+    const auto otherModes = resolveWith(alteredModes, ModesKey, requests[1], "the changed table with a changed mode list");
+    const auto afterModes = ResourceMaterializer::TableReuse();
+    require(afterModes.columnHits == afterShared.columnHits && afterModes.columnMisses - afterShared.columnMisses == (enabled ? 1u : 0u), "image table column memo: a changed mode list was replayed from another mode list's records");
+    require(otherModes.map == changed.map && otherModes.elements.size() == changed.elements.size() && otherModes.elements != changed.elements, "image table column memo: the changed mode did not reach the elements");
+    static_cast<void>(resolveWith(alteredModes, ModesKey, requests[1], "the changed mode list again"));
+    const auto afterModesAgain = ResourceMaterializer::TableReuse();
+    require(afterModesAgain.columnHits - afterModes.columnHits == (enabled ? 1u : 0u) && afterModesAgain.columnMisses == afterModes.columnMisses, "image table column memo: the changed mode list was not replayed the second time");
+    auto alteredImage = info;
+    alteredImage.images.at(0).firstUsePc += 4u;
+    alteredImage.runtimeImageModes.at(0) = ResourceMaterializer::RuntimeImageModes(alteredImage.images.at(0));
+    const auto otherImage = resolveWith(alteredImage, ImageKey, requests[1], "the changed table through a resource with another first use");
+    const auto afterImage = ResourceMaterializer::TableReuse();
+    require(afterImage.columnHits - afterModesAgain.columnHits == (enabled ? 1u : 0u) && afterImage.columnMisses == afterModesAgain.columnMisses, "image table column memo: a resource with another first use did not replay the shared records");
+    require(otherImage.map == changed.map && otherImage.elements == changed.elements && otherImage.poison == changed.poison, "image table column memo: another first use resolved to other records");
+    auto alteredSource = info;
+    alteredSource.images.at(0).source += 1u;
+    alteredSource.runtimeImageModes.at(0) = ResourceMaterializer::RuntimeImageModes(alteredSource.images.at(0));
+    const auto otherSource = resolveWith(alteredSource, SourceKey, requests[1], "the changed table through a resource with another descriptor source");
+    const auto afterSource = ResourceMaterializer::TableReuse();
+    require(afterSource.columnHits - afterImage.columnHits == (enabled ? 1u : 0u) && afterSource.columnMisses == afterImage.columnMisses, "image table column memo: a resource with another descriptor source did not replay the shared records");
+    require(otherSource.map == changed.map && otherSource.elements == changed.elements && otherSource.poison == changed.poison, "image table column memo: another descriptor source resolved to other records");
+    auto alteredDecode = info;
+    alteredDecode.images.at(0).r128 = !alteredDecode.images.at(0).r128;
+    alteredDecode.runtimeImageModes.at(0) = ResourceMaterializer::RuntimeImageModes(alteredDecode.images.at(0));
+    const auto otherDecode = resolveWith(alteredDecode, DecodeKey, requests[1], "the changed table through a resource with another decode input");
+    const auto afterDecode = ResourceMaterializer::TableReuse();
+    require(afterDecode.columnHits == afterSource.columnHits && afterDecode.columnMisses - afterSource.columnMisses == (enabled ? 1u : 0u), "image table column memo: a changed decode input was replayed from another description's records");
+    require(otherDecode.map == changed.map && otherDecode.elements == changed.elements && otherDecode.poison == changed.poison, "image table column memo: the changed decode input resolved to other records");
+    require(afterDecode.columnVerified - before.columnVerified == (verified ? 6u : 0u), "image table column memo: the shared replays were not verified exactly when asked");
+    require(afterDecode.columnMismatches == before.columnMismatches, "image table column memo: the verification found a shared resolution that differs");
+    require(afterDecode.columnMissesNeverSeen - before.columnMissesNeverSeen == (enabled ? 3u : 0u) && afterDecode.columnMissesChangedContent - before.columnMissesChangedContent == (enabled ? 1u : 0u), "image table column memo: the miss diagnostics did not count three first sights and one content change");
+    require(afterDecode.columnDiffedMisses - before.columnDiffedMisses == (diagnosed ? 1u : 0u) && afterDecode.columnChangedKeys - before.columnChangedKeys == (diagnosed ? 1u : 0u), "image table column memo: the diagnostics did not diff the one changed record exactly when asked");
+    std::cout << "image table column memo passed\n";
+}
+
 void verifyImageTableBulkKeyScan() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -8735,6 +8859,10 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-column-memo") {
+            verifyTableColumnMemo();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {

@@ -22,12 +22,16 @@ struct ImageTableElement {
     std::uint32_t samplers = 0;
     bool atomic = false;
     bool atomic64 = false;
+
+    bool operator==(const ImageTableElement& other) const = default;
 };
 
 struct ImageTableSamplerElement {
     std::array<std::uint32_t, 4> words{};
     bool compare = false;
     bool point = false;
+
+    bool operator==(const ImageTableSamplerElement& other) const = default;
 };
 
 struct ImageTablePoisonRecord {
@@ -35,6 +39,8 @@ struct ImageTablePoisonRecord {
     std::uint32_t dwordCount = 0;
     std::uint32_t resource = 0;
     ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::OutsideSnapshot;
+
+    bool operator==(const ImageTablePoisonRecord& other) const = default;
 };
 
 struct ResolvedImageTables {
@@ -53,6 +59,14 @@ struct ImageTableReuseCounts {
     std::uint64_t columns = 0;
     std::uint64_t resolutions = 0;
     std::uint64_t resolutionsShared = 0;
+    std::uint64_t columnHits = 0;
+    std::uint64_t columnMisses = 0;
+    std::uint64_t columnVerified = 0;
+    std::uint64_t columnMismatches = 0;
+    std::uint64_t columnMissesNeverSeen = 0;
+    std::uint64_t columnMissesChangedContent = 0;
+    std::uint64_t columnDiffedMisses = 0;
+    std::uint64_t columnChangedKeys = 0;
 };
 
 struct RuntimeImageModeMatch {
@@ -77,7 +91,7 @@ public:
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     static bool NullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor);
-    static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0, bool columnMemo = true);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;

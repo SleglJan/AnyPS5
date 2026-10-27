@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -369,6 +370,34 @@ bool TableTraced() {
     return traced;
 }
 
+bool TableColumnMemo() {
+    static const bool enabled = std::getenv("APS5_NO_TABLE_COLUMN_MEMO") == nullptr;
+    return enabled;
+}
+
+bool VerifyTableColumnMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_TABLE_COLUMN_MEMO") != nullptr;
+    return verify;
+}
+
+bool TableColumnMemoDiagnosed() {
+    static const bool diagnosed = std::getenv("APS5_TABLE_COLUMN_MEMO_DIAG") != nullptr;
+    return diagnosed;
+}
+
+std::size_t TableColumnMemoWords() {
+    static const std::size_t words = [] {
+        const char* text = std::getenv("APS5_TABLE_COLUMN_MEMO_WORDS");
+        if (text == nullptr) return std::size_t{1} << 25u;
+        char* end = nullptr;
+        errno = 0;
+        const auto value = std::strtoull(text, &end, 0);
+        if (std::strchr(text, '-') != nullptr || end == text || *end != '\0' || errno == ERANGE || value == 0u) throw std::runtime_error("APS5_TABLE_COLUMN_MEMO_WORDS is not a positive word count");
+        return static_cast<std::size_t>(value);
+    }();
+    return words;
+}
+
 constexpr std::size_t PoisonReasonCount = static_cast<std::size_t>(PoisonReason::Count);
 
 enum class NarrowSkip : std::size_t { Value, NotBuffer, KeyScan, Pending, Unmapped, Count };
@@ -387,6 +416,13 @@ struct TableCounters {
     std::atomic<std::uint64_t> reusedUnwritten{0};
     std::atomic<std::uint64_t> reusedCompared{0};
     std::atomic<std::uint64_t> nanoseconds{0};
+    std::atomic<std::uint64_t> columnHits{0};
+    std::atomic<std::uint64_t> columnMisses{0};
+    std::atomic<std::uint64_t> columnEvictions{0};
+    std::atomic<std::uint64_t> columnVerified{0};
+    std::atomic<std::uint64_t> columnMismatches{0};
+    std::atomic<std::uint64_t> columnMissesNeverSeen{0};
+    std::atomic<std::uint64_t> columnMissesChangedContent{0};
     std::atomic<long long> lastReport{0};
 };
 
@@ -403,11 +439,338 @@ struct TableReuseTotals {
     std::atomic<std::uint64_t> columns{0};
     std::atomic<std::uint64_t> resolutions{0};
     std::atomic<std::uint64_t> resolutionsShared{0};
+    std::atomic<std::uint64_t> columnHits{0};
+    std::atomic<std::uint64_t> columnMisses{0};
+    std::atomic<std::uint64_t> columnVerified{0};
+    std::atomic<std::uint64_t> columnMismatches{0};
+    std::atomic<std::uint64_t> columnMissesNeverSeen{0};
+    std::atomic<std::uint64_t> columnMissesChangedContent{0};
+    std::atomic<std::uint64_t> columnDiffedMisses{0};
+    std::atomic<std::uint64_t> columnChangedKeys{0};
 };
 
 TableReuseTotals& tableReuseTotals() {
     static TableReuseTotals totals;
     return totals;
+}
+
+struct ColumnResolutionKey {
+    std::uint64_t codesHash = 0;
+    std::uint64_t wordsHash = 0;
+    std::uint64_t usageHash = 0;
+    std::uint32_t keys = 0;
+    bool outside = false;
+    bool reducing = false;
+
+    bool operator==(const ColumnResolutionKey& other) const = default;
+};
+
+struct ColumnResolutionKeyHash {
+    std::size_t operator()(const ColumnResolutionKey& key) const {
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+        mix(key.codesHash);
+        mix(key.wordsHash);
+        mix(key.usageHash);
+        mix(key.keys);
+        mix(key.outside ? 1u : 0u);
+        mix(key.reducing ? 1u : 0u);
+        return static_cast<std::size_t>(hash);
+    }
+};
+
+ImageResource columnUsage(const ImageResource& image) {
+    ImageResource usage = image;
+    usage.source = 0;
+    usage.firstUsePc = 0;
+    if (usage.table != NoTable) usage.table = 0;
+    return usage;
+}
+
+void mixImageResource(std::uint64_t& hash, const ImageResource& image) {
+    const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+    mix(static_cast<std::uint64_t>(image.resourceClass));
+    mix(static_cast<std::uint64_t>(image.numericClass));
+    mix(static_cast<std::uint64_t>(image.dimension));
+    mix(static_cast<std::uint64_t>(image.mipMode));
+    mix(image.mipCount);
+    mix(static_cast<std::uint64_t>(image.conversionFormat));
+    mix(image.shaderSwizzle);
+    std::uint64_t flags = 0;
+    for (const bool flag : {image.read, image.written, image.atomic, image.atomic64, image.depthCompare, image.cube, image.r128, image.srgbDecode, image.srgbDecodeCompatible, image.depthBits, image.depthUnorm16, image.packed, image.fmaskCompatible, image.depthBitsCompatible, image.constantSwizzle, image.constantSwizzleCompatible, image.cubeFaceCompatible, image.flatVolumeCompatible, image.singleMipPlaneBiasCompatible, image.volumeArraySampleCompatible, image.flatLineCompatible, image.flatVolumeLineCompatible, image.dimensionQueryOnly, image.foldTexelOffsetsOnly, image.convertedSamples, image.remappedDepth1D, image.targetMerge}) flags = (flags << 1u) | (flag ? 1u : 0u);
+    mix(flags);
+    mix(image.srgbDecodeFormats);
+    mix(image.byElements);
+    mix(image.byComponents);
+    mix(static_cast<std::uint64_t>(image.packedFormat));
+    mix(image.emulatedCompare);
+    mix(image.table != NoTable ? 1u : 0u);
+    mix(static_cast<std::uint64_t>(image.tableOperation));
+}
+
+std::uint64_t imageUsageHash(const ImageResource& image, std::span<const ImageResource> modes) {
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    mixImageResource(hash, image);
+    hash = (hash ^ modes.size()) * 0x100000001b3ull;
+    for (const auto& mode : modes) mixImageResource(hash, mode);
+    return hash;
+}
+
+std::uint64_t strictUsageHash(std::uint64_t usage, const ImageResource& image) {
+    const auto mix = [&](std::uint64_t value) { usage = (usage ^ value) * 0x100000001b3ull; };
+    mix(image.source);
+    mix(image.firstUsePc);
+    mix(image.table);
+    return usage;
+}
+
+struct ColumnUsageKey {
+    std::uint64_t memoKey = 0;
+    std::uint32_t resource = 0;
+    std::uint32_t table = 0;
+
+    bool operator==(const ColumnUsageKey& other) const = default;
+};
+
+struct ColumnUsageKeyHash {
+    std::size_t operator()(const ColumnUsageKey& key) const {
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+        mix(key.memoKey);
+        mix(key.resource);
+        mix(key.table);
+        return static_cast<std::size_t>(hash);
+    }
+};
+
+struct ColumnSlot {
+    std::uint64_t content = 0;
+    SharedValues<std::uint32_t> codes;
+    SharedValues<DescriptorValue> words;
+};
+
+struct ColumnUsageSets {
+    std::unordered_set<std::uint64_t> strict;
+    std::unordered_set<std::uint64_t> relaxed;
+};
+
+struct ColumnMissDiagnostics {
+    std::mutex mutex;
+    std::unordered_map<ColumnUsageKey, ColumnSlot, ColumnUsageKeyHash> slots;
+    std::unordered_set<std::uint64_t> missedContents;
+    std::unordered_set<std::uint64_t> allContents;
+    std::unordered_map<std::uint64_t, ColumnUsageSets> usages;
+    std::vector<std::uint32_t> changedKeys;
+    std::vector<std::uint32_t> touchedChunks;
+    std::uint64_t resized = 0;
+    std::size_t pinnedWords = 0;
+};
+
+ColumnMissDiagnostics& columnMissDiagnostics() {
+    static ColumnMissDiagnostics diagnostics;
+    return diagnostics;
+}
+
+constexpr std::size_t ColumnMissDiagnosticsEntries = std::size_t{1} << 17u;
+
+constexpr std::uint32_t ColumnDiffChunkKeys = 1024;
+constexpr std::size_t ColumnDiagnosticsPinnedWords = std::size_t{1} << 26u;
+
+std::size_t columnWords(const SharedValues<std::uint32_t>& codes, const SharedValues<DescriptorValue>& words) {
+    return codes.size() + words.size() * (sizeof(DescriptorValue) / sizeof(std::uint32_t));
+}
+
+std::pair<std::uint32_t, std::uint32_t> diffColumns(const ColumnSlot& previous, const SharedValues<std::uint32_t>& codes, const SharedValues<DescriptorValue>& words) {
+    std::uint32_t changed = 0;
+    std::uint32_t chunks = 0;
+    bool touched = false;
+    for (std::uint32_t key = 0; key < codes.size(); key++) {
+        if (key % ColumnDiffChunkKeys == 0u) {
+            chunks += touched ? 1u : 0u;
+            touched = false;
+        }
+        const auto before = previous.codes[key];
+        const auto after = codes[key];
+        const bool poisoned = ((before | after) & ImageTableAbi::PoisonFlag) != 0u;
+        const bool differs = poisoned ? before != after : !(previous.words.at(before) == words.at(after));
+        if (differs) {
+            changed++;
+            touched = true;
+        }
+    }
+    chunks += touched ? 1u : 0u;
+    return {changed, chunks};
+}
+
+void noteColumnLookup(const ColumnUsageKey& usage, std::uint64_t content, bool hit, const SharedValues<std::uint32_t>& codes, const SharedValues<DescriptorValue>& words, std::uint64_t relaxedUsage, std::uint64_t strictUsage) {
+    auto& diagnostics = columnMissDiagnostics();
+    auto& counters = tableCounters();
+    auto& totals = tableReuseTotals();
+    const bool diagnosed = TableColumnMemoDiagnosed();
+    std::optional<ColumnSlot> previous;
+    {
+        std::lock_guard lock(diagnostics.mutex);
+        if (diagnostics.slots.size() >= ColumnMissDiagnosticsEntries) {
+            diagnostics.slots.clear();
+            diagnostics.pinnedWords = 0;
+        }
+        if (diagnostics.missedContents.size() >= ColumnMissDiagnosticsEntries) diagnostics.missedContents.clear();
+        const auto [slot, inserted] = diagnostics.slots.try_emplace(usage);
+        const auto heldWords = columnWords(slot->second.codes, slot->second.words);
+        if (!hit) {
+            if (inserted) {
+                counters.columnMissesNeverSeen.fetch_add(1, std::memory_order_relaxed);
+                totals.columnMissesNeverSeen.fetch_add(1, std::memory_order_relaxed);
+            } else if (slot->second.content != content) {
+                counters.columnMissesChangedContent.fetch_add(1, std::memory_order_relaxed);
+                totals.columnMissesChangedContent.fetch_add(1, std::memory_order_relaxed);
+                if (diagnosed) previous = std::move(slot->second);
+            }
+            diagnostics.missedContents.insert(content);
+        }
+        slot->second.content = content;
+        if (diagnosed) {
+            diagnostics.pinnedWords -= heldWords;
+            const auto pinWords = columnWords(codes, words);
+            if (diagnostics.pinnedWords + pinWords <= ColumnDiagnosticsPinnedWords) {
+                slot->second.codes = codes;
+                slot->second.words = words;
+                diagnostics.pinnedWords += pinWords;
+            } else {
+                slot->second.codes = {};
+                slot->second.words = {};
+            }
+            if (diagnostics.allContents.size() < ColumnMissDiagnosticsEntries) diagnostics.allContents.insert(content);
+            if (const auto found = diagnostics.usages.find(content); found != diagnostics.usages.end()) {
+                found->second.strict.insert(strictUsage);
+                found->second.relaxed.insert(relaxedUsage);
+            } else if (diagnostics.usages.size() < ColumnMissDiagnosticsEntries) {
+                auto& sets = diagnostics.usages[content];
+                sets.strict.insert(strictUsage);
+                sets.relaxed.insert(relaxedUsage);
+            }
+        }
+    }
+    if (!previous.has_value() || previous->codes.empty()) return;
+    if (previous->codes.size() != codes.size()) {
+        std::lock_guard lock(diagnostics.mutex);
+        diagnostics.resized++;
+        return;
+    }
+    const auto [changed, chunks] = diffColumns(*previous, codes, words);
+    totals.columnDiffedMisses.fetch_add(1, std::memory_order_relaxed);
+    totals.columnChangedKeys.fetch_add(changed, std::memory_order_relaxed);
+    std::lock_guard lock(diagnostics.mutex);
+    if (diagnostics.changedKeys.size() >= ColumnMissDiagnosticsEntries) return;
+    diagnostics.changedKeys.push_back(changed);
+    diagnostics.touchedChunks.push_back(chunks);
+}
+
+enum class ColumnDecodeKind : std::uint8_t { Unknown, Null, Mode, Poison };
+
+struct ColumnDecode {
+    ColumnDecodeKind kind = ColumnDecodeKind::Unknown;
+    std::uint32_t value = 0;
+    std::uint32_t element = 0;
+};
+
+struct ColumnResolutionElement {
+    ImageTableElement element;
+    std::uint64_t hash = 0;
+};
+
+struct ColumnResolution {
+    ColumnResolutionKey key;
+    ImageResource image;
+    std::vector<ImageResource> modes;
+    SharedValues<std::uint32_t> codes;
+    SharedValues<DescriptorValue> words;
+    std::vector<ColumnDecode> decodes;
+    std::vector<ColumnResolutionElement> elements;
+    std::size_t footprint = 0;
+    std::uint64_t used = 0;
+};
+
+bool sameColumnUsage(const ColumnResolution& known, const ImageResource& image, std::span<const ImageResource> modes) {
+    if (known.modes.size() != modes.size() || known.image != columnUsage(image)) return false;
+    for (std::size_t mode = 0; mode < modes.size(); mode++) {
+        if (known.modes[mode] != columnUsage(modes[mode])) return false;
+    }
+    return true;
+}
+
+constexpr std::size_t ColumnResolutionMemoEntries = 4096;
+constexpr std::uint32_t ColumnResolutionMinimumKeys = 64;
+constexpr std::uint32_t NoElement = std::numeric_limits<std::uint32_t>::max();
+
+std::size_t columnResolutionFootprint(const ColumnResolution& entry) {
+    constexpr std::size_t Overhead = sizeof(ColumnResolution) + 160u;
+    const auto bytes = Overhead + entry.modes.size() * sizeof(ImageResource) + entry.codes.size() * sizeof(std::uint32_t) + entry.words.size() * sizeof(DescriptorValue) + entry.decodes.size() * sizeof(ColumnDecode) + entry.elements.size() * sizeof(ColumnResolutionElement);
+    return (bytes + sizeof(std::uint32_t) - 1u) / sizeof(std::uint32_t);
+}
+
+struct ColumnResolutionMemo {
+    std::mutex mutex;
+    std::unordered_map<ColumnResolutionKey, std::shared_ptr<ColumnResolution>, ColumnResolutionKeyHash> entries;
+    std::size_t words = 0;
+    std::size_t records = 0;
+    std::size_t elements = 0;
+    std::uint64_t clock = 0;
+};
+
+ColumnResolutionMemo& columnResolutionMemo() {
+    static ColumnResolutionMemo memo;
+    return memo;
+}
+
+std::shared_ptr<const ColumnResolution> findColumnResolution(const ColumnResolutionKey& key) {
+    auto& memo = columnResolutionMemo();
+    std::lock_guard lock(memo.mutex);
+    const auto found = memo.entries.find(key);
+    if (found == memo.entries.end()) return nullptr;
+    found->second->used = ++memo.clock;
+    return found->second;
+}
+
+void rememberColumnResolution(std::shared_ptr<ColumnResolution> entry) {
+    entry->elements.shrink_to_fit();
+    entry->footprint = columnResolutionFootprint(*entry);
+    const auto budget = TableColumnMemoWords();
+    if (entry->footprint > budget) return;
+    auto& memo = columnResolutionMemo();
+    auto& counters = tableCounters();
+    std::lock_guard lock(memo.mutex);
+    if (const auto held = memo.entries.find(entry->key); held != memo.entries.end()) {
+        const auto& known = *held->second;
+        if (known.codes == entry->codes && known.words == entry->words && known.image == entry->image && known.modes == entry->modes) return;
+        memo.words -= known.footprint;
+        memo.records -= known.words.size();
+        memo.elements -= known.elements.size();
+        memo.entries.erase(held);
+        counters.columnEvictions.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (memo.words + entry->footprint > budget || memo.entries.size() >= ColumnResolutionMemoEntries) {
+        std::vector<std::pair<std::uint64_t, const ColumnResolutionKey*>> order;
+        order.reserve(memo.entries.size());
+        for (const auto& [key, held] : memo.entries) order.emplace_back(held->used, &key);
+        std::sort(order.begin(), order.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+        std::size_t evicted = 0;
+        for (const auto& [used, key] : order) {
+            if (memo.words + entry->footprint <= budget && memo.entries.size() < ColumnResolutionMemoEntries) break;
+            const auto victim = memo.entries.find(*key);
+            memo.words -= victim->second->footprint;
+            memo.records -= victim->second->words.size();
+            memo.elements -= victim->second->elements.size();
+            memo.entries.erase(victim);
+            evicted++;
+        }
+        counters.columnEvictions.fetch_add(evicted, std::memory_order_relaxed);
+    }
+    entry->used = ++memo.clock;
+    memo.words += entry->footprint;
+    memo.records += entry->words.size();
+    memo.elements += entry->elements.size();
+    memo.entries.emplace(entry->key, std::move(entry));
 }
 
 void reportTables() {
@@ -438,6 +801,52 @@ void reportTables() {
     std::fprintf(stderr, "[image-table] (10 s): %llu snapshots, %llu tables, %llu keys, %llu selected records, structural poison:%s, narrowing %llu applied / %llu skipped%s%s, reused %llu unwritten / %llu compared, %.1f ms\n",
         static_cast<unsigned long long>(snapshots), static_cast<unsigned long long>(counters.tables.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.keys.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.selected.exchange(0, std::memory_order_relaxed)), poison.empty() ? " none" : poison.c_str(),
         static_cast<unsigned long long>(counters.narrowed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.narrowSkipped.exchange(0, std::memory_order_relaxed)), skips.empty() ? "" : ":", skips.c_str(), static_cast<unsigned long long>(counters.reusedUnwritten.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.reusedCompared.exchange(0, std::memory_order_relaxed)), static_cast<double>(counters.nanoseconds.exchange(0, std::memory_order_relaxed)) / 1e6);
+    if (!TableColumnMemo()) return;
+    auto& memo = columnResolutionMemo();
+    std::size_t entries = 0;
+    std::size_t words = 0;
+    std::size_t records = 0;
+    std::size_t elements = 0;
+    {
+        std::lock_guard lock(memo.mutex);
+        entries = memo.entries.size();
+        words = memo.words;
+        records = memo.records;
+        elements = memo.elements;
+    }
+    std::size_t missedContents = 0;
+    std::string diagnosed;
+    {
+        auto& diagnostics = columnMissDiagnostics();
+        std::lock_guard lock(diagnostics.mutex);
+        missedContents = diagnostics.missedContents.size();
+        diagnostics.missedContents.clear();
+        if (TableColumnMemoDiagnosed()) {
+            std::size_t strict = 0;
+            std::size_t relaxed = 0;
+            for (const auto& [content, sets] : diagnostics.usages) {
+                strict += sets.strict.size();
+                relaxed += sets.relaxed.size();
+            }
+            const auto quantiles = [](std::vector<std::uint32_t>& values) {
+                if (values.empty()) return std::array<std::uint32_t, 3>{};
+                std::sort(values.begin(), values.end());
+                return std::array<std::uint32_t, 3>{values.front(), values[values.size() / 2u], values.back()};
+            };
+            const auto keys = quantiles(diagnostics.changedKeys);
+            const auto chunks = quantiles(diagnostics.touchedChunks);
+            diagnosed = ", " + std::to_string(diagnostics.allContents.size()) + " distinct contents so far, " + std::to_string(diagnostics.usages.size()) + " contents in the window, " + std::to_string(strict) + " strict usages, " + std::to_string(relaxed) + " relaxed usages, " + std::to_string(diagnostics.changedKeys.size()) + " diffed misses, " +
+                std::to_string(keys[0]) + " changed keys min, " + std::to_string(keys[1]) + " changed keys median, " + std::to_string(keys[2]) + " changed keys max, " + std::to_string(chunks[0]) + " touched chunks min, " + std::to_string(chunks[1]) + " touched chunks median, " + std::to_string(chunks[2]) + " touched chunks max, " + std::to_string(diagnostics.resized) + " resized misses";
+            diagnostics.usages.clear();
+            diagnostics.changedKeys.clear();
+            diagnostics.touchedChunks.clear();
+            diagnostics.resized = 0;
+        }
+    }
+    std::fprintf(stderr, "[image-table] column memo (10 s): %llu hits, %llu misses, %llu evictions, %llu entries holding %llu words, %llu verified, %llu verify mismatches, %llu misses never seen, %llu misses with changed content, %llu distinct contents among the misses, %llu records held, %llu elements held%s\n",
+        static_cast<unsigned long long>(counters.columnHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.columnMisses.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.columnEvictions.exchange(0, std::memory_order_relaxed)),
+        static_cast<unsigned long long>(entries), static_cast<unsigned long long>(words), static_cast<unsigned long long>(counters.columnVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.columnMismatches.exchange(0, std::memory_order_relaxed)),
+        static_cast<unsigned long long>(counters.columnMissesNeverSeen.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(counters.columnMissesChangedContent.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(missedContents), static_cast<unsigned long long>(records), static_cast<unsigned long long>(elements), diagnosed.c_str());
 }
 
 enum class RecordState : std::uint8_t { OutsideDomain, Read, Unmapped, Carried };
@@ -1662,9 +2071,11 @@ std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::
 
 }
 
-ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
+ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey, bool columnMemo) {
     namespace Abi = ImageTableAbi;
     ResolvedImageTables out;
+    const bool memoized = columnMemo && memoKey != 0u && TableColumnMemo();
+    std::uint32_t served = 0;
     std::uint32_t count = 0;
     for (const auto& image : info.images) {
         if (image.table != NoTable) count = std::max(count, image.table + 1u);
@@ -1709,51 +2120,98 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
     }
     const auto reducingSampler = reducingSamplers(info, snapshot);
-    const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
+    const auto placeElement = [&](const ImageTableElement& candidate, std::uint64_t hash) -> std::optional<std::uint32_t> {
+        auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
+            const auto& entry = out.elements[known];
+            return entry.words == candidate.words && entry.dimension == candidate.dimension && entry.depthCompare == candidate.depthCompare && entry.kind == candidate.kind && entry.atomic == candidate.atomic && entry.atomic64 == candidate.atomic64;
+        });
+        if (!index.has_value()) {
+            if (out.elements.size() >= Abi::ImageElementBudget) return std::nullopt;
+            index = static_cast<std::uint32_t>(out.elements.size());
+            out.elements.push_back(candidate);
+            elementIndex.Insert(hash, *index);
+        }
+        return index;
+    };
+    struct ColumnRecorder {
+        ColumnResolution* resolution = nullptr;
+        std::unordered_map<std::uint64_t, std::uint32_t> localByHash;
+    };
+    const auto localElement = [](ColumnRecorder& recorder, const ImageTableElement& candidate, std::uint64_t hash) {
+        auto& elements = recorder.resolution->elements;
+        const auto found = recorder.localByHash.find(hash);
+        if (found != recorder.localByHash.end() && elements[found->second].element == candidate) return found->second;
+        const auto index = static_cast<std::uint32_t>(elements.size());
+        elements.push_back({candidate, hash});
+        recorder.localByHash.try_emplace(hash, index);
+        return index;
+    };
+    const auto appendRecord = [&](const std::array<std::uint32_t, Abi::ImageRecordWords>& record) {
+        const auto offset = static_cast<std::uint32_t>(out.map.size());
+        out.map.insert(out.map.end(), record.begin(), record.end());
+        return offset;
+    };
+    const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words, ColumnRecorder* recorder, ColumnDecode* decode) {
         const auto& image = info.images[resource];
         const auto& modes = info.runtimeImageModes[resource];
         std::array<std::uint32_t, Abi::ImageRecordWords> record{0u, words.dwords[3], 0u};
+        const auto poisoned = [&](PoisonReason reason) {
+            if (decode != nullptr) *decode = {ColumnDecodeKind::Poison, static_cast<std::uint32_t>(reason), 0u};
+            record[Abi::ImageRecordFlags] = poison(resource, reason, &words);
+        };
         if ((words.availableDwordMask & (1u << 3u)) == 0u) {
-            record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::OutsideSnapshot, &words);
-            const auto offset = static_cast<std::uint32_t>(out.map.size());
-            out.map.insert(out.map.end(), record.begin(), record.end());
-            return offset;
+            poisoned(PoisonReason::OutsideSnapshot);
+            return appendRecord(record);
         }
         const auto decoded = decodeTableEntry(image, modes, words, memoKey, resource);
         if ((decoded & DecodeFailed) != 0u) {
-            record[Abi::ImageRecordFlags] = poison(resource, static_cast<PoisonReason>(decoded & ~DecodeFailed), &words);
+            poisoned(static_cast<PoisonReason>(decoded & ~DecodeFailed));
         } else {
             const auto& mode = modes.at(decoded);
             if (mode.dimension == RdnaImageDimension::Dim2DMsaa || mode.dimension == RdnaImageDimension::Dim2DMsaaArray) {
-                record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Multisampled, &words);
+                poisoned(PoisonReason::Multisampled);
             } else if (requiresPointSampler(mode) && reducingSampler[resource]) {
-                record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
+                poisoned(PoisonReason::Reduction);
             } else {
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
+                const ImageTableElement candidate{element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic, image.atomic64};
                 const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic64) << 25u) ^ (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
-                auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
-                    const auto& entry = out.elements[known];
-                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic && entry.atomic64 == image.atomic64;
-                });
-                if (!index.has_value() && out.elements.size() >= Abi::ImageElementBudget) {
+                if (decode != nullptr) *decode = {ColumnDecodeKind::Mode, decoded, localElement(*recorder, candidate, hash)};
+                const auto index = placeElement(candidate, hash);
+                if (!index.has_value()) {
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
-                    if (!index.has_value()) {
-                        index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic, image.atomic64});
-                        elementIndex.Insert(hash, *index);
-                    }
                     out.elements[*index].samplers |= directSamplers[resource];
                     record[Abi::ImageRecordFlags] = decoded << Abi::ModeShift;
                     record[Abi::ImageRecordElement] = *index;
                 }
             }
         }
-        const auto offset = static_cast<std::uint32_t>(out.map.size());
-        out.map.insert(out.map.end(), record.begin(), record.end());
-        return offset;
+        return appendRecord(record);
+    };
+    const auto replayRecord = [&](std::uint32_t resource, const DescriptorValue& words, const ColumnDecode& decode, const ColumnResolution& known, std::vector<std::uint32_t>& placed) {
+        if (decode.kind == ColumnDecodeKind::Unknown) throw std::runtime_error("image table column memo replays a record it never decoded");
+        if (decode.kind == ColumnDecodeKind::Null) return Abi::NullCode;
+        std::array<std::uint32_t, Abi::ImageRecordWords> record{0u, words.dwords[3], 0u};
+        if (decode.kind == ColumnDecodeKind::Poison) {
+            record[Abi::ImageRecordFlags] = poison(resource, static_cast<PoisonReason>(decode.value), &words);
+            return appendRecord(record);
+        }
+        const auto& cached = known.elements.at(decode.element);
+        auto& at = placed.at(decode.element);
+        if (at == NoElement) {
+            if (const auto index = placeElement(cached.element, cached.hash)) at = *index;
+        }
+        if (at == NoElement) {
+            record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
+        } else {
+            out.elements[at].samplers |= directSamplers[resource];
+            record[Abi::ImageRecordFlags] = decode.value << Abi::ModeShift;
+            record[Abi::ImageRecordElement] = at;
+        }
+        return appendRecord(record);
     };
     const auto samplerRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
         std::array<std::uint32_t, Abi::SamplerRecordWords> record{0u, 0u};
@@ -1813,6 +2271,36 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         out.map[header + Abi::TableMapStart] = mapStart;
         out.map.resize(out.map.size() + column.keys, 0u);
         records.Clear();
+        std::shared_ptr<const ColumnResolution> known;
+        std::shared_ptr<ColumnResolution> fresh;
+        ColumnRecorder recorder;
+        std::vector<std::uint32_t> placed;
+        std::uint64_t content = 0;
+        std::uint64_t relaxedUsage = 0;
+        std::uint64_t strictUsage = 0;
+        if (memoized && !sampler && out.map[header + Abi::TableFault] == 0u && column.keys >= ColumnResolutionMinimumKeys) {
+            const auto& image = info.images[resource];
+            const auto& modes = info.runtimeImageModes[resource];
+            const ColumnResolutionKey columnKey{column.codes.Hash(), column.words.Hash(), imageUsageHash(image, modes), column.keys, column.outside, reducingSampler[resource]};
+            known = findColumnResolution(columnKey);
+            if (known != nullptr && !(known->codes == column.codes && known->words == column.words && sameColumnUsage(*known, image, modes))) known = nullptr;
+            content = (columnKey.codesHash * 0x9e3779b97f4a7c15ull) ^ columnKey.wordsHash;
+            relaxedUsage = columnKey.usageHash;
+            if (TableColumnMemoDiagnosed()) strictUsage = strictUsageHash(relaxedUsage, image);
+            if (known != nullptr) {
+                placed.assign(known->elements.size(), NoElement);
+            } else {
+                fresh = std::make_shared<ColumnResolution>();
+                fresh->key = columnKey;
+                fresh->image = columnUsage(image);
+                fresh->modes.reserve(modes.size());
+                for (const auto& mode : modes) fresh->modes.push_back(columnUsage(mode));
+                fresh->codes = column.codes;
+                fresh->words = column.words;
+                fresh->decodes.assign(column.words.size(), ColumnDecode{});
+                recorder.resolution = fresh.get();
+            }
+        }
         for (std::uint32_t key = 0; key < column.keys; key++) {
             const auto code = column.codes[key];
             std::uint32_t mapped = Abi::NullCode;
@@ -1820,15 +2308,33 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 const auto reason = static_cast<PoisonReason>(code & ~Abi::PoisonFlag);
                 mapped = reason == PoisonReason::OutsideDomain ? Abi::PoisonCode(Abi::OutsideDomainPoison) : poison(resource, reason, nullptr);
             } else if (out.map[header + Abi::TableFault] == 0u) {
-                if (const auto known = records.Find(code)) {
-                    mapped = *known;
+                if (const auto found = records.Find(code)) {
+                    mapped = *found;
                 } else {
                     const auto& words = column.words.at(code);
-                    if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) mapped = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
+                    if (known != nullptr) {
+                        mapped = replayRecord(resource, words, known->decodes.at(code), *known, placed);
+                    } else if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) {
+                        mapped = sampler ? samplerRecord(resource, words) : imageRecord(resource, words, fresh != nullptr ? &recorder : nullptr, fresh != nullptr ? &fresh->decodes.at(code) : nullptr);
+                    } else if (fresh != nullptr) {
+                        fresh->decodes.at(code) = {ColumnDecodeKind::Null, 0u, 0u};
+                    }
                     records.Set(code, mapped);
                 }
             }
             out.map[mapStart + key] = mapped;
+        }
+        if (known != nullptr) {
+            served++;
+            tableCounters().columnHits.fetch_add(1, std::memory_order_relaxed);
+            tableReuseTotals().columnHits.fetch_add(1, std::memory_order_relaxed);
+            noteColumnLookup({memoKey, resource, table}, content, true, column.codes, column.words, relaxedUsage, strictUsage);
+        } else if (fresh != nullptr) {
+            tableCounters().columnMisses.fetch_add(1, std::memory_order_relaxed);
+            tableReuseTotals().columnMisses.fetch_add(1, std::memory_order_relaxed);
+            noteColumnLookup({memoKey, resource, table}, content, false, column.codes, column.words, relaxedUsage, strictUsage);
+            const bool complete = std::none_of(fresh->decodes.begin(), fresh->decodes.end(), [](const ColumnDecode& decode) { return decode.kind == ColumnDecodeKind::Unknown; });
+            if (complete) rememberColumnResolution(std::move(fresh));
         }
         if (sampler && out.map[header + Abi::TableFault] == 0u) {
             DescriptorValue zero;
@@ -1851,6 +2357,17 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     out.map[Abi::HeaderSamplerFaults] = static_cast<std::uint32_t>(out.map.size());
     out.map.resize(out.map.size() + out.samplers.size() / Abi::SamplerEntryElements, 0u);
     out.faults = static_cast<std::uint32_t>(expectedCount + static_cast<std::size_t>(std::count(outside.begin(), outside.end(), true)));
+    if (served != 0u && VerifyTableColumnMemo()) {
+        tableCounters().columnVerified.fetch_add(1, std::memory_order_relaxed);
+        tableReuseTotals().columnVerified.fetch_add(1, std::memory_order_relaxed);
+        const auto reference = ResolveImageTables(info, snapshot, memoKey, false);
+        const char* differs = out.map != reference.map ? "map" : out.elements != reference.elements ? "elements" : out.samplers != reference.samplers ? "samplers" : out.poison != reference.poison ? "poison" : out.faults != reference.faults ? "faults" : nullptr;
+        if (differs != nullptr) {
+            tableCounters().columnMismatches.fetch_add(1, std::memory_order_relaxed);
+            const auto mismatch = tableReuseTotals().columnMismatches.fetch_add(1, std::memory_order_relaxed) + 1u;
+            if (mismatch <= 20u) std::fprintf(stderr, "[image-table] column memo mismatch %llu: shader 0x%llx variant %016llx differs in its %s\n", static_cast<unsigned long long>(mismatch), static_cast<unsigned long long>(tables.shader), static_cast<unsigned long long>(memoKey), differs);
+        }
+    }
     return out;
 }
 
@@ -2532,7 +3049,7 @@ std::uint64_t ResourceMaterializer::SpecializationNanoseconds() {
 
 ImageTableReuseCounts ResourceMaterializer::TableReuse() {
     auto& totals = tableReuseTotals();
-    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed), totals.shared.load(std::memory_order_relaxed), totals.columns.load(std::memory_order_relaxed), totals.resolutions.load(std::memory_order_relaxed), totals.resolutionsShared.load(std::memory_order_relaxed)};
+    return {totals.unwritten.load(std::memory_order_relaxed), totals.compared.load(std::memory_order_relaxed), totals.wordsRead.load(std::memory_order_relaxed), totals.shared.load(std::memory_order_relaxed), totals.columns.load(std::memory_order_relaxed), totals.resolutions.load(std::memory_order_relaxed), totals.resolutionsShared.load(std::memory_order_relaxed), totals.columnHits.load(std::memory_order_relaxed), totals.columnMisses.load(std::memory_order_relaxed), totals.columnVerified.load(std::memory_order_relaxed), totals.columnMismatches.load(std::memory_order_relaxed), totals.columnMissesNeverSeen.load(std::memory_order_relaxed), totals.columnMissesChangedContent.load(std::memory_order_relaxed), totals.columnDiffedMisses.load(std::memory_order_relaxed), totals.columnChangedKeys.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t ResourceMaterializer::EvaluateNanoseconds() {
