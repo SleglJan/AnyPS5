@@ -603,6 +603,7 @@ std::pair<std::uint32_t, std::uint32_t> diffColumns(const ColumnSlot& previous, 
 }
 
 void noteColumnLookup(const ColumnUsageKey& usage, std::uint64_t content, bool hit, const SharedValues<std::uint32_t>& codes, const SharedValues<DescriptorValue>& words, std::uint64_t relaxedUsage, std::uint64_t strictUsage) {
+    if (!MaterializeProfiled()) return;
     auto& diagnostics = columnMissDiagnostics();
     auto& counters = tableCounters();
     auto& totals = tableReuseTotals();
@@ -2286,7 +2287,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             if (known != nullptr && !(known->codes == column.codes && known->words == column.words && sameColumnUsage(*known, image, modes))) known = nullptr;
             content = (columnKey.codesHash * 0x9e3779b97f4a7c15ull) ^ columnKey.wordsHash;
             relaxedUsage = columnKey.usageHash;
-            if (TableColumnMemoDiagnosed()) strictUsage = strictUsageHash(relaxedUsage, image);
+            if (MaterializeProfiled() && TableColumnMemoDiagnosed()) strictUsage = strictUsageHash(relaxedUsage, image);
             if (known != nullptr) {
                 placed.assign(known->elements.size(), NoElement);
             } else {

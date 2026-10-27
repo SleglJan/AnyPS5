@@ -2955,7 +2955,8 @@ void verifyTableColumnMemo() {
     heaps[1] = heaps[0];
     const bool enabled = std::getenv("APS5_NO_TABLE_COLUMN_MEMO") == nullptr;
     const bool verified = enabled && std::getenv("APS5_VERIFY_TABLE_COLUMN_MEMO") != nullptr;
-    const bool diagnosed = enabled && std::getenv("APS5_TABLE_COLUMN_MEMO_DIAG") != nullptr;
+    const bool reported = enabled && std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const bool diagnosed = reported && std::getenv("APS5_TABLE_COLUMN_MEMO_DIAG") != nullptr;
     const auto same = [](const ResolvedImageTables& left, const ResolvedImageTables& right) {
         return left.map == right.map && left.elements == right.elements && left.samplers == right.samplers && left.poison == right.poison && left.faults == right.faults;
     };
@@ -3060,7 +3061,7 @@ void verifyTableColumnMemo() {
     require(otherDecode.map == changed.map && otherDecode.elements == changed.elements && otherDecode.poison == changed.poison, "image table column memo: the changed decode input resolved to other records");
     require(afterDecode.columnVerified - before.columnVerified == (verified ? 6u : 0u), "image table column memo: the shared replays were not verified exactly when asked");
     require(afterDecode.columnMismatches == before.columnMismatches, "image table column memo: the verification found a shared resolution that differs");
-    require(afterDecode.columnMissesNeverSeen - before.columnMissesNeverSeen == (enabled ? 3u : 0u) && afterDecode.columnMissesChangedContent - before.columnMissesChangedContent == (enabled ? 1u : 0u), "image table column memo: the miss diagnostics did not count three first sights and one content change");
+    require(afterDecode.columnMissesNeverSeen - before.columnMissesNeverSeen == (reported ? 3u : 0u) && afterDecode.columnMissesChangedContent - before.columnMissesChangedContent == (reported ? 1u : 0u), "image table column memo: the miss diagnostics did not count three first sights and one content change exactly when the report is on");
     require(afterDecode.columnDiffedMisses - before.columnDiffedMisses == (diagnosed ? 1u : 0u) && afterDecode.columnChangedKeys - before.columnChangedKeys == (diagnosed ? 1u : 0u), "image table column memo: the diagnostics did not diff the one changed record exactly when asked");
     std::cout << "image table column memo passed\n";
 }
