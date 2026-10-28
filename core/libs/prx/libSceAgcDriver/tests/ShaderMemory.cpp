@@ -39,6 +39,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <future>
 #include <memory>
@@ -3513,6 +3514,192 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     const auto twoHeaps = GetResourcePlan(TableRequest(split, userData));
     const auto unselected = std::find_if(twoHeaps->info.images.begin(), twoHeaps->info.images.end(), [&](const ImageResource& image) { return !columnOf(*twoHeaps, image).selected; });
     require(twoHeaps->info.images.size() == 31u && selectedTables(*twoHeaps) == 30u && unselected != twoHeaps->info.images.end() && columnOf(*twoHeaps, *unselected).keyDomains.size() == 40u, (name + ": the larger heap was not merged first, or the smaller one lost its split").c_str());
+}
+
+void verifyTableColumnMemoPlacement(std::string_view order) {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::uint32_t Selected = 30;
+    constexpr std::uint32_t Replayed = 65;
+    require(order == "after" || order == "before", "image table column memo placement: the order is after or before");
+    const bool after = order == "after";
+    const std::uint32_t selectedBase = after ? 2u : 2u + Replayed;
+    const std::uint32_t mergedBase = after ? 2u + Selected : 2u;
+    const std::string name = "image table column memo placement (replayed " + std::string(order) + " the selected tables)";
+    const auto step = [&](const char* what, auto&& action) {
+        try {
+            return action();
+        } catch (const std::exception& error) {
+            throw std::runtime_error(name + ": " + what + ": " + error.what());
+        }
+    };
+    static TableTexture textures[4];
+    alignas(4096) static TableManyGuest guest;
+    auto& heap = guest.heap;
+    for (std::uint32_t record = 0; record < heap.size(); record++) heap[record] = TableT(textures[record % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, record + 1u);
+    for (std::uint32_t shared = 0; shared < Selected; shared++) heap[mergedBase + shared] = heap[selectedBase + shared];
+    const auto heapV = TableV(heap.data(), 32u, static_cast<std::uint32_t>(heap.size()));
+    const auto outputV = TableV(guest.output.data(), 0u, 16u);
+    guest.srt = {};
+    std::copy(heapV.begin(), heapV.end(), guest.srt.begin());
+    guest.srt[8] = 0x92u;
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 12);
+    std::copy(heapV.begin(), heapV.end(), guest.srt.begin() + 16);
+    for (std::uint32_t read = 0; read + 20u < guest.srt.size(); read++) guest.srt[20u + read] = read + 2u;
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const auto code = after ? TableManyKeyCode(Selected, Replayed, false) : TableManyKeyCode(Replayed, Selected, false);
+    const auto request = TableRequest(code, userData);
+    const auto plan = step("plan", [&] { return GetResourcePlan(request); });
+    const auto& info = plan->info;
+    require(info.images.size() == Selected + 1u, (name + ": the reads were not planned as thirty selected tables and one merged table").c_str());
+    const auto capture = [&] {
+        CountingMemory memory;
+        SrtRuntime runtime;
+        runtime.userData = request.context.userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        runtime.userContext = &memory;
+        runtime.readMemory = &CountingRead;
+        runtime.readSpecializationMemory = &CountingRead;
+        runtime.accessible = &CountingAccessible;
+        runtime.readWords = &CountingReadWords;
+        return step("capture", [&] { return CaptureResources(request, runtime); });
+    };
+    const auto same = [](const ResolvedImageTables& left, const ResolvedImageTables& right) {
+        return left.map == right.map && left.elements == right.elements && left.samplers == right.samplers && left.poison == right.poison && left.faults == right.faults;
+    };
+    constexpr std::uint64_t MemoKey = 0x7ab1ec11u;
+    const bool enabled = std::getenv("APS5_NO_TABLE_COLUMN_MEMO") == nullptr;
+    const auto first = capture();
+    const auto& tables = first->snapshot.tables.tables;
+    require(tables.size() == Selected + 1u, (name + ": the snapshot does not hold thirty-one tables").c_str());
+    auto merged = std::numeric_limits<std::uint32_t>::max();
+    for (std::uint32_t table = 0; table < tables.size(); table++) {
+        if (tables[table].keys == 1u) continue;
+        require(merged == std::numeric_limits<std::uint32_t>::max() && tables[table].keys >= 64u, (name + ": more than one table holds the merged reads, or the merged table has fewer than 64 keys").c_str());
+        merged = table;
+    }
+    require(merged != std::numeric_limits<std::uint32_t>::max(), (name + ": no table holds the merged reads").c_str());
+    const auto mergedImage = std::find_if(info.images.begin(), info.images.end(), [&](const ImageResource& image) { return image.table == merged; });
+    require(mergedImage != info.images.end() && static_cast<std::uint32_t>(mergedImage - info.images.begin()) == (after ? Selected : 0u), (name + ": the merged column is not resolved at the expected position among the resources").c_str());
+    const auto before = ResourceMaterializer::TableReuse();
+    const auto plain = step("plain resolution", [&] { return ResourceMaterializer::ResolveImageTables(info, first->snapshot, MemoKey, false); });
+    const auto missed = step("recording resolution", [&] { return ResourceMaterializer::ResolveImageTables(info, first->snapshot, MemoKey); });
+    const auto afterMiss = ResourceMaterializer::TableReuse();
+    require(afterMiss.columnMisses - before.columnMisses == (enabled ? 1u : 0u) && afterMiss.columnHits == before.columnHits, (name + ": the merged column did not miss exactly once").c_str());
+    require(same(missed, plain), (name + ": the recording resolution differs from the plain one").c_str());
+    const auto second = capture();
+    const auto replayed = step("replaying resolution", [&] { return ResourceMaterializer::ResolveImageTables(info, second->snapshot, MemoKey); });
+    const auto afterHit = ResourceMaterializer::TableReuse();
+    require(afterHit.columnHits - afterMiss.columnHits == (enabled ? 1u : 0u) && afterHit.columnMisses == afterMiss.columnMisses, (name + ": the merged column was not replayed").c_str());
+    require(same(replayed, plain) && same(replayed, missed), (name + ": the replayed resolution differs from the plain one").c_str());
+    require(replayed.map[Abi::HeaderElementCount] == Replayed + 1u && replayed.elements.size() == Replayed + 1u, (name + ": the merged column's 65 keyed records and its record 0 with the selected tables' thirty shared records did not resolve to 66 elements").c_str());
+    std::map<std::array<std::uint32_t, 8>, std::uint32_t> placedBySelected;
+    for (std::uint32_t table = 0; table < tables.size(); table++) {
+        if (table == merged) continue;
+        const auto selectedCodes = TableCodes(replayed.map, table);
+        require(selectedCodes.size() == 1u && (selectedCodes[0] & Abi::PoisonFlag) == 0u, (name + ": a selected table's map does not hold one record").c_str());
+        const auto element = replayed.map.at(selectedCodes[0] + Abi::ImageRecordElement);
+        placedBySelected.emplace(replayed.elements.at(element).words, element);
+    }
+    require(placedBySelected.size() == Selected, (name + ": the selected tables did not place thirty distinct elements").c_str());
+    const auto codes = TableCodes(replayed.map, merged);
+    require(codes.size() >= mergedBase + Replayed, (name + ": the merged table's map is shorter than its key domain").c_str());
+    for (std::uint32_t shared = 0; shared < Selected; shared++) {
+        const auto mapped = codes.at(mergedBase + shared);
+        require((mapped & Abi::PoisonFlag) == 0u, (name + ": a shared key of the merged table is poisoned").c_str());
+        const auto element = replayed.map.at(mapped + Abi::ImageRecordElement);
+        const auto found = placedBySelected.find(replayed.elements.at(element).words);
+        require(found != placedBySelected.end() && found->second == element, (name + ": a shared record of the merged column and its selected table do not share one element").c_str());
+        require(replayed.elements.at(element).words[2] == heap[mergedBase + shared][2], (name + ": a shared element does not hold its record").c_str());
+    }
+    const auto zero = codes.at(0);
+    require((zero & Abi::PoisonFlag) == 0u && placedBySelected.find(replayed.elements.at(replayed.map.at(zero + Abi::ImageRecordElement)).words) == placedBySelected.end(), (name + ": record 0 of the narrowed merged column was not bound to an element of its own").c_str());
+    std::cout << name << ": " << Selected << " selected tables and one merged column of " << Replayed << " keyed records plus record 0 share " << Selected << " elements, " << replayed.elements.size() << " elements in all\n";
+}
+
+ShaderRecompiler::ResolvedImageTables ResolveTableColumnMemoProbe(std::uint64_t content) {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Keys = 64;
+    static TableTexture textures[4];
+    alignas(4096) static TableGuest guest;
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, Keys> heap;
+    static const auto userData = [&] {
+        for (std::uint32_t record = 0; record < Keys; record++) heap[record] = TableT(textures[record % 4u].bytes.data(), TableFormat8888UNorm, TableType2D, 1u + record);
+        FillTableSrt(guest, heap.data(), 32u, Keys);
+        return TableUserData(guest);
+    }();
+    static const auto request = TableRequest(TableWholeCode, userData);
+    static const auto plan = GetResourcePlan(request);
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D, Keys + 1u + static_cast<std::uint32_t>(content));
+    CountingMemory memory;
+    SrtRuntime runtime;
+    runtime.userData = request.context.userData;
+    runtime.shaderBase = request.shader.codeAddress;
+    runtime.userContext = &memory;
+    runtime.readMemory = &CountingRead;
+    runtime.readSpecializationMemory = &CountingRead;
+    runtime.accessible = &CountingAccessible;
+    runtime.readWords = &CountingReadWords;
+    const auto captured = CaptureResources(request, runtime);
+    require(captured->snapshot.tables.tables.size() == 1u && captured->snapshot.tables.tables.at(0).keys == Keys, "image table column memo probe: the snapshot does not hold the whole table");
+    return ResourceMaterializer::ResolveImageTables(plan->info, captured->snapshot, 0x7ab1ec21u);
+}
+
+void verifyTableColumnMemoEviction(std::string_view mode) {
+    using namespace ShaderRecompiler;
+    constexpr std::uint64_t Entries = 4096;
+    constexpr std::uint64_t Budgeted = 200;
+    require(mode == "count" || mode == "budget" || mode == "oversize", "image table column memo eviction: the mode is count, budget or oversize");
+    const auto expect = [&](std::uint64_t content, bool hit, const char* what) {
+        const auto previous = ResourceMaterializer::TableReuse();
+        static_cast<void>(ResolveTableColumnMemoProbe(content));
+        const auto now = ResourceMaterializer::TableReuse();
+        require(now.columnHits - previous.columnHits == (hit ? 1u : 0u) && now.columnMisses - previous.columnMisses == (hit ? 0u : 1u), what);
+    };
+    expect(0u, false, "image table column memo eviction: the first content did not miss");
+    if (mode == "oversize") {
+        expect(0u, false, "image table column memo eviction: a content over the budget was kept");
+        expect(0u, false, "image table column memo eviction: a content over the budget was kept on the third resolution");
+        std::cout << "image table column memo eviction: an entry over the budget is never kept\n";
+        return;
+    }
+    expect(0u, true, "image table column memo eviction: the first content was not replayed");
+    if (mode == "budget") {
+        for (std::uint64_t content = 1; content < Budgeted; content++) {
+            expect(content, false, "image table column memo eviction: a new content did not miss");
+            expect(0u, true, "image table column memo eviction: the first content, replayed after every insertion, was evicted under the budget");
+        }
+        expect(Budgeted - 1u, true, "image table column memo eviction: the newest entry was not kept under the budget");
+        expect(1u, false, "image table column memo eviction: the least recently used entry survived the budget");
+        expect(0u, true, "image table column memo eviction: re-adding the least recently used content evicted the entry replayed most");
+        std::cout << "image table column memo eviction: " << Budgeted << " contents under the budget; the least recently used entry left first\n";
+        return;
+    }
+    for (std::uint64_t content = 1; content < Entries; content++) expect(content, false, "image table column memo eviction: a new content did not miss while the memo had room");
+    expect(0u, true, "image table column memo eviction: the oldest entry was not replayed before the cap was crossed");
+    expect(Entries, false, "image table column memo eviction: a content past the entry cap did not miss");
+    expect(0u, true, "image table column memo eviction: the entry replayed just before the cap was evicted");
+    expect(1u, false, "image table column memo eviction: the least recently used entry survived the cap");
+    expect(3u, true, "image table column memo eviction: an entry that was not the oldest was evicted");
+    expect(2u, false, "image table column memo eviction: the next oldest entry survived");
+    std::cout << "image table column memo eviction: " << Entries << " entries, then the least recently used entry left first\n";
+}
+
+void verifyTableColumnMemoWords(std::string_view expectation) {
+    using namespace ShaderRecompiler;
+    if (expectation == "refused") {
+        expectFailure([] { static_cast<void>(ResolveTableColumnMemoProbe(0u)); }, "APS5_TABLE_COLUMN_MEMO_WORDS is not a positive word count", "image table column memo words: a malformed word count was accepted");
+        std::cout << "image table column memo words: the variable was refused\n";
+        return;
+    }
+    require(expectation == "accepted", "image table column memo words: the expectation is accepted or refused");
+    const auto before = ResourceMaterializer::TableReuse();
+    static_cast<void>(ResolveTableColumnMemoProbe(0u));
+    static_cast<void>(ResolveTableColumnMemoProbe(0u));
+    const auto after = ResourceMaterializer::TableReuse();
+    require(after.columnMisses - before.columnMisses == 1u && after.columnHits - before.columnHits == 1u, "image table column memo words: the memo did not keep a column under the accepted budget");
+    std::cout << "image table column memo words: the variable was accepted\n";
 }
 
 void verifyImageTableSrtKey() {
@@ -8864,6 +9051,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-column-memo") {
             verifyTableColumnMemo();
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--table-column-memo-placement") {
+            verifyTableColumnMemoPlacement(argv[2]);
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--table-column-memo-eviction") {
+            verifyTableColumnMemoEviction(argv[2]);
+            return 0;
+        }
+        if (argc == 3 && std::string_view(argv[1]) == "--table-column-memo-words") {
+            verifyTableColumnMemoWords(argv[2]);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
