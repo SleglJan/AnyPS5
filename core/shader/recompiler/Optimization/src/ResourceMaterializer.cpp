@@ -506,7 +506,7 @@ void mixImageResource(std::uint64_t& hash, const ImageResource& image) {
     mix(static_cast<std::uint64_t>(image.conversionFormat));
     mix(image.shaderSwizzle);
     std::uint64_t flags = 0;
-    for (const bool flag : {image.read, image.written, image.atomic, image.atomic64, image.depthCompare, image.cube, image.r128, image.srgbDecode, image.srgbDecodeCompatible, image.depthBits, image.depthUnorm16, image.packed, image.fmaskCompatible, image.depthBitsCompatible, image.constantSwizzle, image.constantSwizzleCompatible, image.cubeFaceCompatible, image.flatVolumeCompatible, image.singleMipPlaneBiasCompatible, image.volumeArraySampleCompatible, image.flatLineCompatible, image.flatVolumeLineCompatible, image.dimensionQueryOnly, image.foldTexelOffsetsOnly, image.convertedSamples, image.remappedDepth1D, image.targetMerge}) flags = (flags << 1u) | (flag ? 1u : 0u);
+    for (const bool flag : {image.read, image.written, image.atomic, image.atomic64, image.depthCompare, image.cube, image.r128, image.srgbDecode, image.srgbDecodeCompatible, image.depthBits, image.depthUnorm16, image.packed, image.fmaskCompatible, image.depthBitsCompatible, image.constantSwizzle, image.constantSwizzleCompatible, image.cubeFaceCompatible, image.flatVolumeCompatible, image.singleMipPlaneBiasCompatible, image.volumeArraySampleCompatible, image.flatLineCompatible, image.flatVolumeLineCompatible, image.dimensionQueryOnly, image.sampledOnly, image.foldTexelOffsetsOnly, image.convertedSamples, image.remappedDepth1D, image.optionalDescriptor, image.targetMerge}) flags = (flags << 1u) | (flag ? 1u : 0u);
     mix(flags);
     mix(image.srgbDecodeFormats);
     mix(image.byElements);

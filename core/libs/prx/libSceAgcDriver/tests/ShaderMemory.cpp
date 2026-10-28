@@ -42,6 +42,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <future>
 #include <memory>
 #include <new>
@@ -4088,7 +4089,7 @@ void verifyTableColumnMemoPlacement(std::string_view order) {
     std::cout << name << ": " << Selected << " selected tables and one merged column of " << Replayed << " keyed records plus record 0 share " << Selected << " elements, " << replayed.elements.size() << " elements in all\n";
 }
 
-ShaderRecompiler::ResolvedImageTables ResolveTableColumnMemoProbe(std::uint64_t content) {
+ShaderRecompiler::ResolvedImageTables ResolveTableColumnMemoProbe(std::uint64_t content, std::optional<bool> sampledOnly = std::nullopt, std::optional<bool> optionalDescriptor = std::nullopt) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Keys = 64;
     static TableTexture textures[4];
@@ -4113,7 +4114,20 @@ ShaderRecompiler::ResolvedImageTables ResolveTableColumnMemoProbe(std::uint64_t 
     runtime.readWords = &CountingReadWords;
     const auto captured = CaptureResources(request, runtime);
     require(captured->snapshot.tables.tables.size() == 1u && captured->snapshot.tables.tables.at(0).keys == Keys, "image table column memo probe: the snapshot does not hold the whole table");
-    return ResourceMaterializer::ResolveImageTables(plan->info, captured->snapshot, 0x7ab1ec21u);
+    std::uint64_t key = 0x7ab1ec21u;
+    if (sampledOnly == false) key ^= 0x100u;
+    if (optionalDescriptor == true) key ^= 0x200u;
+    if (!sampledOnly.has_value() && !optionalDescriptor.has_value()) return ResourceMaterializer::ResolveImageTables(plan->info, captured->snapshot, key);
+    ShaderInfo usage = plan->info;
+    const auto apply = [&](ImageResource& image) {
+        if (sampledOnly.has_value()) image.sampledOnly = *sampledOnly;
+        if (optionalDescriptor.has_value()) image.optionalDescriptor = *optionalDescriptor;
+    };
+    for (auto& image : usage.images) apply(image);
+    for (auto& modes : usage.runtimeImageModes) {
+        for (auto& mode : modes) apply(mode);
+    }
+    return ResourceMaterializer::ResolveImageTables(usage, captured->snapshot, key);
 }
 
 void verifyTableColumnMemoEviction(std::string_view mode) {
@@ -4170,6 +4184,24 @@ void verifyTableColumnMemoWords(std::string_view expectation) {
     const auto after = ResourceMaterializer::TableReuse();
     require(after.columnMisses - before.columnMisses == 1u && after.columnHits - before.columnHits == 1u, "image table column memo words: the memo did not keep a column under the accepted budget");
     std::cout << "image table column memo words: the variable was accepted\n";
+}
+
+void verifyTableColumnMemoUsage() {
+    using namespace ShaderRecompiler;
+    const auto expect = [](bool sampledOnly, bool optionalDescriptor, bool hit, const char* what) {
+        const auto before = ResourceMaterializer::TableReuse();
+        static_cast<void>(ResolveTableColumnMemoProbe(0u, sampledOnly, optionalDescriptor));
+        const auto after = ResourceMaterializer::TableReuse();
+        require(after.columnHits - before.columnHits == (hit ? 1u : 0u) && after.columnMisses - before.columnMisses == (hit ? 0u : 1u), what);
+    };
+    expect(true, false, false, "image table column memo usage: the first sampled-only resolution did not miss");
+    expect(false, false, false, "image table column memo usage: a usage that differs only in sampledOnly did not miss");
+    expect(true, false, true, "image table column memo usage: the sampled-only entry was lost to the other usage");
+    expect(false, false, true, "image table column memo usage: the entry with sampledOnly cleared was lost to the sampled-only one");
+    expect(true, true, false, "image table column memo usage: a usage that differs only in optionalDescriptor did not miss");
+    expect(true, true, true, "image table column memo usage: the optional-descriptor entry was not kept");
+    expect(true, false, true, "image table column memo usage: the sampled-only entry was lost to the optional-descriptor usage");
+    std::cout << "image table column memo usage: usages that differ only in sampledOnly or optionalDescriptor keep separate entries\n";
 }
 
 void verifyImageTableSrtKey() {
@@ -9713,6 +9745,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && std::string_view(argv[1]) == "--table-column-memo-words") {
             verifyTableColumnMemoWords(argv[2]);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-column-memo-usage") {
+            verifyTableColumnMemoUsage();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
