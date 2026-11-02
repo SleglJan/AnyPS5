@@ -627,6 +627,7 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0) 
         std::chrono::steady_clock::time_point read{};
         std::uint64_t budget{0};
         std::uint64_t ceiling{0};
+        std::chrono::steady_clock::time_point stagedReclaim{};
     } cached;
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard lock(cached.mutex);
@@ -647,6 +648,20 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0) 
     };
     if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
     const auto needed = std::min(required, cached.ceiling);
+    if (needed > cached.budget && now - cached.stagedReclaim >= std::chrono::seconds(1)) {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr) {
+            std::vector<std::shared_ptr<ShaderResources>> dropped;
+            std::uint64_t freed = 0;
+            if (SharedResourceCache().TryReclaimStaged(needed - cached.budget, dropped, freed)) {
+                cached.stagedReclaim = now;
+                if (!dropped.empty()) std::fprintf(stderr, "[rescache] staged reclaim: %zu entries dropped, %llu KiB staged freed, shortfall %llu KiB, %zu entries left\n", dropped.size(), static_cast<unsigned long long>(freed >> 10u), static_cast<unsigned long long>((needed - cached.budget) >> 10u), SharedResourceCache().Size());
+                for (auto& object : dropped) {
+                    object->KeepStorageImageBytes(*recorder);
+                    recorder->Keep(std::move(object));
+                }
+            }
+        }
+    }
     if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
     if (reported) MemoryAccounting::Report(context, *reported, sampled, storage, cached.budget);
     return cached.budget;
@@ -4217,6 +4232,28 @@ void ResourceCache::removeImage(const StorageTexture* image, std::vector<std::sh
         index.erase(it->first);
         it = entries.erase(it);
     }
+}
+
+bool ResourceCache::TryReclaimStaged(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>& evicted, std::uint64_t& freed) {
+    std::unique_lock lock(mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return false;
+    for (auto it = entries.end(); it != entries.begin() && freed < bytes;) {
+        --it;
+        const auto staged = it->second->StagedBytes();
+        if (staged == 0) continue;
+        freed += staged;
+        evicted.push_back(std::move(it->second));
+        index.erase(it->first);
+        it = entries.erase(it);
+    }
+    return true;
+}
+
+std::uint64_t ResourceCache::StagedBytes() const {
+    std::lock_guard lock(mutex);
+    std::uint64_t bytes = 0;
+    for (const auto& entry : entries) bytes += entry.second->StagedBytes();
+    return bytes;
 }
 
 void ResourceCache::dropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted) {

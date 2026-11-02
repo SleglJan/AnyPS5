@@ -257,6 +257,7 @@ public:
     bool HasCachedStorageImages() const;
     bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
+    std::size_t StagedBytes() const { return guestMemory.StagedBytes(); }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
     // Debug aid: each bound guest resource with the fraction of sampled bytes that are nonzero.
@@ -726,6 +727,8 @@ public:
     void Remove(const Key& key, const ShaderResources* object = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    bool TryReclaimStaged(std::uint64_t bytes, std::vector<std::shared_ptr<ShaderResources>>& evicted, std::uint64_t& freed);
+    std::uint64_t StagedBytes() const;
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
