@@ -6529,6 +6529,20 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
         Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
+        rewriteImage(outerImage, 256u, 0x79);
+        rewriteImage(innerImage, 8u, 0x7a);
+        recorder.NotePendingWrite(inner.baseAddress, static_cast<std::size_t>(innerLayout.guestBytes));
+        Require(recorder.OpenWriteOverlaps(inner.baseAddress, static_cast<std::size_t>(innerLayout.guestBytes)), "the writer over the small image is not a write of the open batch");
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image inside the large one with a writer over it pending");
+        const auto serial = recorder.OpenSerial();
+        Require(StorageTexture::FlushPending(address + 0x8000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's first unit stored nothing");
+        const bool waited = recorder.CompletedThrough() >= serial;
+        settle();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x7a), "a store of the large image's first unit did not store the trapped image inside its third unit");
+        Require(waited, "a store of the large image's first unit did not complete the batch of a writer over the trapped image inside its third unit, which the store takes whole");
+        outerImage->Flush();
+        settle();
     }
 #endif
     auto large = resource;
