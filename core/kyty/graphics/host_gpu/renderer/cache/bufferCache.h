@@ -38,6 +38,31 @@ enum class HackMark : uint32_t {
 	Count,
 };
 
+void DiagArgsSyncSetOperation(uint32_t queue, uint32_t kind, uint64_t sequence, uint64_t submit, bool guest_sync);
+void DiagArgsSyncHint(uint8_t path, const uint32_t* words4);
+void DiagArgsSyncNoteCpWrite(uint32_t queue, uint64_t sequence, uint64_t address, uint64_t size, const void* value);
+void DiagArgsSyncNoteDispatchSkip(uint64_t args_address, const uint32_t* counts3, uint64_t shader_address);
+void DiagArgsSyncSetShader(uint64_t hash);
+bool DiagNoZeroSkip();
+void DiagArgsSyncNoteBuffer(uint8_t kind, uint64_t vaddr, uint64_t size, uint32_t extra);
+void DiagArgsSyncNoteWaitPacket(const uint32_t* body);
+void DiagArgsSyncNotePredicatedSkip(uint32_t queue, uint32_t opcode);
+void DiagArgsSyncNoteAceHold();
+void DiagArgsSyncSetCpPacket(const uint32_t* header);
+void DiagArgsSyncSetSubmission(uint32_t queue, uint64_t order);
+void DiagArgsSyncNoteHoldCheck(uint32_t queue, uint32_t why, uint64_t order, uint64_t before, uint64_t done);
+void DiagArgsSyncNoteDrawParse(uint32_t queue, uint64_t args_base, uint32_t data_offset, uint32_t count, uint32_t stride,
+                               bool run);
+void DiagArgsSyncNoteIbFetch(uint32_t queue, uint64_t address, uint64_t size, uint8_t how);
+void DiagArgsSyncNoteDecision(uint32_t queue, uint8_t kind, uint64_t address, uint32_t size, uint64_t value, uint64_t reference,
+                              uint64_t mask, uint32_t function, uint32_t exec_count, bool taken);
+void DiagArgsSyncNoteBinding(uint64_t address, uint64_t size, bool written);
+void DiagArgsSyncNoteDispatchCp(uint32_t queue, uint64_t sequence, uint64_t args, uint64_t base, uint32_t mode);
+void DiagArgsSyncNoteDecisionSource(uint8_t source, uint64_t write_sequence, uint64_t emitted);
+void DiagArgsSyncNoteWait(uint32_t queue, uint64_t address, uint32_t size, uint64_t value, uint64_t reference, uint64_t mask,
+                          uint32_t function, bool met);
+void DiagArgsSyncSetIndirect(uint64_t base, uint32_t data_offset, uint32_t count, uint32_t stride, const uint32_t* run_offsets);
+
 class BufferCache {
 public:
 	static constexpr uint32_t CACHING_PAGEBITS  = 14;
@@ -141,6 +166,10 @@ public:
 	                                                        bool     is_written,
 	                                                        bool     is_texel_buffer = false,
 	                                                        BufferId id              = {});
+	[[nodiscard]] std::pair<Buffer*, uint64_t> ObtainArgsBuffer(uint64_t vaddr, uint64_t size, uint32_t site);
+	void DiagCullPre(CommandRecorder cmd, vk::Buffer args, uint64_t args_offset, uint64_t args_guest, const uint32_t* direct_groups,
+	                 uint8_t kind, uint32_t mode, uint32_t flags);
+	void DiagCullPost(CommandRecorder cmd, vk::Buffer groups, uint64_t groups_offset);
 	bool PrepareDeviceAddressRead(uint64_t vaddr, uint64_t size);
 	[[nodiscard]] StreamBuffer&                GetUtilityBuffer(MemoryUsage usage) noexcept {
 		switch (usage) {
@@ -591,7 +620,10 @@ private:
 	std::vector<uint64_t>                      m_buffer_region_bits;
 	std::vector<uint64_t>                      m_forced_region_bits;
 	std::vector<uint64_t>                      m_region_forces;
+	uint64_t m_upload_events = 0;
+	const void* m_sync_caller = nullptr;
 	void NoteUpload(uint64_t address, uint64_t bytes) noexcept {
+		m_upload_events++;
 		if (m_copy_feedback_entries != 0) InvalidateCopyFeedback(address, bytes);
 	}
 	std::vector<uint64_t>                      m_synced_region_epochs;

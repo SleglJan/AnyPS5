@@ -547,6 +547,7 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 
 	const auto record = [&](ShaderComputeInputInfo& input_info, uint32_t rt_pass) {
 		const auto& program   = input_info.stage.module->info;
+		DiagArgsSyncSetShader(program.shader_hash);
 		const auto& resources = *input_info.stage.resources;
 		buffer.EndRendering();
 		auto& pipeline = m_context.GetPipelineCache().GetComputePipeline(input_info);
@@ -658,6 +659,13 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 			}
 		}
 
+		{
+			const uint32_t diag_groups[3] = {thread_group_x, thread_group_y, thread_group_z};
+			m_context.GetBufferCache().DiagCullPre(
+			    vk_buffer, vk::Buffer {}, 0, 0, diag_groups, 1, mode,
+			    (program.bindings.dispatch_thread_dword != ShaderRecompiler::IR::PushData::NoStart ? 2u : 0u) |
+			        (input_info.dispatch_thread_dimensions ? 4u : 0u));
+		}
 		vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
 		constexpr uint32_t DISPATCH_INITIATOR_ORDERED_APPEND_ENABLE = 1u << 3u;
 		const uint64_t     group_threads = uint64_t {std::max(input_info.threads_num[0], 1u)} *
@@ -678,6 +686,7 @@ void RenderExecutor::DispatchDirect(CommandBuffer& buffer, uint32_t thread_group
 		} else {
 			vk_buffer.dispatch(thread_group_x, thread_group_y, thread_group_z);
 		}
+		m_context.GetBufferCache().DiagCullPost(vk_buffer, vk::Buffer {}, 0);
 		Common::DebugCounters::Add(Common::DebugCounters::Counter::Dispatches);
 		if (rt_pass == 1) {
 			RtCheck().AfterOracle(bindings, counted);
@@ -779,7 +788,8 @@ void RenderExecutor::DispatchIndirectThreads(CommandBuffer& buffer, uint64_t arg
 	ShaderComputeInputInfo input_info {};
 	m_context.GetImageHeap().BeginDraw();
 	const ShaderModule*    compute_module = nullptr;
-	if (!TakeResolvedDispatch(input_info, compute_module)) {
+	const bool diag_resolved = TakeResolvedDispatch(input_info, compute_module);
+	if (!diag_resolved) {
 		input_info.async_compute              = async_compute;
 		input_info.dispatch_thread_dimensions = true;
 		input_info.dispatch_indirect_threads  = true;
@@ -790,6 +800,7 @@ void RenderExecutor::DispatchIndirectThreads(CommandBuffer& buffer, uint64_t arg
 	}
 	const auto& program = input_info.stage.module->info;
 	EXIT_IF(program.bindings.UsesPushData());
+	DiagArgsSyncSetShader(program.shader_hash);
 	if (input_info.stage.resources->specialization_reads.empty()) {
 		(void)TryConsumeComputeMetaClear(input_info, buffer);
 	}
@@ -911,8 +922,12 @@ void RenderExecutor::DispatchIndirectThreads(CommandBuffer& buffer, uint64_t arg
 	if (has_storage_writes) {
 		ShaderWriteHazardBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	}
+	m_context.GetBufferCache().DiagCullPre(vk_buffer, args_buffer->Handle(), args_offset, args_addr, nullptr, 3, mode,
+	                                       (diag_resolved ? 1u : 0u) | (thread_limit ? 2u : 0u) |
+	                                           (input_info.dispatch_thread_dimensions ? 4u : 0u));
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
 	vk_buffer.dispatchIndirect(stream.Handle(), scratch_offset);
+	m_context.GetBufferCache().DiagCullPost(vk_buffer, stream.Handle(), scratch_offset);
 	ShaderAccessBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
 	ResetBindings();
 }
@@ -924,9 +939,11 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 	m_context.GetCommandScheduler().PopPendingOperations();
 	Common::LockGuard lock(m_context.GetMutex());
 	vk::DispatchIndirectCommand args {};
-	if (!m_context.GetBufferCache().HasGpuDirtyBytes(args_addr, sizeof(args)) &&
+	if (!DiagNoZeroSkip() && !m_context.GetBufferCache().HasGpuDirtyBytes(args_addr, sizeof(args)) &&
 	    LibKernel::Memory::TryReadBacking(args_addr, &args, sizeof(args)) &&
 	    (args.x == 0 || args.y == 0 || args.z == 0)) {
+		const uint32_t counts[3] = {args.x, args.y, args.z};
+		DiagArgsSyncNoteDispatchSkip(args_addr, counts, buffer.GetShaders().GetCs().cs_regs.data_addr);
 		return;
 	}
 	const auto& cs_regs = buffer.GetShaders().GetCs();
@@ -945,7 +962,8 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 	pristine.async_compute         = async_compute;
 	pristine.indirect_args_address = args_addr;
 	const ShaderModule* compute_module = nullptr;
-	if (!TakeResolvedDispatch(input_info, compute_module)) {
+	const bool diag_resolved = TakeResolvedDispatch(input_info, compute_module);
+	if (!diag_resolved) {
 		input_info     = pristine;
 		compute_module = m_context.GetPipelineCache().GetComputeProgram(cs_regs, input_info);
 	}
@@ -957,6 +975,7 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 	if (compute_module == nullptr) return;
 	TableDispatchLearn(cs_regs, *compute_module, async_compute, false);
 	const auto record = [&](ShaderComputeInputInfo& input_info, uint32_t rt_pass) {
+		DiagArgsSyncSetShader(input_info.stage.module->info.shader_hash);
 		buffer.EndRendering();
 		auto& pipeline = m_context.GetPipelineCache().GetComputePipeline(input_info);
 		auto& bindings = m_compute_bindings;
@@ -1013,8 +1032,14 @@ void RenderExecutor::DispatchIndirect(CommandBuffer& buffer, uint64_t args_addr,
 			                          vk::PipelineStageFlagBits::eDrawIndirect, {},
 			                          1, &barrier, 0, nullptr, 0, nullptr);
 		}
+		m_context.GetBufferCache().DiagCullPre(
+		    vk_buffer, args_buffer->Handle(), args_offset, args_addr, nullptr, 2, mode,
+		    (diag_resolved ? 1u : 0u) |
+		        (program.bindings.dispatch_thread_dword != ShaderRecompiler::IR::PushData::NoStart ? 2u : 0u) |
+		        (input_info.dispatch_thread_dimensions ? 4u : 0u));
 		vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
 		vk_buffer.dispatchIndirect(args_buffer->Handle(), args_offset);
+		m_context.GetBufferCache().DiagCullPost(vk_buffer, vk::Buffer {}, 0);
 		Common::DebugCounters::Add(Common::DebugCounters::Counter::Dispatches);
 		if (rt_pass == 1) {
 			RtCheck().AfterOracle(bindings, counted);

@@ -309,6 +309,10 @@ NativeStorageBuffer(RenderContext& context, const PreparedBindings::BufferSource
 	}
 	auto&      queries  = context.GetOcclusionQueries();
 	const bool counters = queries.PrepareRead(address, size);
+	DiagArgsSyncNoteBinding(address, size, resource.written);
+	if (resource.written) {
+		DiagArgsSyncHint(1, nullptr);
+	}
 	auto [buffer, offset] = context.GetBufferCache().ObtainBuffer(
 	    address, size, resource.written,
 	    resource.formatted || (resource.read && Config::SyncRawImageBuffersEnabled()), id);

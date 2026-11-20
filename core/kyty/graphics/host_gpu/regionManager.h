@@ -176,6 +176,60 @@ public:
 		return GetBits<source>().Any(start, end);
 	}
 
+	struct ArgsPageProbe {
+		bool cpu_dirty    = false;
+		bool gpu_dirty    = false;
+		bool gpu_written  = false;
+		bool gpu_noted    = false;
+		bool block_opened = false;
+	};
+
+	[[nodiscard]] ArgsPageProbe ProbeArgsPages(uint64_t offset, uint64_t size) const {
+		const auto [start, end] = GetPageRange(offset, size);
+		return {.cpu_dirty    = m_cpu_dirty.Any(start, end),
+		        .gpu_dirty    = m_gpu_dirty.Any(start, end),
+		        .gpu_written  = m_gpu_written.Any(start, end),
+		        .gpu_noted    = m_gpu_noted.Any(start, end),
+		        .block_opened = m_block_opened.Any(start, end)};
+	}
+
+	struct PageHistory {
+		uint32_t cpu_written = 0;
+		uint32_t seen        = 0;
+		uint32_t cleaned     = 0;
+		uint8_t  writes      = 0;
+		uint8_t  faulted     = 0;
+		uint8_t  busy        = 0;
+	};
+
+	[[nodiscard]] PageHistory ProbePageHistory(uint64_t offset) const {
+		PageHistory history {};
+		const auto  page = static_cast<size_t>(offset / TRACKER_PAGE_SIZE);
+		for (size_t consumer = 0; consumer < m_cpu_written.size(); ++consumer) {
+			if (m_cpu_written[consumer].Get(page)) {
+				history.cpu_written |= 1u << consumer;
+			}
+		}
+		if (m_busy != nullptr) {
+			history.busy    = 1;
+			history.faulted = m_busy->faulted.Get(page) ? 1u : 0u;
+			history.writes  = m_busy->writes[page];
+			history.seen    = m_busy->seen[page];
+			history.cleaned = m_busy->cleaned[page];
+		}
+		return history;
+	}
+
+	void CollectGpuMarkedRuns(uint64_t offset, uint64_t size, std::vector<std::pair<uint64_t, uint64_t>>& runs) const {
+		const auto [start, end] = GetPageRange(offset, size);
+		RegionBits marked(m_gpu_written, start, end);
+		const RegionBits noted(m_gpu_noted, start, end);
+		marked |= noted;
+		for (const auto [first, last]: marked) {
+			runs.emplace_back(m_cpu_addr + first * TRACKER_PAGE_SIZE, (last - first) * TRACKER_PAGE_SIZE);
+		}
+	}
+
 	struct WriteBlockProbe {
 		uint32_t opened  = 0;
 		bool     gpu     = false;

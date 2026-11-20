@@ -28,6 +28,33 @@ public:
 
 	[[nodiscard]] bool IsRegionCpuModified(uint64_t vaddr, uint64_t size);
 	[[nodiscard]] bool IsRegionGpuModified(uint64_t vaddr, uint64_t size);
+	[[nodiscard]] RegionManager::ArgsPageProbe ProbeArgsPages(uint64_t vaddr, uint64_t size) {
+		RegionManager::ArgsPageProbe probe {};
+		Iterate<false>(vaddr, size, [&](RegionManager* manager, uint64_t offset, uint64_t bytes) {
+			std::scoped_lock lock(manager->lock);
+			const auto part = manager->ProbeArgsPages(offset, bytes);
+			probe.cpu_dirty    = probe.cpu_dirty || part.cpu_dirty;
+			probe.gpu_dirty    = probe.gpu_dirty || part.gpu_dirty;
+			probe.gpu_written  = probe.gpu_written || part.gpu_written;
+			probe.gpu_noted    = probe.gpu_noted || part.gpu_noted;
+			probe.block_opened = probe.block_opened || part.block_opened;
+		});
+		return probe;
+	}
+	[[nodiscard]] RegionManager::PageHistory ProbePageHistory(uint64_t vaddr) {
+		RegionManager::PageHistory history {};
+		Iterate<false>(vaddr, 1, [&](RegionManager* manager, uint64_t offset, uint64_t) {
+			std::scoped_lock lock(manager->lock);
+			history = manager->ProbePageHistory(offset);
+		});
+		return history;
+	}
+	void CollectGpuMarkedRuns(uint64_t vaddr, uint64_t size, std::vector<std::pair<uint64_t, uint64_t>>& runs) {
+		Iterate<false>(vaddr, size, [&](RegionManager* manager, uint64_t offset, uint64_t bytes) {
+			std::scoped_lock lock(manager->lock);
+			manager->CollectGpuMarkedRuns(offset, bytes, runs);
+		});
+	}
 	[[nodiscard]] bool MayBeGpuModified(uint64_t vaddr, uint64_t size) const {
 		if (size == 0 || size > TRACKER_ADDRESS_SIZE || vaddr > TRACKER_ADDRESS_SIZE - size) {
 			return true;

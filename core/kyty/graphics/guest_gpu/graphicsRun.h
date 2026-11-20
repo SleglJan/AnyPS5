@@ -105,6 +105,8 @@ private:
 		bool                      yielded         = false;
 		uint64_t                  flip_request_id = 0;
 		uint64_t                  scout_sequence  = 0;
+		uint64_t                  diag_order      = 0;
+		uint64_t                  diag_gfx_before = 0;
 #if defined(ANYPS5_KYTY)
 		bool                      frame_end       = false;
 		uint64_t                  wait_flushed    = 0;
@@ -130,6 +132,9 @@ private:
 	std::deque<Common::UniqueFunction<void>>       m_commands;
 	std::atomic_uint32_t                           m_pending_commands {0};
 	uint32_t                                       m_next_queue        = 0;
+	uint64_t                                       m_diag_submit_order = 0;
+	uint64_t                                       m_diag_gfx_last     = 0;
+	uint64_t                                       m_diag_gfx_done     = 0;
 	uint32_t                                       m_submission_count  = 0;
 	bool                                           m_processing        = false;
 	bool                                           m_accepting         = true;

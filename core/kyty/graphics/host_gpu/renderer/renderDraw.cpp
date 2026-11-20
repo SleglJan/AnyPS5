@@ -68,8 +68,222 @@
 #include <string_view>
 #include <vector>
 #include <xxhash.h>
+#include <cinttypes>
+#include <cstdlib>
 
 namespace Libs::Graphics {
+
+void DiagArgsSyncDumpFor(uint64_t address, const char* why);
+void DiagArgsSyncDumpPackets(uint64_t address, const char* why);
+
+namespace {
+
+struct GpuArgsTag {
+	uint64_t tick        = 0;
+	uint64_t key         = 0;
+	uint64_t key2        = 0;
+	uint64_t key3        = 0;
+	uint32_t max_indices = 0;
+	uint32_t path        = 0;
+};
+
+constexpr uint32_t GpuArgsSlots     = 65536;
+constexpr uint32_t GpuArgsSlotBytes = 32;
+
+struct GpuArgsDiag {
+	std::unique_ptr<Buffer>  ring;
+	std::vector<GpuArgsTag>  tags;
+	uint32_t                 next           = 0;
+	uint64_t                 last_scan_ns   = 0;
+	uint64_t                 last_report_ns = 0;
+	uint64_t                 recorded       = 0;
+	uint64_t                 scanned        = 0;
+	uint64_t                 absurd         = 0;
+	uint32_t                 max_inst       = 0;
+	uint32_t                 max_index      = 0;
+	uint32_t                 printed        = 0;
+	uint32_t                 large_printed  = 0;
+	CommandScheduler*        scheduler      = nullptr;
+};
+
+GpuArgsDiag g_gpu_args;
+
+bool DiagGpuArgs() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_GPU_ARGS");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+uint64_t DiagSkipVsModule() {
+	static const uint64_t id = [] {
+		const char* value = std::getenv("KYTY_DIAG_SKIP_VS");
+		return value != nullptr && value[0] != '\0' ? std::strtoull(value, nullptr, 16) : uint64_t {0};
+	}();
+	return id;
+}
+
+std::atomic<uint64_t> g_skipped_vs_draws {0};
+
+uint64_t GpuArgsNowNs() {
+	return static_cast<uint64_t>(
+	    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void DiagGpuArgsDumpNeighbour(uint64_t key, uint64_t vs) {
+	auto& d = g_gpu_args;
+	if (d.ring == nullptr || key == 0) {
+		return;
+	}
+	const uint64_t page   = key & ~uint64_t {0xfff};
+	const auto     mapped = d.ring->Mapped();
+	for (uint32_t slot = 0; slot < GpuArgsSlots; slot++) {
+		const auto& tag = d.tags[slot];
+		if (tag.key < page + 0x1000u || tag.key >= page + 0x2000u || tag.key2 == vs) {
+			continue;
+		}
+		uint32_t words[5] {};
+		std::memcpy(words, mapped.data() + size_t {slot} * GpuArgsSlotBytes, sizeof(words));
+		const bool bad = words[1] > (1u << 20u) ||
+		                 (tag.max_indices != 0 && (words[0] > tag.max_indices || words[2] >= tag.max_indices));
+		if (bad || words[0] == 0) {
+			continue;
+		}
+		std::fprintf(stderr,
+		             "[kyty-gpu-args] neighbour: a sane record of another pipeline on the next page: args 0x%016" PRIx64
+		             " ids 0x%016" PRIx64 " 0x%016" PRIx64 ": index count %u, instances %u, first index %u\n",
+		             tag.key, tag.key2, tag.key3, words[0], words[1], words[2]);
+		DiagArgsSyncDumpFor(tag.key, "a sane record of another pipeline on the next page");
+		return;
+	}
+	std::fprintf(stderr, "[kyty-gpu-args] neighbour: no sane record of another pipeline on the next page in the ring\n");
+}
+
+void GpuArgsScan(CommandScheduler& scheduler, uint64_t now) {
+	auto& d = g_gpu_args;
+	d.ring->Invalidate(0, d.ring->Size());
+	const auto mapped = d.ring->Mapped();
+	for (uint32_t slot = 0; slot < GpuArgsSlots; slot++) {
+		auto& tag = d.tags[slot];
+		if (tag.tick == 0 || !scheduler.IsFree(tag.tick)) {
+			continue;
+		}
+		uint32_t words[5] {};
+		std::memcpy(words, mapped.data() + size_t {slot} * GpuArgsSlotBytes, sizeof(words));
+		const bool bad = words[1] > (1u << 20u) ||
+		                 (tag.max_indices != 0 && (words[0] > tag.max_indices || words[2] >= tag.max_indices));
+		const bool large = !bad && (words[1] > 4096u || uint64_t {words[0]} * words[1] > (uint64_t {1} << 30u));
+		if (large && d.large_printed < 64) {
+			d.large_printed++;
+			std::fprintf(stderr,
+			             "[kyty-gpu-args] large (as the GPU read it) path %u tick %" PRIu64 " args 0x%016" PRIx64
+			             " ids 0x%016" PRIx64 " 0x%016" PRIx64 ": index count %u, instances %u, first index %u, "
+			             "vertex offset %d, first instance %u; index buffer %u indices\n",
+			             tag.path, tag.tick, tag.key, tag.key2, tag.key3, words[0], words[1], words[2],
+			             static_cast<int32_t>(words[3]), words[4], tag.max_indices);
+		}
+		d.scanned++;
+		d.max_index = std::max(d.max_index, words[0]);
+		d.max_inst  = std::max(d.max_inst, words[1]);
+		if (bad) {
+			d.absurd++;
+			if (d.printed < 96) {
+				d.printed++;
+				std::fprintf(stderr,
+				             "[kyty-gpu-args] absurd (as the GPU read it) path %u tick %" PRIu64 " args 0x%016" PRIx64
+				             " ids 0x%016" PRIx64 " 0x%016" PRIx64 ": index count %u, instances %u, first index %u, "
+				             "vertex offset %d, first instance %u; index buffer %u indices\n",
+				             tag.path, tag.tick, tag.key, tag.key2, tag.key3, words[0], words[1], words[2],
+				             static_cast<int32_t>(words[3]), words[4], tag.max_indices);
+				if (tag.key != 0) {
+					DiagArgsSyncDumpFor(tag.key, "absurd record");
+					DiagArgsSyncDumpPackets(tag.key, "absurd record");
+					DiagGpuArgsDumpNeighbour(tag.key, tag.key2);
+				}
+			}
+		}
+		tag.tick = 0;
+	}
+	if (d.last_report_ns == 0) {
+		d.last_report_ns = now;
+	} else if (now - d.last_report_ns >= 10'000'000'000ull) {
+		std::fprintf(stderr,
+		             "[kyty-gpu-args] last %.0f s: %" PRIu64 " indexed indirect records copied, %" PRIu64
+		             " checked after their tick, index count max %u, instances max %u, absurd %" PRIu64 "\n",
+		             static_cast<double>(now - d.last_report_ns) / 1e9, d.recorded, d.scanned, d.max_index, d.max_inst,
+		             d.absurd);
+		d.last_report_ns = now;
+		d.recorded = d.scanned = d.absurd = 0;
+		d.max_index = d.max_inst = 0;
+	}
+}
+
+void GpuArgsRecord(RenderContext& context, CommandRecorder vk_buffer, vk::Buffer source, uint64_t source_offset,
+                   uint64_t key, uint64_t key2, uint64_t key3, uint32_t max_indices, uint32_t path) {
+	auto& d         = g_gpu_args;
+	auto& scheduler = context.GetCommandScheduler();
+	if (d.ring == nullptr) {
+		d.ring = std::make_unique<Buffer>(context.GetGraphics(), scheduler, MemoryUsage::Download, 0,
+		                                  vk::BufferUsageFlagBits::eTransferDst,
+		                                  uint64_t {GpuArgsSlots} * GpuArgsSlotBytes);
+		d.tags.resize(GpuArgsSlots);
+		d.scheduler = &scheduler;
+	}
+	const auto now = GpuArgsNowNs();
+	if (now - d.last_scan_ns > 500'000'000ull) {
+		d.last_scan_ns = now;
+		GpuArgsScan(scheduler, now);
+	}
+	const uint32_t slot = d.next++ % GpuArgsSlots;
+	vk::MemoryBarrier before {};
+	before.srcAccessMask = vk::AccessFlagBits::eMemoryWrite;
+	before.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+	vk_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eTransfer, {}, 1,
+	                          &before, 0, nullptr, 0, nullptr);
+	const vk::BufferCopy region {source_offset, uint64_t {slot} * GpuArgsSlotBytes, 20};
+	vk_buffer.copyBuffer(source, d.ring->Handle(), 1, &region);
+	vk::MemoryBarrier after {};
+	after.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+	after.dstAccessMask = vk::AccessFlagBits::eHostRead;
+	vk_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 1, &after, 0,
+	                          nullptr, 0, nullptr);
+	d.tags[slot] = {scheduler.CurrentTick(), key, key2, key3, max_indices, path};
+	d.recorded++;
+}
+
+} // namespace
+
+void DiagGpuArgsDumpUnfinished() {
+	auto& d = g_gpu_args;
+	if (!DiagGpuArgs() || d.ring == nullptr || d.scheduler == nullptr) {
+		return;
+	}
+	d.ring->Invalidate(0, d.ring->Size());
+	const auto mapped = d.ring->Mapped();
+	std::fprintf(stderr, "[kyty-gpu-args] at the device loss: the last 48 records copied (%u so far), newest last:\n", d.next);
+	const uint32_t count = std::min<uint32_t>(d.next, 48);
+	for (uint32_t i = count; i > 0; i--) {
+		const uint32_t slot = (d.next - i) % GpuArgsSlots;
+		const auto&    tag  = d.tags[slot];
+		uint32_t       words[5] {};
+		std::memcpy(words, mapped.data() + size_t {slot} * GpuArgsSlotBytes, sizeof(words));
+		std::fprintf(stderr,
+		             "[kyty-gpu-args] unfinished? %s path %u tick %" PRIu64 " args 0x%016" PRIx64 " ids 0x%016" PRIx64
+		             " 0x%016" PRIx64 ": index count %u, instances %u, first index %u, vertex offset %d, first instance %u; "
+		             "index buffer %u indices\n",
+		             tag.tick == 0 ? "checked" : (d.scheduler->IsFree(tag.tick) ? "done" : "NOT DONE"), tag.path, tag.tick,
+		             tag.key, tag.key2, tag.key3, words[0], words[1], words[2], static_cast<int32_t>(words[3]), words[4],
+		             tag.max_indices);
+		const bool bad = words[1] > (1u << 20u) ||
+		                 (tag.max_indices != 0 && (words[0] > tag.max_indices || words[2] >= tag.max_indices));
+		if (bad && tag.key != 0) {
+			DiagArgsSyncDumpFor(tag.key, "absurd record at the device loss");
+			DiagArgsSyncDumpPackets(tag.key, "absurd record at the device loss");
+			DiagGpuArgsDumpNeighbour(tag.key, tag.key2);
+		}
+	}
+}
 
 namespace {
 bool NativeXprVertexBuffersEnabled();
@@ -1935,7 +2149,7 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 		const auto size = static_cast<uint64_t>(emit.indirect.count - 1) * emit.indirect.stride +
 		                  (draw.indexed ? sizeof(vk::DrawIndexedIndirectCommand)
 		                                : sizeof(vk::DrawIndirectCommand));
-		args_buffer = m_context.GetBufferCache().ObtainBuffer(emit.indirect.address, size, false);
+		args_buffer = m_context.GetBufferCache().ObtainArgsBuffer(emit.indirect.address, size, 1);
 		EXIT_IF((args_buffer.second & 3u) != 0);
 		if (emit.indirect.count_address != 0) {
 			count_buffer = m_context.GetBufferCache().ObtainBuffer(emit.indirect.count_address,
@@ -2063,6 +2277,13 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 		buffer.EndRendering();
 		ShaderWriteHazardBarrier(vk_buffer, shader_write_stages);
 	}
+	if (args_buffer.first != nullptr && draw.indexed && DiagGpuArgs()) {
+		buffer.EndRendering();
+		GpuArgsRecord(m_context, vk_buffer, args_buffer.first->Handle(), args_buffer.second, emit.indirect.address,
+		              state.vertex_info[0].stage.module != nullptr ? state.vertex_info[0].stage.module->id : 0,
+		              state.ps_active && state.ps_input_info.stage.module != nullptr ? state.ps_input_info.stage.module->id : 0,
+		              draw.index_count, count_buffer.first != nullptr ? 2u : 1u);
+	}
 	buffer.BeginRendering(rendering);
 	vk_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
 	if (mesh_task) {
@@ -2091,8 +2312,18 @@ void RenderExecutor::ExecutePreparedDraw(CommandBuffer& buffer, const DrawCallIn
 			                            emit.indirect.count, emit.indirect.stride);
 		}
 	} else if (draw.indexed) {
-		vk_buffer.drawIndexedIndirect(args_buffer.first->Handle(), args_buffer.second,
-		                              emit.indirect.count, emit.indirect.stride);
+		const auto skip_vs = DiagSkipVsModule();
+		if (skip_vs != 0 && state.vertex_info[0].stage.module != nullptr &&
+		    state.vertex_info[0].stage.module->id == skip_vs) {
+			const auto n = g_skipped_vs_draws.fetch_add(1, std::memory_order_relaxed) + 1;
+			if (n <= 8 || (n & (n - 1)) == 0) {
+				std::fprintf(stderr, "[kyty-skip-vs] skipped indexed indirect draw %" PRIu64 " of VS module 0x%016" PRIx64
+				             " (args 0x%016" PRIx64 ")\n", n, skip_vs, emit.indirect.address);
+			}
+		} else {
+			vk_buffer.drawIndexedIndirect(args_buffer.first->Handle(), args_buffer.second,
+			                              emit.indirect.count, emit.indirect.stride);
+		}
 	} else {
 		vk_buffer.drawIndirect(args_buffer.first->Handle(), args_buffer.second,
 		                       emit.indirect.count, emit.indirect.stride);

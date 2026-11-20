@@ -1445,7 +1445,7 @@ bool RenderExecutor::NativeXprEmit(CommandBuffer& buffer, NativeXprRecord& recor
 	const auto [indices, index_offset] = buffer_cache.ObtainBuffer(index_base, index_bytes, false);
 	const auto [arguments, args_offset] =
 	    direct != nullptr ? std::pair<Buffer*, uint64_t> {nullptr, 0}
-	                      : buffer_cache.ObtainBuffer(args_addr, sizeof(vk::DrawIndexedIndirectCommand), false);
+	                      : buffer_cache.ObtainArgsBuffer(args_addr, sizeof(vk::DrawIndexedIndirectCommand), 3);
 	if (indices == nullptr || (direct == nullptr && arguments == nullptr) || buffer.IsInvalid()) return false;
 	PreparedVertexBuffers vertex_bindings;
 	if (record.vertex_buffers) {

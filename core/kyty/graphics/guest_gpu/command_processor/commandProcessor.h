@@ -170,6 +170,7 @@ public:
 	const uint32_t* StageIndirectRegisters(uint32_t opcode, const uint32_t* packet, uint32_t packet_dw);
 
 	[[nodiscard]] bool IsAsyncComputeQueue() const { return m_interrupt_event_id >= 0x20; }
+	[[nodiscard]] int  DiagQueueId() const { return m_interrupt_event_id; }
 	void ScoutSkipDraws(uint32_t count) noexcept { m_scout_skipped += count; }
 
 private:

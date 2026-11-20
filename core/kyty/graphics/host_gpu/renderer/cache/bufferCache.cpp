@@ -27,6 +27,12 @@
 #include <bit>
 #include <chrono>
 #include <cinttypes>
+#include <cstdio>
+#include <mutex>
+#include <string>
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -243,6 +249,7 @@ void BufferCache::TouchBuffer(const Buffer& buffer) {
 }
 
 void BufferCache::DeleteBuffer(BufferId id) {
+	DiagArgsSyncNoteBuffer(11, m_slot_buffers[id].CpuAddress(), m_slot_buffers[id].Size(), 0);
 	Unregister(id);
 	if (m_scheduler.Active()) {
 		m_scheduler.DeferHostOperation([this, id] {
@@ -1458,6 +1465,24 @@ BufferId BufferCache::CreateBuffer(uint64_t vaddr, uint64_t size) {
 	SetVulkanObjectNameF(m_graphics.device, buffer.Handle(),
 	                     "Kyty.GameBuffer[guest=0x{:016x} size=0x{:x}]", overlap.begin,
 	                     overlap.end - overlap.begin);
+	{
+		uint32_t joined = 0;
+		uint64_t at     = overlap.begin;
+		for (auto it = overlap.first; it != overlap.last; ++it) {
+			const auto& old = m_slot_buffers[it->second];
+			if (old.CpuAddress() > at) {
+				DiagArgsSyncNoteBuffer(12, at, old.CpuAddress() - at, 0);
+			}
+			DiagArgsSyncNoteBuffer(10, old.CpuAddress(), old.Size(), 0);
+			at = std::max(at, old.CpuAddress() + old.Size());
+			joined++;
+		}
+		if (at < overlap.end) {
+			DiagArgsSyncNoteBuffer(12, at, overlap.end - at, 0);
+		}
+		DiagArgsSyncNoteBuffer(9, overlap.begin, overlap.end - overlap.begin,
+		                       joined | (overlap.has_stream_leap ? 0x80000000u : 0u));
+	}
 	for (auto it = overlap.first; it != overlap.last;) {
 		const auto old_id = (it++)->second;
 		JoinOverlap(id, old_id, !overlap.has_stream_leap);
@@ -1472,6 +1497,1596 @@ bool BufferCache::NoImageStartsAt(uint64_t vaddr) const noexcept {
 	       !m_texture_cache.m_registered_pages.Any(pages.first, pages.last_exclusive);
 }
 
+namespace {
+
+bool ArgsSyncDiag() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_ARGS_SYNC");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+bool ArgsPreferGpu() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_ARGS_PREFER_GPU");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+bool SyncPreferGpu() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_SYNC_PREFER_GPU");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+uint64_t g_sync_skipped_runs  = 0;
+uint64_t g_sync_skipped_bytes = 0;
+
+template <typename Emit>
+void SyncSkipMarked(std::span<const std::pair<uint64_t, uint64_t>> marked, uint64_t address, uint64_t bytes, Emit&& emit) {
+	auto       at      = address;
+	const auto end     = address + bytes;
+	uint64_t   emitted = 0;
+	for (const auto& [marked_begin, marked_size]: marked) {
+		const auto marked_end = marked_begin + marked_size;
+		if (marked_end <= at || marked_begin >= end) {
+			continue;
+		}
+		if (marked_begin > at) {
+			emit(at, marked_begin - at);
+			emitted += marked_begin - at;
+		}
+		at = std::max(at, marked_end);
+		if (at >= end) {
+			break;
+		}
+	}
+	if (at < end) {
+		emit(at, end - at);
+		emitted += end - at;
+	}
+	if (emitted != bytes) {
+		g_sync_skipped_runs++;
+		g_sync_skipped_bytes += bytes - emitted;
+	}
+}
+
+struct ArgsSyncCounts {
+	uint64_t reads    = 0;
+	uint64_t dirty    = 0;
+	uint64_t streamed = 0;
+	uint64_t uploaded = 0;
+	uint64_t over_gpu = 0;
+	uint64_t cpu_only = 0;
+	uint64_t kept_gpu = 0;
+	uint64_t any_over_gpu = 0;
+	uint64_t last_ns  = 0;
+	uint32_t printed  = 0;
+	uint32_t any_printed = 0;
+};
+
+ArgsSyncCounts g_args_sync;
+
+struct SyncRingEntry {
+	uint64_t    seq    = 0;
+	uint64_t    vaddr  = 0;
+	uint64_t    size   = 0;
+	const void* caller = nullptr;
+	uint8_t     kind   = 0;
+	uint8_t     marks  = 0;
+	uint8_t     op_kind    = 0xff;
+	uint8_t     guest_sync = 0;
+	uint8_t     path       = 0;
+	int32_t     queue      = -1;
+	uint64_t    op_seq     = 0;
+	uint64_t    submit     = 0;
+	uint64_t    shader     = 0;
+	std::array<uint32_t, 4> words {};
+	uint64_t    ind_base   = 0;
+	uint32_t    ind_offset = 0;
+	uint32_t    ind_count  = 0;
+	uint32_t    ind_stride = 0;
+	uint32_t    ind_run0   = 0;
+	uint32_t    ind_runl   = 0;
+	uint8_t     ind_run    = 0;
+	uint32_t    pkt_header = 0;
+	std::array<uint32_t, 3> pkt_body {};
+	uint64_t    sub_order  = 0;
+	int32_t     sub_queue  = -1;
+};
+
+constexpr size_t SyncRingSize = 4096;
+
+struct SyncRing {
+	std::mutex                              mutex;
+	std::array<SyncRingEntry, SyncRingSize> uploads {};
+	std::array<SyncRingEntry, SyncRingSize> writes {};
+	std::array<SyncRingEntry, SyncRingSize> reads {};
+	std::array<SyncRingEntry, SyncRingSize> cp {};
+	std::array<SyncRingEntry, SyncRingSize> skips {};
+	std::array<SyncRingEntry, SyncRingSize> life {};
+	uint64_t                                seq          = 0;
+	uint64_t                                upload_count = 0;
+	uint64_t                                write_count  = 0;
+	uint64_t                                read_count   = 0;
+	uint64_t                                cp_count     = 0;
+	uint64_t                                skip_count   = 0;
+	uint64_t                                life_count   = 0;
+	uint64_t                                skip_marked  = 0;
+	uint64_t                                skip_window  = 0;
+	uint64_t                                skip_window_marked = 0;
+	MemoryTracker*                          tracker      = nullptr;
+};
+
+SyncRing g_sync_ring;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define KYTY_DIAG_RETURN_ADDRESS() __builtin_return_address(0)
+#else
+#define KYTY_DIAG_RETURN_ADDRESS() nullptr
+#endif
+
+struct SyncOpContext {
+	int32_t  queue      = -1;
+	uint8_t  op_kind    = 0xff;
+	uint8_t  guest_sync = 0;
+	uint64_t op_seq     = 0;
+	uint64_t submit     = 0;
+};
+
+thread_local SyncOpContext g_sync_op;
+
+struct SyncBindingHint {
+	uint8_t                 path = 0;
+	std::array<uint32_t, 4> words {};
+};
+
+thread_local SyncBindingHint g_sync_hint;
+
+struct SyncIndirect {
+	uint64_t base   = 0;
+	uint32_t offset = 0;
+	uint32_t count  = 0;
+	uint32_t stride = 0;
+	uint32_t run0   = 0;
+	uint32_t runl   = 0;
+	uint8_t  run    = 0;
+};
+
+thread_local SyncIndirect g_sync_indirect;
+
+thread_local uint64_t g_sync_shader = 0;
+
+struct SyncDecision {
+	uint8_t  source    = 0;
+	uint64_t write_seq = 0;
+	uint64_t emitted   = 0;
+};
+
+thread_local SyncDecision g_sync_decision;
+
+thread_local const uint32_t* g_sync_packet = nullptr;
+
+struct SyncWaitEntry {
+	uint64_t seq       = 0;
+	uint64_t address   = 0;
+	uint64_t value     = 0;
+	uint64_t reference = 0;
+	uint64_t mask      = 0;
+	uint64_t write_seq = 0;
+	uint64_t emitted   = 0;
+	uint64_t repeats   = 0;
+	int32_t  queue     = -1;
+	uint32_t size      = 0;
+	uint32_t function  = 0;
+	uint8_t  met       = 0;
+	uint8_t  source    = 0;
+	uint8_t  marks     = 0;
+	const uint32_t* packet = nullptr;
+	uint64_t hold_order  = 0;
+	uint64_t hold_before = 0;
+	uint64_t hold_done   = 0;
+	uint8_t  hold_why    = 0xffu;
+};
+
+struct SyncWaits {
+	std::array<SyncWaitEntry, 4096> ring {};
+	std::array<uint64_t, 64>        last_by_queue {};
+	uint64_t                        count = 0;
+};
+
+SyncWaits g_sync_waits;
+
+struct SyncHoldCheck {
+	std::atomic<uint64_t> order {0};
+	std::atomic<uint64_t> before {0};
+	std::atomic<uint64_t> done {0};
+	std::atomic<uint32_t> why {0xffu};
+};
+
+std::array<SyncHoldCheck, 64>        g_sync_hold_last {};
+std::array<std::atomic<uint64_t>, 4> g_sync_hold_why {};
+thread_local const uint32_t*         g_sync_cp_packet = nullptr;
+thread_local uint64_t                g_sync_sub_order = 0;
+thread_local int32_t                 g_sync_sub_queue = -1;
+
+constexpr const char* SyncHoldWhy[] = {
+    "held, or would be held with KYTY_DIAG_ACE_HOLD off (an earlier q0 submission not fully parsed, q0's front not blocked)",
+    "no hold: every q0 submission enqueued before it was fully parsed",
+    "no hold: q0 empty although an earlier q0 submission is not marked done",
+    "no hold: q0's front blocked (the no-deadlock exception)"};
+
+struct SyncDecisionEntry {
+	uint64_t seq        = 0;
+	uint64_t address    = 0;
+	uint64_t value      = 0;
+	uint64_t reference  = 0;
+	uint64_t mask       = 0;
+	uint64_t write_seq  = 0;
+	uint64_t emitted    = 0;
+	int32_t  queue      = -1;
+	uint32_t size       = 0;
+	uint32_t function   = 0;
+	uint32_t exec_count = 0;
+	uint8_t  kind       = 0;
+	uint8_t  taken      = 0;
+	uint8_t  source     = 0;
+	uint8_t  marks      = 0;
+};
+
+struct SyncDecisions {
+	std::array<SyncDecisionEntry, 4096> ring {};
+	uint64_t                            count = 0;
+};
+
+SyncDecisions g_sync_decisions;
+
+struct CullBinding {
+	uint64_t address = 0;
+	uint64_t size    = 0;
+	uint8_t  written = 0;
+};
+
+struct CullSlot {
+	uint64_t                   seq        = 0;
+	uint64_t                   op_seq     = 0;
+	uint64_t                   submit     = 0;
+	uint64_t                   shader     = 0;
+	uint64_t                   tick       = 0;
+	uint64_t                   args_guest = 0;
+	int32_t                    queue      = -1;
+	uint32_t                   mode       = 0;
+	uint32_t                   flags      = 0;
+	uint8_t                    kind       = 0;
+	uint8_t                    bindings   = 0;
+	uint8_t                    post       = 0;
+	uint8_t                    has_args   = 0;
+	uint8_t                    has_groups = 0;
+	uint32_t                   direct_groups[3] {};
+	std::array<CullBinding, 8> b {};
+	std::array<int8_t, 8>      post_head {};
+};
+
+constexpr uint32_t CullSlots     = 512;
+constexpr uint64_t CullHeadBytes = 4096u;
+constexpr uint64_t CullPreBase   = 1024u;
+constexpr uint64_t CullPostBase  = CullPreBase + 8u * CullHeadBytes;
+constexpr uint64_t CullSlotBytes = CullPostBase + 4u * CullHeadBytes;
+
+struct CullState {
+	std::unique_ptr<Buffer>          ring;
+	CommandScheduler*                scheduler = nullptr;
+	std::array<CullSlot, CullSlots> slots {};
+	uint32_t                         next    = 0;
+	int32_t                          current = -1;
+};
+
+CullState g_cull;
+
+thread_local std::vector<CullBinding> g_cull_bindings;
+
+struct CullCp {
+	uint64_t op_seq = 0;
+	uint64_t args   = 0;
+	uint64_t base   = 0;
+	uint32_t mode   = 0;
+	int32_t  queue  = -1;
+};
+
+std::array<CullCp, 4096> g_cull_cp {};
+uint64_t                 g_cull_cp_count = 0;
+
+bool CullShader(uint64_t hash) {
+	static const std::vector<uint64_t> set = [] {
+		std::vector<uint64_t> values;
+		const char*           text = std::getenv("KYTY_DIAG_CULL_SHADERS");
+		const std::string     list = text != nullptr && text[0] != '\0'
+		                                  ? std::string(text)
+		                                  : std::string("7d3742bf962e7527,1b64e3043113a655,f757b6bfbb13cf67,"
+		                                                "c820ae0968beaefd,0de564535eb5bf62,80a562a7c9fab830,"
+		                                                "651dc20d4c870826,49c47c3080e7a0fc,05d7a53196247a0a,297c685a60d19e1b");
+		size_t at = 0;
+		while (at < list.size()) {
+			const auto comma = list.find_first_of(",; :", at);
+			const auto item  = list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+			if (!item.empty()) {
+				values.push_back(std::strtoull(item.c_str(), nullptr, 16));
+			}
+			if (comma == std::string::npos) {
+				break;
+			}
+			at = comma + 1;
+		}
+		return values;
+	}();
+	return hash != 0 && std::find(set.begin(), set.end(), hash) != set.end();
+}
+
+uint64_t CullObjectBytes() {
+	static const uint64_t bytes = [] {
+		const char* text = std::getenv("KYTY_DIAG_CULL_SLOTS");
+		if (text == nullptr || text[0] == '\0') {
+			return uint64_t {0};
+		}
+		char*          end   = nullptr;
+		const uint64_t slots = std::strtoull(text, &end, 10);
+		if (end == nullptr || *end != ':') {
+			return uint64_t {0};
+		}
+		return static_cast<uint64_t>(slots * std::strtoull(end + 1, nullptr, 10));
+	}();
+	return bytes;
+}
+
+struct RunShaderConfig {
+	uint64_t hash    = 0;
+	uint64_t threads = 0;
+	uint64_t stride  = 0;
+};
+
+const RunShaderConfig& DiagRunShader() {
+	static const RunShaderConfig config = [] {
+		RunShaderConfig c {};
+		const char*     text = std::getenv("KYTY_DIAG_RUN_SHADER");
+		if (text == nullptr || text[0] == '\0') {
+			return c;
+		}
+		char*          end  = nullptr;
+		const uint64_t hash = std::strtoull(text, &end, 16);
+		if (end == nullptr || *end != ':') {
+			return c;
+		}
+		const uint64_t threads = std::strtoull(end + 1, &end, 10);
+		if (end == nullptr || *end != ':') {
+			return c;
+		}
+		const uint64_t stride = std::strtoull(end + 1, nullptr, 10);
+		if (hash != 0 && threads != 0 && stride != 0) {
+			c = {hash, threads, stride};
+		}
+		return c;
+	}();
+	return config;
+}
+
+constexpr const char* CullKinds[] = {"?", "dispatch direct", "dispatch indirect", "dispatch indirect (thread counts)"};
+
+constexpr const char* SyncDecisionSources[] = {"?", "a parsed CP write of known value", "guest memory after waiting for a write's execution",
+                                               "a guest-memory copy", "a guest-memory copy (no pipeline)"};
+
+SyncRingEntry SyncEntry(uint8_t kind, uint64_t vaddr, uint64_t size, const void* caller, uint8_t marks, bool take_hint) {
+	SyncRingEntry e {};
+	e.vaddr      = vaddr;
+	e.size       = size;
+	e.caller     = caller;
+	e.kind       = kind;
+	e.marks      = marks;
+	e.queue      = g_sync_op.queue;
+	e.op_kind    = g_sync_op.op_kind;
+	e.guest_sync = g_sync_op.guest_sync;
+	e.op_seq     = g_sync_op.op_seq;
+	e.submit     = g_sync_op.submit;
+	e.shader     = Common::HackNotice::CurrentShaderSlot() != 0 ? Common::HackNotice::CurrentShaderSlot() : g_sync_shader;
+	if (kind == 5) {
+		e.ind_base   = g_sync_indirect.base;
+		e.ind_offset = g_sync_indirect.offset;
+		e.ind_count  = g_sync_indirect.count;
+		e.ind_stride = g_sync_indirect.stride;
+		e.ind_run0   = g_sync_indirect.run0;
+		e.ind_runl   = g_sync_indirect.runl;
+		e.ind_run    = g_sync_indirect.run;
+	}
+	if (take_hint) {
+		e.path      = g_sync_hint.path;
+		e.words     = g_sync_hint.words;
+		g_sync_hint = {};
+	}
+	return e;
+}
+
+constexpr const char* SyncRingKinds[] = {"?", "upload (one buffer)", "upload (buffer spans)",
+                                         "GPU write (a written binding)", "GPU write (write-bitmap readback)",
+                                         "indirect args read", "CP write (parse time)", "?",
+                                         "dispatch skipped on a CPU-read zero count", "buffer created",
+                                         "old buffer joined into a new one (copied)", "buffer deleted",
+                                         "GAP of a new buffer no old buffer covered", "GC eviction, clean per the tracker (no download)",
+                                         "GC eviction, GPU-dirty (downloaded)"};
+
+constexpr const char* SyncOpKinds[] = {"draw index", "draw auto", "draw indirect", "dispatch direct",
+                                       "dispatch indirect", "callback"};
+
+uint8_t SyncMarks(const RegionManager::ArgsPageProbe& probe) {
+	return static_cast<uint8_t>((probe.cpu_dirty ? 1u : 0u) | (probe.gpu_dirty ? 2u : 0u) | (probe.gpu_written ? 4u : 0u) |
+	                            (probe.gpu_noted ? 8u : 0u) | (probe.block_opened ? 16u : 0u));
+}
+
+void SyncRingRecordWrite(uint8_t kind, uint64_t vaddr, uint64_t size, const void* caller) {
+	auto             e = SyncEntry(kind, vaddr, size, caller, 0, kind == 3);
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            r = g_sync_ring;
+	e.seq             = ++r.seq;
+	r.writes[r.write_count++ % SyncRingSize] = e;
+}
+
+void SyncCallerText(const void* caller, char* text, size_t size) {
+	std::snprintf(text, size, "-");
+	if (caller == nullptr) {
+		return;
+	}
+	std::snprintf(text, size, "%p", caller);
+#if defined(__linux__)
+	Dl_info info {};
+	if (dladdr(caller, &info) != 0 && info.dli_fbase != nullptr && info.dli_fname != nullptr) {
+		const char* name = std::strrchr(info.dli_fname, '/');
+		std::snprintf(text, size, "%s+0x%" PRIxPTR, name != nullptr ? name + 1 : info.dli_fname,
+		              reinterpret_cast<uintptr_t>(caller) - reinterpret_cast<uintptr_t>(info.dli_fbase));
+	}
+#endif
+}
+
+void ArgsSyncReport() {
+	auto&      c   = g_args_sync;
+	const auto now = static_cast<uint64_t>(
+	    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+	if (c.last_ns == 0) {
+		c.last_ns = now;
+		return;
+	}
+	if (now - c.last_ns < 10'000'000'000ull) {
+		return;
+	}
+	std::fprintf(stderr,
+	             "[kyty-args-sync] last %.0f s: %" PRIu64 " args reads, %" PRIu64 " on CPU-dirty pages, %" PRIu64
+	             " streamed from guest memory, %" PRIu64 " uploaded CPU-dirty pages; %" PRIu64
+	             " of those over GPU-written pages, %" PRIu64 " with no GPU mark; %" PRIu64 " kept the GPU's bytes; %" PRIu64
+	             " uploads by any reader over GPU-written pages\n",
+	             static_cast<double>(now - c.last_ns) / 1e9, c.reads, c.dirty, c.streamed, c.uploaded, c.over_gpu,
+	             c.cpu_only, c.kept_gpu, c.any_over_gpu);
+	if (SyncPreferGpu()) {
+		std::fprintf(stderr,
+		             "[kyty-args-sync] last %.0f s: prefer GPU (all readers) skipped %" PRIu64 " upload runs, %" PRIu64
+		             " bytes on GPU-marked pages\n",
+		             static_cast<double>(now - c.last_ns) / 1e9, g_sync_skipped_runs, g_sync_skipped_bytes);
+		g_sync_skipped_runs = g_sync_skipped_bytes = 0;
+	}
+	{
+		std::scoped_lock lock(g_sync_ring.mutex);
+		std::fprintf(stderr,
+		             "[kyty-args-sync] last %.0f s: %" PRIu64 " indirect dispatches skipped on a CPU-read zero count, %" PRIu64
+		             " of them with GPU marks on their args page; no-zero-skip %s\n",
+		             static_cast<double>(now - c.last_ns) / 1e9, g_sync_ring.skip_window, g_sync_ring.skip_window_marked,
+		             DiagNoZeroSkip() ? "on" : "off");
+		g_sync_ring.skip_window = g_sync_ring.skip_window_marked = 0;
+	}
+	c.last_ns = now;
+	c.reads = c.dirty = c.streamed = c.uploaded = c.over_gpu = c.cpu_only = c.kept_gpu = c.any_over_gpu = 0;
+}
+
+void ArgsSyncPrint(const char* what, uint32_t site, uint64_t vaddr, uint64_t size,
+                   const RegionManager::ArgsPageProbe& probe) {
+	auto& c = g_args_sync;
+	if (c.printed >= 64) {
+		return;
+	}
+	c.printed++;
+	std::fprintf(stderr,
+	             "[kyty-args-sync] %s: site %u args 0x%016" PRIx64 " size %" PRIu64 " pages %" PRIu64
+	             ": cpu_dirty %d gpu_dirty %d gpu_written %d gpu_noted %d block_opened %d\n",
+	             what, site, vaddr, size,
+	             (vaddr + size + TRACKER_PAGE_SIZE - 1) / TRACKER_PAGE_SIZE - vaddr / TRACKER_PAGE_SIZE,
+	             probe.cpu_dirty ? 1 : 0, probe.gpu_dirty ? 1 : 0, probe.gpu_written ? 1 : 0,
+	             probe.gpu_noted ? 1 : 0, probe.block_opened ? 1 : 0);
+}
+
+void ArgsSyncNoteUploads(MemoryTracker& tracker, const Buffer& buffer, std::span<const vk::BufferCopy> copies,
+                         uint8_t kind, const void* caller) {
+	auto& c = g_args_sync;
+	for (const auto& copy: copies) {
+		const auto address = buffer.CpuAddress() + copy.dstOffset;
+		const auto probe   = tracker.ProbeArgsPages(address, copy.size);
+		{
+			auto             e = SyncEntry(kind, address, static_cast<uint64_t>(copy.size), caller, SyncMarks(probe), false);
+			std::scoped_lock lock(g_sync_ring.mutex);
+			auto&            r = g_sync_ring;
+			r.tracker         = &tracker;
+			e.seq             = ++r.seq;
+			r.uploads[r.upload_count++ % SyncRingSize] = e;
+		}
+		if (!probe.gpu_written && !probe.gpu_noted) {
+			continue;
+		}
+		c.any_over_gpu++;
+		if (c.any_printed < 16) {
+			c.any_printed++;
+			std::fprintf(stderr,
+			             "[kyty-args-sync] an upload (any reader) over GPU-written pages: address 0x%016" PRIx64
+			             " bytes %" PRIu64 ": gpu_dirty %d gpu_written %d gpu_noted %d block_opened %d\n",
+			             address, static_cast<uint64_t>(copy.size), probe.gpu_dirty ? 1 : 0, probe.gpu_written ? 1 : 0,
+			             probe.gpu_noted ? 1 : 0, probe.block_opened ? 1 : 0);
+		}
+	}
+}
+
+}
+
+void DiagArgsSyncSetOperation(uint32_t queue, uint32_t kind, uint64_t sequence, uint64_t submit, bool guest_sync) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_op = {static_cast<int32_t>(queue), static_cast<uint8_t>(kind), static_cast<uint8_t>(guest_sync ? 1u : 0u), sequence,
+	             submit};
+	g_sync_indirect = {};
+	g_sync_shader   = 0;
+}
+
+void DiagArgsSyncSetShader(uint64_t hash) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_shader = hash;
+	g_cull_bindings.clear();
+}
+
+void DiagArgsSyncNoteBinding(uint64_t address, uint64_t size, bool written) {
+	if (!ArgsSyncDiag() || address == 0 || size == 0 || !CullShader(g_sync_shader)) {
+		return;
+	}
+	for (auto& b: g_cull_bindings) {
+		if (b.address == address && b.size == size) {
+			b.written = static_cast<uint8_t>(b.written | (written ? 1u : 0u));
+			return;
+		}
+	}
+	if (g_cull_bindings.size() < 8u) {
+		g_cull_bindings.push_back({address, size, static_cast<uint8_t>(written ? 1u : 0u)});
+	}
+}
+
+void DiagArgsSyncNoteDispatchCp(uint32_t queue, uint64_t sequence, uint64_t args, uint64_t base, uint32_t mode) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	std::scoped_lock lock(g_sync_ring.mutex);
+	g_cull_cp[g_cull_cp_count++ % g_cull_cp.size()] = {sequence, args, base, mode, static_cast<int32_t>(queue)};
+}
+
+bool DiagNoZeroSkip() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_NO_ZERO_SKIP");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
+void DiagArgsSyncNoteCpWrite(uint32_t queue, uint64_t sequence, uint64_t address, uint64_t size, const void* value) {
+	if (!ArgsSyncDiag() || size == 0) {
+		return;
+	}
+	SyncRingEntry e {};
+	e.vaddr  = address;
+	e.size   = size;
+	e.kind   = 6;
+	e.queue  = static_cast<int32_t>(queue);
+	e.op_seq = sequence;
+	if (const auto* p = g_sync_cp_packet; p != nullptr) {
+		std::array<uint32_t, 4> pkt {};
+		if (LibKernel::Memory::TryReadBacking(reinterpret_cast<uint64_t>(p), pkt.data(), sizeof(pkt))) {
+			e.pkt_header = pkt[0];
+			std::copy_n(pkt.begin() + 1, 3, e.pkt_body.begin());
+		}
+	}
+	e.sub_order = g_sync_sub_order;
+	e.sub_queue = g_sync_sub_queue;
+	if (value != nullptr) {
+		std::memcpy(e.words.data(), value, static_cast<size_t>(std::min<uint64_t>(size, sizeof(uint32_t) * 4u)));
+	}
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            r = g_sync_ring;
+	e.seq             = ++r.seq;
+	r.cp[r.cp_count++ % SyncRingSize] = e;
+}
+
+void DiagArgsSyncNoteWaitPacket(const uint32_t* body) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_packet = body;
+}
+
+void DiagArgsSyncNoteBuffer(uint8_t kind, uint64_t vaddr, uint64_t size, uint32_t extra) {
+	if (!ArgsSyncDiag() || size == 0) {
+		return;
+	}
+	auto*      tracker = g_sync_ring.tracker;
+	const auto probe   = tracker != nullptr ? tracker->ProbeArgsPages(vaddr, size) : RegionManager::ArgsPageProbe {};
+	auto       e       = SyncEntry(kind, vaddr, size, nullptr, SyncMarks(probe), false);
+	e.words[0]         = extra;
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            r = g_sync_ring;
+	e.seq             = ++r.seq;
+	r.life[r.life_count++ % SyncRingSize] = e;
+}
+
+void DiagArgsSyncNoteDecisionSource(uint8_t source, uint64_t write_sequence, uint64_t emitted) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_decision = {source, write_sequence, emitted};
+}
+
+void DiagArgsSyncNoteWait(uint32_t queue, uint64_t address, uint32_t size, uint64_t value, uint64_t reference, uint64_t mask,
+                          uint32_t function, bool met) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	auto*      tracker  = g_sync_ring.tracker;
+	const auto probe    = tracker != nullptr ? tracker->ProbeArgsPages(address, size) : RegionManager::ArgsPageProbe {};
+	const auto decision = std::exchange(g_sync_decision, SyncDecision {});
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            w    = g_sync_waits;
+	auto&            last = w.last_by_queue[queue % 64u];
+	if (last != 0 && w.count - (last - 1) < w.ring.size()) {
+		auto& previous = w.ring[(last - 1) % w.ring.size()];
+		if (previous.met == 0 && !met && previous.address == address && previous.reference == reference &&
+		    previous.mask == mask && previous.function == function) {
+			previous.repeats++;
+			previous.value   = value;
+			previous.emitted = decision.emitted;
+			return;
+		}
+	}
+	SyncWaitEntry e {};
+	e.seq       = ++g_sync_ring.seq;
+	e.address   = address;
+	e.value     = value;
+	e.reference = reference;
+	e.mask      = mask;
+	e.write_seq = decision.write_seq;
+	e.emitted   = decision.emitted;
+	e.queue     = static_cast<int32_t>(queue);
+	e.size      = size;
+	e.function  = function;
+	e.met       = met ? 1u : 0u;
+	e.source    = decision.source;
+	e.marks     = SyncMarks(probe);
+	e.packet    = std::exchange(g_sync_packet, nullptr);
+	if (e.queue >= 0) {
+		const auto& h = g_sync_hold_last[static_cast<uint32_t>(e.queue) % 64u];
+		e.hold_why    = static_cast<uint8_t>(h.why.load(std::memory_order_relaxed));
+		e.hold_order  = h.order.load(std::memory_order_relaxed);
+		e.hold_before = h.before.load(std::memory_order_relaxed);
+		e.hold_done   = h.done.load(std::memory_order_relaxed);
+	}
+	w.ring[w.count % w.ring.size()] = e;
+	last = ++w.count;
+}
+
+void DiagArgsSyncNoteDecision(uint32_t queue, uint8_t kind, uint64_t address, uint32_t size, uint64_t value, uint64_t reference,
+                              uint64_t mask, uint32_t function, uint32_t exec_count, bool taken) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	auto*      tracker  = g_sync_ring.tracker;
+	const auto probe    = tracker != nullptr ? tracker->ProbeArgsPages(address, size) : RegionManager::ArgsPageProbe {};
+	const auto decision = std::exchange(g_sync_decision, SyncDecision {});
+	SyncDecisionEntry e {};
+	e.address    = address;
+	e.value      = value;
+	e.reference  = reference;
+	e.mask       = mask;
+	e.write_seq  = decision.write_seq;
+	e.emitted    = decision.emitted;
+	e.queue      = static_cast<int32_t>(queue);
+	e.size       = size;
+	e.function   = function;
+	e.exec_count = exec_count;
+	e.kind       = kind;
+	e.taken      = taken ? 1u : 0u;
+	e.source     = decision.source;
+	e.marks      = SyncMarks(probe);
+	std::scoped_lock lock(g_sync_ring.mutex);
+	e.seq = ++g_sync_ring.seq;
+	auto& d = g_sync_decisions;
+	d.ring[d.count++ % d.ring.size()] = e;
+}
+
+std::array<std::atomic<uint64_t>, 256> g_predicated_skips {};
+std::atomic<uint64_t>                  g_ace_holds {0};
+
+void DiagArgsSyncNotePredicatedSkip(uint32_t queue, uint32_t opcode) {
+	(void)queue;
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_predicated_skips[opcode & 0xffu].fetch_add(1, std::memory_order_relaxed);
+}
+
+const char* DiagAceHoldText() {
+	const char* value = std::getenv("KYTY_DIAG_ACE_HOLD");
+	return value != nullptr && value[0] == '1' ? "on" : "off";
+}
+
+void DiagArgsSyncNoteAceHold() {
+	g_ace_holds.fetch_add(1, std::memory_order_relaxed);
+}
+
+void DiagArgsSyncNoteDispatchSkip(uint64_t args_address, const uint32_t* counts3, uint64_t shader_address) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	auto*      tracker = g_sync_ring.tracker;
+	const auto probe   = tracker != nullptr ? tracker->ProbeArgsPages(args_address, sizeof(uint32_t) * 3u)
+	                                       : RegionManager::ArgsPageProbe {};
+	auto e     = SyncEntry(8, args_address, sizeof(uint32_t) * 3u, nullptr, SyncMarks(probe), false);
+	e.shader   = shader_address;
+	e.words[0] = counts3[0];
+	e.words[1] = counts3[1];
+	e.words[2] = counts3[2];
+	const bool marked = probe.gpu_written || probe.gpu_noted;
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            r = g_sync_ring;
+	e.seq             = ++r.seq;
+	r.skips[r.skip_count++ % SyncRingSize] = e;
+	r.skip_window++;
+	if (marked) {
+		r.skip_marked++;
+		r.skip_window_marked++;
+	}
+}
+
+void DiagArgsSyncSetIndirect(uint64_t base, uint32_t data_offset, uint32_t count, uint32_t stride, const uint32_t* run_offsets) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_indirect = {.base = base, .offset = data_offset, .count = count, .stride = stride};
+	if (run_offsets != nullptr && count != 0) {
+		g_sync_indirect.run  = 1;
+		g_sync_indirect.run0 = run_offsets[0];
+		g_sync_indirect.runl = run_offsets[5u * (count - 1u)];
+	}
+}
+
+void DiagArgsSyncHint(uint8_t path, const uint32_t* words4) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_hint.path  = path;
+	g_sync_hint.words = {};
+	if (words4 != nullptr) {
+		std::memcpy(g_sync_hint.words.data(), words4, sizeof(uint32_t) * 4u);
+	}
+}
+
+namespace {
+
+struct SyncSetBaseEntry {
+	uint64_t                seq    = 0;
+	const uint32_t*         packet = nullptr;
+	std::array<uint32_t, 4> words {};
+	uint8_t                 marks  = 0;
+};
+
+struct SyncDrawPacketEntry {
+	uint64_t                 seq         = 0;
+	uint64_t                 args_base   = 0;
+	const uint32_t*          packet      = nullptr;
+	SyncSetBaseEntry         set_base {};
+	std::array<uint32_t, 10> words {};
+	int32_t                  queue       = -1;
+	uint32_t                 dw          = 0;
+	uint32_t                 data_offset = 0;
+	uint32_t                 count       = 0;
+	uint32_t                 stride      = 0;
+	uint8_t                  marks       = 0;
+	uint8_t                  run         = 0;
+};
+
+struct SyncIbFetchEntry {
+	uint64_t seq     = 0;
+	uint64_t address = 0;
+	uint64_t size    = 0;
+	int32_t  queue   = -1;
+	uint8_t  how     = 0;
+	uint8_t  marks   = 0;
+};
+
+struct SyncPackets {
+	std::array<SyncDrawPacketEntry, 512> draws {};
+	std::array<SyncIbFetchEntry, 1024>   ibs {};
+	std::array<uint64_t, 4>              ib_by_how {};
+	uint64_t                             draw_count = 0;
+	uint64_t                             ib_count   = 0;
+};
+
+std::array<SyncSetBaseEntry, 64> g_sync_set_base {};
+SyncPackets                      g_sync_packets;
+thread_local const uint32_t*     g_sync_draw_packet    = nullptr;
+thread_local uint32_t            g_sync_draw_packet_dw = 0;
+
+constexpr const char* SyncIbHow[] = {"an IB fetched with no PFP_SYNC_ME armed (never checked for GPU writes)",
+                                     "an IB fetched after PFP_SYNC_ME (checked; not GPU-modified per the buffer cache)",
+                                     "an IB downloaded after PFP_SYNC_ME (GPU-modified per the buffer cache)",
+                                     "a top-level submission (never checked for GPU writes)"};
+
+void SyncMarksText(uint8_t m, char* text, size_t size) {
+	std::snprintf(text, size, "cpu_dirty %d gpu_dirty %d gpu_written %d gpu_noted %d block_opened %d", (m & 1u) != 0 ? 1 : 0,
+	              (m & 2u) != 0 ? 1 : 0, (m & 4u) != 0 ? 1 : 0, (m & 8u) != 0 ? 1 : 0, (m & 16u) != 0 ? 1 : 0);
+}
+
+struct SyncPacketNow {
+	std::array<uint32_t, 10> words {};
+	uint8_t                  marks = 0;
+	bool                     read  = false;
+};
+
+SyncPacketNow SyncReadPacketNow(const uint32_t* packet, uint32_t dw) {
+	SyncPacketNow now {};
+	if (packet == nullptr || dw == 0) {
+		return now;
+	}
+	const auto address = reinterpret_cast<uint64_t>(packet);
+	const auto bytes   = sizeof(uint32_t) * std::min<uint32_t>(dw, 10u);
+	auto*      tracker = g_sync_ring.tracker;
+	now.marks          = tracker != nullptr ? SyncMarks(tracker->ProbeArgsPages(address, bytes)) : 0;
+	now.read           = LibKernel::Memory::TryReadBacking(address, now.words.data(), bytes);
+	return now;
+}
+
+void SyncPrintWords(const char* what, const uint32_t* words, uint32_t dw) {
+	std::fprintf(stderr, "[kyty-args-sync]       %s:", what);
+	for (uint32_t i = 0; i < dw; i++) {
+		std::fprintf(stderr, " %08x", words[i]);
+	}
+	std::fprintf(stderr, "\n");
+}
+
+void SyncPrintPageRings(uint64_t address, const char* what) {
+	const auto page = address & ~(TRACKER_PAGE_SIZE - 1);
+	auto&      r    = g_sync_ring;
+	const auto ring = [&](const std::array<SyncRingEntry, SyncRingSize>& entries, uint64_t count, const char* name) {
+		uint64_t hits  = 0;
+		uint32_t shown = 0;
+		for (uint64_t i = 0; i < std::min<uint64_t>(count, SyncRingSize); i++) {
+			const auto& e = entries[(count - 1 - i) % SyncRingSize];
+			if (e.vaddr >= page + TRACKER_PAGE_SIZE || page >= e.vaddr + e.size) {
+				continue;
+			}
+			hits++;
+			if (shown >= 6u) {
+				continue;
+			}
+			shown++;
+			std::fprintf(stderr,
+			             "[kyty-args-sync]         %s: sequence %" PRIu64 " %s 0x%016" PRIx64 " bytes %" PRIu64
+			             " queue %d op %s sequence %" PRIu64 " shader 0x%016" PRIx64 "\n",
+			             name, e.seq, SyncRingKinds[e.kind < 15 ? e.kind : 0], e.vaddr, e.size, e.queue,
+			             e.op_kind < 6 ? SyncOpKinds[e.op_kind] : "none", e.op_seq, e.shader);
+		}
+		std::fprintf(stderr, "[kyty-args-sync]       %s on the %s page 0x%016" PRIx64 ": %" PRIu64 " of the last %" PRIu64 "\n", name,
+		             what, page, hits, std::min<uint64_t>(count, SyncRingSize));
+	};
+	ring(r.writes, r.write_count, "GPU writes");
+	ring(r.uploads, r.upload_count, "uploads");
+	ring(r.cp, r.cp_count, "CP writes");
+	ring(r.life, r.life_count, "buffer lifecycle");
+}
+
+void SyncPrintIbOf(const uint32_t* packet, int32_t queue, uint64_t before_seq) {
+	if (packet == nullptr) {
+		return;
+	}
+	const auto  address = reinterpret_cast<uint64_t>(packet);
+	const auto& p       = g_sync_packets;
+	for (uint64_t i = 0; i < std::min<uint64_t>(p.ib_count, p.ibs.size()); i++) {
+		const auto& e = p.ibs[(p.ib_count - 1 - i) % p.ibs.size()];
+		if (e.queue != queue || e.seq > before_seq || address < e.address || address >= e.address + e.size) {
+			continue;
+		}
+		char marks[128];
+		SyncMarksText(e.marks, marks, sizeof(marks));
+		std::fprintf(stderr,
+		             "[kyty-args-sync]       its command buffer: %s, 0x%016" PRIx64 " bytes %" PRIu64 " (fetch sequence %" PRIu64
+		             "), marks over it at the fetch: %s\n",
+		             SyncIbHow[e.how & 3u], e.address, e.size, e.seq, marks);
+		return;
+	}
+	std::fprintf(stderr, "[kyty-args-sync]       its command buffer: no fetch of this queue covering the packet in the last %" PRIu64 "\n",
+	             std::min<uint64_t>(p.ib_count, p.ibs.size()));
+}
+
+}
+
+void DiagArgsSyncSetCpPacket(const uint32_t* header) {
+	g_sync_cp_packet = header;
+}
+
+void DiagArgsSyncSetSubmission(uint32_t queue, uint64_t order) {
+	g_sync_sub_queue = static_cast<int32_t>(queue);
+	g_sync_sub_order = order;
+}
+
+void DiagArgsSyncNoteHoldCheck(uint32_t queue, uint32_t why, uint64_t order, uint64_t before, uint64_t done) {
+	auto& last = g_sync_hold_last[queue % 64u];
+	last.order.store(order, std::memory_order_relaxed);
+	last.before.store(before, std::memory_order_relaxed);
+	last.done.store(done, std::memory_order_relaxed);
+	last.why.store(why, std::memory_order_relaxed);
+	g_sync_hold_why[why & 3u].fetch_add(1, std::memory_order_relaxed);
+}
+
+void DiagArgsSyncNoteSetBase(uint32_t queue, const uint32_t* body, uint32_t shader_type) {
+	if (!ArgsSyncDiag() || shader_type != 0u || body == nullptr) {
+		return;
+	}
+	auto*            tracker = g_sync_ring.tracker;
+	SyncSetBaseEntry e {};
+	e.packet = body - 1;
+	std::memcpy(e.words.data(), e.packet, sizeof(uint32_t) * 4u);
+	e.marks = tracker != nullptr ? SyncMarks(tracker->ProbeArgsPages(reinterpret_cast<uint64_t>(e.packet), sizeof(uint32_t) * 4u)) : 0;
+	std::scoped_lock lock(g_sync_ring.mutex);
+	e.seq                        = ++g_sync_ring.seq;
+	g_sync_set_base[queue % 64u] = e;
+}
+
+void DiagArgsSyncNoteDrawPacket(const uint32_t* header, uint32_t dw) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	g_sync_draw_packet    = header;
+	g_sync_draw_packet_dw = std::min<uint32_t>(dw, 10u);
+}
+
+void DiagArgsSyncNoteDrawParse(uint32_t queue, uint64_t args_base, uint32_t data_offset, uint32_t count, uint32_t stride,
+                               bool run) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	const auto*         header  = std::exchange(g_sync_draw_packet, nullptr);
+	const auto          dw      = std::exchange(g_sync_draw_packet_dw, 0u);
+	auto*               tracker = g_sync_ring.tracker;
+	SyncDrawPacketEntry e {};
+	e.args_base   = args_base;
+	e.packet      = header;
+	e.queue       = static_cast<int32_t>(queue);
+	e.dw          = header != nullptr ? dw : 0u;
+	e.data_offset = data_offset;
+	e.count       = count;
+	e.stride      = stride;
+	e.run         = run ? 1u : 0u;
+	if (header != nullptr && e.dw != 0) {
+		std::memcpy(e.words.data(), header, sizeof(uint32_t) * e.dw);
+		e.marks = tracker != nullptr ? SyncMarks(tracker->ProbeArgsPages(reinterpret_cast<uint64_t>(header), sizeof(uint32_t) * e.dw))
+		                             : 0;
+	}
+	std::scoped_lock lock(g_sync_ring.mutex);
+	e.set_base = g_sync_set_base[queue % 64u];
+	e.seq      = ++g_sync_ring.seq;
+	auto& p    = g_sync_packets;
+	p.draws[p.draw_count++ % p.draws.size()] = e;
+}
+
+void DiagArgsSyncNoteIbFetch(uint32_t queue, uint64_t address, uint64_t size, uint8_t how) {
+	if (!ArgsSyncDiag() || size == 0) {
+		return;
+	}
+	auto*            tracker = g_sync_ring.tracker;
+	SyncIbFetchEntry e {};
+	e.address = address;
+	e.size    = size;
+	e.queue   = static_cast<int32_t>(queue);
+	e.how     = static_cast<uint8_t>(how & 3u);
+	e.marks   = tracker != nullptr ? SyncMarks(tracker->ProbeArgsPages(address, size)) : 0;
+	std::scoped_lock lock(g_sync_ring.mutex);
+	e.seq  = ++g_sync_ring.seq;
+	auto& p = g_sync_packets;
+	p.ibs[p.ib_count++ % p.ibs.size()] = e;
+	p.ib_by_how[e.how]++;
+}
+
+void DiagArgsSyncDumpPackets(uint64_t address, const char* why) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	std::vector<SyncDrawPacketEntry> draws;
+	std::vector<SyncWaitEntry>       waits;
+	bool                             covered    = false;
+	uint64_t                         draw_count = 0;
+	{
+		std::scoped_lock lock(g_sync_ring.mutex);
+		const auto&      p    = g_sync_packets;
+		const auto       kept = std::min<uint64_t>(p.draw_count, p.draws.size());
+		draw_count            = p.draw_count;
+		for (uint64_t i = 0; i < kept && draws.size() < 4u; i++) {
+			const auto& e  = p.draws[(p.draw_count - 1 - i) % p.draws.size()];
+			const auto  lo = e.args_base + e.data_offset;
+			const auto  hi = lo + uint64_t {std::max(e.count, 1u)} * uint64_t {std::max(e.stride, 4u)};
+			if (address >= lo && address < hi) {
+				draws.push_back(e);
+			}
+		}
+		covered = !draws.empty();
+		for (uint64_t i = 0; i < kept && draws.empty(); i++) {
+			const auto& e = p.draws[(p.draw_count - 1 - i) % p.draws.size()];
+			if (e.queue == 0) {
+				draws.push_back(e);
+			}
+		}
+		const auto& w = g_sync_waits;
+		for (uint64_t i = 0; i < std::min<uint64_t>(w.count, w.ring.size()) && waits.size() < 8u; i++) {
+			const auto& e = w.ring[(w.count - 1 - i) % w.ring.size()];
+			if (e.queue == 0 || e.reference != 0 || e.packet == nullptr) {
+				continue;
+			}
+			bool seen = false;
+			for (const auto& x: waits) {
+				seen = seen || x.packet == e.packet;
+			}
+			if (!seen) {
+				waits.push_back(e);
+			}
+		}
+	}
+	std::vector<SyncPacketNow> draw_now;
+	std::vector<SyncPacketNow> base_now;
+	std::vector<SyncPacketNow> wait_now;
+	for (const auto& e: draws) {
+		draw_now.push_back(SyncReadPacketNow(e.packet, e.dw));
+		base_now.push_back(SyncReadPacketNow(e.set_base.packet, e.set_base.packet != nullptr ? 4u : 0u));
+	}
+	for (const auto& e: waits) {
+		wait_now.push_back(SyncReadPacketNow(e.packet - 1, 7u));
+	}
+	std::scoped_lock lock(g_sync_ring.mutex);
+	const auto&      p = g_sync_packets;
+	std::fprintf(stderr,
+	             "[kyty-args-sync] %s: command packets for args 0x%016" PRIx64 ": %s (%" PRIu64
+	             " indirect draws parsed so far); command buffer fetches so far: %" PRIu64 " IBs without PFP_SYNC_ME, %" PRIu64
+	             " IBs checked after PFP_SYNC_ME, %" PRIu64 " IBs downloaded as GPU-modified, %" PRIu64 " top-level submissions\n",
+	             why, address,
+	             covered ? "parsed draws whose args range covers it, newest first"
+	                     : (draws.empty() ? "no parsed draw in the ring" : "NO parsed draw in the ring covers it; the newest queue-0 draw instead"),
+	             draw_count, p.ib_by_how[0], p.ib_by_how[1], p.ib_by_how[2], p.ib_by_how[3]);
+	std::fprintf(stderr,
+	             "[kyty-args-sync]   ACE hold checks so far (KYTY_DIAG_ACE_HOLD %s): %" PRIu64 " %s; %" PRIu64 " %s; %" PRIu64 " %s; %" PRIu64
+	             " %s\n",
+	             DiagAceHoldText(), g_sync_hold_why[0].load(std::memory_order_relaxed), SyncHoldWhy[0],
+	             g_sync_hold_why[1].load(std::memory_order_relaxed), SyncHoldWhy[1], g_sync_hold_why[2].load(std::memory_order_relaxed),
+	             SyncHoldWhy[2], g_sync_hold_why[3].load(std::memory_order_relaxed), SyncHoldWhy[3]);
+	for (size_t i = 0; i < draws.size(); i++) {
+		const auto& e = draws[i];
+		char        then[128];
+		char        now[128];
+		SyncMarksText(e.marks, then, sizeof(then));
+		SyncMarksText(draw_now[i].marks, now, sizeof(now));
+		const bool same = draw_now[i].read && std::equal(e.words.begin(), e.words.begin() + e.dw, draw_now[i].words.begin());
+		std::fprintf(stderr,
+		             "[kyty-args-sync]     draw packet: queue %d parse sequence %" PRIu64 " at 0x%016" PRIx64 " (%u dw): args base 0x%016" PRIx64
+		             " data offset 0x%x count %u stride %u run %u\n",
+		             e.queue, e.seq, reinterpret_cast<uint64_t>(e.packet), e.dw, e.args_base, e.data_offset, e.count, e.stride,
+		             static_cast<unsigned>(e.run));
+		if (e.packet != nullptr) {
+			SyncPrintWords("as parsed", e.words.data(), e.dw);
+			SyncPrintWords(draw_now[i].read ? (same ? "guest backing now (backing read, no fault): EQUAL"
+			                                        : "guest backing now (backing read, no fault): DIFFERENT")
+			                                : "guest backing now: READ FAILED",
+			               draw_now[i].words.data(), e.dw);
+			std::fprintf(stderr, "[kyty-args-sync]       packet page marks at parse: %s; now: %s\n", then, now);
+			SyncPrintIbOf(e.packet, e.queue, e.seq);
+			SyncPrintPageRings(reinterpret_cast<uint64_t>(e.packet), "draw packet");
+		}
+		const auto& b = e.set_base;
+		if (b.packet == nullptr) {
+			std::fprintf(stderr, "[kyty-args-sync]     SET_BASE: none parsed on queue %d while the diag ran\n", e.queue);
+			continue;
+		}
+		const uint64_t base_parsed = (uint64_t {b.words[2]} & ~0x7ull) | (uint64_t {b.words[3] & 0xffffu} << 32u);
+		const bool base_same   = base_now[i].read && std::equal(b.words.begin(), b.words.end(), base_now[i].words.begin());
+		SyncMarksText(b.marks, then, sizeof(then));
+		SyncMarksText(base_now[i].marks, now, sizeof(now));
+		std::fprintf(stderr,
+		             "[kyty-args-sync]     SET_BASE packet: parse sequence %" PRIu64 " at 0x%016" PRIx64 ", base from it 0x%016" PRIx64
+		             " (%s the draw's args base)\n",
+		             b.seq, reinterpret_cast<uint64_t>(b.packet), base_parsed, base_parsed == e.args_base ? "equal to" : "DIFFERENT from");
+		SyncPrintWords("as parsed", b.words.data(), 4u);
+		SyncPrintWords(base_now[i].read ? (base_same ? "guest backing now (backing read, no fault): EQUAL"
+		                                             : "guest backing now (backing read, no fault): DIFFERENT")
+		                                : "guest backing now: READ FAILED",
+		               base_now[i].words.data(), 4u);
+		std::fprintf(stderr, "[kyty-args-sync]       packet page marks at parse: %s; now: %s\n", then, now);
+		SyncPrintIbOf(b.packet, e.queue, b.seq);
+		if ((reinterpret_cast<uint64_t>(b.packet) & ~(TRACKER_PAGE_SIZE - 1)) !=
+		    (reinterpret_cast<uint64_t>(e.packet) & ~(TRACKER_PAGE_SIZE - 1))) {
+			SyncPrintPageRings(reinterpret_cast<uint64_t>(b.packet), "SET_BASE packet");
+		} else {
+			std::fprintf(stderr, "[kyty-args-sync]       (same page as the draw packet)\n");
+		}
+	}
+	std::fprintf(stderr, "[kyty-args-sync]   ACE WAIT_REG_MEM packets with reference 0, newest first (%zu distinct):\n", waits.size());
+	for (size_t i = 0; i < waits.size(); i++) {
+		const auto& e = waits[i];
+		char        now[128];
+		SyncMarksText(wait_now[i].marks, now, sizeof(now));
+		std::fprintf(stderr,
+		             "[kyty-args-sync]     wait: sequence %" PRIu64 " queue %d packet 0x%016" PRIx64 " address 0x%016" PRIx64
+		             " function %u met %u; ref field now 0x%08x%s; packet page marks now: %s\n",
+		             e.seq, e.queue, reinterpret_cast<uint64_t>(e.packet - 1), e.address, e.function, static_cast<unsigned>(e.met),
+		             wait_now[i].words[4], wait_now[i].read ? "" : " (READ FAILED)", now);
+		SyncPrintWords("packet now", wait_now[i].words.data(), 7u);
+		SyncPrintIbOf(e.packet - 1, e.queue, e.seq);
+		SyncPrintPageRings(reinterpret_cast<uint64_t>(e.packet - 1), "wait packet");
+	}
+}
+
+void DiagArgsSyncDumpFor(uint64_t address, const char* why) {
+	if (!ArgsSyncDiag()) {
+		return;
+	}
+	const auto page    = address & ~(TRACKER_PAGE_SIZE - 1);
+	auto*      tracker = g_sync_ring.tracker;
+	const auto probe   = tracker != nullptr ? tracker->ProbeArgsPages(page, TRACKER_PAGE_SIZE) : RegionManager::ArgsPageProbe {};
+	{
+		uint32_t   guest[5] {};
+		const bool read    = LibKernel::Memory::TryReadBacking(address, guest, sizeof(guest));
+		const auto history = tracker != nullptr ? tracker->ProbePageHistory(page) : RegionManager::PageHistory {};
+		std::fprintf(stderr,
+		             "[kyty-args-sync] %s: guest memory at args 0x%016" PRIx64 " (backing read, no fault, no download)%s: %08x %08x %08x %08x %08x"
+		             " (index count %u, instances %u, first index %u, vertex offset %d, first instance %u)\n",
+		             why, address, read ? "" : " READ FAILED", guest[0], guest[1], guest[2], guest[3], guest[4], guest[0], guest[1],
+		             guest[2], static_cast<int32_t>(guest[3]), guest[4]);
+		std::fprintf(stderr,
+		             "[kyty-args-sync]   page history: cpu_written consumers 0x%x; busy record %s (faulted %u, writes %u, seen %u, cleaned %u)\n",
+		             history.cpu_written, history.busy != 0 ? "present" : "absent", static_cast<unsigned>(history.faulted),
+		             static_cast<unsigned>(history.writes), history.seen, history.cleaned);
+	}
+	std::scoped_lock lock(g_sync_ring.mutex);
+	auto&            r = g_sync_ring;
+	std::fprintf(stderr,
+	             "[kyty-args-sync] %s: args 0x%016" PRIx64 "; its 4 KiB page now: cpu_dirty %d gpu_dirty %d gpu_written %d "
+	             "gpu_noted %d block_opened %d; sequence now %" PRIu64 ", %" PRIu64 " uploads and %" PRIu64
+	             " GPU writes recorded so far\n",
+	             why, address, probe.cpu_dirty ? 1 : 0, probe.gpu_dirty ? 1 : 0, probe.gpu_written ? 1 : 0,
+	             probe.gpu_noted ? 1 : 0, probe.block_opened ? 1 : 0, r.seq, r.upload_count, r.write_count);
+	const auto print_ring = [&](const std::array<SyncRingEntry, SyncRingSize>& ring, uint64_t count, const char* what) {
+		const uint64_t kept  = std::min<uint64_t>(count, SyncRingSize);
+		uint64_t       hits  = 0;
+		uint32_t       shown = 0;
+		for (uint64_t i = 0; i < kept; i++) {
+			const auto& e = ring[(count - 1 - i) % SyncRingSize];
+			if (e.vaddr >= page + TRACKER_PAGE_SIZE || page >= e.vaddr + e.size) {
+				continue;
+			}
+			hits++;
+			if (shown >= 24) {
+				continue;
+			}
+			shown++;
+			char where[192];
+			SyncCallerText(e.caller, where, sizeof(where));
+			std::fprintf(stderr,
+			             "[kyty-args-sync]   %s: sequence %" PRIu64 " %s 0x%016" PRIx64 " bytes %" PRIu64
+			             " marks after (cpu_dirty %d gpu_dirty %d gpu_written %d gpu_noted %d block_opened %d) caller %s;"
+			             " queue %d op %s sequence %" PRIu64 " submit %" PRIu64 " guest_sync %u shader 0x%016" PRIx64
+			             " path %u V# %08x %08x %08x %08x\n",
+			             what, e.seq, SyncRingKinds[e.kind < 15 ? e.kind : 0], e.vaddr, e.size, (e.marks & 1u) != 0 ? 1 : 0,
+			             (e.marks & 2u) != 0 ? 1 : 0, (e.marks & 4u) != 0 ? 1 : 0, (e.marks & 8u) != 0 ? 1 : 0,
+			             (e.marks & 16u) != 0 ? 1 : 0, where, e.queue, e.op_kind < 6 ? SyncOpKinds[e.op_kind] : "none",
+			             e.op_seq, e.submit, static_cast<unsigned>(e.guest_sync), e.shader, static_cast<unsigned>(e.path),
+			             e.words[0], e.words[1], e.words[2], e.words[3]);
+			if (e.kind == 5) {
+				std::fprintf(stderr,
+				             "[kyty-args-sync]     the draw: base 0x%016" PRIx64 " data offset 0x%x count %u stride %u run %u"
+				             " (the command buffer's first data offset now 0x%x, last 0x%x)\n",
+				             e.ind_base, e.ind_offset, e.ind_count, e.ind_stride, static_cast<unsigned>(e.ind_run), e.ind_run0,
+				             e.ind_runl);
+			}
+		}
+		std::fprintf(stderr, "[kyty-args-sync]   %s covering that page: %" PRIu64 " of the last %" PRIu64 " (newest first above)\n",
+		             what, hits, kept);
+	};
+	print_ring(r.uploads, r.upload_count, "uploads");
+	print_ring(r.writes, r.write_count, "GPU writes");
+	print_ring(r.reads, r.read_count, "indirect args reads");
+	print_ring(r.cp, r.cp_count, "CP writes");
+	if (g_cull.ring != nullptr && g_cull.scheduler != nullptr) {
+		g_cull.ring->Invalidate(0, g_cull.ring->Size());
+		const auto mapped = g_cull.ring->Mapped();
+		const auto dword  = [&](uint32_t index, uint64_t offset) {
+			uint32_t value = 0;
+			std::memcpy(&value, mapped.data() + uint64_t {index} * CullSlotBytes + offset, sizeof(value));
+			return value;
+		};
+		std::vector<uint32_t> order;
+		for (uint32_t i = 0; i < CullSlots; ++i) {
+			if (g_cull.slots[i].seq != 0) {
+				order.push_back(i);
+			}
+		}
+		std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return g_cull.slots[a].seq > g_cull.slots[b].seq; });
+		const uint64_t per_object = CullObjectBytes();
+		const auto     covers     = [&](const CullSlot& s) {
+			for (uint32_t k = 0; k < s.bindings; ++k) {
+				if (s.b[k].written != 0 && address >= s.b[k].address && address < s.b[k].address + s.b[k].size) {
+					return true;
+				}
+			}
+			return false;
+		};
+		const auto print_slot = [&](uint32_t i, const char* why) {
+			const auto&   s  = g_cull.slots[i];
+			const CullCp* cp = nullptr;
+			for (uint64_t j = 0; j < std::min<uint64_t>(g_cull_cp_count, g_cull_cp.size()); ++j) {
+				const auto& x = g_cull_cp[(g_cull_cp_count - 1 - j) % g_cull_cp.size()];
+				if (x.op_seq == s.op_seq) {
+					cp = &x;
+					break;
+				}
+			}
+			std::fprintf(stderr,
+			             "[kyty-args-sync]     cull (%s): sequence %" PRIu64 " queue %d op sequence %" PRIu64 " shader 0x%016" PRIx64
+			             " %s, tick %s; args 0x%016" PRIx64 " (CP: dispatch base 0x%016" PRIx64 " + offset 0x%" PRIx64 ")\n",
+			             why, s.seq, s.queue, s.op_seq, s.shader, CullKinds[s.kind < 4 ? s.kind : 0],
+			             g_cull.scheduler->IsFree(s.tick) ? "done" : "NOT done (copies may be unwritten)", s.args_guest,
+			             cp != nullptr ? cp->base : 0u, cp != nullptr && cp->base != 0 ? s.args_guest - cp->base : 0u);
+			std::fprintf(stderr,
+			             "[kyty-args-sync]       mode 0x%x: USE_THREAD_DIMENSIONS (0x20) %s; program has the dispatch-thread dword: %s;"
+			             " input_info.dispatch_thread_dimensions: %s; input_info from TakeResolvedDispatch: %s\n",
+			             s.mode, (s.mode & 0x20u) != 0 ? "set" : "clear", (s.flags & 2u) != 0 ? "yes" : "no",
+			             (s.flags & 4u) != 0 ? "yes" : "no", (s.flags & 1u) != 0 ? "yes" : "no");
+			if (s.has_args != 0) {
+				std::fprintf(stderr, "[kyty-args-sync]       %s as the GPU read them: %u %u %u\n",
+				             s.kind == 3 ? "thread counts" : "group counts", dword(i, 0), dword(i, 4), dword(i, 8));
+			}
+			if (s.has_groups != 0) {
+				std::fprintf(stderr, "[kyty-args-sync]       groups launched (from the thread pass): %u %u %u\n", dword(i, 16),
+				             dword(i, 20), dword(i, 24));
+			}
+			if (s.kind == 1) {
+				std::fprintf(stderr, "[kyty-args-sync]       direct groups: %u %u %u\n", s.direct_groups[0], s.direct_groups[1],
+				             s.direct_groups[2]);
+			}
+			if (const auto& run = DiagRunShader(); run.hash != 0 && s.shader == run.hash) {
+				const uint64_t RunThreads = run.threads;
+				const uint64_t RunStride  = run.stride;
+				const uint64_t     groups =
+				    s.kind == 1 ? uint64_t {s.direct_groups[0]} * std::max(s.direct_groups[1], 1u) * std::max(s.direct_groups[2], 1u)
+				                : (s.has_args != 0 ? uint64_t {dword(i, 0)} * std::max(dword(i, 4), 1u) * std::max(dword(i, 8), 1u) : 0u);
+				bool reported = false;
+				for (uint32_t q = 0; q < s.bindings; ++q) {
+					if (s.b[q].written != 0) {
+						continue;
+					}
+					const uint64_t first = dword(i, CullPreBase + uint64_t {q} * CullHeadBytes);
+					const uint64_t last  = groups != 0 ? first + RunThreads * groups - 1u : first;
+					for (uint32_t t = 0; t < s.bindings; ++t) {
+						const auto& w = s.b[t];
+						if (w.written == 0 || address < w.address || address >= w.address + w.size || (address - w.address) % RunStride != 0) {
+							continue;
+						}
+						const uint64_t element = (address - w.address) / RunStride;
+						reported               = true;
+						std::fprintf(stderr,
+						             "[kyty-args-sync]       run shader: read binding %u dword 0 = %" PRIu64 ", %" PRIu64
+						             " groups x %" PRIu64 " threads -> elements %" PRIu64 "..%" PRIu64 " of written binding %u; the args record is element %" PRIu64
+						             ": %s\n",
+						             q, first, groups, RunThreads, first, last, t, element,
+						             groups != 0 && element >= first && element <= last ? "INSIDE the run" : "outside the run");
+					}
+				}
+				if (!reported) {
+					std::fprintf(stderr,
+					             "[kyty-args-sync]       run shader: no read binding with a written binding at a %" PRIu64
+					             "-byte step from the args record (the constant may come from user data rather than a buffer)\n",
+					             RunStride);
+				}
+			}
+			for (uint32_t k = 0; k < s.bindings; ++k) {
+				const uint64_t head = CullPreBase + uint64_t {k} * CullHeadBytes;
+				std::fprintf(stderr,
+				             "[kyty-args-sync]       binding %u: 0x%016" PRIx64 " bytes %" PRIu64 " %s; first dwords before: %08x %08x %08x %08x",
+				             k, s.b[k].address, s.b[k].size, s.b[k].written != 0 ? "written" : "read", dword(i, head),
+				             dword(i, head + 4), dword(i, head + 8), dword(i, head + 12));
+				if (s.b[k].written != 0 && s.post != 0) {
+					const uint64_t tail = 64u + uint64_t {k} * 64u;
+					std::fprintf(stderr, "; after: %08x %08x %08x %08x", dword(i, tail), dword(i, tail + 4), dword(i, tail + 8),
+					             dword(i, tail + 12));
+				}
+				std::fprintf(stderr, "\n");
+				const uint32_t counter = dword(i, head);
+				const uint64_t window  = std::min<uint64_t>(s.b[k].size, CullHeadBytes) / 4u;
+				if (s.b[k].written == 0 && counter > 0 && uint64_t {counter} + 3u < window) {
+					std::fprintf(stderr, "[kyty-args-sync]         as a list: counter %u; entries %u..%u:", counter,
+					             counter > 2u ? counter - 2u : 1u, counter + 2u);
+					for (uint32_t e = counter > 2u ? counter - 2u : 1u; e <= counter + 2u; ++e) {
+						std::fprintf(stderr, " %u", dword(i, head + uint64_t {e} * 4u));
+					}
+					std::fprintf(stderr, " (entries past the counter are stale tail)\n");
+				}
+				if (address >= s.b[k].address && address + 20u <= s.b[k].address + std::min<uint64_t>(s.b[k].size, CullHeadBytes)) {
+					const uint64_t at = address - s.b[k].address;
+					std::fprintf(stderr, "[kyty-args-sync]         the args record at 0x%016" PRIx64 " before: %08x %08x %08x %08x %08x",
+					             address, dword(i, head + at), dword(i, head + at + 4), dword(i, head + at + 8),
+					             dword(i, head + at + 12), dword(i, head + at + 16));
+					if (s.post != 0 && s.post_head[k] >= 0) {
+						const uint64_t ph = CullPostBase + uint64_t {static_cast<uint8_t>(s.post_head[k])} * CullHeadBytes + at;
+						std::fprintf(stderr, "; after: %08x %08x %08x %08x %08x", dword(i, ph), dword(i, ph + 4), dword(i, ph + 8),
+						             dword(i, ph + 12), dword(i, ph + 16));
+					}
+					std::fprintf(stderr, "\n");
+				}
+			}
+			for (uint32_t k = 0; k < s.bindings; ++k) {
+				const auto& t = s.b[k];
+				if (t.written == 0 || per_object == 0 || address < t.address || address >= t.address + t.size ||
+				    (address - t.address) % per_object != 0) {
+					continue;
+				}
+				const uint64_t object = (address - t.address) / per_object;
+				std::fprintf(stderr,
+				             "[kyty-args-sync]       OVERRUN CHECK: args 0x%016" PRIx64 " = binding %u base + %" PRIu64 " x %" PRIu64
+				             ": object %" PRIu64 "; groups %u; list entries equal to it:",
+				             address, k, object, per_object, object,
+				             s.has_groups != 0 ? dword(i, 16) : (s.has_args != 0 ? dword(i, 0) : s.direct_groups[0]));
+				for (uint32_t q = 0; q < s.bindings; ++q) {
+					if (s.b[q].written != 0) {
+						continue;
+					}
+					const uint64_t head   = CullPreBase + uint64_t {q} * CullHeadBytes;
+					const uint64_t window = std::min<uint64_t>(s.b[q].size, CullHeadBytes) / 4u;
+					for (uint64_t e = 1; e < window; ++e) {
+						if (dword(i, head + e * 4u) == object) {
+							std::fprintf(stderr, " binding %u entry %" PRIu64 " (counter %u)", q, e, dword(i, head));
+						}
+					}
+				}
+				std::fprintf(stderr, "\n");
+			}
+		};
+		std::fprintf(stderr,
+		             "[kyty-args-sync]   culling, builder and args-writer dispatches: %zu of %u slots used; object stride %" PRIu64
+		             " bytes%s; the newest 24, then every older slot whose written binding covers the args address:\n",
+		             order.size(), CullSlots, per_object,
+		             per_object == 0 ? " (overrun check off: KYTY_DIAG_CULL_SLOTS=<slots>:<record bytes> not set)" : "");
+		uint32_t covering = 0;
+		for (size_t n = 0; n < order.size(); ++n) {
+			const bool hit = covers(g_cull.slots[order[n]]);
+			covering += hit ? 1u : 0u;
+			if (n < 24u) {
+				print_slot(order[n], hit ? "newest, covers the args" : "newest");
+			} else if (hit && covering <= 48u) {
+				print_slot(order[n], "covers the args");
+			}
+		}
+		std::fprintf(stderr, "[kyty-args-sync]   slots whose written binding covers the args address: %u\n", covering);
+	}
+	print_ring(r.life, r.life_count, "buffer lifecycle (created, joined, deleted, gaps, GC; words[0] of a created entry = joined count)");
+	std::fprintf(stderr,
+	             "[kyty-args-sync]   dispatch skips on a CPU-read zero count: %" PRIu64 " so far, %" PRIu64
+	             " with GPU marks on their args page; the newest 24 (queue, op sequence, args, counts read, CS address):\n",
+	             r.skip_count, r.skip_marked);
+	uint64_t window_lo = UINT64_MAX;
+	uint64_t window_hi = 0;
+	uint64_t producer_hi = 0;
+	{
+		uint32_t taken = 0;
+		for (uint64_t i = 0; i < std::min<uint64_t>(r.write_count, SyncRingSize) && taken < 16u; i++) {
+			const auto& e = r.writes[(r.write_count - 1 - i) % SyncRingSize];
+			if (e.vaddr >= page + TRACKER_PAGE_SIZE || page >= e.vaddr + e.size || e.op_seq == 0) {
+				continue;
+			}
+			taken++;
+			window_lo = std::min(window_lo, e.op_seq);
+			producer_hi = std::max(producer_hi, e.op_seq);
+		}
+		for (uint64_t i = 0; i < std::min<uint64_t>(r.read_count, SyncRingSize); i++) {
+			const auto& e = r.reads[(r.read_count - 1 - i) % SyncRingSize];
+			if (e.vaddr >= page + TRACKER_PAGE_SIZE || page >= e.vaddr + e.size) {
+				continue;
+			}
+			window_hi = e.op_seq;
+			break;
+		}
+	}
+	if (window_lo == UINT64_MAX) {
+		window_lo = 0;
+	} else {
+		window_lo = window_lo > 200u ? window_lo - 200u : 0u;
+	}
+	if (window_hi == 0) {
+		window_hi = UINT64_MAX;
+	}
+	const auto& w = g_sync_waits;
+	std::fprintf(stderr,
+	             "[kyty-args-sync]   WAIT_REG_MEM evaluations with the CP's emitted counter in [%" PRIu64 ", %" PRIu64
+	             "] (200 before the oldest of the newest 16 GPU writes on the page, up to the newest args read), newest first; %" PRIu64
+	             " waits recorded so far:\n",
+	             window_lo, window_hi, w.count);
+	for (int pass = 0; pass < 2; ++pass) {
+	if (pass == 1 && producer_hi == 0) {
+		break;
+	}
+	const uint64_t pass_lo = pass == 0 ? window_lo : producer_hi + 1u;
+	const uint64_t pass_hi = pass == 0 ? (producer_hi != 0 ? producer_hi : window_hi) : window_hi;
+	std::fprintf(stderr, "[kyty-args-sync]   %s [%" PRIu64 ", %" PRIu64 "]:\n",
+	             pass == 0 ? "waits from 200 before the producers up to the last producer write"
+	                       : "waits after the last producer write up to the newest args read",
+	             pass_lo, pass_hi);
+	uint32_t waits_shown = 0;
+	for (uint64_t i = 0; i < std::min<uint64_t>(w.count, w.ring.size()) && waits_shown < (pass == 0 ? 48u : 16u); i++) {
+		const auto& e = w.ring[(w.count - 1 - i) % w.ring.size()];
+		if (e.emitted < pass_lo || e.emitted > pass_hi) {
+			continue;
+		}
+		waits_shown++;
+		std::fprintf(stderr,
+		             "[kyty-args-sync]     wait: sequence %" PRIu64 " queue %d emitted %" PRIu64 " address 0x%016" PRIx64
+		             " size %u value 0x%" PRIx64 " ref 0x%" PRIx64 " mask 0x%" PRIx64 " function %u met %u (unmet retries before: %" PRIu64
+		             "), value from %s (write sequence %" PRIu64 "), page marks (gpu_dirty %d gpu_written %d gpu_noted %d)\n",
+		             e.seq, e.queue, e.emitted, e.address, e.size, e.value, e.reference, e.mask, e.function,
+		             static_cast<unsigned>(e.met), e.repeats, SyncDecisionSources[e.source < 5 ? e.source : 0], e.write_seq,
+		             (e.marks & 2u) != 0 ? 1 : 0, (e.marks & 4u) != 0 ? 1 : 0, (e.marks & 8u) != 0 ? 1 : 0);
+		if (e.packet != nullptr) {
+			uint64_t   ref_now  = 0;
+			const bool ref_read = LibKernel::Memory::TryReadBacking(reinterpret_cast<uint64_t>(e.packet + 3), &ref_now,
+			                                                       e.size == 8u ? 8u : 4u);
+			std::fprintf(stderr, "[kyty-args-sync]       ref in the command buffer now 0x%" PRIx64 " (%s the parsed ref)\n",
+			             ref_now,
+			             !ref_read ? "READ FAILED, not compared with" : ref_now == e.reference ? "equal to" : "DIFFERENT from");
+		}
+		if (e.hold_why != 0xffu) {
+			std::fprintf(stderr,
+			             "[kyty-args-sync]       hold check that admitted its submission: %s (submission order %" PRIu64
+			             ", last q0 submission enqueued before it %" PRIu64 ", q0 done up to %" PRIu64 ")\n",
+			             SyncHoldWhy[e.hold_why & 3u], e.hold_order, e.hold_before, e.hold_done);
+		}
+		if (e.source == 1) {
+			const SyncRingEntry* cw = nullptr;
+			for (uint64_t j = 0; j < std::min<uint64_t>(r.cp_count, SyncRingSize); j++) {
+				const auto& x = r.cp[(r.cp_count - 1 - j) % SyncRingSize];
+				if (x.op_seq == e.write_seq && x.vaddr <= e.address && e.address < x.vaddr + x.size) {
+					cw = &x;
+					break;
+				}
+			}
+			if (cw == nullptr) {
+				std::fprintf(stderr, "[kyty-args-sync]       the parsed CP write it used (write sequence %" PRIu64 "): not in the ring\n",
+				             e.write_seq);
+			} else {
+				const uint32_t op   = (cw->pkt_header >> 8u) & 0xffu;
+				const char*    name = op == 0x49u ? "RELEASE_MEM" : op == 0x37u ? "WRITE_DATA" : op == 0x47u ? "EVENT_WRITE_EOP"
+				                    : op == 0x48u ? "EVENT_WRITE_EOS" : op == 0x50u ? "DMA_DATA" : op == 0x40u ? "COPY_DATA"
+				                    : op == 0x1eu ? "ATOMIC_MEM" : "other";
+				char fields[160] = "";
+				if (op == 0x49u) {
+					std::snprintf(fields, sizeof(fields), "; event_type 0x%x event_index %u data_sel %u int_sel %u dst_sel %u",
+					              cw->pkt_body[0] & 0x3fu, (cw->pkt_body[0] >> 8u) & 0xfu, cw->pkt_body[1] >> 29u,
+					              (cw->pkt_body[1] >> 24u) & 0x7u, (cw->pkt_body[1] >> 16u) & 0x3u);
+				} else if (op == 0x37u) {
+					std::snprintf(fields, sizeof(fields), "; dst_sel %u wr_confirm %u engine_sel %u", (cw->pkt_body[0] >> 8u) & 0xfu,
+					              (cw->pkt_body[0] >> 20u) & 0x1u, cw->pkt_body[0] >> 30u);
+				}
+				const char* state = cw->sub_queue != 0      ? "not a queue-0 write"
+				                    : e.hold_why == 0xffu    ? "q0 done order at admission unknown"
+				                    : cw->sub_order > e.hold_done ? "its q0 submission was NOT fully parsed when this wait's submission was admitted"
+				                                                  : "its q0 submission was fully parsed when this wait's submission was admitted";
+				std::fprintf(stderr,
+				             "[kyty-args-sync]       the parsed CP write it used: queue %d write sequence %" PRIu64 " at 0x%016" PRIx64
+				             " from packet %s (opcode 0x%02x, header %08x, body %08x %08x %08x%s); submission order %" PRIu64
+				             " on queue %d: %s\n",
+				             cw->queue, cw->op_seq, cw->vaddr, name, op, cw->pkt_header, cw->pkt_body[0], cw->pkt_body[1],
+				             cw->pkt_body[2], fields, cw->sub_order, cw->sub_queue, state);
+			}
+		}
+		const auto last_before = [&](const std::array<SyncRingEntry, SyncRingSize>& ring, uint64_t count) -> const SyncRingEntry* {
+			for (uint64_t j = 0; j < std::min<uint64_t>(count, SyncRingSize); j++) {
+				const auto& x = ring[(count - 1 - j) % SyncRingSize];
+				if (x.seq < e.seq && x.vaddr <= e.address && e.address < x.vaddr + x.size) {
+					return &x;
+				}
+			}
+			return nullptr;
+		};
+		if (const auto* x = last_before(r.cp, r.cp_count); x != nullptr) {
+			std::fprintf(stderr,
+			             "[kyty-args-sync]       last CP write to it before: queue %d op sequence %" PRIu64 " at 0x%016" PRIx64
+			             " bytes %" PRIu64 " first dwords %08x %08x\n",
+			             x->queue, x->op_seq, x->vaddr, x->size, x->words[0], x->words[1]);
+		} else {
+			std::fprintf(stderr, "[kyty-args-sync]       last CP write to it before: none in the ring\n");
+		}
+		if (const auto* x = last_before(r.writes, r.write_count); x != nullptr) {
+			std::fprintf(stderr,
+			             "[kyty-args-sync]       last GPU write over it before: %s queue %d op sequence %" PRIu64 " shader 0x%016" PRIx64
+			             " range 0x%016" PRIx64 " bytes %" PRIu64 "\n",
+			             SyncRingKinds[x->kind < 15 ? x->kind : 0], x->queue, x->op_seq, x->shader, x->vaddr, x->size);
+		} else {
+			std::fprintf(stderr, "[kyty-args-sync]       last GPU write over it before: none in the ring\n");
+		}
+	}
+	}
+	{
+		const auto& dr = g_sync_decisions;
+		uint64_t    stale_total = 0;
+		for (uint64_t i = 0; i < std::min<uint64_t>(dr.count, dr.ring.size()); i++) {
+			const auto& e = dr.ring[i];
+			stale_total += e.source >= 3 && (e.marks & 14u) != 0 ? 1u : 0u;
+		}
+		std::fprintf(stderr,
+		             "[kyty-args-sync]   COND_EXEC / branch decisions with the emitted counter up to %" PRIu64
+		             " (the newest args read of the page), newest 32; %" PRIu64 " recorded so far, %" PRIu64
+		             " in the ring taken from a guest-memory copy on a GPU-marked page:\n",
+		             window_hi, dr.count, stale_total);
+		uint32_t shown = 0;
+		for (uint64_t i = 0; i < std::min<uint64_t>(dr.count, dr.ring.size()) && shown < 32u; i++) {
+			const auto& e = dr.ring[(dr.count - 1 - i) % dr.ring.size()];
+			if (e.emitted > window_hi) {
+				continue;
+			}
+			shown++;
+			const bool stale = e.source >= 3 && (e.marks & 14u) != 0;
+			std::fprintf(stderr,
+			             "[kyty-args-sync]     decision: sequence %" PRIu64 " queue %d emitted %" PRIu64 " %s at 0x%016" PRIx64
+			             " size %u value 0x%" PRIx64 " (ref 0x%" PRIx64 " mask 0x%" PRIx64 " function %u) -> %s (%u dwords);"
+			             " value from %s (write sequence %" PRIu64 "), page marks (gpu_dirty %d gpu_written %d gpu_noted %d)%s\n",
+			             e.seq, e.queue, e.emitted, e.kind == 1 ? "COND_EXEC" : e.kind == 2 ? "branch" : e.kind == 3 ? "SET_PREDICATION op 1 (zpass)" : "SET_PREDICATION op 3 (memory)", e.address, e.size, e.value, e.reference,
+			             e.mask, e.function,
+			             e.kind == 1 ? (e.taken != 0 ? "executed the next" : "SKIPPED the next")
+			             : e.kind == 2 ? (e.taken != 0 ? "then" : "else / none")
+			                           : (e.taken != 0 ? "predicated packets run" : "predicated packets SKIPPED"),
+			             e.exec_count, SyncDecisionSources[e.source < 5 ? e.source : 0], e.write_seq, (e.marks & 2u) != 0 ? 1 : 0,
+			             (e.marks & 4u) != 0 ? 1 : 0, (e.marks & 8u) != 0 ? 1 : 0,
+			             stale ? " STALE? (a guest-memory copy on a GPU-marked page)" : "");
+		}
+	}
+	{
+		uint64_t total = 0;
+		for (const auto& n: g_predicated_skips) {
+			total += n.load(std::memory_order_relaxed);
+		}
+		std::fprintf(stderr, "[kyty-args-sync]   predicated packets skipped so far: %" PRIu64 " (by opcode:", total);
+		for (uint32_t op = 0; op < 256u; ++op) {
+			const auto n = g_predicated_skips[op].load(std::memory_order_relaxed);
+			if (n != 0) {
+				std::fprintf(stderr, " 0x%02x x%" PRIu64, op, n);
+			}
+		}
+		const char* hold = std::getenv("KYTY_DIAG_ACE_HOLD");
+		std::fprintf(stderr, "); ACE submissions held behind earlier queue-0 work: %" PRIu64 " (KYTY_DIAG_ACE_HOLD %s)\n",
+		             g_ace_holds.load(std::memory_order_relaxed), hold != nullptr && hold[0] == '1' ? "on" : "off");
+	}
+	for (uint64_t i = 0; i < std::min<uint64_t>({r.skip_count, SyncRingSize, 24u}); i++) {
+		const auto& e = r.skips[(r.skip_count - 1 - i) % SyncRingSize];
+		std::fprintf(stderr,
+		             "[kyty-args-sync]     skip: sequence %" PRIu64 " queue %d op sequence %" PRIu64 " submit %" PRIu64
+		             " args 0x%016" PRIx64 " counts %u %u %u marks (cpu_dirty %d gpu_dirty %d gpu_written %d gpu_noted %d) CS 0x%016" PRIx64 "\n",
+		             e.seq, e.queue, e.op_seq, e.submit, e.vaddr, e.words[0], e.words[1], e.words[2], (e.marks & 1u) != 0 ? 1 : 0,
+		             (e.marks & 2u) != 0 ? 1 : 0, (e.marks & 4u) != 0 ? 1 : 0, (e.marks & 8u) != 0 ? 1 : 0, e.shader);
+	}
+}
+
 bool BufferCache::SynchronizeBuffer(Buffer& buffer, uint64_t vaddr, uint64_t size, bool is_written,
                                     bool is_texel_buffer) {
 	if (!is_written && !m_memory_tracker.IsRegionCpuModified(vaddr, size)) {
@@ -1484,15 +3099,29 @@ bool BufferCache::SynchronizeBuffer(Buffer& buffer, uint64_t vaddr, uint64_t siz
 	uint64_t                    total_size = 0;
 	vk::Buffer                  source;
 	const MemoryTracker::UploadScope upload_scope;
+	std::vector<std::pair<uint64_t, uint64_t>> marked;
+	if (!is_written && SyncPreferGpu()) {
+		m_memory_tracker.CollectGpuMarkedRuns(vaddr, size, marked);
+	}
 	m_memory_tracker.ForEachUploadRange(
 	    vaddr, size, is_written,
 	    [&](uint64_t address, uint64_t bytes) noexcept {
-		    copies.emplace_back(total_size, buffer.Offset(address), bytes);
-		    total_size += bytes;
-		    NoteUpload(address, bytes);
+		    const auto emit = [&](uint64_t at, uint64_t run) noexcept {
+			    copies.emplace_back(total_size, buffer.Offset(at), run);
+			    total_size += run;
+			    NoteUpload(at, run);
+		    };
+		    if (marked.empty()) {
+			    emit(address, bytes);
+		    } else {
+			    SyncSkipMarked(marked, address, bytes, emit);
+		    }
 	    },
 	    [&]() noexcept { source = UploadCopies(buffer, copies, total_size); }, m_device_sync_pass);
 	RecordBufferUpload(buffer, copies, source);
+	if (!is_written && !copies.empty() && ArgsSyncDiag()) {
+		ArgsSyncNoteUploads(m_memory_tracker, buffer, copies, 1, m_sync_caller);
+	}
 	if (is_texel_buffer && !is_written && !NoImageStartsAt(vaddr)) {
 		return SynchronizeBufferFromImage(buffer, vaddr, size);
 	}
@@ -1543,19 +3172,35 @@ void BufferCache::SynchronizeBuffers(std::span<Buffer* const>                   
 		m_span_copies[index].clear();
 	}
 	const MemoryTracker::UploadScope upload_scope;
+	std::vector<std::vector<std::pair<uint64_t, uint64_t>>> marked;
+	if (SyncPreferGpu()) {
+		marked.resize(ranges.size());
+		for (size_t index = 0; index < ranges.size(); index++) {
+			m_memory_tracker.CollectGpuMarkedRuns(ranges[index].first, ranges[index].second, marked[index]);
+		}
+	}
 	m_memory_tracker.ForEachUploadRanges(
 	    ranges,
 	    [&](size_t index, uint64_t address, uint64_t bytes) noexcept {
-		    m_span_copies[index].emplace_back(m_span_sizes[index], buffers[index]->Offset(address),
-		                                      bytes);
-		    m_span_sizes[index] += bytes;
-		    NoteUpload(address, bytes);
+		    const auto emit = [&](uint64_t at, uint64_t run) noexcept {
+			    m_span_copies[index].emplace_back(m_span_sizes[index], buffers[index]->Offset(at), run);
+			    m_span_sizes[index] += run;
+			    NoteUpload(at, run);
+		    };
+		    if (marked.empty() || marked[index].empty()) {
+			    emit(address, bytes);
+		    } else {
+			    SyncSkipMarked(marked[index], address, bytes, emit);
+		    }
 	    },
 	    [&]() noexcept {
 		    for (size_t index = 0; index < buffers.size(); index++) {
 			    const auto source =
 			        UploadCopies(*buffers[index], m_span_copies[index], m_span_sizes[index]);
 			    RecordBufferUpload(*buffers[index], m_span_copies[index], source);
+			    if (!m_span_copies[index].empty() && ArgsSyncDiag()) {
+				    ArgsSyncNoteUploads(m_memory_tracker, *buffers[index], m_span_copies[index], 2, m_sync_caller);
+			    }
 		    }
 	    },
 	    m_device_sync_pass);
@@ -1720,6 +3365,9 @@ std::pair<Buffer*, uint64_t> BufferCache::ObtainBuffer(uint64_t vaddr, uint64_t 
 	EXIT_IF(!(GuestRange {vaddr, size}.Valid()));
 	if (is_written) {
 		m_scheduler.Context().CollectHotPageWrites(vaddr, size);
+		if (ArgsSyncDiag()) {
+			SyncRingRecordWrite(3, vaddr, size, KYTY_DIAG_RETURN_ADDRESS());
+		}
 	}
 
 	const bool  small_read = !is_written && size <= CACHING_PAGESIZE;
@@ -1817,7 +3465,11 @@ std::pair<Buffer*, uint64_t> BufferCache::ObtainBuffer(uint64_t vaddr, uint64_t 
 
 	auto& buffer = m_slot_buffers[id];
 	TouchBuffer(buffer);
+#if defined(__GNUC__) || defined(__clang__)
+	m_sync_caller = __builtin_return_address(0);
+#endif
 	(void)SynchronizeBuffer(buffer, vaddr, size, is_written, is_texel_buffer);
+	m_sync_caller = nullptr;
 	if (written != nullptr) {
 		*written = {.vaddr        = vaddr,
 		            .size         = size,
@@ -1859,6 +3511,170 @@ std::pair<Buffer*, uint64_t> BufferCache::ObtainBuffer(uint64_t vaddr, uint64_t 
 		NoteWrite(vaddr, size);
 	}
 	return {&buffer, buffer.Offset(vaddr)};
+}
+
+std::pair<Buffer*, uint64_t> BufferCache::ObtainArgsBuffer(uint64_t vaddr, uint64_t size, uint32_t site) {
+	const bool diag   = ArgsSyncDiag();
+	const bool prefer = ArgsPreferGpu();
+	if (!diag && !prefer) {
+		return ObtainBuffer(vaddr, size, false);
+	}
+	const auto probe     = m_memory_tracker.ProbeArgsPages(vaddr, size);
+	const bool gpu_marks = probe.gpu_written || probe.gpu_noted;
+	if (diag) {
+		auto e = SyncEntry(5, vaddr, size, KYTY_DIAG_RETURN_ADDRESS(), SyncMarks(probe), false);
+		e.path = static_cast<uint8_t>(site);
+		std::scoped_lock lock(g_sync_ring.mutex);
+		auto&            r = g_sync_ring;
+		r.tracker         = &m_memory_tracker;
+		e.seq             = ++r.seq;
+		r.reads[r.read_count++ % SyncRingSize] = e;
+	}
+	if (prefer && probe.cpu_dirty && gpu_marks) {
+		const auto id     = FindBuffer(vaddr, size);
+		auto&      buffer = m_slot_buffers[id];
+		TouchBuffer(buffer);
+		if (diag) {
+			auto& c = g_args_sync;
+			c.reads++;
+			c.dirty++;
+			c.kept_gpu++;
+			ArgsSyncPrint("kept the GPU's bytes over CPU-dirty pages", site, vaddr, size, probe);
+			ArgsSyncReport();
+		}
+		return {&buffer, buffer.Offset(vaddr)};
+	}
+	if (!diag) {
+		return ObtainBuffer(vaddr, size, false);
+	}
+	const auto uploads   = m_upload_events;
+	const auto result    = ObtainBuffer(vaddr, size, false);
+	const bool streamed  = result.first == static_cast<Buffer*>(&m_stream_buffer);
+	const bool uploaded  = m_upload_events != uploads;
+	auto&      c         = g_args_sync;
+	c.reads++;
+	c.dirty += probe.cpu_dirty ? 1u : 0u;
+	c.streamed += streamed ? 1u : 0u;
+	c.uploaded += uploaded ? 1u : 0u;
+	if ((streamed || uploaded) && gpu_marks) {
+		c.over_gpu++;
+		ArgsSyncPrint(streamed ? "streamed guest memory over GPU-written pages" : "uploaded CPU-dirty pages over GPU-written pages",
+		              site, vaddr, size, probe);
+	} else if (streamed || uploaded) {
+		c.cpu_only++;
+	}
+	ArgsSyncReport();
+	return result;
+}
+
+void BufferCache::DiagCullPre(CommandRecorder cmd, vk::Buffer args, uint64_t args_offset, uint64_t args_guest,
+                              const uint32_t* direct_groups, uint8_t kind, uint32_t mode, uint32_t flags) {
+	g_cull.current = -1;
+	if (!ArgsSyncDiag() || !CullShader(g_sync_shader)) {
+		return;
+	}
+	if (g_cull.ring == nullptr) {
+		g_cull.ring      = std::make_unique<Buffer>(m_graphics, m_scheduler, MemoryUsage::Download, 0,
+		                                           vk::BufferUsageFlagBits::eTransferDst, uint64_t {CullSlots} * CullSlotBytes);
+		g_cull.scheduler = &m_scheduler;
+	}
+	const uint32_t index = g_cull.next++ % CullSlots;
+	auto&          s     = g_cull.slots[index];
+	s                    = {};
+	s.post_head.fill(-1);
+	s.op_seq     = g_sync_op.op_seq;
+	s.submit     = g_sync_op.submit;
+	s.queue      = g_sync_op.queue;
+	s.shader     = g_sync_shader;
+	s.tick       = m_scheduler.CurrentTick();
+	s.args_guest = args_guest;
+	s.kind       = kind;
+	s.mode       = mode;
+	s.flags      = flags;
+	{
+		std::scoped_lock lock(g_sync_ring.mutex);
+		s.seq = ++g_sync_ring.seq;
+	}
+	if (direct_groups != nullptr) {
+		std::copy_n(direct_groups, 3, s.direct_groups);
+	}
+	const uint64_t    base = uint64_t {index} * CullSlotBytes;
+	vk::MemoryBarrier before {};
+	before.srcAccessMask = vk::AccessFlagBits::eMemoryWrite;
+	before.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eTransfer, {}, 1, &before, 0, nullptr,
+	                    0, nullptr);
+	if (args) {
+		const vk::BufferCopy copy {args_offset, base, 12};
+		cmd.copyBuffer(args, g_cull.ring->Handle(), 1, &copy);
+		s.has_args = 1;
+	}
+	for (const auto& b: g_cull_bindings) {
+		if (s.bindings >= 8u) {
+			break;
+		}
+		const auto* owner = m_page_table.Find(b.address >> PageTable::kPageBits);
+		if (owner == nullptr || !*owner || !m_slot_buffers[*owner].IsInBounds(b.address, b.size)) {
+			continue;
+		}
+		auto&                buffer = m_slot_buffers[*owner];
+		const vk::BufferCopy copy {buffer.Offset(b.address), base + CullPreBase + uint64_t {s.bindings} * CullHeadBytes,
+		                           std::min<uint64_t>(b.size, CullHeadBytes)};
+		cmd.copyBuffer(buffer.Handle(), g_cull.ring->Handle(), 1, &copy);
+		s.b[s.bindings++] = b;
+	}
+	vk::MemoryBarrier after {};
+	after.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+	after.dstAccessMask = vk::AccessFlagBits::eHostRead;
+	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 1, &after, 0, nullptr, 0,
+	                    nullptr);
+	g_cull.current = static_cast<int32_t>(index);
+}
+
+void BufferCache::DiagCullPost(CommandRecorder cmd, vk::Buffer groups, uint64_t groups_offset) {
+	if (g_cull.current < 0) {
+		return;
+	}
+	const auto     index = static_cast<uint32_t>(g_cull.current);
+	auto&          s     = g_cull.slots[index];
+	const uint64_t base  = uint64_t {index} * CullSlotBytes;
+	g_cull.current       = -1;
+	vk::MemoryBarrier before {};
+	before.srcAccessMask = vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eMemoryWrite;
+	before.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eTransfer, {}, 1, &before, 0, nullptr,
+	                    0, nullptr);
+	if (groups) {
+		const vk::BufferCopy copy {groups_offset, base + 16u, 12};
+		cmd.copyBuffer(groups, g_cull.ring->Handle(), 1, &copy);
+		s.has_groups = 1;
+	}
+	int8_t heads = 0;
+	for (uint32_t i = 0; i < s.bindings; ++i) {
+		if (s.b[i].written == 0) {
+			continue;
+		}
+		const auto* owner = m_page_table.Find(s.b[i].address >> PageTable::kPageBits);
+		if (owner == nullptr || !*owner || !m_slot_buffers[*owner].IsInBounds(s.b[i].address, s.b[i].size)) {
+			continue;
+		}
+		auto&                buffer = m_slot_buffers[*owner];
+		const vk::BufferCopy small {buffer.Offset(s.b[i].address), base + 64u + uint64_t {i} * 64u,
+		                            std::min<uint64_t>(s.b[i].size, 64u)};
+		cmd.copyBuffer(buffer.Handle(), g_cull.ring->Handle(), 1, &small);
+		if (heads < 4) {
+			const vk::BufferCopy head {buffer.Offset(s.b[i].address), base + CullPostBase + uint64_t {static_cast<uint8_t>(heads)} * CullHeadBytes,
+			                           std::min<uint64_t>(s.b[i].size, CullHeadBytes)};
+			cmd.copyBuffer(buffer.Handle(), g_cull.ring->Handle(), 1, &head);
+			s.post_head[i] = heads++;
+		}
+	}
+	vk::MemoryBarrier after {};
+	after.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+	after.dstAccessMask = vk::AccessFlagBits::eHostRead;
+	cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 1, &after, 0, nullptr, 0,
+	                    nullptr);
+	s.post = 1;
 }
 
 bool BufferCache::PrepareDeviceAddressRead(uint64_t vaddr, uint64_t size) {
@@ -3103,8 +4919,10 @@ void BufferCache::RunGarbageCollector() {
 			EXIT_NOT_IMPLEMENTED(
 			    !DownloadBufferMemory<true>(buffer, buffer.CpuAddress(), buffer.Size()) &&
 			    InFlightReadbackTick(buffer.CpuAddress(), buffer.CpuAddress() + buffer.Size()) == 0);
+			DiagArgsSyncNoteBuffer(14, buffer.CpuAddress(), buffer.Size(), 0);
 			dirty_buffers.push_back(id);
 		} else {
+			DiagArgsSyncNoteBuffer(13, buffer.CpuAddress(), buffer.Size(), 0);
 			m_memory_tracker.MarkRegionAsCpuModified(buffer.CpuAddress(), buffer.Size());
 			if (m_record_released) {
 				m_released_ranges.Add(buffer.CpuAddress(), buffer.Size());
@@ -3150,6 +4968,9 @@ void BufferCache::ProcessUseBuffer() {
 
 void BufferCache::NoteGpuWrites(uint64_t vaddr, uint64_t size) {
 	m_gpu_write_generation++;
+	if (ArgsSyncDiag()) {
+		SyncRingRecordWrite(4, vaddr, size, nullptr);
+	}
 	if (!GuestRange {vaddr, size}.Valid()) {
 		EXIT("BufferCache: invalid GPU write range\n");
 	}

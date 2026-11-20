@@ -1579,6 +1579,7 @@ bool RenderExecutor::TableBlocks(TablePair& pair, std::array<std::span<const uin
 						if (image_starts(address)) return Spec::Refuse("blocks: written image start"), false;
 						proof.image_checked = true;
 					}
+					DiagArgsSyncHint(2, words4.data());
 					const auto [owner, offset] = buffer_cache.ObtainBuffer(address, size, true, formatted);
 					region_epochs.fill({UINT64_MAX, 0});
 					if (owner == nullptr || buffer_cache.GetBufferIfLive(buffer_cache.FindBuffer(address, size)) != owner)
@@ -2133,7 +2134,8 @@ RenderExecutor::TableResult RenderExecutor::TableDraw(CommandBuffer& buffer, Tab
 		LiveCensus::Scope miss(LiveCensus::DrawPhase, 0x7ab1e, &held == &table.args ? 10 : 11);
 		prepare();
 		const auto registration_before = buffer_cache.RegistrationEpoch();
-		const auto result = buffer_cache.ObtainBuffer(address, size, false);
+		const auto result = &held == &table.args ? buffer_cache.ObtainArgsBuffer(address, size, 2)
+		                                         : buffer_cache.ObtainBuffer(address, size, false);
 		region_epochs.fill({UINT64_MAX, 0});
 		const auto owner  = spec_state != nullptr ? buffer_cache.RegisteredBuffer(address, size)
 		                                               : buffer_cache.FindBuffer(address, size);
@@ -2254,6 +2256,12 @@ RenderExecutor::TableResult RenderExecutor::TableDraw(CommandBuffer& buffer, Tab
 			            static_cast<unsigned long long>(pair.vs), static_cast<unsigned long long>(pair.ps), variant.colors,
 			            draw_state.rendering.num_color_attachments);
 		return Spec::Refuse("table: variant colors"), TableResult::Native;
+	}
+	if (!vertex_arguments && groups != 0 && DiagGpuArgs()) {
+		buffer.EndRendering();
+		for (uint32_t group = 0; group < groups; ++group)
+			GpuArgsRecord(m_context, vk_buffer, arguments[group].first->Handle(), arguments[group].second, 0, pair.vs, pair.ps,
+			              static_cast<uint32_t>(index_bytes / (index_type == vk::IndexType::eUint16 ? 2u : 4u)), 3u);
 	}
 	buffer.BeginRendering(draw_state.rendering);
 	const bool query_bias = m_context.GetOcclusionQueries().Counting();

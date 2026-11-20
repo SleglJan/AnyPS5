@@ -21,6 +21,8 @@
 
 namespace Libs::Graphics {
 
+void DiagGpuArgsDumpUnfinished();
+
 static thread_local CommandScheduler* g_deferred_callback_scheduler = nullptr;
 
 CommandScheduler::CommandPool::CommandPool(GraphicContext& graphics, MasterSemaphore& master)
@@ -627,6 +629,7 @@ void CommandScheduler::QueueSubmit(vk::CommandBuffer buffer, SubmitInfo& submit,
 	Common::DebugCounters::Add(Common::DebugCounters::Counter::QueueSubmits);
 
 	if (result != vk::Result::eSuccess) {
+		DiagGpuArgsDumpUnfinished();
 		EXIT("vkQueueSubmit failed: %s, tick=%" PRIu64 "\n", vk::to_string(result).c_str(), tick);
 	}
 	m_submitted_tick.store(tick, std::memory_order_release);

@@ -74,6 +74,16 @@ static bool IsDrawOperation(GpuOperationKind kind) {
 	       kind == GpuOperationKind::DrawIndirect;
 }
 
+static thread_local const uint32_t* t_diag_cp_packet = nullptr;
+
+static bool DiagAceHold() {
+	static const bool enabled = [] {
+		const char* value = std::getenv("KYTY_DIAG_ACE_HOLD");
+		return value != nullptr && value[0] == '1';
+	}();
+	return enabled;
+}
+
 static void CopyFromGuest(void* destination, const volatile void* source, size_t size) {
 	auto*      out     = static_cast<uint8_t*>(destination);
 	const auto address = reinterpret_cast<uint64_t>(source);
@@ -431,6 +441,8 @@ void GuestGpu::NoteGuestWrite(uint64_t sequence, uint64_t address, uint64_t size
 
 void GuestGpu::ReadDecisionMemory(const volatile void* address, void* value, size_t size) {
 	ForgetExecutedWrites();
+	uint8_t    diag_source = 3;
+	uint64_t   diag_write  = 0;
 	const auto begin = reinterpret_cast<uint64_t>(address);
 	const auto end   = begin + size;
 	for (size_t i = m_pending_count; i-- > 0;) {
@@ -441,11 +453,15 @@ void GuestGpu::ReadDecisionMemory(const volatile void* address, void* value, siz
 		if (write->known && write->address <= begin && end <= write->address + write->size) {
 			std::memcpy(value, write->value + (begin - write->address), size);
 			NoteOrderedSequence(write->sequence);
+			DiagArgsSyncNoteDecisionSource(1, write->sequence, m_emitted);
 			return;
 		}
+		diag_source = 2;
+		diag_write  = write->sequence;
 		WaitForExecution(write->sequence);
 		break;
 	}
+	DiagArgsSyncNoteDecisionSource(diag_source, diag_write, m_emitted);
 	CopyFromGuest(value, address, size);
 }
 
@@ -875,6 +891,8 @@ uint64_t CommandProcessor::Emit(GpuOperation&& operation) {
 
 void CommandProcessor::NoteGuestWrite(uint64_t sequence, uint64_t address, uint64_t size,
                                       const void* value) {
+	DiagArgsSyncSetCpPacket(t_diag_cp_packet);
+	DiagArgsSyncNoteCpWrite(static_cast<uint32_t>(m_interrupt_event_id), sequence, address, size, value);
 	YieldIfWaitedOn(address, size);
 	if (m_interrupt_event_id == 0 && size != 0 && Scout::Running()) Scout::NoteWrite(reinterpret_cast<const void*>(address), static_cast<uint32_t>(std::min<uint64_t>(size, UINT32_MAX)), value);
 	if (m_pipeline != nullptr && size != 0) {
@@ -892,6 +910,7 @@ void CommandProcessor::ReadDecisionMemory(const volatile void* address, void* va
 		m_pipeline->ReadDecisionMemory(address, value, size);
 		return;
 	}
+	DiagArgsSyncNoteDecisionSource(4, 0, 0);
 	CopyFromGuest(value, address, size);
 }
 
@@ -932,6 +951,8 @@ void CommandProcessor::Execute(GpuOperation& operation) {
 	                                 operation.kind == GpuOperationKind::DrawAuto ||
 	                                 operation.kind == GpuOperationKind::DrawIndirect,
 	                             operation.guest_sync);
+	DiagArgsSyncSetOperation(static_cast<uint32_t>(m_interrupt_event_id), static_cast<uint32_t>(operation.kind),
+	                         operation.sequence, operation.submit_id, operation.guest_sync);
 	if (operation.after_wait) {
 		executor.InvalidateRenderTargetMemo();
 	}
@@ -1119,7 +1140,11 @@ void CommandProcessor::WaitRegMem(uint32_t func, const T* addr, T ref, T mask, u
 	}
 
 	m_wait_since_operation = true;
-	if (TestWaitRegMemValue(ReadDecisionValue<T>(addr), ref, mask, func)) {
+	const T    diag_value = ReadDecisionValue<T>(addr);
+	const bool met        = TestWaitRegMemValue(diag_value, ref, mask, func);
+	DiagArgsSyncNoteWait(static_cast<uint32_t>(m_interrupt_event_id), reinterpret_cast<uint64_t>(addr), sizeof(T),
+	                     static_cast<uint64_t>(diag_value), static_cast<uint64_t>(ref), static_cast<uint64_t>(mask), func, met);
+	if (met) {
 		m_renderer.CollectHotPageWrites();
 	} else {
 		if (g_gpu_state != nullptr) {
@@ -1322,6 +1347,12 @@ void GuestGpu::Enqueue(Submission submission) {
 	} else if (submission.queue_id == 0) {
 		m_scout_reset = true;
 	}
+	submission.diag_order = ++m_diag_submit_order;
+	if (submission.queue_id == 0) {
+		m_diag_gfx_last = submission.diag_order;
+	} else {
+		submission.diag_gfx_before = m_diag_gfx_last;
+	}
 	m_queues[submission.queue_id].push_back(std::move(submission));
 	m_submission_count++;
 	m_work_epoch.fetch_add(1, std::memory_order_release);
@@ -1414,6 +1445,18 @@ void GuestGpu::ThreadRun(void* data) {
 				for (uint32_t offset = 0; offset < QueueCount; offset++) {
 					const auto id = (gpu->m_next_queue + offset) % QueueCount;
 					if (!gpu->m_queues[id].empty() && !gpu->m_queues[id].front().blocked) {
+						if (id != 0) {
+							const auto&    front = gpu->m_queues[id].front();
+							const uint32_t why   = front.diag_gfx_before <= gpu->m_diag_gfx_done ? 1u
+							                       : gpu->m_queues[0].empty()                    ? 2u
+							                       : gpu->m_queues[0].front().blocked            ? 3u
+							                                                                     : 0u;
+							DiagArgsSyncNoteHoldCheck(id, why, front.diag_order, front.diag_gfx_before, gpu->m_diag_gfx_done);
+							if (why == 0u && DiagAceHold()) {
+								DiagArgsSyncNoteAceHold();
+								continue;
+							}
+						}
 						selected_queue = static_cast<int>(id);
 						break;
 					}
@@ -1438,6 +1481,7 @@ void GuestGpu::ThreadRun(void* data) {
 				}
 				auto& queue = gpu->m_queues[static_cast<uint32_t>(selected_queue)];
 				submission  = std::move(queue.front());
+				DiagArgsSyncSetSubmission(static_cast<uint32_t>(selected_queue), submission.diag_order);
 				queue.pop_front();
 				gpu->m_submission_count--;
 				gpu->m_next_queue = (static_cast<uint32_t>(selected_queue) + 1) % QueueCount;
@@ -1507,6 +1551,9 @@ void GuestGpu::ThreadRun(void* data) {
 			gpu->m_queues[submission.queue_id].push_front(std::move(submission));
 			gpu->m_submission_count++;
 		} else {
+			if (submission.queue_id == 0 && submission.diag_order > gpu->m_diag_gfx_done) {
+				gpu->m_diag_gfx_done = submission.diag_order;
+			}
 			for (auto& queue: gpu->m_queues) {
 				if (!queue.empty()) {
 					queue.front().blocked = false;
@@ -1701,6 +1748,8 @@ Pm4ProcessResult CommandProcessor::Process(Pm4Execution&             execution,
 	if (execution.m_buffer_stack.empty() && !commands.empty()) {
 		m_renderer.CollectHotPageWrites();
 		m_renderer.GetBufferCache().NoteCommandBuffer(reinterpret_cast<uint64_t>(commands.data()), commands.size_bytes());
+		DiagArgsSyncNoteIbFetch(static_cast<uint32_t>(m_interrupt_event_id), reinterpret_cast<uint64_t>(commands.data()),
+		                        commands.size_bytes(), 3u);
 		execution.m_buffer_stack.push_back({commands});
 	}
 	execution.m_suspended     = false;
@@ -1763,6 +1812,8 @@ const uint32_t* CommandProcessor::StageIndirectRegisters(uint32_t opcode, const 
 }
 
 void CommandProcessor::PrepareCommandFetch(std::span<const uint32_t> commands) {
+	DiagArgsSyncNoteIbFetch(static_cast<uint32_t>(m_interrupt_event_id), reinterpret_cast<uint64_t>(commands.data()),
+	                        commands.size_bytes(), m_fetch_sync_sequence != 0 && m_pipeline != nullptr ? 1u : 0u);
 	if (m_fetch_sync_sequence == 0 || m_pipeline == nullptr) {
 		return;
 	}
@@ -1773,6 +1824,7 @@ void CommandProcessor::PrepareCommandFetch(std::span<const uint32_t> commands) {
 	if (size != 0 && GuestRange {address, size}.Valid() && buffers.MayBeGpuModified(address, size) &&
 	    buffers.IsRegionGpuModified(address, size)) {
 		buffers.ReadMemory(address, size);
+		DiagArgsSyncNoteIbFetch(static_cast<uint32_t>(m_interrupt_event_id), address, size, 2u);
 	}
 }
 
@@ -1794,6 +1846,7 @@ void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
 		}
 
 		const auto* const packet        = cursor.commands.data() + cursor.offset_dw;
+		t_diag_cp_packet                = packet;
 		const auto        total_dw      = static_cast<uint32_t>(cursor.commands.size());
 		const auto        remaining_dw  = total_dw - cursor.offset_dw;
 		const auto        packet_header = packet[0];
@@ -1825,6 +1878,7 @@ void CommandProcessor::ProcessPm4(Pm4Execution& execution) {
 		const auto* const view = StageIndirectRegisters(opcode, packet, std::min(KYTY_PM4_LEN(packet_header), remaining_dw));
 
 		if ((packet_header & 1u) != 0 && ShouldSkipPredicatedPackets()) {
+			DiagArgsSyncNotePredicatedSkip(static_cast<uint32_t>(m_interrupt_event_id), opcode);
 			auto packet_dw = KYTY_PM4_LEN(packet_header);
 			EXIT_NOT_IMPLEMENTED(packet_dw > remaining_dw);
 			if (m_draw_observer != nullptr) m_draw_observer->ObservePacket(opcode, view, packet_dw, true);
@@ -1989,6 +2043,8 @@ void CommandProcessor::SetPredication(uint32_t condition, uint32_t op, uint32_t 
 		case 0x01: m_predicate_skip = (value == 0); break;
 		default: EXIT("unknown predication condition: 0x%08" PRIx32 "\n", condition);
 	}
+	DiagArgsSyncNoteDecision(static_cast<uint32_t>(m_interrupt_event_id), op == 0x01u ? 3 : 4, reinterpret_cast<uint64_t>(address),
+	                         op == 0x01u ? 256u : 8u, value, condition, 0, op, 0, !m_predicate_skip);
 }
 
 void CommandProcessor::CountDraw() {
@@ -2093,6 +2149,8 @@ void CommandProcessor::DrawIndirectMulti(uint32_t data_offset, uint32_t max_coun
 	                           .index_base        = m_index_base_addr,
 	                           .registers         = registers,
 	                           .run_offsets       = run_offsets};
+	DiagArgsSyncNoteDrawParse(static_cast<uint32_t>(m_interrupt_event_id), m_draw_indirect_args_base_addr, data_offset,
+	                          max_count_or_count, stride_in_bytes, run_offsets != nullptr);
 	Emit(std::move(operation));
 }
 
@@ -2178,6 +2236,8 @@ void CommandProcessor::ExecuteDrawIndirect(const GpuOperation& operation) {
 	if (indirect.max_count == 0) {
 		return;
 	}
+	DiagArgsSyncSetIndirect(indirect.args_base, indirect.data_offset, indirect.max_count, indirect.stride,
+	                        indirect.run_offsets);
 	const auto  args_addr = indirect.args_base + indirect.data_offset;
 	const auto& registers = indirect.registers;
 	const auto record_address = [&](uint32_t i) {
@@ -2834,7 +2894,9 @@ void CommandProcessor::DispatchIndirect(uint64_t args_addr, uint32_t mode) {
 	GetShCtx().SetCsWaveSize(Pm4::ComputeWaveSize(mode));
 	auto operation     = MakeOperation(GpuOperationKind::DispatchIndirect);
 	operation.dispatch = {.mode = mode, .args_addr = args_addr};
-	Emit(std::move(operation));
+	const auto diag_sequence = Emit(std::move(operation));
+	DiagArgsSyncNoteDispatchCp(static_cast<uint32_t>(m_interrupt_event_id), diag_sequence, args_addr,
+	                           m_dispatch_indirect_args_base_addr, mode);
 	EmitPsrBlasBuilt();
 }
 

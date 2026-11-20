@@ -33,6 +33,12 @@
 
 namespace Libs::Graphics {
 
+void DiagArgsSyncNoteWaitPacket(const uint32_t* body);
+void DiagArgsSyncNoteSetBase(uint32_t queue, const uint32_t* body, uint32_t shader_type);
+void DiagArgsSyncNoteDrawPacket(const uint32_t* header, uint32_t dw);
+void DiagArgsSyncNoteDecision(uint32_t queue, uint8_t kind, uint64_t address, uint32_t size, uint64_t value, uint64_t reference,
+                              uint64_t mask, uint32_t function, uint32_t exec_count, bool taken);
+
 namespace {
 
 constexpr uint32_t RegisterSelectorMask = 0x70000000u;
@@ -573,7 +579,9 @@ KYTY_CP_OP_PARSER(CpOpCondExec) {
 	EXIT_NOT_IMPLEMENTED(addr == 0);
 	EXIT_NOT_IMPLEMENTED(payload_dw + exec_count >= dw);
 
-	if (cp.ReadDecisionValue<uint32_t>(reinterpret_cast<const volatile void*>(addr)) == 0) {
+	const auto diag_value = cp.ReadDecisionValue<uint32_t>(reinterpret_cast<const volatile void*>(addr));
+	DiagArgsSyncNoteDecision(static_cast<uint32_t>(cp.DiagQueueId()), 1, addr, 4, diag_value, 0, 0, 0, exec_count, diag_value != 0);
+	if (diag_value == 0) {
 		return payload_dw + exec_count;
 	}
 
@@ -603,8 +611,11 @@ KYTY_CP_OP_PARSER(CpOpBranch) {
 	EXIT_NOT_IMPLEMENTED(function > 6);
 	EXIT_NOT_IMPLEMENTED(then_buffer == nullptr || then_num_dw == 0);
 
-	if (TestWaitRegMemValue(cp.ReadDecisionValue<uint64_t>(compare_addr), reference, mask,
-	                        function)) {
+	const auto diag_value = cp.ReadDecisionValue<uint64_t>(compare_addr);
+	const bool diag_taken = TestWaitRegMemValue(diag_value, reference, mask, function);
+	DiagArgsSyncNoteDecision(static_cast<uint32_t>(cp.DiagQueueId()), 2, reinterpret_cast<uint64_t>(compare_addr), 8, diag_value,
+	                         reference, mask, function, then_num_dw, diag_taken);
+	if (diag_taken) {
 		cp.PrepareCommandFetch({then_buffer, then_num_dw});
 		cp.ProcessIndirectBuffer({then_buffer, then_num_dw}, true);
 	} else if (mode == 2 && else_num_dw != 0) {
@@ -777,6 +788,7 @@ KYTY_CP_OP_PARSER(CpOpDrawIndirect) {
 		}
 		count++;
 	}
+	DiagArgsSyncNoteDrawPacket(buffer - 1, 5);
 	if (indexed && cp.TakesDrawRuns()) {
 		constexpr uint32_t MaxRun = 64;
 		uint32_t           run    = count;
@@ -819,6 +831,7 @@ KYTY_CP_OP_PARSER(CpOpDrawIndirectMulti) {
 		count_addr = nullptr;
 	}
 
+	DiagArgsSyncNoteDrawPacket(buffer - 1, 10);
 	cp.DrawIndirectMulti(data_offset, max_count_or_count, count_addr, stride_in_bytes,
 	                     registers, draw_initiator, indexed);
 
@@ -967,6 +980,8 @@ KYTY_CP_OP_PARSER(CpOpSetBase) {
 
 	EXIT_NOT_IMPLEMENTED(base_index != 1u);
 	EXIT_NOT_IMPLEMENTED(shader_type > 1u);
+
+	DiagArgsSyncNoteSetBase(static_cast<uint32_t>(cp.DiagQueueId()), buffer, shader_type);
 
 	if (shader_type == 0u) {
 		cp.SetDrawIndirectArgsBaseAddress(base_addr);
@@ -1406,6 +1421,7 @@ static uint32_t CpOpWaitRegMemSized(CommandProcessor& cp, uint32_t cmd_id, const
 
 	EXIT_NOT_IMPLEMENTED((ctrl & 0x10u) == 0);
 
+	DiagArgsSyncNoteWaitPacket(buffer);
 	cp.WaitRegMem(ctrl & 0x7u, addr, ref, mask, CpOpWaitRegMemWaitOp<T>(ctrl));
 
 	return payload_dw;
